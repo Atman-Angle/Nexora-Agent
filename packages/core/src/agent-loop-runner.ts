@@ -1487,8 +1487,33 @@ function describeResourceScope(toolCall: ToolCall): string {
   return "workspace";
 }
 
+export function fingerprintToolCall(toolCall: ToolCall): string {
+  if (toolCall.toolName === "filesystem.read") {
+    return JSON.stringify({ toolName: toolCall.toolName, path: toolCall.input.path });
+  }
+  if (toolCall.toolName === "filesystem.search") {
+    return JSON.stringify({ toolName: toolCall.toolName, query: toolCall.input.query, limit: toolCall.input.limit });
+  }
+  if (toolCall.toolName === "filesystem.patch") {
+    return JSON.stringify({
+      toolName: toolCall.toolName,
+      path: toolCall.input.path,
+      patch: toolCall.input.patch,
+      encoding: toolCall.input.encoding
+    });
+  }
+  return JSON.stringify({
+    toolName: toolCall.toolName,
+    command: toolCall.input.command,
+    args: toolCall.input.args,
+    cwd: toolCall.input.cwd,
+    environment: toolCall.input.environment,
+    purpose: toolCall.input.purpose
+  });
+}
+
 function fingerprintAction(toolCall: ToolCall): string {
-  return JSON.stringify(toolCall);
+  return fingerprintToolCall(toolCall);
 }
 
 function isCriticalAction(toolCall: ToolCall): boolean {

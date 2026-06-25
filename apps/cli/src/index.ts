@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import {
   AgentLoopRunFailure,
   DirectRunFailure,
+  fingerprintToolCall,
   runAgentLoop,
   runDirect,
   runToolMode,
@@ -1156,6 +1157,12 @@ async function runApproveCommand(command: {
     }
 
     const run = requireRun(runStore, approval.request.runId);
+    if (run.status === "cancelled") {
+      throw new Error(`Run ${run.runId} was cancelled and cannot be approved.`);
+    }
+    if (approval.request.status === "cancelled") {
+      throw new Error(`Approval ${command.approvalId} was cancelled and cannot be approved.`);
+    }
     const task = requireTask(taskStore, run.taskId);
     const pendingAction = requirePendingAction(pendingActionStore.getPendingActionByApprovalId(command.approvalId), command.approvalId);
     if (pendingAction.runId !== approval.request.runId) {
@@ -1167,7 +1174,7 @@ async function runApproveCommand(command: {
     if (pendingAction.action.type !== "tool_call") {
       throw new Error("Approval can only resume a tool_call action.");
     }
-    if (JSON.stringify(pendingAction.action.toolCall) !== approval.actionFingerprint) {
+    if (fingerprintToolCall(pendingAction.action.toolCall) !== approval.actionFingerprint) {
       throw new Error("Pending action no longer matches the approved tool call.");
     }
 
@@ -1282,6 +1289,12 @@ async function runDenyCommand(command: {
     }
 
     const run = requireRun(runStore, approval.request.runId);
+    if (run.status === "cancelled") {
+      throw new Error(`Run ${run.runId} was cancelled and cannot be denied.`);
+    }
+    if (approval.request.status === "cancelled") {
+      throw new Error(`Approval ${command.approvalId} was cancelled and cannot be denied.`);
+    }
     if (approval.request.status === "denied" && approval.decision?.decision === "denied") {
       return {
         runId: run.runId,
@@ -1362,6 +1375,12 @@ async function runRespondCommand(command: {
     }
 
     const run = requireRun(runStore, requestEntry.request.runId);
+    if (run.status === "cancelled") {
+      throw new Error(`Run ${run.runId} was cancelled and cannot accept responses.`);
+    }
+    if (requestEntry.request.status === "cancelled") {
+      throw new Error(`Request ${command.requestId} was cancelled and cannot be answered.`);
+    }
     const task = requireTask(taskStore, run.taskId);
     const pendingAction = requirePendingAction(pendingActionStore.getPendingActionByRequestId(command.requestId), command.requestId);
     const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
