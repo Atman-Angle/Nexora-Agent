@@ -80,6 +80,16 @@ export class PendingActionStore {
     );
   }
 
+  public getPendingAction(pendingActionId: string): PendingAction | null {
+    return this.getSingle(
+      `SELECT payload_json
+       FROM pending_actions
+       WHERE id = ?
+       LIMIT 1`,
+      pendingActionId
+    );
+  }
+
   private getSingle(query: string, value: string): PendingAction | null {
     const row = this.database.connection.prepare(query).get(value) as { payload_json: string } | undefined;
     if (row === undefined) {

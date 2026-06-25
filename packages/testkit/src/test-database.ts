@@ -7,6 +7,8 @@ import {
   ApprovalRequestSchema,
   type ValidationResult,
   ValidationResultSchema,
+  type Checkpoint,
+  CheckpointSchema,
   type ExecutionRecord,
   ExecutionRecordSchema,
   type Artifact,
@@ -45,6 +47,7 @@ export function readDatabaseState(path: string): {
     request: UserInputRequest;
     response?: UserInputResponse | undefined;
   }>;
+  checkpoints: Checkpoint[];
   validationResults: Array<{
     runId: string;
     result: ValidationResult;
@@ -308,6 +311,22 @@ export function readDatabaseState(path: string): {
               )
       }));
 
+    const checkpoints = database.connection
+      .prepare(
+        `SELECT payload_json
+         FROM checkpoints
+         ORDER BY created_at ASC, id ASC`
+      )
+      .all()
+      .map((row) => {
+        try {
+          return CheckpointSchema.parse(JSON.parse(String((row as Record<string, unknown>).payload_json)) as Checkpoint);
+        } catch {
+          return null;
+        }
+      })
+      .filter((value): value is Checkpoint => value !== null);
+
     return {
       tasks,
       runs,
@@ -319,6 +338,7 @@ export function readDatabaseState(path: string): {
       approvals,
       pendingActions,
       userInputRequests,
+      checkpoints,
       validationResults
     };
   } finally {

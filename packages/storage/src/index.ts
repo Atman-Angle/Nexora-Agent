@@ -1,6 +1,7 @@
 export * from "./agent-iteration-store.js";
 export * from "./approval-store.js";
 export * from "./artifact-store.js";
+export * from "./checkpoint-store.js";
 export * from "./database.js";
 export * from "./execution-record-store.js";
 export * from "./event-store.js";

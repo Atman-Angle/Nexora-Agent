@@ -4,6 +4,8 @@ import {
   AgentBudgetUsageSchema,
   ApprovalRequestSchema,
   ValidationPlanSchema,
+  computeArtifactHash,
+  createCheckpoint,
   createEvent,
   createProgressLedger,
   createTextArtifact,
@@ -11,6 +13,8 @@ import {
   type AgentIteration,
   type ApprovalRequest,
   type Artifact,
+  type Checkpoint,
+  type CheckpointPhase,
   type ContextSnapshot,
   type Event,
   type PendingAction,
@@ -36,6 +40,7 @@ import type { AgentLoopModelProvider } from "../../model-gateway/src/index.js";
 import type { AgentIterationStore } from "../../storage/src/agent-iteration-store.js";
 import type { ApprovalStore } from "../../storage/src/approval-store.js";
 import type { ArtifactStore } from "../../storage/src/artifact-store.js";
+import type { CheckpointStore } from "../../storage/src/checkpoint-store.js";
 import type { EventStore } from "../../storage/src/event-store.js";
 import type { LedgerStore } from "../../storage/src/ledger-store.js";
 import type { PendingActionStore } from "../../storage/src/pending-action-store.js";
@@ -112,6 +117,7 @@ export async function runAgentLoop(input: {
   approvalStore: ApprovalStore;
   pendingActionStore: PendingActionStore;
   userInputStore: UserInputStore;
+  checkpointStore: CheckpointStore;
   resume?:
     | {
         ledger: ProgressLedger;
@@ -184,6 +190,7 @@ export async function runAgentLoop(input: {
           payload
         })
       );
+      maybeAbortAfterEvent(type);
       nextSequence += 1;
     });
 
@@ -198,6 +205,41 @@ export async function runAgentLoop(input: {
       },
       ledger.updatedAt
     );
+  };
+
+  const checkpoint = async (phase: CheckpointPhase, options?: {
+    pendingActionId?: string;
+    pendingActionFingerprint?: string;
+    note?: string;
+  }): Promise<Checkpoint> => {
+    const createdAt = input.now();
+    const pendingPatchPath = input.task.input.patchRequest?.path;
+    const filePaths = collectRehydrationFilePaths({
+      workingSetPaths: currentWorkingSet?.items.map((item) => item.path) ?? [],
+      pendingPatchPath
+    });
+    let workspaceHash: string | undefined;
+    if (filePaths.length > 0) {
+      const facts = rehydrateWorkspaceFacts({ workspaceRoot: input.workspaceRoot, filePaths, now: createdAt });
+      const hashes = facts.fileHashes.map((entry) => `${entry.path}:${entry.hash ?? "missing"}`).join("|");
+      workspaceHash = computeArtifactHash(hashes);
+    }
+    const checkpointRecord = createCheckpoint({
+      checkpointId: input.idGenerator(),
+      runId: activeRun.runId,
+      runStateVersion: activeRun.stateVersion,
+      ledgerVersion: ledger.version,
+      phase,
+      ...(options?.pendingActionId === undefined ? {} : { pendingActionId: options.pendingActionId }),
+      ...(options?.pendingActionFingerprint === undefined ? {} : { pendingActionFingerprint: options.pendingActionFingerprint }),
+      ...(workspaceHash === undefined ? {} : { workspaceHash }),
+      ...(options?.note === undefined ? {} : { note: options.note }),
+      createdAt
+    });
+    input.checkpointStore.insertCheckpoint(checkpointRecord);
+    await appendEvent("checkpoint.created", { checkpointId: checkpointRecord.checkpointId, phase }, createdAt);
+    maybeAbortAfterCheckpoint(phase);
+    return checkpointRecord;
   };
 
   if (input.resume === undefined) {
@@ -343,6 +385,7 @@ export async function runAgentLoop(input: {
         now: input.now()
       });
       await persistLedger(ledger);
+      await checkpoint("plan_formed");
       const iteration = createIteration({
         iterationId: input.idGenerator(),
         runId: activeRun.runId,
@@ -396,6 +439,7 @@ export async function runAgentLoop(input: {
         run: activeRun,
         ledger,
         appendEvent,
+        checkpoint,
         nextSequence,
         latestIterationIndex,
         currentWorkingSet,
@@ -478,6 +522,7 @@ export async function runAgentLoop(input: {
       const verifyingAt = input.now();
       activeRun = transitionRun(activeRun, "verifying", verifyingAt);
       input.runStore.updateRun(activeRun);
+      await checkpoint("pre_validation");
       await appendEvent("validation.started", { status: activeRun.status }, verifyingAt);
 
       const validation = (
@@ -497,6 +542,7 @@ export async function runAgentLoop(input: {
         result: validation,
         createdAt: input.now()
       });
+      await checkpoint("post_validation");
       await appendEvent("validation.completed", { status: validation.status, evidence: validation.evidence }, input.now());
 
       const iteration = createIteration({
@@ -572,6 +618,7 @@ export async function runAgentLoop(input: {
           run: activeRun,
           ledger,
           appendEvent,
+          checkpoint,
           nextSequence,
           latestIterationIndex,
           currentWorkingSet,
@@ -600,6 +647,40 @@ export async function runAgentLoop(input: {
     const waitingAt = input.now();
     activeRun = transitionRun(activeRun, "waiting_for_tool", waitingAt);
     input.runStore.updateRun(activeRun);
+    const toolPendingAction = createPendingAction({
+      pendingActionId: input.idGenerator(),
+      runId: activeRun.runId,
+      actionId: toolCall.toolCallId,
+      waitingFor: "tool_execution",
+      action: {
+        type: "tool_call",
+        toolCall
+      },
+      resumeState: buildResumeState({
+        usage,
+        nextSequence: nextSequence + 1,
+        currentWorkingSet,
+        recentToolResult,
+        recentValidationResult,
+        latestIterationIndex,
+        regroundRequested,
+        replanRequested,
+        noProgressCount,
+        previousSnapshot
+      }),
+      now: input.now()
+    });
+    input.pendingActionStore.insertPendingAction(toolPendingAction);
+    await checkpoint("pre_tool", {
+      pendingActionId: toolPendingAction.pendingActionId,
+      pendingActionFingerprint: actionFingerprint
+    });
+    if (toolCall.toolName === "filesystem.patch") {
+      await checkpoint("pre_patch", {
+        pendingActionId: toolPendingAction.pendingActionId,
+        pendingActionFingerprint: actionFingerprint
+      });
+    }
     await appendEvent(
       "tool.started",
       {
@@ -629,6 +710,21 @@ export async function runAgentLoop(input: {
       idGenerator: input.idGenerator
     });
     usage.toolCalls += 1;
+    input.pendingActionStore.updatePendingAction({
+      ...toolPendingAction,
+      status: "resolved",
+      updatedAt: input.now()
+    });
+    if (toolCall.toolName === "filesystem.patch") {
+      await checkpoint("post_patch", {
+        pendingActionId: toolPendingAction.pendingActionId,
+        pendingActionFingerprint: actionFingerprint
+      });
+    }
+    await checkpoint("post_tool", {
+      pendingActionId: toolPendingAction.pendingActionId,
+      pendingActionFingerprint: actionFingerprint
+    });
 
     if (execution.toolResult.status === "error") {
       if (toolCall.toolName === "shell.execute") {
@@ -910,6 +1006,14 @@ async function waitForApproval(input: {
   run: Run;
   ledger: ProgressLedger;
   appendEvent: (type: Event["type"], payload: Record<string, unknown>, timestamp: string) => Promise<void>;
+  checkpoint: (
+    phase: CheckpointPhase,
+    options?: {
+      pendingActionId?: string;
+      pendingActionFingerprint?: string;
+      note?: string;
+    }
+  ) => Promise<Checkpoint>;
   nextSequence: number;
   latestIterationIndex: number;
   currentWorkingSet: WorkingSet | null;
@@ -977,6 +1081,10 @@ async function waitForApproval(input: {
     now: input.input.now()
   });
   input.input.pendingActionStore.insertPendingAction(pendingAction);
+  await input.checkpoint("waiting_for_approval", {
+    pendingActionId: pendingAction.pendingActionId,
+    pendingActionFingerprint: fingerprintAction(input.toolCall)
+  });
 
   return {
     kind: "waiting_for_approval",
@@ -991,6 +1099,14 @@ async function waitForUser(input: {
   run: Run;
   ledger: ProgressLedger;
   appendEvent: (type: Event["type"], payload: Record<string, unknown>, timestamp: string) => Promise<void>;
+  checkpoint: (
+    phase: CheckpointPhase,
+    options?: {
+      pendingActionId?: string;
+      pendingActionFingerprint?: string;
+      note?: string;
+    }
+  ) => Promise<Checkpoint>;
   nextSequence: number;
   latestIterationIndex: number;
   currentWorkingSet: WorkingSet | null;
@@ -1057,6 +1173,9 @@ async function waitForUser(input: {
     now: input.input.now()
   });
   input.input.pendingActionStore.insertPendingAction(pendingAction);
+  await input.checkpoint("waiting_for_user", {
+    pendingActionId: pendingAction.pendingActionId
+  });
 
   return {
     kind: "waiting_for_user",
@@ -1592,6 +1711,32 @@ function reGroundNow(
     now
   });
   return facts.regroundedAt;
+}
+
+function maybeAbortAfterCheckpoint(phase: CheckpointPhase): void {
+  const configuredPhase = process.env.NEXORA_TEST_EXIT_AFTER_CHECKPOINT_PHASE?.trim();
+  if (configuredPhase === undefined || configuredPhase.length === 0) {
+    return;
+  }
+
+  if (configuredPhase !== phase) {
+    return;
+  }
+
+  throw new Error(`Test abort after checkpoint phase ${phase}`);
+}
+
+function maybeAbortAfterEvent(type: Event["type"]): void {
+  const configuredType = process.env.NEXORA_TEST_EXIT_AFTER_EVENT_TYPE?.trim();
+  if (configuredType === undefined || configuredType.length === 0) {
+    return;
+  }
+
+  if (configuredType !== type) {
+    return;
+  }
+
+  throw new Error(`Test abort after event ${type}`);
 }
 
 function describeResourceScope(toolCall: ToolCall): string {

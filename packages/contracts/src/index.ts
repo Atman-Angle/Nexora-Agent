@@ -4,6 +4,7 @@ export * from "./agent-action.js";
 export * from "./agent-budget.js";
 export * from "./agent-iteration.js";
 export * from "./artifact.js";
+export * from "./checkpoint.js";
 export * from "./command-result.js";
 export * from "./context-snapshot.js";
 export * from "./evidence.js";

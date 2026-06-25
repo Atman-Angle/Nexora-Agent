@@ -145,6 +145,25 @@ CREATE TABLE IF NOT EXISTS pending_actions (
   updated_at TEXT NOT NULL,
   FOREIGN KEY(run_id) REFERENCES runs(id)
 );
+
+CREATE TABLE IF NOT EXISTS checkpoints (
+  id TEXT PRIMARY KEY,
+  schema_version TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  run_state_version INTEGER NOT NULL,
+  ledger_version INTEGER NOT NULL,
+  phase TEXT NOT NULL,
+  pending_action_id TEXT,
+  pending_action_fingerprint TEXT,
+  workspace_hash TEXT,
+  note TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(run_id) REFERENCES runs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_run_created
+  ON checkpoints(run_id, created_at);
 `;
 
 export interface DatabaseClient {

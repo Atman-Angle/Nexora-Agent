@@ -1,13 +1,19 @@
 import {
   AgentActionSchema,
+  computeArtifactHash,
+  createCheckpoint,
   createEvent,
   createRun,
   createTask,
+  ToolResultSchema,
   type ApprovalDecision,
   type ApprovalScope,
+  type CheckpointPhase,
   type PendingAction,
-  type ProgressLedger
+  type ProgressLedger,
+  type ToolResult
 } from "../../../packages/contracts/src/index.js";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -25,6 +31,7 @@ import {
   AgentIterationStore,
   ApprovalStore,
   ArtifactStore,
+  CheckpointStore,
   EventStore,
   ExecutionRecordStore,
   LedgerStore,
@@ -66,10 +73,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
                       ? await runRequestListCommand(command.runId)
                       : command.type === "respond"
                         ? await runRespondCommand(command)
-                        : command.type === "run_status"
+                      : command.type === "run_status"
                           ? await runStatusCommand(command.runId)
                           : command.type === "run_cancel"
                             ? await runCancelCommand(command.runId)
+                            : command.type === "run_resume"
+                              ? await runResumeCommand(command.runId)
               : command.type === "verify"
                 ? await runVerifyCommand(command)
                 : await runAgentCommand(command);
@@ -94,6 +103,7 @@ export function parseCommand(argv: string[]):
   | { type: "respond"; requestId: string; value: string }
   | { type: "run_status"; runId: string }
   | { type: "run_cancel"; runId: string }
+  | { type: "run_resume"; runId: string }
   | { type: "agent"; goal: string; command: string; args: string[] }
   | { type: "verify"; command: string; args: string[] } {
   const [command, ...rest] = argv;
@@ -246,7 +256,14 @@ export function parseCommand(argv: string[]):
       };
     }
 
-    throw new Error('Usage: nexora run status "<runId>" | nexora run cancel "<runId>"');
+    if (rest[0] === "resume" && rest[1] !== undefined && rest[1].trim().length > 0) {
+      return {
+        type: "run_resume",
+        runId: rest[1]
+      };
+    }
+
+    throw new Error('Usage: nexora run status "<runId>" | nexora run cancel "<runId>" | nexora run resume "<runId>"');
   }
 
   if (command === "agent") {
@@ -269,7 +286,7 @@ export function parseCommand(argv: string[]):
   }
 
   throw new Error(
-    'Usage: nexora ask "<text>" | nexora read "<path>" | nexora search "<query>" | nexora patch "<path>" "<expectedHash>" "<find>" "<replace>" ["<idempotencyKey>"] | nexora approvals list "<runId>" | nexora approve "<approvalId>" ["once"|"current_run"] ["<reason>"] | nexora deny "<approvalId>" ["<reason>"] | nexora requests list "<runId>" | nexora respond "<requestId>" "<value>" | nexora run status "<runId>" | nexora run cancel "<runId>" | nexora verify "<command>" ["<arg>" ...] | nexora agent "<goal>" "<command>" ["<arg>" ...]'
+    'Usage: nexora ask "<text>" | nexora read "<path>" | nexora search "<query>" | nexora patch "<path>" "<expectedHash>" "<find>" "<replace>" ["<idempotencyKey>"] | nexora approvals list "<runId>" | nexora approve "<approvalId>" ["once"|"current_run"] ["<reason>"] | nexora deny "<approvalId>" ["<reason>"] | nexora requests list "<runId>" | nexora respond "<requestId>" "<value>" | nexora run status "<runId>" | nexora run cancel "<runId>" | nexora run resume "<runId>" | nexora verify "<command>" ["<arg>" ...] | nexora agent "<goal>" "<command>" ["<arg>" ...]'
   );
 }
 
@@ -760,6 +777,7 @@ export async function runAgentCommand(command: {
   const approvalStore = new ApprovalStore(database);
   const pendingActionStore = new PendingActionStore(database);
   const userInputStore = new UserInputStore(database);
+  const checkpointStore = new CheckpointStore(database);
 
   try {
     const now = () => new Date().toISOString();
@@ -842,7 +860,8 @@ export async function runAgentCommand(command: {
       agentIterationStore,
       approvalStore,
       pendingActionStore,
-      userInputStore
+      userInputStore,
+      checkpointStore
     });
 
     return renderAgentLoopResult(result);
@@ -1076,6 +1095,13 @@ async function runCancelCommand(runId: string): Promise<unknown> {
 
     const cancelledRun = transitionRun(run, "cancelled", now());
     runStore.updateRun(cancelledRun);
+    persistCheckpointForRun({
+      checkpointStore: new CheckpointStore(database),
+      ledgerStore: new LedgerStore(database),
+      run: cancelledRun,
+      phase: "runtime_shutdown",
+      now: now()
+    });
 
     const pendingAction = pendingActionStore.getActiveByRun(runId);
     if (pendingAction !== null) {
@@ -1128,6 +1154,587 @@ async function runCancelCommand(runId: string): Promise<unknown> {
   }
 }
 
+async function runResumeCommand(runId: string): Promise<unknown> {
+  const databasePath = requireDatabasePath();
+  const database = openDatabase(databasePath);
+  try {
+    const now = () => new Date().toISOString();
+    const taskStore = new TaskStore(database);
+    const runStore = new RunStore(database);
+    const eventStore = new EventStore(database);
+    const artifactStore = new ArtifactStore(database);
+    const executionRecordStore = new ExecutionRecordStore(database);
+    const validationResultStore = new ValidationResultStore(database);
+    const ledgerStore = new LedgerStore(database);
+    const agentIterationStore = new AgentIterationStore(database);
+    const approvalStore = new ApprovalStore(database);
+    const userInputStore = new UserInputStore(database);
+    const pendingActionStore = new PendingActionStore(database);
+    const checkpointStore = new CheckpointStore(database);
+
+    const run = requireRun(runStore, runId);
+    if (run.status === "cancelled" || run.status === "succeeded" || run.status === "failed") {
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.rejected",
+        { runId, reason: "terminal_run", status: run.status },
+        now()
+      );
+      throw new Error(`Run ${runId} is ${run.status} and cannot be resumed.`);
+    }
+
+    const latestCheckpoint = checkpointStore.inspectLatestForRun(runId);
+    if (latestCheckpoint.kind === "missing") {
+      appendRunEvent(eventStore, run.runId, "recovery.rejected", { runId, reason: "checkpoint_missing" }, now());
+      throw new Error(`Run ${runId} has no checkpoint to resume from.`);
+    }
+    if (latestCheckpoint.kind === "corrupt") {
+      appendRunEvent(eventStore, run.runId, "recovery.rejected", { runId, reason: "checkpoint_corrupt" }, now());
+      throw new Error(`Run ${runId} has a corrupt checkpoint and cannot be resumed.`);
+    }
+    if (latestCheckpoint.kind === "schema_version_mismatch") {
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.rejected",
+        { runId, reason: "checkpoint_schema_version_mismatch", schemaVersion: latestCheckpoint.schemaVersion ?? null },
+        now()
+      );
+      throw new Error(
+        `Run ${runId} checkpoint schema version ${latestCheckpoint.schemaVersion ?? "unknown"} is not supported for resume.`
+      );
+    }
+    const checkpoint = latestCheckpoint.checkpoint;
+
+    appendRunEvent(
+      eventStore,
+      run.runId,
+      "checkpoint.loaded",
+      { checkpointId: checkpoint.checkpointId, phase: checkpoint.phase },
+      now()
+    );
+
+    const pendingAction =
+      checkpoint.pendingActionId === undefined
+        ? pendingActionStore.getActiveByRun(runId)
+        : pendingActionStore.getPendingAction(checkpoint.pendingActionId);
+    if (checkpoint.pendingActionId !== undefined && pendingAction?.pendingActionId !== checkpoint.pendingActionId) {
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.rejected",
+        { runId, checkpointId: checkpoint.checkpointId, reason: "pending_action_mismatch" },
+        now()
+      );
+      throw new Error(`Run ${runId} pending action no longer matches the latest checkpoint.`);
+    }
+
+    if (run.status === "waiting_for_approval") {
+      const approvalId = pendingAction?.approvalId;
+      const approval =
+        approvalId === undefined ? undefined : approvalStore.listByRun(runId).find((entry) => entry.request.approvalId === approvalId);
+      if (approval === undefined || approval.request.status !== "pending") {
+        appendRunEvent(
+          eventStore,
+          run.runId,
+          "recovery.rejected",
+          { runId, checkpointId: checkpoint.checkpointId, reason: "approval_missing" },
+          now()
+        );
+        throw new Error(`Run ${runId} has no pending approval to resume.`);
+      }
+
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.decision",
+        { action: "wait", checkpointId: checkpoint.checkpointId, waitingFor: "approval" },
+        now()
+      );
+      return {
+        runId: run.runId,
+        status: run.status,
+        approvalId: approval.request.approvalId,
+        checkpointId: checkpoint.checkpointId,
+        recoveryAction: "wait",
+        text: approval.request.actionSummary
+      };
+    }
+
+    if (run.status === "waiting_for_user") {
+      const requestId = pendingAction?.requestId;
+      const request =
+        requestId === undefined ? undefined : userInputStore.listByRun(runId).find((entry) => entry.request.requestId === requestId);
+      if (request === undefined || request.request.status !== "pending") {
+        appendRunEvent(
+          eventStore,
+          run.runId,
+          "recovery.rejected",
+          { runId, checkpointId: checkpoint.checkpointId, reason: "request_missing" },
+          now()
+        );
+        throw new Error(`Run ${runId} has no pending user-input request to resume.`);
+      }
+
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.decision",
+        { action: "wait", checkpointId: checkpoint.checkpointId, waitingFor: "user_input" },
+        now()
+      );
+      return {
+        runId: run.runId,
+        status: run.status,
+        requestId: request.request.requestId,
+        checkpointId: checkpoint.checkpointId,
+        recoveryAction: "wait",
+        text: request.request.question
+      };
+    }
+
+    if (run.status === "blocked") {
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.decision",
+        { action: "blocked", checkpointId: checkpoint.checkpointId, waitingFor: "manual_intervention" },
+        now()
+      );
+      return {
+        runId: run.runId,
+        status: run.status,
+        checkpointId: checkpoint.checkpointId,
+        recoveryAction: "blocked",
+        text: run.errorCode ?? "Run is blocked and needs manual intervention."
+      };
+    }
+
+    if (run.status === "waiting_for_tool") {
+      if (pendingAction === null || pendingAction.waitingFor !== "tool_execution" || pendingAction.action.type !== "tool_call") {
+        const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
+        runStore.updateRun(blockedRun);
+        appendRunEvent(
+          eventStore,
+          run.runId,
+          "recovery.decision",
+          {
+            action: "blocked",
+            checkpointId: checkpoint.checkpointId,
+            waitingFor: "manual_intervention",
+            previousStatus: run.status,
+            reason: "tool_pending_action_missing"
+          },
+          now()
+        );
+        return {
+          runId: blockedRun.runId,
+          status: blockedRun.status,
+          checkpointId: checkpoint.checkpointId,
+          recoveryAction: "blocked",
+          text: `Run ${runId} lost its tool recovery context and needs manual review.`
+        };
+      }
+
+      if (
+        checkpoint.pendingActionFingerprint !== undefined &&
+        fingerprintToolCall(pendingAction.action.toolCall) !== checkpoint.pendingActionFingerprint
+      ) {
+        appendRunEvent(
+          eventStore,
+          run.runId,
+          "recovery.rejected",
+          { runId, checkpointId: checkpoint.checkpointId, reason: "pending_action_fingerprint_mismatch" },
+          now()
+        );
+        throw new Error(`Run ${runId} tool action no longer matches the latest checkpoint.`);
+      }
+
+      const events = eventStore.listEventsByRun(runId);
+      const checkpointCreatedEvent = events.find(
+        (event) => event.type === "checkpoint.created" && event.payload.checkpointId === checkpoint.checkpointId
+      );
+      const toolStartedSeenAfterCheckpoint =
+        checkpointCreatedEvent !== undefined &&
+        events.some(
+          (event) =>
+            event.sequence > checkpointCreatedEvent.sequence &&
+            (event.type === "tool.started" || event.type === "command.started")
+        );
+
+      if (checkpoint.phase === "pre_tool") {
+        if (pendingAction.action.toolCall.toolName === "filesystem.patch") {
+          const workspaceRoot = requireWorkspaceRoot();
+          const currentFileHash = readWorkspaceFileHash(workspaceRoot, pendingAction.action.toolCall.input.path);
+          if (currentFileHash === null) {
+            const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
+            runStore.updateRun(blockedRun);
+            appendRunEvent(
+              eventStore,
+              run.runId,
+              "recovery.decision",
+                {
+                  action: "blocked",
+                  checkpointId: checkpoint.checkpointId,
+                  waitingFor: "manual_intervention",
+                  previousStatus: run.status,
+                  reason: "workspace_target_missing_before_patch_resume"
+                },
+                now()
+              );
+            return {
+              runId: blockedRun.runId,
+              status: blockedRun.status,
+              checkpointId: checkpoint.checkpointId,
+              recoveryAction: "blocked",
+              text: `Run ${runId} target file is missing after checkpoint and patch resume needs manual review.`
+            };
+          }
+          if (currentFileHash !== pendingAction.action.toolCall.input.expectedHash) {
+            pendingActionStore.updatePendingAction({
+              ...pendingAction,
+              status: "cancelled",
+              updatedAt: now()
+            });
+
+            appendRunEvent(
+              eventStore,
+              run.runId,
+              "recovery.decision",
+              {
+                action: "replan",
+                checkpointId: checkpoint.checkpointId,
+                waitingFor: "tool_execution",
+                previousStatus: run.status,
+                reason: "workspace_changed_before_patch_resume"
+              },
+              now()
+            );
+
+            const artifactRoot = resolveArtifactRoot(databasePath);
+            const task = requireTask(taskStore, run.taskId);
+            const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
+            const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
+            const replanningResumeState = {
+              ...pendingAction.resumeState,
+              regroundRequested: true,
+              replanRequested: true
+            };
+            const modelProvider = new FakeModelProvider({
+              mode: "success",
+              text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
+              ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(replanningResumeState.usage.modelCalls) })
+            });
+            const toolRuntime = new ToolRuntime({
+              registry: createDefaultToolRegistry(),
+              executionRecordStore,
+              artifactStore
+            });
+
+            const result = await runAgentLoop({
+              task,
+              run,
+              now,
+              idGenerator: randomUUID,
+              workspaceRoot,
+              artifactRoot,
+              modelProvider,
+              toolRuntime,
+              runStore,
+              eventStore,
+              artifactStore,
+              validationResultStore,
+              ledgerStore,
+              agentIterationStore,
+              approvalStore,
+              pendingActionStore,
+              userInputStore,
+              checkpointStore,
+              resume: {
+                ledger,
+                resumeState: replanningResumeState
+              }
+            });
+
+            return {
+              ...renderAgentLoopResult(result),
+              checkpointId: checkpoint.checkpointId,
+              recoveryAction: "replan"
+            };
+          }
+        }
+
+        if (toolStartedSeenAfterCheckpoint && pendingAction.action.toolCall.toolName !== "filesystem.read") {
+          const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
+          runStore.updateRun(blockedRun);
+          appendRunEvent(
+            eventStore,
+            run.runId,
+            "recovery.decision",
+            {
+              action: "blocked",
+              checkpointId: checkpoint.checkpointId,
+              waitingFor: "manual_intervention",
+              previousStatus: run.status,
+              reason: "tool_started_state_unknown"
+            },
+            now()
+          );
+          return {
+            runId: blockedRun.runId,
+            status: blockedRun.status,
+            checkpointId: checkpoint.checkpointId,
+            recoveryAction: "blocked",
+            text: `Run ${runId} was interrupted after ${pendingAction.action.toolCall.toolName} started and needs manual review.`
+          };
+        }
+
+        appendRunEvent(
+          eventStore,
+          run.runId,
+          "recovery.decision",
+          { action: "resume", checkpointId: checkpoint.checkpointId, waitingFor: "tool_execution" },
+          now()
+        );
+
+        const workspaceRoot = requireWorkspaceRoot();
+        const artifactRoot = resolveArtifactRoot(databasePath);
+        const task = requireTask(taskStore, run.taskId);
+        const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
+        const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
+        const modelProvider = new FakeModelProvider({
+          mode: "success",
+          text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
+          ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(pendingAction.resumeState.usage.modelCalls) })
+        });
+        const toolRuntime = new ToolRuntime({
+          registry: createDefaultToolRegistry(),
+          executionRecordStore,
+          artifactStore
+        });
+
+        const result = await runAgentLoop({
+          task,
+          run,
+          now,
+          idGenerator: randomUUID,
+          workspaceRoot,
+          artifactRoot,
+          modelProvider,
+          toolRuntime,
+          runStore,
+          eventStore,
+          artifactStore,
+          validationResultStore,
+          ledgerStore,
+          agentIterationStore,
+          approvalStore,
+          pendingActionStore,
+          userInputStore,
+          checkpointStore,
+          resume: {
+            ledger,
+            resumeState: pendingAction.resumeState,
+            seedAction: pendingAction.action
+          }
+        });
+
+        return {
+          ...renderAgentLoopResult(result),
+          checkpointId: checkpoint.checkpointId,
+          recoveryAction: "resume"
+        };
+      }
+
+      if (checkpoint.phase === "post_tool") {
+        if (pendingAction.action.toolCall.toolName === "shell.execute") {
+          const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
+          runStore.updateRun(blockedRun);
+          appendRunEvent(
+            eventStore,
+            run.runId,
+            "recovery.decision",
+            {
+              action: "blocked",
+              checkpointId: checkpoint.checkpointId,
+              waitingFor: "manual_intervention",
+              previousStatus: run.status,
+              reason: "post_tool_shell_requires_review"
+            },
+            now()
+          );
+          return {
+            runId: blockedRun.runId,
+            status: blockedRun.status,
+            checkpointId: checkpoint.checkpointId,
+            recoveryAction: "blocked",
+            text: `Run ${runId} was interrupted after shell.execute completed and needs manual review.`
+          };
+        }
+
+        const executionRecord = executionRecordStore
+          .listByRun(runId)
+          .slice()
+          .reverse()
+          .find((record) => record.toolCallId === pendingAction.actionId && record.status === "success");
+        if (executionRecord === undefined) {
+          const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
+          runStore.updateRun(blockedRun);
+          appendRunEvent(
+            eventStore,
+            run.runId,
+            "recovery.decision",
+            {
+              action: "blocked",
+              checkpointId: checkpoint.checkpointId,
+              waitingFor: "manual_intervention",
+              previousStatus: run.status,
+              reason: "post_tool_execution_missing"
+            },
+            now()
+          );
+          return {
+            runId: blockedRun.runId,
+            status: blockedRun.status,
+            checkpointId: checkpoint.checkpointId,
+            recoveryAction: "blocked",
+            text: `Run ${runId} has no successful execution record for post-tool recovery.`
+          };
+        }
+
+        const task = requireTask(taskStore, run.taskId);
+        const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
+        const recoveredToolResult = ToolResultSchema.parse(JSON.parse(executionRecord.outputJson) as unknown);
+        const artifactRefs = collectArtifactRefs(recoveredToolResult);
+        const reconciledLedger: ProgressLedger =
+          artifactRefs.length === 0
+            ? ledger
+            : {
+                ...ledger,
+                artifactRefs: [...new Set([...ledger.artifactRefs, ...artifactRefs])],
+                version: ledger.version + 1,
+                updatedAt: now()
+              };
+        if (artifactRefs.length > 0) {
+          ledgerStore.upsertLedger(reconciledLedger);
+        }
+        const reconciledResumeState = {
+          ...pendingAction.resumeState,
+          usage: {
+            ...pendingAction.resumeState.usage,
+            toolCalls: pendingAction.resumeState.usage.toolCalls + 1
+          },
+          recentToolResult: recoveredToolResult,
+          currentWorkingSet:
+            recoveredToolResult.toolName === "filesystem.search" && recoveredToolResult.status === "success"
+              ? recoveredToolResult.output.workingSet
+              : pendingAction.resumeState.currentWorkingSet
+        };
+
+        appendRunEvent(
+          eventStore,
+          run.runId,
+          "recovery.reconciled",
+          {
+            checkpointId: checkpoint.checkpointId,
+            toolCallId: executionRecord.toolCallId,
+            toolName: executionRecord.toolName
+          },
+          now()
+        );
+        appendRunEvent(
+          eventStore,
+          run.runId,
+          "recovery.decision",
+          { action: "resume", checkpointId: checkpoint.checkpointId, waitingFor: "tool_execution" },
+          now()
+        );
+
+        const workspaceRoot = requireWorkspaceRoot();
+        const artifactRoot = resolveArtifactRoot(databasePath);
+        const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
+        const modelProvider = new FakeModelProvider({
+          mode: "success",
+          text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
+          ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(reconciledResumeState.usage.modelCalls) })
+        });
+        const toolRuntime = new ToolRuntime({
+          registry: createDefaultToolRegistry(),
+          executionRecordStore,
+          artifactStore
+        });
+
+        const result = await runAgentLoop({
+          task,
+          run,
+          now,
+          idGenerator: randomUUID,
+          workspaceRoot,
+          artifactRoot,
+          modelProvider,
+          toolRuntime,
+          runStore,
+          eventStore,
+          artifactStore,
+          validationResultStore,
+          ledgerStore,
+          agentIterationStore,
+          approvalStore,
+          pendingActionStore,
+          userInputStore,
+          checkpointStore,
+          resume: {
+            ledger: reconciledLedger,
+            resumeState: reconciledResumeState
+          }
+        });
+
+        return {
+          ...renderAgentLoopResult(result),
+          checkpointId: checkpoint.checkpointId,
+          recoveryAction: "resume"
+        };
+      }
+    }
+
+    if (run.status === "running" || run.status === "waiting_for_tool" || run.status === "verifying") {
+      const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
+      runStore.updateRun(blockedRun);
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.decision",
+        {
+          action: "blocked",
+          checkpointId: checkpoint.checkpointId,
+          waitingFor: "manual_intervention",
+          previousStatus: run.status
+        },
+        now()
+      );
+      return {
+        runId: blockedRun.runId,
+        status: blockedRun.status,
+        checkpointId: checkpoint.checkpointId,
+        recoveryAction: "blocked",
+        text: `Run ${runId} was interrupted in ${run.status} and needs manual review before continuing.`
+      };
+    }
+
+    appendRunEvent(
+      eventStore,
+      run.runId,
+      "recovery.rejected",
+      { runId, checkpointId: checkpoint.checkpointId, reason: "unsupported_state", status: run.status },
+      now()
+    );
+    throw new Error(`Run ${runId} in status ${run.status} is not recoverable by explicit resume yet.`);
+  } finally {
+    database.close();
+  }
+}
+
 async function runApproveCommand(command: {
   approvalId: string;
   scope: ApprovalScope;
@@ -1148,6 +1755,7 @@ async function runApproveCommand(command: {
   const approvalStore = new ApprovalStore(database);
   const pendingActionStore = new PendingActionStore(database);
   const userInputStore = new UserInputStore(database);
+  const checkpointStore = new CheckpointStore(database);
   const taskStore = new TaskStore(database);
 
   try {
@@ -1224,6 +1832,14 @@ async function runApproveCommand(command: {
       status: "resolved",
       updatedAt: now()
     });
+    persistCheckpointForRun({
+      checkpointStore,
+      ledgerStore,
+      run,
+      phase: "post_approval",
+      pendingAction,
+      now: now()
+    });
 
     const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
     const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
@@ -1256,6 +1872,7 @@ async function runApproveCommand(command: {
       approvalStore,
       pendingActionStore,
       userInputStore,
+      checkpointStore,
       resume: {
         ledger,
         resumeState: pendingAction.resumeState,
@@ -1268,6 +1885,60 @@ async function runApproveCommand(command: {
   } finally {
     database.close();
   }
+}
+
+function collectArtifactRefs(toolResult: ToolResult): string[] {
+  if (toolResult.status !== "success") {
+    return [];
+  }
+
+  if (toolResult.toolName === "filesystem.read") {
+    return toolResult.output.kind === "artifact_ref" ? [toolResult.output.artifactId] : [];
+  }
+
+  if (toolResult.toolName === "filesystem.search") {
+    return toolResult.output.kind === "search_artifact_ref" ? [toolResult.output.artifactId] : [];
+  }
+
+  if (toolResult.toolName === "filesystem.patch") {
+    return [toolResult.output.result.diffArtifactRef];
+  }
+
+  return [toolResult.output.result.stdoutArtifactRef, toolResult.output.result.stderrArtifactRef].filter(
+    (value): value is string => value !== undefined
+  );
+}
+
+function readWorkspaceFileHash(workspaceRoot: string, relativePath: string): string | null {
+  const absolutePath = join(workspaceRoot, relativePath);
+  try {
+    statSync(absolutePath);
+    return computeArtifactHash(readFileSync(absolutePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function persistCheckpointForRun(input: {
+  checkpointStore: CheckpointStore;
+  ledgerStore: LedgerStore;
+  run: { runId: string; stateVersion: number };
+  phase: CheckpointPhase;
+  pendingAction?: PendingAction;
+  now: string;
+}): void {
+  const ledgerVersion = input.ledgerStore.getByRun(input.run.runId)?.version ?? 0;
+  input.checkpointStore.insertCheckpoint(
+    createCheckpoint({
+      checkpointId: randomUUID(),
+      runId: input.run.runId,
+      runStateVersion: input.run.stateVersion,
+      ledgerVersion,
+      phase: input.phase,
+      ...(input.pendingAction === undefined ? {} : { pendingActionId: input.pendingAction.pendingActionId }),
+      createdAt: input.now
+    })
+  );
 }
 
 async function runDenyCommand(command: {
@@ -1366,6 +2037,7 @@ async function runRespondCommand(command: {
   const approvalStore = new ApprovalStore(database);
   const pendingActionStore = new PendingActionStore(database);
   const userInputStore = new UserInputStore(database);
+  const checkpointStore = new CheckpointStore(database);
   const taskStore = new TaskStore(database);
 
   try {
@@ -1417,6 +2089,14 @@ async function runRespondCommand(command: {
       status: "resolved",
       updatedAt: now()
     });
+    persistCheckpointForRun({
+      checkpointStore,
+      ledgerStore,
+      run,
+      phase: "post_response",
+      pendingAction,
+      now: now()
+    });
 
     const resumedLedger: ProgressLedger = {
       ...ledger,
@@ -1456,6 +2136,7 @@ async function runRespondCommand(command: {
       approvalStore,
       pendingActionStore,
       userInputStore,
+      checkpointStore,
       resume: {
         ledger: resumedLedger,
         resumeState: pendingAction.resumeState

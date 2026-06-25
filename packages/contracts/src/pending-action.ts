@@ -32,7 +32,7 @@ export const PendingActionSchema = z.object({
   pendingActionId: z.string().min(1),
   runId: z.string().min(1),
   actionId: z.string().min(1),
-  waitingFor: z.enum(["approval", "user_input"]),
+  waitingFor: z.enum(["approval", "user_input", "tool_execution"]),
   approvalId: z.string().min(1).optional(),
   requestId: z.string().min(1).optional(),
   action: AgentActionSchema,
