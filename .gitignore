@@ -1,7 +1,15 @@
 node_modules/
 dist/
 coverage/
+
 *.db
-*.db-shm
 *.db-wal
-tmp/
+*.db-shm
+
+.env
+.env.*
+!.env.example
+
+*.log
+.tmp/
+temp/
