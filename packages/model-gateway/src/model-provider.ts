@@ -3,6 +3,7 @@ import type {
   AgentAction,
   AgentBudget,
   AgentBudgetUsage,
+  ContextSnapshot,
   ProgressLedger,
   TaskPatchRequest,
   TaskValidationRequest,
@@ -54,5 +55,6 @@ export interface AgentLoopModelProvider {
     availableTools: Array<"filesystem.read" | "filesystem.search" | "filesystem.patch" | "shell.execute">;
     regroundRequested: boolean;
     replanRequested: boolean;
+    contextSnapshot?: ContextSnapshot;
   }): Promise<AgentAction>;
 }

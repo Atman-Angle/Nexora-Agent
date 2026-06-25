@@ -11,12 +11,14 @@ import {
   type AgentIteration,
   type ApprovalRequest,
   type Artifact,
+  type ContextSnapshot,
   type Event,
   type PendingAction,
   type PendingActionResumeState,
   type ProgressLedger,
   type Run,
   type Task,
+  type TaskAnchor,
   type TestResult,
   type ToolCall,
   type ToolResult,
@@ -24,6 +26,12 @@ import {
   type ValidationResult,
   type WorkingSet
 } from "../../contracts/src/index.js";
+import {
+  buildContextSnapshot,
+  collectRehydrationFilePaths,
+  rehydrateWorkspaceFacts,
+  validateCompactionIntegrity
+} from "../../context/src/index.js";
 import type { AgentLoopModelProvider } from "../../model-gateway/src/index.js";
 import type { AgentIterationStore } from "../../storage/src/agent-iteration-store.js";
 import type { ApprovalStore } from "../../storage/src/approval-store.js";
@@ -206,6 +214,14 @@ export async function runAgentLoop(input: {
     await appendEvent("run.resumed", { status: activeRun.status }, resumedAt);
   }
 
+  let regroundedAt: string | null = null;
+  if (input.resume !== undefined) {
+    regroundedAt = reGroundNow(input, currentWorkingSet, input.now());
+    if (regroundedAt !== null) {
+      await appendEvent("context.regrounded", { reason: "resume", at: regroundedAt }, regroundedAt);
+    }
+  }
+
   let previousSnapshot: NoProgressSnapshot =
     input.resume?.resumeState.previousSnapshot ?? {
       actionSignature: null,
@@ -243,6 +259,48 @@ export async function runAgentLoop(input: {
       usage.loopCount += 1;
       usage.modelCalls += 1;
 
+      const contextSnapshot = buildLoopContextSnapshot({
+        runId: activeRun.runId,
+        anchor,
+        ledger,
+        workingSet: currentWorkingSet,
+        recentToolResult,
+        recentValidationResult,
+        approvalStore: input.approvalStore,
+        userInputStore: input.userInputStore,
+        regroundedAt,
+        now: iterationStartedAt
+      });
+      const integrity = validateCompactionIntegrity(
+        {
+          anchor,
+          ledger,
+          openApprovals: contextSnapshot.openApprovals,
+          openUserInputs: contextSnapshot.openUserInputs
+        },
+        contextSnapshot
+      );
+      if (!integrity.valid) {
+        return failRun({
+          input,
+          run: activeRun,
+          appendEvent,
+          code: "CONTEXT_COMPACTION_FAILED",
+          message: `Context compaction lost required fields: ${integrity.violations.map((violation) => violation.field).join(", ")}`,
+          retryable: false
+        });
+      }
+      await appendEvent(
+        "context.compacted",
+        {
+          trims: contextSnapshot.trims.map((trim) => ({ field: trim.field, droppedCount: trim.droppedCount })),
+          regroundedAt: contextSnapshot.regroundedAt,
+          openApprovals: contextSnapshot.openApprovals,
+          openUserInputs: contextSnapshot.openUserInputs
+        },
+        iterationStartedAt
+      );
+
       try {
         action = AgentActionSchema.parse(
           await input.modelProvider.nextAction({
@@ -258,7 +316,8 @@ export async function runAgentLoop(input: {
             usage,
             availableTools: ["filesystem.read", "filesystem.search", "filesystem.patch", "shell.execute"],
             regroundRequested,
-            replanRequested
+            replanRequested,
+            contextSnapshot
           })
         );
       } catch {
@@ -703,6 +762,12 @@ export async function runAgentLoop(input: {
         },
         input.now()
       );
+      if (execution.toolResult.output.result.changed) {
+        regroundedAt = reGroundNow(input, currentWorkingSet, input.now());
+        if (regroundedAt !== null) {
+          await appendEvent("context.regrounded", { reason: "workspace_change", at: regroundedAt }, regroundedAt);
+        }
+      }
     }
 
     if (execution.toolResult.toolName === "shell.execute") {
@@ -1473,6 +1538,60 @@ function describeApprovalReason(toolCall: ToolCall): string {
   }
 
   return "Command execution requires approval before running a process.";
+}
+
+function buildLoopContextSnapshot(input: {
+  runId: string;
+  anchor: TaskAnchor;
+  ledger: ProgressLedger;
+  workingSet: WorkingSet | null;
+  recentToolResult: ToolResult | null;
+  recentValidationResult: ValidationResult | null;
+  approvalStore: ApprovalStore;
+  userInputStore: UserInputStore;
+  regroundedAt: string | null;
+  now: string;
+}): ContextSnapshot {
+  const openApprovals = input.approvalStore.hasPendingByRun(input.runId) ? countPendingApprovals(input.approvalStore, input.runId) : 0;
+  const openUserInputs = input.userInputStore.hasPendingByRun(input.runId) ? countPendingUserInputs(input.userInputStore, input.runId) : 0;
+  return buildContextSnapshot({
+    runId: input.runId,
+    anchor: input.anchor,
+    ledger: input.ledger,
+    workingSet: input.workingSet,
+    recentToolResult: input.recentToolResult,
+    recentValidationResult: input.recentValidationResult,
+    openApprovals,
+    openUserInputs,
+    regroundedAt: input.regroundedAt,
+    now: input.now
+  });
+}
+
+function countPendingApprovals(approvalStore: ApprovalStore, runId: string): number {
+  return approvalStore.listByRun(runId).filter((entry) => entry.request.status === "pending").length;
+}
+
+function countPendingUserInputs(userInputStore: UserInputStore, runId: string): number {
+  return userInputStore.listByRun(runId).filter((entry) => entry.request.status === "pending").length;
+}
+
+function reGroundNow(
+  input: {
+    workspaceRoot: string;
+    task: Task;
+  },
+  workingSet: WorkingSet | null,
+  now: string
+): string | null {
+  const workingSetPaths = workingSet?.items.map((item) => item.path) ?? [];
+  const pendingPatchPath = input.task.input.patchRequest?.path;
+  const facts = rehydrateWorkspaceFacts({
+    workspaceRoot: input.workspaceRoot,
+    filePaths: collectRehydrationFilePaths({ workingSetPaths, pendingPatchPath }),
+    now
+  });
+  return facts.regroundedAt;
 }
 
 function describeResourceScope(toolCall: ToolCall): string {
