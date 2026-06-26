@@ -1,5 +1,4 @@
 import {
-  AgentActionSchema,
   computeArtifactHash,
   createCheckpoint,
   createEvent,
@@ -42,8 +41,8 @@ import {
   UserInputStore,
   ValidationResultStore
 } from "../../../packages/storage/src/index.js";
-import { FakeModelProvider } from "../../../packages/testkit/src/fake-model-provider.js";
 import { createDefaultToolRegistry, ToolRuntime } from "../../../packages/tool-runtime/src/index.js";
+import { createModelProvider, resolveProviderKind, ModelConfigError, ModelHttpError, ModelTimeoutError, ModelJsonParseError } from "../../../packages/model-gateway/src/index.js";
 
 type CliError = {
   code: string;
@@ -51,8 +50,18 @@ type CliError = {
   retryable: boolean;
 };
 
+export const NEXORA_CLI_VERSION = "0.1.0";
+
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   try {
+    if (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) {
+      printHelp();
+      return 0;
+    }
+    if (argv.length === 1 && (argv[0] === "--version" || argv[0] === "-v")) {
+      process.stdout.write(`${NEXORA_CLI_VERSION}\n`);
+      return 0;
+    }
     const command = parseCommand(argv);
     const result =
       command.type === "ask"
@@ -323,12 +332,7 @@ export async function runAskCommand(text: string): Promise<{
     });
     runStore.insertRun(run);
 
-    const fakeModelDelay = parseOptionalDelay(process.env.NEXORA_FAKE_MODEL_DELAY_MS);
-    const modelProvider = new FakeModelProvider({
-      mode: parseFakeModelMode(process.env.NEXORA_FAKE_MODEL_MODE),
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(fakeModelDelay === undefined ? {} : { delayMs: fakeModelDelay })
-    });
+    const modelProvider = createCliModelProvider();
 
     const result = await runDirect({
       task,
@@ -396,16 +400,7 @@ export async function runReadCommand(filePath: string): Promise<{
     });
     runStore.insertRun(run);
 
-    const toolPlanMode = parseToolPlanMode(process.env.NEXORA_FAKE_TOOL_PLAN_MODE);
-    const toolFinalMode = parseToolFinalMode(process.env.NEXORA_FAKE_TOOL_FINAL_MODE);
-    const toolTimeoutMs = parseOptionalDelay(process.env.NEXORA_FAKE_TOOL_TIMEOUT_MS);
-    const modelProvider = new FakeModelProvider({
-      mode: "success",
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(toolPlanMode === undefined ? {} : { toolPlanMode }),
-      ...(toolFinalMode === undefined ? {} : { toolFinalMode }),
-      ...(toolTimeoutMs === undefined ? {} : { toolTimeoutMs })
-    });
+    const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
       registry: createDefaultToolRegistry(),
       executionRecordStore,
@@ -482,16 +477,7 @@ export async function runSearchCommand(searchQuery: string): Promise<{
     });
     runStore.insertRun(run);
 
-    const toolPlanMode = parseToolPlanMode(process.env.NEXORA_FAKE_TOOL_PLAN_MODE);
-    const toolFinalMode = parseToolFinalMode(process.env.NEXORA_FAKE_TOOL_FINAL_MODE);
-    const toolTimeoutMs = parseOptionalDelay(process.env.NEXORA_FAKE_TOOL_TIMEOUT_MS);
-    const modelProvider = new FakeModelProvider({
-      mode: "success",
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(toolPlanMode === undefined ? {} : { toolPlanMode }),
-      ...(toolFinalMode === undefined ? {} : { toolFinalMode }),
-      ...(toolTimeoutMs === undefined ? {} : { toolTimeoutMs })
-    });
+    const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
       registry: createDefaultToolRegistry(),
       executionRecordStore,
@@ -584,16 +570,7 @@ export async function runPatchCommand(command: {
     });
     runStore.insertRun(run);
 
-    const toolPlanMode = parseToolPlanMode(process.env.NEXORA_FAKE_TOOL_PLAN_MODE);
-    const toolFinalMode = parseToolFinalMode(process.env.NEXORA_FAKE_TOOL_FINAL_MODE);
-    const toolTimeoutMs = parseOptionalDelay(process.env.NEXORA_FAKE_TOOL_TIMEOUT_MS);
-    const modelProvider = new FakeModelProvider({
-      mode: "success",
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(toolPlanMode === undefined ? {} : { toolPlanMode }),
-      ...(toolFinalMode === undefined ? {} : { toolFinalMode }),
-      ...(toolTimeoutMs === undefined ? {} : { toolTimeoutMs })
-    });
+    const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
       registry: createDefaultToolRegistry(),
       executionRecordStore,
@@ -700,15 +677,7 @@ export async function runVerifyCommand(command: {
     });
     runStore.insertRun(run);
 
-    const toolPlanMode = parseToolPlanMode(process.env.NEXORA_FAKE_TOOL_PLAN_MODE);
-    const toolFinalMode = parseToolFinalMode(process.env.NEXORA_FAKE_TOOL_FINAL_MODE);
-    const modelProvider = new FakeModelProvider({
-      mode: "success",
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(toolPlanMode === undefined ? {} : { toolPlanMode }),
-      ...(toolFinalMode === undefined ? {} : { toolFinalMode }),
-      toolTimeoutMs: timeoutMs
-    });
+    const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
       registry: createDefaultToolRegistry(),
       executionRecordStore,
@@ -831,12 +800,7 @@ export async function runAgentCommand(command: {
     });
     runStore.insertRun(run);
 
-    const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
-    const modelProvider = new FakeModelProvider({
-      mode: "success",
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(agentActions === undefined ? {} : { agentActions })
-    });
+    const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
       registry: createDefaultToolRegistry(),
       executionRecordStore,
@@ -878,6 +842,64 @@ export function printError(error: CliError): void {
   process.stderr.write(`${JSON.stringify(error)}\n`);
 }
 
+export function printHelp(): void {
+  const lines = [
+    `Nexora CLI v${NEXORA_CLI_VERSION}`,
+    "",
+    "Usage: nexora <command> [args]",
+    "",
+    "Commands:",
+    "  ask \"<text>\"                                  Direct model response for the given text.",
+    "  read \"<path>\"                                 Read a workspace file.",
+    "  search \"<query>\"                              Search the workspace.",
+    "  patch \"<path>\" \"<expectedHash>\" \"<find>\" \"<replace>\" [\"<idempotencyKey>\"]",
+    "                                                 Patch a workspace file.",
+    "  verify \"<command>\" [\"<arg>\" ...]             Run a verification command.",
+    "  agent \"<goal>\" \"<command>\" [\"<arg>\" ...]    Run the agent loop with verification.",
+    "  approvals list \"<runId>\"                      List pending approvals for a run.",
+    "  approve \"<approvalId>\" [\"once\"|\"current_run\"] [\"<reason>\"]",
+    "  deny \"<approvalId>\" [\"<reason>\"]",
+    "  requests list \"<runId>\"                       List pending user input requests.",
+    "  respond \"<requestId>\" \"<value>\"",
+    "  run status \"<runId>\"                          Show run status.",
+    "  run cancel \"<runId>\"                          Cancel a waiting run.",
+    "  run resume \"<runId>\"                          Resume an interrupted run.",
+    "  --help, -h                                     Show this help.",
+    "  --version, -v                                  Show the CLI version.",
+    "",
+    "Required environment variables:",
+    "  NEXORA_DB_PATH                                 SQLite database path.",
+    "  NEXORA_WORKSPACE_ROOT                          Workspace root for file/shell tools.",
+    "  NEXORA_ARTIFACT_ROOT                           Artifact storage root.",
+    "",
+    "Model provider selection:",
+    "  NEXORA_MODEL_PROVIDER                          \"fake\" (default) or \"openai-compatible\".",
+    "  NEXORA_MODEL_BASE_URL                          OpenAI-compatible base URL (required for openai-compatible).",
+    "  NEXORA_MODEL_API_KEY                           API key (required for openai-compatible).",
+    "  NEXORA_MODEL_NAME                              Model name (required for openai-compatible).",
+    "  NEXORA_MODEL_TIMEOUT_MS                        Request timeout in milliseconds (optional, default 60000).",
+    "",
+    "Fake provider tuning (tests):",
+    "  NEXORA_FAKE_MODEL_TEXT, NEXORA_FAKE_MODEL_MODE, NEXORA_FAKE_AGENT_SCRIPT_JSON, ...",
+    ""
+  ];
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+function createCliModelProvider(options?: { agentActionSliceFrom?: number }): ReturnType<typeof createModelProvider> {
+  const kind = resolveProviderKind(process.env);
+  return createModelProvider({
+    fakeModelText: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
+    fakeModelMode: parseFakeModelMode(process.env.NEXORA_FAKE_MODEL_MODE),
+    ...(process.env.NEXORA_FAKE_TOOL_PLAN_MODE === undefined ? {} : { fakeToolPlanMode: parseToolPlanMode(process.env.NEXORA_FAKE_TOOL_PLAN_MODE) }),
+    ...(process.env.NEXORA_FAKE_TOOL_FINAL_MODE === undefined ? {} : { fakeToolFinalMode: parseToolFinalMode(process.env.NEXORA_FAKE_TOOL_FINAL_MODE) }),
+    ...(process.env.NEXORA_FAKE_TOOL_TIMEOUT_MS === undefined ? {} : { fakeToolTimeoutMs: parseOptionalDelay(process.env.NEXORA_FAKE_TOOL_TIMEOUT_MS) }),
+    ...(process.env.NEXORA_FAKE_MODEL_DELAY_MS === undefined ? {} : { fakeModelDelayMs: parseOptionalDelay(process.env.NEXORA_FAKE_MODEL_DELAY_MS) }),
+    ...(options?.agentActionSliceFrom === undefined ? {} : { agentActionSliceFrom: options.agentActionSliceFrom }),
+    ...(kind === "openai-compatible" ? { env: process.env } : {})
+  });
+}
+
 class InvalidInputError extends Error {}
 
 function toCliError(error: unknown): CliError {
@@ -911,6 +933,19 @@ function toCliError(error: unknown): CliError {
       message: error.message,
       retryable: error.retryable
     };
+  }
+
+  if (error instanceof ModelConfigError) {
+    return { code: "MODEL_CONFIG_ERROR", message: error.message, retryable: false };
+  }
+  if (error instanceof ModelHttpError) {
+    return { code: error.code, message: error.message, retryable: error.retryable };
+  }
+  if (error instanceof ModelTimeoutError) {
+    return { code: "MODEL_TIMEOUT", message: error.message, retryable: true };
+  }
+  if (error instanceof ModelJsonParseError) {
+    return { code: "MODEL_JSON_PARSE_ERROR", message: error.message, retryable: false };
   }
 
   if (error instanceof Error && error.message.startsWith("Usage:")) {
@@ -1010,15 +1045,6 @@ function parseNonNegativeInteger(rawValue: string | undefined): number | undefin
   }
 
   return parsedValue;
-}
-
-function parseAgentActions(rawValue: string | undefined) {
-  if (rawValue === undefined || rawValue.trim().length === 0) {
-    return undefined;
-  }
-
-  const parsedValue = JSON.parse(rawValue) as unknown[];
-  return parsedValue.map((entry) => AgentActionSchema.parse(entry));
 }
 
 async function runApprovalListCommand(runId: string): Promise<unknown> {
@@ -1415,17 +1441,12 @@ async function runResumeCommand(runId: string): Promise<unknown> {
             const artifactRoot = resolveArtifactRoot(databasePath);
             const task = requireTask(taskStore, run.taskId);
             const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
-            const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
             const replanningResumeState = {
               ...pendingAction.resumeState,
               regroundRequested: true,
               replanRequested: true
             };
-            const modelProvider = new FakeModelProvider({
-              mode: "success",
-              text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-              ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(replanningResumeState.usage.modelCalls) })
-            });
+            const modelProvider = createCliModelProvider({ agentActionSliceFrom: replanningResumeState.usage.modelCalls });
             const toolRuntime = new ToolRuntime({
               registry: createDefaultToolRegistry(),
               executionRecordStore,
@@ -1502,12 +1523,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         const artifactRoot = resolveArtifactRoot(databasePath);
         const task = requireTask(taskStore, run.taskId);
         const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
-        const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
-        const modelProvider = new FakeModelProvider({
-          mode: "success",
-          text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-          ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(pendingAction.resumeState.usage.modelCalls) })
-        });
+        const modelProvider = createCliModelProvider({ agentActionSliceFrom: pendingAction.resumeState.usage.modelCalls });
         const toolRuntime = new ToolRuntime({
           registry: createDefaultToolRegistry(),
           executionRecordStore,
@@ -1547,7 +1563,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         };
       }
 
-      if (checkpoint.phase === "post_tool") {
+      if (checkpoint.phase === "post_tool" || checkpoint.phase === "post_patch") {
         if (pendingAction.action.toolCall.toolName === "shell.execute") {
           const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
           runStore.updateRun(blockedRun);
@@ -1653,12 +1669,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
 
         const workspaceRoot = requireWorkspaceRoot();
         const artifactRoot = resolveArtifactRoot(databasePath);
-        const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
-        const modelProvider = new FakeModelProvider({
-          mode: "success",
-          text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-          ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(reconciledResumeState.usage.modelCalls) })
-        });
+        const modelProvider = createCliModelProvider({ agentActionSliceFrom: reconciledResumeState.usage.modelCalls });
         const toolRuntime = new ToolRuntime({
           registry: createDefaultToolRegistry(),
           executionRecordStore,
@@ -1842,12 +1853,7 @@ async function runApproveCommand(command: {
     });
 
     const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
-    const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
-    const modelProvider = new FakeModelProvider({
-      mode: "success",
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(pendingAction.resumeState.usage.modelCalls) })
-    });
+    const modelProvider = createCliModelProvider({ agentActionSliceFrom: pendingAction.resumeState.usage.modelCalls });
     const toolRuntime = new ToolRuntime({
       registry: createDefaultToolRegistry(),
       executionRecordStore,
@@ -1904,9 +1910,29 @@ function collectArtifactRefs(toolResult: ToolResult): string[] {
     return [toolResult.output.result.diffArtifactRef];
   }
 
-  return [toolResult.output.result.stdoutArtifactRef, toolResult.output.result.stderrArtifactRef].filter(
-    (value): value is string => value !== undefined
-  );
+  if (toolResult.toolName === "shell.execute") {
+    return [toolResult.output.result.stdoutArtifactRef, toolResult.output.result.stderrArtifactRef].filter(
+      (value): value is string => value !== undefined
+    );
+  }
+
+  if (toolResult.toolName === "git.diff") {
+    return toolResult.output.kind === "diff_artifact_ref" ? [toolResult.output.artifactId] : [];
+  }
+
+  if (toolResult.toolName === "git.show") {
+    return toolResult.output.kind === "show_artifact_ref" ? [toolResult.output.artifactId] : [];
+  }
+
+  if (toolResult.toolName === "filesystem.list") {
+    return toolResult.output.kind === "list_artifact_ref" ? [toolResult.output.artifactId] : [];
+  }
+
+  if (toolResult.toolName === "project.inspect") {
+    return toolResult.output.kind === "inspect_artifact_ref" ? [toolResult.output.artifactId] : [];
+  }
+
+  return [];
 }
 
 function readWorkspaceFileHash(workspaceRoot: string, relativePath: string): string | null {
@@ -2106,12 +2132,7 @@ async function runRespondCommand(command: {
     };
     ledgerStore.upsertLedger(resumedLedger);
 
-    const agentActions = parseAgentActions(process.env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
-    const modelProvider = new FakeModelProvider({
-      mode: "success",
-      text: process.env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-      ...(agentActions === undefined ? {} : { agentActions: agentActions.slice(pendingAction.resumeState.usage.modelCalls) })
-    });
+    const modelProvider = createCliModelProvider({ agentActionSliceFrom: pendingAction.resumeState.usage.modelCalls });
     const toolRuntime = new ToolRuntime({
       registry: createDefaultToolRegistry(),
       executionRecordStore,

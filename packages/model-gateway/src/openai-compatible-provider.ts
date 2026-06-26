@@ -1,0 +1,451 @@
+import { AgentActionSchema, ActionSchema } from "../../contracts/src/index.js";
+import type {
+  AgentAction,
+  AgentBudget,
+  AgentBudgetUsage,
+  Action,
+  ProgressLedger,
+  TaskPatchRequest,
+  TaskValidationRequest,
+  ToolResult,
+  ValidationResult,
+  WorkingSet
+} from "../../contracts/src/index.js";
+import type { ToolName } from "../../contracts/src/tool-call.js";
+import type {
+  AgentLoopModelProvider,
+  ModelProvider,
+  ToolModeModelProvider
+} from "./model-provider.js";
+
+export class ModelConfigError extends Error {
+  public readonly code = "MODEL_CONFIG_ERROR";
+  public constructor(message: string) {
+    super(message);
+    this.name = "ModelConfigError";
+  }
+}
+
+export class ModelHttpError extends Error {
+  public readonly code: string;
+  public readonly retryable: boolean;
+  public constructor(code: string, message: string, retryable: boolean) {
+    super(message);
+    this.name = "ModelHttpError";
+    this.code = code;
+    this.retryable = retryable;
+  }
+}
+
+export class ModelTimeoutError extends Error {
+  public readonly code = "MODEL_TIMEOUT";
+  public readonly retryable = true;
+  public constructor(message: string) {
+    super(message);
+    this.name = "ModelTimeoutError";
+  }
+}
+
+export class ModelJsonParseError extends Error {
+  public readonly code = "MODEL_JSON_PARSE_ERROR";
+  public readonly retryable = false;
+  public constructor(message: string) {
+    super(message);
+    this.name = "ModelJsonParseError";
+  }
+}
+
+export type OpenAICompatibleConfig = {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  timeoutMs: number;
+};
+
+export type OpenAICompatibleProviderOptions = OpenAICompatibleConfig & {
+  fetchImpl?: typeof fetch;
+};
+
+const DEFAULT_TIMEOUT_MS = 60_000;
+
+export function resolveOpenAICompatibleConfig(env: Record<string, string | undefined>): OpenAICompatibleConfig {
+  const baseUrl = env.NEXORA_MODEL_BASE_URL?.trim();
+  const apiKey = env.NEXORA_MODEL_API_KEY?.trim();
+  const model = env.NEXORA_MODEL_NAME?.trim();
+  const timeoutMsRaw = env.NEXORA_MODEL_TIMEOUT_MS?.trim();
+  const timeoutMs = timeoutMsRaw === undefined || timeoutMsRaw.length === 0 ? DEFAULT_TIMEOUT_MS : parseTimeout(timeoutMsRaw);
+
+  const missing: string[] = [];
+  if (baseUrl === undefined || baseUrl.length === 0) {
+    missing.push("NEXORA_MODEL_BASE_URL");
+  }
+  if (apiKey === undefined || apiKey.length === 0) {
+    missing.push("NEXORA_MODEL_API_KEY");
+  }
+  if (model === undefined || model.length === 0) {
+    missing.push("NEXORA_MODEL_NAME");
+  }
+  if (missing.length > 0) {
+    throw new ModelConfigError(`OpenAI-compatible provider is not configured. Missing: ${missing.join(", ")}.`);
+  }
+
+  return { baseUrl: baseUrl as string, apiKey: apiKey as string, model: model as string, timeoutMs };
+}
+
+function parseTimeout(rawValue: string): number {
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new ModelConfigError(`NEXORA_MODEL_TIMEOUT_MS must be a positive number, got: ${rawValue}.`);
+  }
+  return Math.floor(parsed);
+}
+
+export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelProvider, AgentLoopModelProvider {
+  private readonly fetchImpl: typeof fetch;
+
+  public constructor(private readonly options: OpenAICompatibleProviderOptions) {
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    if (options.apiKey.length === 0) {
+      throw new ModelConfigError("OpenAI-compatible provider requires a non-empty API key.");
+    }
+  }
+
+  public async generate(input: { runId: string; text: string }): Promise<{
+    text: string;
+    provider: string;
+    model: string;
+  }> {
+    const content = await this.chatCompletion([
+      { role: "user", content: input.text }
+    ]);
+    return { text: content, provider: "openai-compatible", model: this.options.model };
+  }
+
+  public async plan(input: {
+    runId: string;
+    text: string;
+    filePath?: string;
+    searchQuery?: string;
+    patchRequest?: TaskPatchRequest;
+    validationRequest?: TaskValidationRequest;
+  }): Promise<Action> {
+    const prompt = buildPlanPrompt(input);
+    const json = await this.chatCompletionJson(prompt);
+    return ActionSchema.parse(json);
+  }
+
+  public async finalize(input: {
+    runId: string;
+    text: string;
+    toolResult: ToolResult;
+  }): Promise<Action> {
+    const prompt = buildFinalizePrompt(input);
+    const json = await this.chatCompletionJson(prompt);
+    return ActionSchema.parse(json);
+  }
+
+  public async nextAction(input: {
+    runId: string;
+    goal: string;
+    constraints: string[];
+    successCriteria: string[];
+    ledger: ProgressLedger;
+    workingSet: WorkingSet | null;
+    recentToolResult: ToolResult | null;
+    recentValidationResult: ValidationResult | null;
+    budget: AgentBudget;
+    usage: AgentBudgetUsage;
+    availableTools: ToolName[];
+    regroundRequested: boolean;
+    replanRequested: boolean;
+  }): Promise<AgentAction> {
+    const prompt = buildNextActionPrompt(input);
+    const json = await this.chatCompletionJson(prompt);
+    return AgentActionSchema.parse(json);
+  }
+
+  private async chatCompletion(messages: Array<{ role: string; content: string }>): Promise<string> {
+    const response = await this.postChatCompletion(messages);
+    const parsed = response as OpenAIChatResponse;
+    const choice = parsed.choices?.[0];
+    const content = choice?.message?.content;
+    if (typeof content !== "string" || content.length === 0) {
+      throw new ModelJsonParseError("Model response did not include a non-empty content string.");
+    }
+    return content;
+  }
+
+  private async chatCompletionJson(prompt: string): Promise<unknown> {
+    const content = await this.chatCompletion([{ role: "user", content: prompt }]);
+    return parseJsonFromModel(content);
+  }
+
+  private async postChatCompletion(messages: Array<{ role: string; content: string }>): Promise<unknown> {
+    const url = joinUrl(this.options.baseUrl, "/chat/completions");
+    const body = JSON.stringify({
+      model: this.options.model,
+      messages,
+      temperature: 0
+    });
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      authorization: `Bearer ${this.options.apiKey}`
+    };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: controller.signal
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new ModelTimeoutError(`Model request timed out after ${String(this.options.timeoutMs)}ms.`);
+      }
+      throw new ModelHttpError("MODEL_NETWORK_ERROR", "Network error while contacting the model endpoint.", true);
+    }
+    clearTimeout(timer);
+
+    if (!response.ok) {
+      throw mapHttpError(response.status);
+    }
+
+    let rawText: string;
+    try {
+      rawText = await response.text();
+    } catch {
+      throw new ModelHttpError("MODEL_NETWORK_ERROR", "Failed to read the model response body.", true);
+    }
+
+    try {
+      return JSON.parse(rawText) as unknown;
+    } catch {
+      throw new ModelJsonParseError("Model endpoint returned a non-JSON response body.");
+    }
+  }
+}
+
+function parseJsonFromModel(content: string): unknown {
+  const trimmed = content.trim();
+  const fenced = extractJsonFence(trimmed);
+  const candidate = fenced ?? trimmed;
+  try {
+    return JSON.parse(candidate) as unknown;
+  } catch {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(candidate.slice(start, end + 1)) as unknown;
+      } catch {
+        // fall through
+      }
+    }
+    throw new ModelJsonParseError("Model did not return a valid JSON action.");
+  }
+}
+
+function extractJsonFence(content: string): string | null {
+  const match = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return match?.[1] ?? null;
+}
+
+function joinUrl(base: string, path: string): string {
+  if (base.endsWith("/")) {
+    return `${base}${path.replace(/^\//, "")}`;
+  }
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function mapHttpError(status: number): ModelHttpError {
+  if (status === 401 || status === 403) {
+    return new ModelHttpError("MODEL_AUTH_ERROR", "Model endpoint rejected the API key (auth failed).", false);
+  }
+  if (status === 429) {
+    return new ModelHttpError("MODEL_RATE_LIMITED", "Model endpoint returned 429 (rate limited). Retry later.", true);
+  }
+  if (status >= 500 && status < 600) {
+    return new ModelHttpError("MODEL_SERVER_ERROR", `Model endpoint returned server error ${String(status)}.`, true);
+  }
+  return new ModelHttpError("MODEL_HTTP_ERROR", `Model endpoint returned HTTP ${String(status)}.`, false);
+}
+
+type OpenAIChatResponse = {
+  choices?: Array<{
+    message?: { content?: string };
+  }>;
+};
+
+function buildPlanPrompt(input: {
+  runId: string;
+  text: string;
+  filePath?: string;
+  searchQuery?: string;
+  patchRequest?: TaskPatchRequest;
+  validationRequest?: TaskValidationRequest;
+}): string {
+  const context: string[] = [`Task text: ${input.text}`];
+  if (input.filePath !== undefined) {
+    context.push(`File path: ${input.filePath}`);
+  }
+  if (input.searchQuery !== undefined) {
+    context.push(`Search query: ${input.searchQuery}`);
+  }
+  if (input.patchRequest !== undefined) {
+    context.push(`Patch request: ${JSON.stringify(input.patchRequest)}`);
+  }
+  if (input.validationRequest !== undefined) {
+    context.push(`Validation request: ${JSON.stringify({ command: input.validationRequest.command, args: input.validationRequest.args })}`);
+  }
+  return [
+    "You are a planning model for the Nexora agent runtime.",
+    "Decide the next action for the current task and return ONLY a JSON object matching this TypeScript union:",
+    "type Action =",
+    "  | { type: \"tool_call\"; toolCall: { toolCallId: string; toolName: \"filesystem.read\" | \"filesystem.search\" | \"filesystem.patch\" | \"shell.execute\"; input: object; timeoutMs: number } }",
+    "  | { type: \"update_plan\"; patch: object; reason: string }",
+    "  | { type: \"final\"; text: string; evidenceRefs?: string[] }",
+    "  | { type: \"fail\"; code: string; message: string; retryable: boolean }",
+    "Return a single JSON object, no prose, no markdown fence.",
+    ...context
+  ].join("\n");
+}
+
+function buildFinalizePrompt(input: {
+  runId: string;
+  text: string;
+  toolResult: ToolResult;
+}): string {
+  const toolSummary = summarizeToolResultForPrompt(input.toolResult);
+  const finalizeInstructions = buildFinalizeInstructions(input.toolResult);
+  return [
+    "You are a finalizing model for the Nexora agent runtime.",
+    "Given the tool result, decide the final action and return ONLY a JSON object matching the Action union:",
+    "type Action =",
+    "  | { type: \"final\"; text: string; evidenceRefs?: string[] }",
+    "  | { type: \"fail\"; code: string; message: string; retryable: boolean }",
+    `Task text: ${input.text}`,
+    `Tool result: ${toolSummary}`,
+    finalizeInstructions,
+    "Return a single JSON object, no prose, no markdown fence."
+  ].join("\n");
+}
+
+function buildNextActionPrompt(input: {
+  runId: string;
+  goal: string;
+  constraints: string[];
+  successCriteria: string[];
+  ledger: ProgressLedger;
+  workingSet: WorkingSet | null;
+  recentToolResult: ToolResult | null;
+  recentValidationResult: ValidationResult | null;
+  budget: AgentBudget;
+  usage: AgentBudgetUsage;
+  availableTools: ToolName[];
+  regroundRequested: boolean;
+  replanRequested: boolean;
+}): string {
+  const ledgerSummary = JSON.stringify({
+    currentStep: input.ledger.currentStep,
+    completedSteps: input.ledger.completedSteps,
+    failedAttempts: input.ledger.failedAttempts,
+    evidenceRefs: input.ledger.evidenceRefs,
+    openQuestions: input.ledger.openQuestions
+  });
+  const workingSetSummary = input.workingSet === null ? "null" : JSON.stringify(input.workingSet.items.map((item) => ({ path: item.path, score: item.score })));
+  const toolSummary = input.recentToolResult === null ? "null" : summarizeToolResultForPrompt(input.recentToolResult);
+  const toolNameUnion = input.availableTools.map((tool) => `"${tool}"`).join(" | ");
+  const approvalToolUnion = input.availableTools
+    .filter((tool) => tool === "filesystem.patch" || tool === "shell.execute")
+    .map((tool) => `"${tool}"`)
+    .join(" | ");
+  return [
+    "You are the agent loop model for the Nexora runtime.",
+    "Decide the next action and return ONLY a JSON object matching this TypeScript union:",
+    "type AgentAction =",
+    `  | { type: "tool_call"; toolCall: { toolCallId: string; toolName: ${toolNameUnion}; input: object; timeoutMs: number } }`,
+    `  | { type: "request_approval"; reason: string; toolCall: { toolCallId: string; toolName: ${approvalToolUnion}; input: object; timeoutMs: number } }`,
+    "  | { type: \"ask_user\"; question: string; expectedInputType: string; required: boolean }",
+    "  | { type: \"update_plan\"; patch: object; reason: string }",
+    "  | { type: \"final\"; text: string; evidenceRefs?: string[] }",
+    "  | { type: \"fail\"; code: string; message: string; retryable: boolean }",
+    `Goal: ${input.goal}`,
+    `Constraints: ${input.constraints.join("; ")}`,
+    `Success criteria: ${input.successCriteria.join("; ")}`,
+    `Available tools: ${input.availableTools.join(", ")}`,
+    `Budget: ${JSON.stringify(input.budget)}`,
+    `Usage: ${JSON.stringify(input.usage)}`,
+    `Ledger: ${ledgerSummary}`,
+    `Working set: ${workingSetSummary}`,
+    `Recent tool result: ${toolSummary}`,
+    `Recent validation status: ${input.recentValidationResult?.status ?? "null"}`,
+    `Reground requested: ${String(input.regroundRequested)}`,
+    `Replan requested: ${String(input.replanRequested)}`,
+    "Return a single JSON object, no prose, no markdown fence."
+  ].join("\n");
+}
+
+function summarizeToolResultForPrompt(toolResult: ToolResult): string {
+  if (toolResult.status === "error") {
+    return JSON.stringify({ toolName: toolResult.toolName, status: "error", code: toolResult.error.code });
+  }
+  if (toolResult.toolName === "filesystem.read") {
+    if (toolResult.output.kind === "inline_text") {
+      return JSON.stringify({
+        toolName: toolResult.toolName,
+        status: "success",
+        kind: toolResult.output.kind,
+        path: toolResult.output.path,
+        mimeType: toolResult.output.mimeType,
+        byteLength: toolResult.output.byteLength,
+        content: toolResult.output.content
+      });
+    }
+    return JSON.stringify({
+      toolName: toolResult.toolName,
+      status: "success",
+      kind: toolResult.output.kind,
+      path: toolResult.output.path,
+      artifactId: toolResult.output.artifactId,
+      mimeType: toolResult.output.mimeType,
+      byteLength: toolResult.output.byteLength,
+      reason: toolResult.output.reason,
+      previewText: toolResult.output.previewText ?? null
+    });
+  }
+  if (toolResult.toolName === "filesystem.search") {
+    return JSON.stringify({ toolName: toolResult.toolName, status: "success", returnedMatches: toolResult.output.result.returnedMatches });
+  }
+  if (toolResult.toolName === "filesystem.patch") {
+    return JSON.stringify({ toolName: toolResult.toolName, status: "success", path: toolResult.output.result.path, patchStatus: toolResult.output.result.status });
+  }
+  if (toolResult.toolName === "shell.execute") {
+    return JSON.stringify({ toolName: toolResult.toolName, status: "success", exitCode: toolResult.output.result.exitCode });
+  }
+  return JSON.stringify({ toolName: toolResult.toolName, status: "success" });
+}
+
+function buildFinalizeInstructions(toolResult: ToolResult): string {
+  if (toolResult.status === "error") {
+    return "If the tool result is an error, return a fail action that preserves the tool error.";
+  }
+  if (toolResult.toolName === "filesystem.read") {
+    return [
+      "For filesystem.read, return a final action whose text summarizes the file contents.",
+      "Do not merely say that the file was read successfully.",
+      "Mention the file path and the most important code or text found in the file."
+    ].join(" ");
+  }
+  if (toolResult.toolName === "filesystem.search") {
+    return "For filesystem.search, summarize the best matching files and what they imply for the task.";
+  }
+  if (toolResult.toolName === "filesystem.patch") {
+    return "For filesystem.patch, summarize what changed and the resulting status.";
+  }
+  return "For shell.execute, summarize the verification outcome using the command result.";
+}

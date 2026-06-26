@@ -11,6 +11,7 @@ import type {
   ValidationResult,
   WorkingSet
 } from "../../contracts/src/index.js";
+import type { ToolName } from "../../contracts/src/tool-call.js";
 
 export interface ModelProvider {
   generate(input: {
@@ -52,7 +53,7 @@ export interface AgentLoopModelProvider {
     recentValidationResult: ValidationResult | null;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
-    availableTools: Array<"filesystem.read" | "filesystem.search" | "filesystem.patch" | "shell.execute">;
+    availableTools: ToolName[];
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;
