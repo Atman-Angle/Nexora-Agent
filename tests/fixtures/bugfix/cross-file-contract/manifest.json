@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1",
+  "id": "cross-file-contract",
+  "title": "API returns productId but view reads product_id",
+  "category": "cross-file-contract",
+  "difficulty": "intermediate",
+  "projectType": "typescript-single",
+  "languages": ["JavaScript"],
+  "frameworks": [],
+  "issue": {
+    "objective": "Fix the field name mismatch between api.js (productId) and view.js (product_id)",
+    "reportedSymptoms": ["renderProduct returns 'Product: Widget (id: undefined)'"],
+    "expectedBehavior": "renderProduct returns 'Product: Widget (id: p1)'",
+    "reproductionHints": ["run node test.js"],
+    "constraints": ["do not change the API contract (productId)"],
+    "acceptanceCriteria": ["node test.js exits 0"],
+    "forbiddenChanges": ["modifying src/api.js to rename productId"]
+  },
+  "reproductionCommands": [
+    { "command": "node", "args": ["test.js"], "cwd": ".", "expectedExitCode": 1, "purpose": "reproduce", "timeoutMs": 10000 }
+  ],
+  "acceptanceCommands": [
+    { "command": "node", "args": ["test.js"], "cwd": ".", "expectedExitCode": 0, "purpose": "acceptance", "timeoutMs": 10000 }
+  ],
+  "regressionCommands": [
+    { "command": "node", "args": ["-e", "const {fetchProduct}=require('./src/api.js'); if(fetchProduct('x').productId!=='x') process.exit(1);"], "cwd": ".", "expectedExitCode": 0, "purpose": "regression", "timeoutMs": 10000 }
+  ],
+  "allowedPaths": ["src/view.js"],
+  "forbiddenPaths": ["src/api.js"],
+  "expectedChangedFiles": ["src/view.js"],
+  "forbiddenChangedFiles": ["src/api.js"],
+  "requiredEvidence": ["reproduction-failure", "acceptance-pass"],
+  "scoring": {
+    "weights": { "functionalCorrectness": 0.3, "regressionSafety": 0.2, "scopePrecision": 0.2, "rootCauseQuality": 0.1, "evidenceQuality": 0.1, "runtimeReliability": 0.1 },
+    "passThreshold": 0.6
+  },
+  "timeoutMs": 60000,
+  "staticProvable": false
+}

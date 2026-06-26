@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1",
+  "id": "state-machine-recovery",
+  "title": "resume allows transitioning a terminal run back to running",
+  "category": "state-machine-recovery",
+  "difficulty": "intermediate",
+  "projectType": "typescript-single",
+  "languages": ["JavaScript"],
+  "frameworks": [],
+  "issue": {
+    "objective": "Fix resume() so terminal runs (succeeded/failed/cancelled) cannot be resumed",
+    "reportedSymptoms": ["a succeeded run changes to running after resume()"],
+    "expectedBehavior": "terminal run status is unchanged after resume()",
+    "reproductionHints": ["run node test.js"],
+    "constraints": ["do not change transition() or createRunStore()"],
+    "acceptanceCriteria": ["node test.js exits 0"],
+    "forbiddenChanges": ["modifying transition or createRunStore"]
+  },
+  "reproductionCommands": [
+    { "command": "node", "args": ["test.js"], "cwd": ".", "expectedExitCode": 1, "purpose": "reproduce", "timeoutMs": 10000 }
+  ],
+  "acceptanceCommands": [
+    { "command": "node", "args": ["test.js"], "cwd": ".", "expectedExitCode": 0, "purpose": "acceptance", "timeoutMs": 10000 }
+  ],
+  "regressionCommands": [
+    { "command": "node", "args": ["-e", "const {createRunStore,transition}=require('./src/run-state.js'); const s=createRunStore(); const r=s.create('x'); transition(s,r.id,'running'); if(s.get(r.id).status!=='running') process.exit(1);"], "cwd": ".", "expectedExitCode": 0, "purpose": "regression", "timeoutMs": 10000 }
+  ],
+  "allowedPaths": ["src/run-state.js"],
+  "forbiddenPaths": [],
+  "expectedChangedFiles": ["src/run-state.js"],
+  "forbiddenChangedFiles": [],
+  "requiredEvidence": ["reproduction-failure", "acceptance-pass"],
+  "scoring": {
+    "weights": { "functionalCorrectness": 0.3, "regressionSafety": 0.2, "scopePrecision": 0.2, "rootCauseQuality": 0.1, "evidenceQuality": 0.1, "runtimeReliability": 0.1 },
+    "passThreshold": 0.6
+  },
+  "timeoutMs": 60000,
+  "staticProvable": false
+}

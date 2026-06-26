@@ -5,7 +5,7 @@ import tsParser from "@typescript-eslint/parser";
 
 export default [
   {
-    ignores: ["dist/**", "node_modules/**", "tmp/**"]
+    ignores: ["dist/**", "node_modules/**", "tmp/**", "tests/fixtures/**", ".nexora/**"]
   },
   js.configs.recommended,
   {

@@ -26,6 +26,7 @@ import {
   type TestResult,
   type ToolCall,
   type ToolResult,
+  ALL_TOOL_NAMES,
   type UserInputRequest,
   type ValidationResult,
   type WorkingSet
@@ -134,7 +135,7 @@ export async function runAgentLoop(input: {
   let activeRun = input.run;
   let nextSequence =
     input.resume === undefined
-      ? 1
+      ? Math.max(1, input.eventStore.listEventsByRun(input.run.runId).length + 1)
       : Math.max(input.resume.resumeState.nextSequence, input.eventStore.listEventsByRun(input.run.runId).length + 1);
   let currentWorkingSet = input.resume?.resumeState.currentWorkingSet ?? null;
   let recentToolResult = input.resume?.resumeState.recentToolResult ?? null;
@@ -356,7 +357,7 @@ export async function runAgentLoop(input: {
             recentValidationResult,
             budget: input.task.input.agentRequest.budget,
             usage,
-            availableTools: ["filesystem.read", "filesystem.search", "filesystem.patch", "shell.execute"],
+            availableTools: ALL_TOOL_NAMES,
             regroundRequested,
             replanRequested,
             contextSnapshot
@@ -1625,7 +1626,28 @@ function describeToolSuccess(toolResult: Extract<ToolResult, { status: "success"
   if (toolResult.toolName === "filesystem.patch") {
     return `Patched ${toolResult.output.result.path}.`;
   }
-  return `Executed ${toolResult.output.result.executionRecordId}.`;
+  if (toolResult.toolName === "shell.execute") {
+    return `Executed ${toolResult.output.result.executionRecordId}.`;
+  }
+  if (toolResult.toolName === "filesystem.list") {
+    if (toolResult.output.kind === "list_inline") {
+      return `Listed ${String(toolResult.output.entries.length)} entries.`;
+    }
+    return `Listed ${String(toolResult.output.entryCount)} entries (artifact).`;
+  }
+  if (toolResult.toolName === "git.status") {
+    return `Git status: dirty ${String(toolResult.output.result.isDirty)}.`;
+  }
+  if (toolResult.toolName === "git.diff") {
+    return `Git diff: ${String(toolResult.output.changedFiles.length)} files.`;
+  }
+  if (toolResult.toolName === "git.show") {
+    return `Git show ${toolResult.output.revision}.`;
+  }
+  if (toolResult.toolName === "project.commands") {
+    return `Discovered ${String(toolResult.output.commands.length)} commands.`;
+  }
+  return `Inspected repository ${toolResult.output.profile.root}.`;
 }
 
 function describeCapabilities(toolCall: ToolCall): string[] {
@@ -1766,14 +1788,17 @@ export function fingerprintToolCall(toolCall: ToolCall): string {
       encoding: toolCall.input.encoding
     });
   }
-  return JSON.stringify({
-    toolName: toolCall.toolName,
-    command: toolCall.input.command,
-    args: toolCall.input.args,
-    cwd: toolCall.input.cwd,
-    environment: toolCall.input.environment,
-    purpose: toolCall.input.purpose
-  });
+  if (toolCall.toolName === "shell.execute") {
+    return JSON.stringify({
+      toolName: toolCall.toolName,
+      command: toolCall.input.command,
+      args: toolCall.input.args,
+      cwd: toolCall.input.cwd,
+      environment: toolCall.input.environment,
+      purpose: toolCall.input.purpose
+    });
+  }
+  return JSON.stringify({ toolName: toolCall.toolName, input: toolCall.input });
 }
 
 function fingerprintAction(toolCall: ToolCall): string {

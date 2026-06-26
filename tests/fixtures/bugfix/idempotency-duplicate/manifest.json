@@ -1,0 +1,39 @@
+{
+  "schemaVersion": "1",
+  "id": "idempotency-duplicate",
+  "title": "duplicate submitJob creates two jobs for the same taskKey",
+  "category": "idempotency",
+  "difficulty": "intermediate",
+  "projectType": "typescript-single",
+  "languages": ["JavaScript"],
+  "frameworks": [],
+  "issue": {
+    "objective": "Make submitJob idempotent per taskKey so duplicate submits return the same job",
+    "reportedSymptoms": ["submitJob('task-A') twice creates two jobs"],
+    "expectedBehavior": "duplicate taskKey returns the same job id; different taskKey returns a new job",
+    "reproductionHints": ["run node test.js"],
+    "constraints": ["do not change the job id format for first submissions"],
+    "acceptanceCriteria": ["node test.js exits 0"],
+    "forbiddenChanges": ["deleting the test"]
+  },
+  "reproductionCommands": [
+    { "command": "node", "args": ["test.js"], "cwd": ".", "expectedExitCode": 1, "purpose": "reproduce", "timeoutMs": 10000 }
+  ],
+  "acceptanceCommands": [
+    { "command": "node", "args": ["test.js"], "cwd": ".", "expectedExitCode": 0, "purpose": "acceptance", "timeoutMs": 10000 }
+  ],
+  "regressionCommands": [
+    { "command": "node", "args": ["-e", "const {submitJob}=require('./src/jobs.js'); if(submitJob('z').id===submitJob('y').id) process.exit(1);"], "cwd": ".", "expectedExitCode": 0, "purpose": "regression", "timeoutMs": 10000 }
+  ],
+  "allowedPaths": ["src/jobs.js"],
+  "forbiddenPaths": [],
+  "expectedChangedFiles": ["src/jobs.js"],
+  "forbiddenChangedFiles": [],
+  "requiredEvidence": ["reproduction-failure", "acceptance-pass"],
+  "scoring": {
+    "weights": { "functionalCorrectness": 0.3, "regressionSafety": 0.2, "scopePrecision": 0.2, "rootCauseQuality": 0.1, "evidenceQuality": 0.1, "runtimeReliability": 0.1 },
+    "passThreshold": 0.6
+  },
+  "timeoutMs": 60000,
+  "staticProvable": false
+}

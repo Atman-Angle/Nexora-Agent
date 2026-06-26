@@ -1,0 +1,37 @@
+{
+  "schemaVersion": "1",
+  "id": "go-single-file",
+  "title": "go Add implemented as subtract",
+  "category": "single-file-logic",
+  "difficulty": "basic",
+  "projectType": "go-backend",
+  "languages": ["Go"],
+  "frameworks": [],
+  "issue": {
+    "objective": "Fix math.Add so it returns a+b instead of a-b",
+    "reportedSymptoms": ["math.Add(2,3) returns -1 instead of 5"],
+    "expectedBehavior": "math.Add(2,3) returns 5",
+    "reproductionHints": ["go run . "],
+    "constraints": ["do not change main.go"],
+    "acceptanceCriteria": ["go run . exits 0"],
+    "forbiddenChanges": ["modifying main.go"]
+  },
+  "reproductionCommands": [
+    { "command": "go", "args": ["run", "."], "cwd": ".", "expectedExitCode": 1, "purpose": "reproduce", "timeoutMs": 30000 }
+  ],
+  "acceptanceCommands": [
+    { "command": "go", "args": ["run", "."], "cwd": ".", "expectedExitCode": 0, "purpose": "acceptance", "timeoutMs": 30000 }
+  ],
+  "regressionCommands": [],
+  "allowedPaths": ["math/math.go"],
+  "forbiddenPaths": ["main.go"],
+  "expectedChangedFiles": ["math/math.go"],
+  "forbiddenChangedFiles": ["main.go"],
+  "requiredEvidence": ["reproduction-failure", "acceptance-pass"],
+  "scoring": {
+    "weights": { "functionalCorrectness": 0.3, "regressionSafety": 0.2, "scopePrecision": 0.2, "rootCauseQuality": 0.1, "evidenceQuality": 0.1, "runtimeReliability": 0.1 },
+    "passThreshold": 0.6
+  },
+  "timeoutMs": 90000,
+  "staticProvable": false
+}
