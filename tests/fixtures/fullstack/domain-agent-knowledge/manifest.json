@@ -1,0 +1,41 @@
+{
+  "schemaVersion": "1",
+  "id": "domain-agent-knowledge",
+  "title": "knowledge-base domain agent reusing Nexora Runtime",
+  "category": "domain-agent",
+  "difficulty": "advanced",
+  "projectType": "typescript-single",
+  "stack": ["TypeScript", "JavaScript"],
+  "requirement": {
+    "objective": "Domain Agent (knowledge-base note ingestion) reuses Nexora Task/Run/Artifact to ingest and persist notes",
+    "userValue": "Domain knowledge notes are ingested as Runtime tasks with artifacts and status",
+    "actors": ["knowledge-worker"],
+    "userFlows": [{ "name": "ingest note", "actor": "knowledge-worker", "steps": ["create note", "verify persisted"] }],
+    "functionalRequirements": ["create persists a domain note", "list returns persisted notes"],
+    "nonFunctionalRequirements": ["reuse Runtime, no second state machine", "Fake Provider only, no real network"],
+    "acceptanceCriteria": [
+      { "id": "ac1", "description": "create persists a note", "layer": "service" },
+      { "id": "ac2", "description": "list returns the created note", "layer": "e2e" }
+    ],
+    "constraints": ["do not change repository or test", "reuse Nexora Runtime", "no real network"],
+    "assumptions": ["repository is correct"],
+    "outOfScope": ["auth", "ui", "real provider"],
+    "compatibilityRequirements": ["additive"],
+    "securityRequirements": ["no secrets", "no network"]
+  },
+  "setupCommands": [],
+  "baselineCommands": [],
+  "acceptanceCommands": [{ "command": "node", "args": ["test.js"], "expectedExitCode": 0, "purpose": "acceptance", "timeoutMs": 10000 }],
+  "e2eCommands": [{ "command": "node", "args": ["test.js"], "expectedExitCode": 0, "purpose": "e2e", "timeoutMs": 10000 }],
+  "regressionCommands": [],
+  "allowedPaths": ["src/note/service.js"],
+  "forbiddenPaths": ["src/note/repository.js", "test.js"],
+  "expectedLayers": ["domain", "service", "runtime", "api", "client"],
+  "requiredEvidence": ["requirement", "architecture", "contract", "plan", "e2e"],
+  "requiresRuntimeReuse": true,
+  "scoring": {
+    "weights": { "functionalCompleteness": 0.2, "contractConsistency": 0.15, "architectureFit": 0.1, "dataSafety": 0.15, "verificationQuality": 0.1, "scopePrecision": 0.1, "runtimeReuse": 0.1, "runtimeReliability": 0.1 },
+    "passThreshold": 0.6
+  },
+  "timeoutMs": 60000
+}

@@ -11,6 +11,7 @@ export * from "./context-snapshot.js";
 export * from "./evidence.js";
 export * from "./execution-record.js";
 export * from "./event.js";
+export * from "./fullstack-feature.js";
 export * from "./patch-result.js";
 export * from "./pending-action.js";
 export * from "./repository-profile.js";

@@ -22,7 +22,23 @@ export class ToolRuntimeError extends Error {
       | "TOOL_CANCELLED"
       | "PERMISSION_DENIED"
       | "INVALID_TOOL_INPUT"
-      | "RUNTIME_ERROR",
+      | "RUNTIME_ERROR"
+      | "WORKSPACE_NOT_FOUND"
+      | "WORKSPACE_NOT_DIRECTORY"
+      | "DIRECTORY_BUDGET_EXCEEDED"
+      | "REPOSITORY_TOO_LARGE"
+      | "NOT_A_GIT_REPOSITORY"
+      | "GIT_NOT_AVAILABLE"
+      | "GIT_COMMAND_FAILED"
+      | "INVALID_REVISION"
+      | "DIFF_TOO_LARGE"
+      | "CONFIG_NOT_FOUND"
+      | "CONFIG_PARSE_FAILED"
+      | "PROJECT_TYPE_UNKNOWN"
+      | "COMMAND_DISCOVERY_FAILED"
+      | "REPOSITORY_PROFILE_INVALID"
+      | "WORKING_SET_INVALID"
+      | "REPOSITORY_FACTS_STALE",
     message: string,
     public readonly retryable: boolean
   ) {

@@ -2,6 +2,7 @@ import {
   AgentActionSchema,
   AgentIterationSchema,
   AgentBudgetUsageSchema,
+  type AgentBudgetUsage,
   ApprovalRequestSchema,
   ValidationPlanSchema,
   computeArtifactHash,
@@ -37,7 +38,13 @@ import {
   rehydrateWorkspaceFacts,
   validateCompactionIntegrity
 } from "../../context/src/index.js";
-import type { AgentLoopModelProvider } from "../../model-gateway/src/index.js";
+import type { AgentLoopModelProvider, ModelActionRejection, ModelActionRejectionCategory } from "../../model-gateway/src/index.js";
+import {
+  ModelConfigError,
+  ModelHttpError,
+  ModelJsonParseError,
+  ModelTimeoutError
+} from "../../model-gateway/src/index.js";
 import type { AgentIterationStore } from "../../storage/src/agent-iteration-store.js";
 import type { ApprovalStore } from "../../storage/src/approval-store.js";
 import type { ArtifactStore } from "../../storage/src/artifact-store.js";
@@ -278,7 +285,7 @@ export async function runAgentLoop(input: {
   let bypassApprovalForSeedAction = input.resume?.bypassApprovalForSeedAction ?? false;
 
   for (;;) {
-    let action: AgentAction;
+    let action: AgentAction | undefined;
     const currentSeededAction = seededAction;
     const usedSeededAction = currentSeededAction !== null;
     const bypassApproval = usedSeededAction && bypassApprovalForSeedAction;
@@ -344,32 +351,82 @@ export async function runAgentLoop(input: {
         iterationStartedAt
       );
 
-      try {
-        action = AgentActionSchema.parse(
-          await input.modelProvider.nextAction({
-            runId: activeRun.runId,
-            goal: anchor.goal,
-            constraints: anchor.constraints,
-            successCriteria: anchor.successCriteria,
-            ledger,
-            workingSet: currentWorkingSet,
-            recentToolResult,
-            recentValidationResult,
+      const MAX_ACTION_REPAIRS = 2;
+      let lastRejection: ModelActionRejection | null = null;
+      for (let attempt = 0; attempt <= MAX_ACTION_REPAIRS; attempt += 1) {
+        if (attempt > 0) {
+          usage.actionRepairCount += 1;
+          usage.modelCalls += 1;
+          await ensureBudget({
+            appendEvent,
+            now: input.now(),
+            phase: "model",
             budget: input.task.input.agentRequest.budget,
             usage,
-            availableTools: ALL_TOOL_NAMES,
-            regroundRequested,
-            replanRequested,
-            contextSnapshot
-          })
-        );
-      } catch {
+            reserveVerification: input.task.input.validationRequest !== undefined
+          });
+        }
+        try {
+          action = AgentActionSchema.parse(
+            await input.modelProvider.nextAction({
+              runId: activeRun.runId,
+              goal: anchor.goal,
+              constraints: anchor.constraints,
+              successCriteria: anchor.successCriteria,
+              ledger,
+              workingSet: currentWorkingSet,
+              recentToolResult,
+              recentValidationResult,
+              budget: input.task.input.agentRequest.budget,
+              usage,
+              availableTools: ALL_TOOL_NAMES,
+              regroundRequested,
+              replanRequested,
+              contextSnapshot,
+              lastModelError: lastRejection
+            })
+          );
+          break;
+        } catch (error) {
+          const failure = describeModelActionError(error);
+          const category = failure.category ?? "schema_validation";
+          lastRejection = {
+            category,
+            attempt: attempt + 1,
+            message: failure.message,
+            ...(failure.issues === null ? {} : { issues: failure.issues })
+          };
+          await appendEvent(
+            "model.action.rejected",
+            {
+              code: failure.code,
+              message: redactForEvidence(failure.message),
+              category,
+              attempt: attempt + 1,
+              ...(failure.issues === null ? {} : { issues: failure.issues }),
+              raw: failure.raw ?? null
+            },
+            input.now()
+          );
+          if (!isActionRepairable(error) || attempt === MAX_ACTION_REPAIRS) {
+            return failRun({
+              input,
+              run: activeRun,
+              appendEvent,
+              code: failure.code,
+              message: failure.message,
+              retryable: failure.retryable
+            });
+          }
+        }
+      }
+      if (action === undefined) {
         return failRun({
           input,
           run: activeRun,
           appendEvent,
           code: "MODEL_ACTION_INVALID",
-          message: "Agent model produced an invalid action.",
+          message: "Agent model action repair did not produce a valid action.",
           retryable: false
         });
       }
@@ -1249,13 +1306,7 @@ async function ensureBudget(input: {
   now: string;
   phase: "model" | "tool";
   budget: NonNullable<Task["input"]["agentRequest"]>["budget"];
-  usage: {
-    loopCount: number;
-    modelCalls: number;
-    toolCalls: number;
-    retryCount: number;
-    startedAt: string;
-  };
+  usage: AgentBudgetUsage;
   reserveVerification: boolean;
 }): Promise<void> {
   await input.appendEvent(
@@ -1266,7 +1317,9 @@ async function ensureBudget(input: {
         loopCount: input.usage.loopCount,
         modelCalls: input.usage.modelCalls,
         toolCalls: input.usage.toolCalls,
-        retryCount: input.usage.retryCount
+        retryCount: input.usage.retryCount,
+        actionRepairCount: input.usage.actionRepairCount,
+        providerRetryCount: input.usage.providerRetryCount
       }
     },
     input.now
@@ -1278,6 +1331,7 @@ async function ensureBudget(input: {
     input.usage.modelCalls >= input.budget.maxModelCalls ||
     input.usage.toolCalls >= input.budget.maxToolCalls ||
     input.usage.retryCount > input.budget.maxRetries ||
+    input.usage.actionRepairCount + input.usage.providerRetryCount > input.budget.maxRetries ||
     durationMs >= input.budget.maxDurationMs ||
     (input.reserveVerification &&
       input.phase === "tool" &&
@@ -1614,6 +1668,110 @@ async function failRun(input: {
   input.input.runStore.updateRun(failedRun);
   await input.appendEvent("run.failed", { code: input.code, message: input.message }, failedAt);
   throw new AgentLoopRunFailure(input.code, input.message, input.retryable);
+}
+
+type ModelActionFailure = {
+  code: string;
+  message: string;
+  retryable: boolean;
+  raw: unknown;
+  category: ModelActionRejectionCategory | null;
+  issues: Array<{ path: string; message: string }> | null;
+};
+
+function summarizeZodIssues(issues: Array<{ path: PropertyKey[]; message: string }>): {
+  summary: string;
+  plain: Array<{ path: string; message: string }>;
+} {
+  const plain = issues.slice(0, 5).map((issue) => ({
+    path: issue.path.length > 0 ? issue.path.join(".") : "(root)",
+    message: issue.message
+  }));
+  const summary = plain.map((i) => `${i.path}: ${i.message}`).join("; ");
+  const suffix = issues.length > 5 ? `; (+${String(issues.length - 5)} more)` : "";
+  return { summary: `${summary}${suffix}`, plain };
+}
+
+function describeModelActionError(error: unknown): ModelActionFailure {
+  if (error instanceof ModelConfigError) {
+    return { code: "MODEL_CONFIG_ERROR", message: error.message, retryable: false, raw: null, category: null, issues: null };
+  }
+  if (error instanceof ModelTimeoutError) {
+    return { code: error.code, message: error.message, retryable: error.retryable, raw: null, category: null, issues: null };
+  }
+  if (error instanceof ModelHttpError) {
+    return { code: error.code, message: error.message, retryable: error.retryable, raw: null, category: null, issues: null };
+  }
+  if (error instanceof ModelJsonParseError) {
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      raw: null,
+      category: "json_parse",
+      issues: null
+    };
+  }
+  if (error instanceof Error && Array.isArray((error as { issues?: unknown[] }).issues)) {
+    const issues = (error as unknown as { issues: Array<{ path: PropertyKey[]; message: string }> }).issues;
+    const { summary, plain } = summarizeZodIssues(issues);
+    return {
+      code: "MODEL_ACTION_INVALID",
+      message: `Agent model produced an action that failed schema validation. ${summary}`,
+      retryable: false,
+      raw: { issues: plain },
+      category: "schema_validation",
+      issues: plain
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      code: "MODEL_ACTION_INVALID",
+      message: `Agent model produced an invalid action: ${error.message}`,
+      retryable: false,
+      raw: null,
+      category: null,
+      issues: null
+    };
+  }
+  return {
+    code: "MODEL_ACTION_INVALID",
+    message: "Agent model produced an invalid action.",
+    retryable: false,
+    raw: null,
+    category: null,
+    issues: null
+  };
+}
+
+function isActionRepairable(error: unknown): boolean {
+  if (error instanceof ModelConfigError) {
+    return false;
+  }
+  if (error instanceof ModelJsonParseError) {
+    return true;
+  }
+  if (error instanceof ModelTimeoutError || error instanceof ModelHttpError) {
+    return false;
+  }
+  if (error instanceof Error && Array.isArray((error as { issues?: unknown[] }).issues)) {
+    return true;
+  }
+  return false;
+}
+
+const SECRET_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
+  { re: /Bearer\s+[A-Za-z0-9._-]+/g, replacement: "Bearer ***" },
+  { re: /sk-[A-Za-z0-9_-]{8,}/g, replacement: "sk-***" },
+  { re: /[Aa]uthorization[:\s]+[A-Za-z0-9._-]+/g, replacement: "authorization ***" }
+];
+
+export function redactForEvidence(text: string): string {
+  let result = text;
+  for (const pattern of SECRET_PATTERNS) {
+    result = result.replace(pattern.re, pattern.replacement);
+  }
+  return result;
 }
 
 function describeToolSuccess(toolResult: Extract<ToolResult, { status: "success" }>): string {

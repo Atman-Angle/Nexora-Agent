@@ -12,7 +12,9 @@ export const AgentBudgetUsageSchema = z.object({
   loopCount: z.number().int().nonnegative(),
   modelCalls: z.number().int().nonnegative(),
   toolCalls: z.number().int().nonnegative(),
-  retryCount: z.number().int().nonnegative(),
+  retryCount: z.number().int().nonnegative().default(0),
+  actionRepairCount: z.number().int().nonnegative().default(0),
+  providerRetryCount: z.number().int().nonnegative().default(0),
   startedAt: z.string().datetime()
 });
 

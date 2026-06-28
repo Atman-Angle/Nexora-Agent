@@ -56,6 +56,7 @@ export function createModelProvider(options: ProviderFactoryOptions = {}): Resol
   const rawAgentActions = options.agentActions ?? parseAgentActionsEnv(env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
   const parsedAgentActions = parseAgentActions(rawAgentActions);
   const slicedAgentActions = applyAgentActionSlice(parsedAgentActions, options.agentActionSliceFrom);
+  const rawAgentResponses = parseAgentRawResponsesEnv(env.NEXORA_FAKE_AGENT_RAW_RESPONSES_JSON);
   const fakeProvider = new FakeModelProvider({
     mode: options.fakeModelMode ?? parseFakeModelMode(env.NEXORA_FAKE_MODEL_MODE),
     text: options.fakeModelText ?? env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
@@ -63,9 +64,25 @@ export function createModelProvider(options: ProviderFactoryOptions = {}): Resol
     ...(options.fakeToolPlanMode === undefined ? {} : { toolPlanMode: options.fakeToolPlanMode }),
     ...(options.fakeToolFinalMode === undefined ? {} : { toolFinalMode: options.fakeToolFinalMode }),
     ...(options.fakeToolTimeoutMs === undefined ? {} : { toolTimeoutMs: options.fakeToolTimeoutMs }),
-    ...(slicedAgentActions === undefined ? {} : { agentActions: slicedAgentActions })
+    ...(slicedAgentActions === undefined ? {} : { agentActions: slicedAgentActions }),
+    ...(rawAgentResponses === undefined ? {} : { agentRawResponses: rawAgentResponses })
   });
   return Object.assign(fakeProvider, { kind });
+}
+
+function parseAgentRawResponsesEnv(rawValue: string | undefined): string[] | undefined {
+  if (rawValue === undefined || rawValue.trim().length === 0) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(rawValue) as unknown;
+    if (!Array.isArray(parsed)) {
+      return undefined;
+    }
+    return parsed.filter((entry): entry is string => typeof entry === "string");
+  } catch {
+    return undefined;
+  }
 }
 
 function parseAgentActionsEnv(rawValue: string | undefined): unknown[] | undefined {

@@ -1,4 +1,4 @@
-import { AgentActionSchema, ActionSchema } from "../../contracts/src/index.js";
+import { AgentActionSchema, ActionSchema, computeArtifactHash } from "../../contracts/src/index.js";
 import type {
   AgentAction,
   AgentBudget,
@@ -12,6 +12,8 @@ import type {
   WorkingSet
 } from "../../contracts/src/index.js";
 import type { ToolName } from "../../contracts/src/tool-call.js";
+import type { ModelActionRejection } from "./model-provider.js";
+import { buildAgentActionSchemaText, buildPlanActionSchemaText } from "./model-tool-definition.js";
 import type {
   AgentLoopModelProvider,
   ModelProvider,
@@ -60,13 +62,16 @@ export type OpenAICompatibleConfig = {
   apiKey: string;
   model: string;
   timeoutMs: number;
+  maxProviderRetries: number;
 };
 
-export type OpenAICompatibleProviderOptions = OpenAICompatibleConfig & {
+export type OpenAICompatibleProviderOptions = Omit<OpenAICompatibleConfig, "maxProviderRetries"> & {
   fetchImpl?: typeof fetch;
+  maxProviderRetries?: number;
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_MAX_PROVIDER_RETRIES = 2;
 
 export function resolveOpenAICompatibleConfig(env: Record<string, string | undefined>): OpenAICompatibleConfig {
   const baseUrl = env.NEXORA_MODEL_BASE_URL?.trim();
@@ -74,6 +79,8 @@ export function resolveOpenAICompatibleConfig(env: Record<string, string | undef
   const model = env.NEXORA_MODEL_NAME?.trim();
   const timeoutMsRaw = env.NEXORA_MODEL_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutMsRaw === undefined || timeoutMsRaw.length === 0 ? DEFAULT_TIMEOUT_MS : parseTimeout(timeoutMsRaw);
+  const maxProviderRetriesRaw = env.NEXORA_MODEL_MAX_PROVIDER_RETRIES?.trim();
+  const maxProviderRetries = maxProviderRetriesRaw === undefined || maxProviderRetriesRaw.length === 0 ? DEFAULT_MAX_PROVIDER_RETRIES : parseNonNegativeInt(maxProviderRetriesRaw, "NEXORA_MODEL_MAX_PROVIDER_RETRIES");
 
   const missing: string[] = [];
   if (baseUrl === undefined || baseUrl.length === 0) {
@@ -89,7 +96,7 @@ export function resolveOpenAICompatibleConfig(env: Record<string, string | undef
     throw new ModelConfigError(`OpenAI-compatible provider is not configured. Missing: ${missing.join(", ")}.`);
   }
 
-  return { baseUrl: baseUrl as string, apiKey: apiKey as string, model: model as string, timeoutMs };
+  return { baseUrl: baseUrl as string, apiKey: apiKey as string, model: model as string, timeoutMs, maxProviderRetries };
 }
 
 function parseTimeout(rawValue: string): number {
@@ -98,6 +105,14 @@ function parseTimeout(rawValue: string): number {
     throw new ModelConfigError(`NEXORA_MODEL_TIMEOUT_MS must be a positive number, got: ${rawValue}.`);
   }
   return Math.floor(parsed);
+}
+
+function parseNonNegativeInt(rawValue: string, name: string): number {
+  const parsed = Number(rawValue);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new ModelConfigError(`${name} must be a non-negative integer, got: ${rawValue}.`);
+  }
+  return parsed;
 }
 
 export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelProvider, AgentLoopModelProvider {
@@ -158,15 +173,18 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
     availableTools: ToolName[];
     regroundRequested: boolean;
     replanRequested: boolean;
+    lastModelError?: ModelActionRejection | null;
   }): Promise<AgentAction> {
     const prompt = buildNextActionPrompt(input);
-    const json = await this.chatCompletionJson(prompt);
+    const json = await this.chatCompletionJson(prompt, () => {
+      input.usage.providerRetryCount += 1;
+    });
     return AgentActionSchema.parse(json);
   }
 
-  private async chatCompletion(messages: Array<{ role: string; content: string }>): Promise<string> {
-    const response = await this.postChatCompletion(messages);
-    const parsed = response as OpenAIChatResponse;
+  private async chatCompletion(messages: Array<{ role: string; content: string }>, onRetry?: (attempt: number) => void): Promise<string> {
+    const { body } = await this.postChatCompletion(messages, onRetry);
+    const parsed = body as OpenAIChatResponse;
     const choice = parsed.choices?.[0];
     const content = choice?.message?.content;
     if (typeof content !== "string" || content.length === 0) {
@@ -175,12 +193,36 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
     return content;
   }
 
-  private async chatCompletionJson(prompt: string): Promise<unknown> {
-    const content = await this.chatCompletion([{ role: "user", content: prompt }]);
+  private async chatCompletionJson(prompt: string, onRetry?: (attempt: number) => void): Promise<unknown> {
+    const content = await this.chatCompletion([{ role: "user", content: prompt }], onRetry);
     return parseJsonFromModel(content);
   }
 
-  private async postChatCompletion(messages: Array<{ role: string; content: string }>): Promise<unknown> {
+  private async postChatCompletion(messages: Array<{ role: string; content: string }>, onRetry?: (attempt: number) => void): Promise<{ body: unknown; attempts: number }> {
+    const maxProviderRetries = this.options.maxProviderRetries ?? DEFAULT_MAX_PROVIDER_RETRIES;
+    const maxAttempts = Math.max(1, maxProviderRetries + 1);
+    let attempts = 0;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      attempts += 1;
+      try {
+        const body = await this.singleChatCompletionRequest(messages);
+        return { body, attempts };
+      } catch (error) {
+        const retryable = isProviderRetryable(error);
+        if (!retryable || attempt === maxAttempts - 1) {
+          throw error;
+        }
+        if (onRetry !== undefined) {
+          onRetry(attempt + 1);
+        }
+        await sleep(PROVIDER_BACKOFF_MS[attempt] ?? PROVIDER_BACKOFF_MS[PROVIDER_BACKOFF_MS.length - 1]!);
+      }
+    }
+    // Unreachable; satisfy TS.
+    throw new ModelHttpError("MODEL_NETWORK_ERROR", "Provider retry loop exhausted.", true);
+  }
+
+  private async singleChatCompletionRequest(messages: Array<{ role: string; content: string }>): Promise<unknown> {
     const url = joinUrl(this.options.baseUrl, "/chat/completions");
     const body = JSON.stringify({
       model: this.options.model,
@@ -228,6 +270,22 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
       throw new ModelJsonParseError("Model endpoint returned a non-JSON response body.");
     }
   }
+}
+
+const PROVIDER_BACKOFF_MS = [500, 1000] as const;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isProviderRetryable(error: unknown): boolean {
+  if (error instanceof ModelTimeoutError) {
+    return true;
+  }
+  if (error instanceof ModelHttpError) {
+    return error.retryable;
+  }
+  return false;
 }
 
 function parseJsonFromModel(content: string): unknown {
@@ -303,15 +361,9 @@ function buildPlanPrompt(input: {
     context.push(`Validation request: ${JSON.stringify({ command: input.validationRequest.command, args: input.validationRequest.args })}`);
   }
   return [
-    "You are a planning model for the Nexora agent runtime.",
-    "Decide the next action for the current task and return ONLY a JSON object matching this TypeScript union:",
-    "type Action =",
-    "  | { type: \"tool_call\"; toolCall: { toolCallId: string; toolName: \"filesystem.read\" | \"filesystem.search\" | \"filesystem.patch\" | \"shell.execute\"; input: object; timeoutMs: number } }",
-    "  | { type: \"update_plan\"; patch: object; reason: string }",
-    "  | { type: \"final\"; text: string; evidenceRefs?: string[] }",
-    "  | { type: \"fail\"; code: string; message: string; retryable: boolean }",
-    "Return a single JSON object, no prose, no markdown fence.",
-    ...context
+    buildPlanActionSchemaText(["filesystem.read", "filesystem.search", "filesystem.patch", "shell.execute"]),
+    ...context,
+    "Return a single JSON object, no prose, no markdown fence."
   ].join("\n");
 }
 
@@ -349,6 +401,7 @@ function buildNextActionPrompt(input: {
   availableTools: ToolName[];
   regroundRequested: boolean;
   replanRequested: boolean;
+  lastModelError?: ModelActionRejection | null;
 }): string {
   const ledgerSummary = JSON.stringify({
     currentStep: input.ledger.currentStep,
@@ -359,21 +412,10 @@ function buildNextActionPrompt(input: {
   });
   const workingSetSummary = input.workingSet === null ? "null" : JSON.stringify(input.workingSet.items.map((item) => ({ path: item.path, score: item.score })));
   const toolSummary = input.recentToolResult === null ? "null" : summarizeToolResultForPrompt(input.recentToolResult);
-  const toolNameUnion = input.availableTools.map((tool) => `"${tool}"`).join(" | ");
-  const approvalToolUnion = input.availableTools
-    .filter((tool) => tool === "filesystem.patch" || tool === "shell.execute")
-    .map((tool) => `"${tool}"`)
-    .join(" | ");
+  const repairLines = renderLastModelError(input.lastModelError ?? null);
   return [
-    "You are the agent loop model for the Nexora runtime.",
-    "Decide the next action and return ONLY a JSON object matching this TypeScript union:",
-    "type AgentAction =",
-    `  | { type: "tool_call"; toolCall: { toolCallId: string; toolName: ${toolNameUnion}; input: object; timeoutMs: number } }`,
-    `  | { type: "request_approval"; reason: string; toolCall: { toolCallId: string; toolName: ${approvalToolUnion}; input: object; timeoutMs: number } }`,
-    "  | { type: \"ask_user\"; question: string; expectedInputType: string; required: boolean }",
-    "  | { type: \"update_plan\"; patch: object; reason: string }",
-    "  | { type: \"final\"; text: string; evidenceRefs?: string[] }",
-    "  | { type: \"fail\"; code: string; message: string; retryable: boolean }",
+    buildAgentActionSchemaText(input.availableTools),
+    "",
     `Goal: ${input.goal}`,
     `Constraints: ${input.constraints.join("; ")}`,
     `Success criteria: ${input.successCriteria.join("; ")}`,
@@ -386,8 +428,21 @@ function buildNextActionPrompt(input: {
     `Recent validation status: ${input.recentValidationResult?.status ?? "null"}`,
     `Reground requested: ${String(input.regroundRequested)}`,
     `Replan requested: ${String(input.replanRequested)}`,
+    ...(repairLines.length === 0 ? [] : ["", ...repairLines]),
     "Return a single JSON object, no prose, no markdown fence."
   ].join("\n");
+}
+
+function renderLastModelError(rejection: ModelActionRejection | null): string[] {
+  if (rejection === null) {
+    return [];
+  }
+  const issueLines = (rejection.issues ?? []).slice(0, 5).map((issue) => `  - ${issue.path}: ${issue.message}`);
+  return [
+    `Previous attempt was rejected (category: ${rejection.category}, attempt ${String(rejection.attempt)}): ${rejection.message}`,
+    ...(issueLines.length === 0 ? [] : ["Issues:", ...issueLines]),
+    "Fix the error above and return a valid JSON object matching the schema."
+  ];
 }
 
 function summarizeToolResultForPrompt(toolResult: ToolResult): string {
@@ -403,6 +458,7 @@ function summarizeToolResultForPrompt(toolResult: ToolResult): string {
         path: toolResult.output.path,
         mimeType: toolResult.output.mimeType,
         byteLength: toolResult.output.byteLength,
+        currentHash: computeArtifactHash(toolResult.output.content),
         content: toolResult.output.content
       });
     }

@@ -3,6 +3,7 @@ import type {
   AgentAction,
   AgentBudget,
   AgentBudgetUsage,
+  ContextSnapshot,
   ProgressLedger,
   TaskPatchRequest,
   TaskValidationRequest,
@@ -10,10 +11,12 @@ import type {
   ValidationResult,
   WorkingSet
 } from "../../contracts/src/index.js";
-import type { AgentLoopModelProvider, ModelProvider, ToolModeModelProvider } from "../../model-gateway/src/index.js";
+import type { ToolName } from "../../contracts/src/tool-call.js";
+import type { AgentLoopModelProvider, ModelActionRejection, ModelProvider, ToolModeModelProvider } from "../../model-gateway/src/index.js";
 
 export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, AgentLoopModelProvider {
   public callCount = 0;
+  public lastModelError: ModelActionRejection | null = null;
   private agentScriptIndex = 0;
 
   public constructor(
@@ -25,6 +28,7 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
       toolFinalMode?: "success" | "empty" | "fail_action";
       toolTimeoutMs?: number;
       agentActions?: AgentAction[];
+      agentRawResponses?: string[];
     }
   ) {}
 
@@ -217,23 +221,30 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
       };
     }
 
-    if (input.toolResult.output.kind === "inline_text") {
-      return {
-        type: "final",
-        text: `Read ${input.toolResult.output.path}: ${input.toolResult.output.content}`
-      };
-    }
+    if (input.toolResult.toolName === "filesystem.read" && input.toolResult.status === "success") {
+      if (input.toolResult.output.kind === "inline_text") {
+        return {
+          type: "final",
+          text: `Read ${input.toolResult.output.path}: ${input.toolResult.output.content}`
+        };
+      }
 
-    if (input.toolResult.output.reason === "large_file") {
+      if (input.toolResult.output.reason === "large_file") {
+        return {
+          type: "final",
+          text: `Large file ${input.toolResult.output.path} stored as artifact ${input.toolResult.output.artifactId}. Preview: ${input.toolResult.output.previewText ?? ""}`.trim()
+        };
+      }
+
       return {
         type: "final",
-        text: `Large file ${input.toolResult.output.path} stored as artifact ${input.toolResult.output.artifactId}. Preview: ${input.toolResult.output.previewText ?? ""}`.trim()
+        text: `Binary file ${input.toolResult.output.path} stored as artifact ${input.toolResult.output.artifactId}.`
       };
     }
 
     return {
       type: "final",
-      text: `Binary file ${input.toolResult.output.path} stored as artifact ${input.toolResult.output.artifactId}.`
+      text: `${input.toolResult.toolName} completed.`
     };
   }
 
@@ -248,15 +259,26 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
     recentValidationResult: ValidationResult | null;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
-    availableTools: Array<"filesystem.read" | "filesystem.search" | "filesystem.patch" | "shell.execute">;
+    availableTools: ToolName[];
     regroundRequested: boolean;
     replanRequested: boolean;
+    contextSnapshot?: ContextSnapshot;
+    lastModelError?: ModelActionRejection | null;
   }): Promise<AgentAction> {
+    this.lastModelError = input.lastModelError ?? null;
     void input;
     this.callCount += 1;
 
     if ((this.options.delayMs ?? 0) > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.options.delayMs));
+    }
+
+    const rawResponse = this.options.agentRawResponses?.[this.agentScriptIndex];
+    if (rawResponse !== undefined) {
+      this.agentScriptIndex += 1;
+      // Return parsed JSON WITHOUT AgentActionSchema validation so the runner's parse
+      // is the gate that fails (mirrors how the real provider returns unknown).
+      return JSON.parse(rawResponse) as AgentAction;
     }
 
     const scriptedAction = this.options.agentActions?.[this.agentScriptIndex];

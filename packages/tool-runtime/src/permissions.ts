@@ -1,11 +1,32 @@
 import { ToolRuntimeError } from "./errors.js";
 
 export type Permission = {
-  operation: "filesystem.read" | "filesystem.search" | "filesystem.patch" | "shell.execute";
+  operation:
+    | "filesystem.read"
+    | "filesystem.search"
+    | "filesystem.patch"
+    | "shell.execute"
+    | "filesystem.list"
+    | "git.status"
+    | "git.diff"
+    | "git.show"
+    | "project.commands"
+    | "project.inspect";
   scope: "workspace";
 };
 
 export type RiskLevel = "read" | "write" | "execute";
+
+const READ_OPERATIONS = new Set<Permission["operation"]>([
+  "filesystem.read",
+  "filesystem.search",
+  "filesystem.list",
+  "git.status",
+  "git.diff",
+  "git.show",
+  "project.commands",
+  "project.inspect"
+]);
 
 export function classifyRisk(operation: Permission["operation"]): RiskLevel {
   if (operation === "filesystem.patch") {
@@ -19,14 +40,25 @@ export function classifyRisk(operation: Permission["operation"]): RiskLevel {
   return "read";
 }
 
+const ALL_OPERATIONS = new Set<Permission["operation"]>([
+  "filesystem.read",
+  "filesystem.search",
+  "filesystem.patch",
+  "shell.execute",
+  "filesystem.list",
+  "git.status",
+  "git.diff",
+  "git.show",
+  "project.commands",
+  "project.inspect"
+]);
+
 export function assertFilesystemPermission(permission: Permission): void {
-  if (
-    (permission.operation !== "filesystem.read" &&
-      permission.operation !== "filesystem.search" &&
-      permission.operation !== "filesystem.patch" &&
-      permission.operation !== "shell.execute") ||
-    permission.scope !== "workspace"
-  ) {
+  if (!ALL_OPERATIONS.has(permission.operation) || permission.scope !== "workspace") {
     throw new ToolRuntimeError("PERMISSION_DENIED", "Permission denied for filesystem operation.", false);
   }
+}
+
+export function isReadOperation(operation: Permission["operation"]): boolean {
+  return READ_OPERATIONS.has(operation);
 }

@@ -95,7 +95,7 @@ export class ExecutionRecordStore {
       schema_version: string;
       run_id: string;
       tool_call_id: string;
-      tool_name: "filesystem.read" | "filesystem.search" | "filesystem.patch" | "shell.execute";
+      tool_name: ExecutionRecord["toolName"];
       status: "success" | "error";
       target_path: string | null;
       idempotency_key: string | null;

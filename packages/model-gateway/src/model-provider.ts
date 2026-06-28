@@ -13,6 +13,19 @@ import type {
 } from "../../contracts/src/index.js";
 import type { ToolName } from "../../contracts/src/tool-call.js";
 
+export type ModelActionRejectionCategory =
+  | "json_parse"
+  | "schema_validation"
+  | "unknown_tool"
+  | "tool_not_available";
+
+export type ModelActionRejection = {
+  category: ModelActionRejectionCategory;
+  attempt: number;
+  message: string;
+  issues?: Array<{ path: string; message: string }>;
+};
+
 export interface ModelProvider {
   generate(input: {
     runId: string;
@@ -57,5 +70,6 @@ export interface AgentLoopModelProvider {
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;
+    lastModelError?: ModelActionRejection | null;
   }): Promise<AgentAction>;
 }

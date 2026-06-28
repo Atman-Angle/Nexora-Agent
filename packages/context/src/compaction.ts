@@ -72,7 +72,11 @@ export function measureToolResultFootprint(toolResult: ToolResult): number {
     return JSON.stringify(toolResult.output.result).length;
   }
 
-  return JSON.stringify(toolResult.output.result).length;
+  if (toolResult.toolName === "shell.execute") {
+    return JSON.stringify(toolResult.output.result).length;
+  }
+
+  return JSON.stringify(toolResult.output).length;
 }
 
 export function summarizeToolResult(toolResult: ToolResult, budget: ContextBudget): ToolResultSummary {
@@ -140,17 +144,32 @@ export function summarizeToolResult(toolResult: ToolResult, budget: ContextBudge
     });
   }
 
-  const result = toolResult.output.result;
-  const inlineSummary = `Command exit ${formatExitCode(result.exitCode)} (duration ${String(result.durationMs)}ms). stdout: ${result.stdoutSummary}`;
-  const artifactRefs = [result.stdoutArtifactRef, result.stderrArtifactRef].filter((value): value is string => value !== undefined);
-  const summary = truncate(inlineSummary, budget.maxToolResultSummaryChars);
+  if (toolResult.toolName === "shell.execute") {
+    const result = toolResult.output.result;
+    const inlineSummary = `Command exit ${formatExitCode(result.exitCode)} (duration ${String(result.durationMs)}ms). stdout: ${result.stdoutSummary}`;
+    const artifactRefs = [result.stdoutArtifactRef, result.stderrArtifactRef].filter((value): value is string => value !== undefined);
+    const summary = truncate(inlineSummary, budget.maxToolResultSummaryChars);
+    return ToolResultSummarySchema.parse({
+      toolCallId: toolResult.toolCallId,
+      toolName: toolResult.toolName,
+      status: "success",
+      summary,
+      artifactRefs,
+      truncated: summary.length < inlineSummary.length
+    });
+  }
+
+  const fallbackSummary = truncate(
+    `${toolResult.toolName} completed.`,
+    budget.maxToolResultSummaryChars
+  );
   return ToolResultSummarySchema.parse({
     toolCallId: toolResult.toolCallId,
     toolName: toolResult.toolName,
     status: "success",
-    summary,
-    artifactRefs,
-    truncated: summary.length < inlineSummary.length
+    summary: fallbackSummary,
+    artifactRefs: [],
+    truncated: false
   });
 }
 

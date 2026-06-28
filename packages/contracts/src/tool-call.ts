@@ -2,6 +2,16 @@ import { z } from "zod";
 
 import { PatchOperationSchema } from "./patch-result.js";
 
+export const FilesystemListInputSchema = z.object({
+  relativePath: z.string().min(1).default("."),
+  maxDepth: z.number().int().positive().max(32).default(4),
+  maxEntries: z.number().int().positive().max(20_000).default(2000),
+  includeHidden: z.boolean().default(false),
+  ignorePatterns: z.array(z.string().min(1)).default([])
+});
+
+export const GitDiffModeSchema = z.enum(["working", "staged"]);
+
 export const ToolCallSchema = z.union([
   z.object({
     toolCallId: z.string().min(1),
@@ -44,7 +54,69 @@ export const ToolCallSchema = z.union([
       idempotencyKey: z.string().min(1)
     }),
     timeoutMs: z.number().int().positive().max(60_000)
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.literal("filesystem.list"),
+    input: FilesystemListInputSchema,
+    timeoutMs: z.number().int().positive().max(60_000)
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.literal("git.status"),
+    input: z.object({}).default({}),
+    timeoutMs: z.number().int().positive().max(60_000)
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.literal("git.diff"),
+    input: z.object({
+      mode: GitDiffModeSchema.default("working"),
+      path: z.string().min(1).optional(),
+      statOnly: z.boolean().default(false),
+      maxBytes: z.number().int().positive().max(2_000_000).default(16_384)
+    }),
+    timeoutMs: z.number().int().positive().max(60_000)
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.literal("git.show"),
+    input: z.object({
+      revision: z.string().min(1),
+      path: z.string().min(1).optional(),
+      maxBytes: z.number().int().positive().max(2_000_000).default(16_384)
+    }),
+    timeoutMs: z.number().int().positive().max(60_000)
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.literal("project.commands"),
+    input: z.object({}).default({}),
+    timeoutMs: z.number().int().positive().max(60_000)
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.literal("project.inspect"),
+    input: z.object({
+      relativePath: z.string().min(1).default(".")
+    }),
+    timeoutMs: z.number().int().positive().max(60_000)
   })
 ]);
 
 export type ToolCall = z.infer<typeof ToolCallSchema>;
+export type FilesystemListInput = z.infer<typeof FilesystemListInputSchema>;
+export type GitDiffMode = z.infer<typeof GitDiffModeSchema>;
+export type ToolName = ToolCall["toolName"];
+export const ALL_TOOL_NAMES: ToolName[] = [
+  "filesystem.read",
+  "filesystem.search",
+  "filesystem.patch",
+  "shell.execute",
+  "filesystem.list",
+  "git.status",
+  "git.diff",
+  "git.show",
+  "project.commands",
+  "project.inspect"
+];

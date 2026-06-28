@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1",
+  "id": "data-management",
+  "title": "note service does not persist",
+  "category": "data-management",
+  "difficulty": "intermediate",
+  "projectType": "typescript-single",
+  "stack": ["TypeScript", "JavaScript"],
+  "requirement": {
+    "objective": "Fix NoteService so create() persists and list() returns persisted notes with correct shape",
+    "userValue": "Users can create and list notes through the service layer",
+    "actors": ["user"],
+    "userFlows": [{ "name": "create and list", "actor": "user", "steps": ["create note", "list notes"] }],
+    "functionalRequirements": ["create persists a note", "list returns persisted notes"],
+    "nonFunctionalRequirements": ["service layer only", "no UI changes"],
+    "acceptanceCriteria": [
+      { "id": "ac1", "description": "create returns {id,text} with persisted id", "layer": "service" },
+      { "id": "ac2", "description": "list returns the created note", "layer": "e2e" }
+    ],
+    "constraints": ["do not change repository or test"],
+    "assumptions": ["repository is correct"],
+    "outOfScope": ["auth", "ui"],
+    "compatibilityRequirements": ["additive"],
+    "securityRequirements": []
+  },
+  "setupCommands": [],
+  "baselineCommands": [],
+  "acceptanceCommands": [{ "command": "node", "args": ["test.js"], "expectedExitCode": 0, "purpose": "acceptance", "timeoutMs": 10000 }],
+  "e2eCommands": [{ "command": "node", "args": ["test.js"], "expectedExitCode": 0, "purpose": "e2e", "timeoutMs": 10000 }],
+  "regressionCommands": [
+    { "command": "node", "args": ["-e", "const {createNote,listNotes}=require('./src/note/repository.js'); createNote('x'); if(listNotes().length!==1) process.exit(1);"], "expectedExitCode": 0, "purpose": "regression", "timeoutMs": 10000 }
+  ],
+  "allowedPaths": ["src/note/service.js"],
+  "forbiddenPaths": ["src/note/repository.js", "test.js"],
+  "expectedLayers": ["data", "service", "api", "client"],
+  "requiredEvidence": ["requirement", "architecture", "contract", "plan", "e2e"],
+  "requiresRuntimeReuse": false,
+  "scoring": {
+    "weights": { "functionalCompleteness": 0.2, "contractConsistency": 0.15, "architectureFit": 0.1, "dataSafety": 0.15, "verificationQuality": 0.1, "scopePrecision": 0.1, "runtimeReuse": 0.1, "runtimeReliability": 0.1 },
+    "passThreshold": 0.6
+  },
+  "timeoutMs": 60000
+}
