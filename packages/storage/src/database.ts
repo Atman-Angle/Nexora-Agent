@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   patch_encoding TEXT,
   idempotency_key TEXT,
   validation_request_json TEXT,
+  task_type TEXT,
+  acceptance_criteria_json TEXT,
   source TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
@@ -185,6 +187,8 @@ export function openDatabase(path: string): DatabaseClient {
   ensureColumn(connection, "tasks", "idempotency_key", "TEXT");
   ensureColumn(connection, "tasks", "validation_request_json", "TEXT");
   ensureColumn(connection, "tasks", "agent_request_json", "TEXT");
+  ensureColumn(connection, "tasks", "task_type", "TEXT");
+  ensureColumn(connection, "tasks", "acceptance_criteria_json", "TEXT");
   ensureColumn(connection, "artifacts", "file_path", "TEXT");
   ensureColumn(connection, "artifacts", "size_bytes", "INTEGER");
   ensureColumn(connection, "execution_records", "target_path", "TEXT");

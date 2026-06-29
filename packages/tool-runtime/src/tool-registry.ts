@@ -5,6 +5,7 @@ import { executeFilesystemPatch } from "./filesystem-patch.js";
 import { executeFilesystemRead } from "./filesystem-read.js";
 import { executeFilesystemSearch } from "./filesystem-search.js";
 import { executeFilesystemList } from "./filesystem-list.js";
+import { executeFilesystemWrite } from "./filesystem-write.js";
 import { executeGitStatus } from "./git-status.js";
 import { executeGitDiff } from "./git-diff.js";
 import { executeGitShow } from "./git-show.js";
@@ -54,6 +55,10 @@ export class ToolRegistry {
 
     return tool;
   }
+
+  public listNames(): ToolCall["toolName"][] {
+    return [...this.tools.keys()] as ToolCall["toolName"][];
+  }
 }
 
 export function createDefaultToolRegistry(): ToolRegistry {
@@ -96,6 +101,20 @@ export function createDefaultToolRegistry(): ToolRegistry {
       }
 
       return executeFilesystemPatch({
+        ...context,
+        toolCall: parsedToolCall
+      });
+    }
+  });
+  registry.register({
+    name: "filesystem.write",
+    async execute(context, toolCall) {
+      const parsedToolCall = ToolCallSchema.parse(toolCall);
+      if (parsedToolCall.toolName !== "filesystem.write") {
+        throw new ToolRuntimeError("INVALID_TOOL_INPUT", "Expected filesystem.write tool call.", false);
+      }
+
+      return executeFilesystemWrite({
         ...context,
         toolCall: parsedToolCall
       });

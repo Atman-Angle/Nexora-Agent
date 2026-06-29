@@ -168,6 +168,7 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
     workingSet: WorkingSet | null;
     recentToolResult: ToolResult | null;
     recentValidationResult: ValidationResult | null;
+    validationRequest?: TaskValidationRequest;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
     availableTools: ToolName[];
@@ -361,7 +362,7 @@ function buildPlanPrompt(input: {
     context.push(`Validation request: ${JSON.stringify({ command: input.validationRequest.command, args: input.validationRequest.args })}`);
   }
   return [
-    buildPlanActionSchemaText(["filesystem.read", "filesystem.search", "filesystem.patch", "shell.execute"]),
+    buildPlanActionSchemaText(["filesystem.read", "filesystem.search", "filesystem.patch", "filesystem.write", "shell.execute"]),
     ...context,
     "Return a single JSON object, no prose, no markdown fence."
   ].join("\n");
@@ -396,6 +397,7 @@ function buildNextActionPrompt(input: {
   workingSet: WorkingSet | null;
   recentToolResult: ToolResult | null;
   recentValidationResult: ValidationResult | null;
+  validationRequest?: TaskValidationRequest;
   budget: AgentBudget;
   usage: AgentBudgetUsage;
   availableTools: ToolName[];
@@ -419,6 +421,16 @@ function buildNextActionPrompt(input: {
     `Goal: ${input.goal}`,
     `Constraints: ${input.constraints.join("; ")}`,
     `Success criteria: ${input.successCriteria.join("; ")}`,
+    `Validation request: ${
+      input.validationRequest === undefined
+        ? "null"
+        : JSON.stringify({
+            command: input.validationRequest.command,
+            args: input.validationRequest.args,
+            cwd: input.validationRequest.cwd,
+            purpose: input.validationRequest.purpose
+          })
+    }`,
     `Available tools: ${input.availableTools.join(", ")}`,
     `Budget: ${JSON.stringify(input.budget)}`,
     `Usage: ${JSON.stringify(input.usage)}`,
@@ -480,6 +492,16 @@ function summarizeToolResultForPrompt(toolResult: ToolResult): string {
   if (toolResult.toolName === "filesystem.patch") {
     return JSON.stringify({ toolName: toolResult.toolName, status: "success", path: toolResult.output.result.path, patchStatus: toolResult.output.result.status });
   }
+  if (toolResult.toolName === "filesystem.write") {
+    return JSON.stringify({
+      toolName: toolResult.toolName,
+      status: "success",
+      path: toolResult.output.result.path,
+      mode: toolResult.output.result.mode,
+      hash: toolResult.output.result.hash,
+      created: toolResult.output.result.created
+    });
+  }
   if (toolResult.toolName === "shell.execute") {
     return JSON.stringify({ toolName: toolResult.toolName, status: "success", exitCode: toolResult.output.result.exitCode });
   }
@@ -502,6 +524,9 @@ function buildFinalizeInstructions(toolResult: ToolResult): string {
   }
   if (toolResult.toolName === "filesystem.patch") {
     return "For filesystem.patch, summarize what changed and the resulting status.";
+  }
+  if (toolResult.toolName === "filesystem.write") {
+    return "For filesystem.write, summarize what file was written, whether it was created or overwritten, and the resulting status.";
   }
   return "For shell.execute, summarize the verification outcome using the command result.";
 }

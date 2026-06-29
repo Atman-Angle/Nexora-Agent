@@ -28,3 +28,4 @@ export * from "./validation.js";
 export * from "./validation-plan.js";
 export * from "./working-set.js";
 export * from "./ledger.js";
+export * from "./write-result.js";

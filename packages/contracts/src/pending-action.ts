@@ -19,6 +19,7 @@ export const PendingActionResumeStateSchema = z.object({
   usage: AgentBudgetUsageSchema,
   nextSequence: z.number().int().positive(),
   currentWorkingSet: WorkingSetSchema.nullable(),
+  changedFiles: z.array(z.string().min(1)).default([]),
   recentToolResult: ToolResultSchema.nullable(),
   recentValidationResult: ValidationResultSchema.nullable(),
   latestIterationIndex: z.number().int().nonnegative(),

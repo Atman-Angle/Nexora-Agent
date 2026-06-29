@@ -271,12 +271,16 @@ export async function runToolMode(input: {
           await runCompletionGate({
             run: activeRun,
             task: input.task,
+            ledger: null,
             toolResult: toolExecution.toolResult,
+            latestValidationResult: null,
             finalArtifact: artifact,
             artifacts: [
               artifact,
               ...(toolExecution.artifacts ?? [])
             ],
+            events: input.eventStore.listEventsByRun(activeRun.runId),
+            workspaceRoot: input.workspaceRoot,
             now: input.now(),
             idGenerator: input.idGenerator
           })

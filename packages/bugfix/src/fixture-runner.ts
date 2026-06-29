@@ -27,6 +27,7 @@ export function prepareFixtureEnvironment(input: {
   templateRoot: string;
   options?: FixtureRunnerOptions;
 }): FixtureEnvironment {
+  ensureNodeExecutableOnPath();
   const manifest = input.manifest;
   if (!existsSync(input.templateRoot)) {
     throw new FixtureError("FIXTURE_NOT_FOUND", `Fixture template not found: ${input.templateRoot}`);
@@ -144,6 +145,21 @@ export function sanitizedEnv(): Record<string, string> {
   }
   env.NODE_OPTIONS = "";
   return env;
+}
+
+function ensureNodeExecutableOnPath(): void {
+  const nodeDirectory = dirname(process.execPath);
+  const pathKey = process.platform === "win32" ? "PATH" : "PATH";
+  const currentPath = process.env[pathKey] ?? "";
+  const separator = process.platform === "win32" ? ";" : ":";
+  const entries = currentPath
+    .split(separator)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (entries.some((entry) => entry.toLowerCase() === nodeDirectory.toLowerCase())) {
+    return;
+  }
+  process.env[pathKey] = currentPath.length === 0 ? nodeDirectory : `${nodeDirectory}${separator}${currentPath}`;
 }
 
 export function cleanupFixture(tempRoot: string): void {

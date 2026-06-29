@@ -9,6 +9,7 @@ import {
 } from "./repository-profile.js";
 import { SearchResultSchema } from "./search-result.js";
 import { ContextManifestSchema, WorkingSetSchema } from "./working-set.js";
+import { WriteResultSchema } from "./write-result.js";
 
 const ToolErrorSchema = z.object({
   code: z.enum([
@@ -24,6 +25,11 @@ const ToolErrorSchema = z.object({
     "EMPTY_SEARCH_QUERY",
     "EXPECTED_HASH_MISSING",
     "STALE_FILE_HASH",
+    "FILE_ALREADY_EXISTS",
+    "INVALID_WRITE_MODE",
+    "WRITE_FAILED",
+    "WRITE_VERIFICATION_FAILED",
+    "TEMP_FILE_CLEANUP_FAILED",
     "PATCH_INVALID",
     "PATCH_APPLY_FAILED",
     "PATCH_WRITE_FAILED",
@@ -216,6 +222,15 @@ export const ToolResultSchema = z.union([
   }),
   z.object({
     toolCallId: z.string().min(1),
+    toolName: z.literal("filesystem.write"),
+    status: z.literal("success"),
+    output: z.object({
+      kind: z.literal("write_result"),
+      result: WriteResultSchema
+    })
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
     toolName: z.literal("shell.execute"),
     status: z.literal("success"),
     output: z.object({
@@ -268,6 +283,7 @@ export const ToolResultSchema = z.union([
       "filesystem.read",
       "filesystem.search",
       "filesystem.patch",
+      "filesystem.write",
       "shell.execute",
       "filesystem.list",
       "git.status",

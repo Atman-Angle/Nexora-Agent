@@ -9,6 +9,7 @@ export const ExecutionRecordSchema = z.object({
     "filesystem.read",
     "filesystem.search",
     "filesystem.patch",
+    "filesystem.write",
     "shell.execute",
     "filesystem.list",
     "git.status",

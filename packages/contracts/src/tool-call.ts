@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { PatchOperationSchema } from "./patch-result.js";
+import { WriteModeSchema } from "./write-result.js";
 
 export const FilesystemListInputSchema = z.object({
   relativePath: z.string().min(1).default("."),
@@ -11,6 +12,25 @@ export const FilesystemListInputSchema = z.object({
 });
 
 export const GitDiffModeSchema = z.enum(["working", "staged"]);
+
+const FilesystemWriteInputSchema = z
+  .object({
+    path: z.string().min(1),
+    content: z.string(),
+    encoding: z.literal("utf8"),
+    mode: WriteModeSchema,
+    expectedHash: z.string().min(1).optional(),
+    idempotencyKey: z.string().min(1)
+  })
+  .superRefine((input, ctx) => {
+    if (input.mode === "overwrite" && input.expectedHash === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "filesystem.write overwrite mode requires expectedHash.",
+        path: ["expectedHash"]
+      });
+    }
+  });
 
 export const ToolCallSchema = z.union([
   z.object({
@@ -40,6 +60,12 @@ export const ToolCallSchema = z.union([
       encoding: z.literal("utf8"),
       idempotencyKey: z.string().min(1)
     }),
+    timeoutMs: z.number().int().positive().max(60_000)
+  }),
+  z.object({
+    toolCallId: z.string().min(1),
+    toolName: z.literal("filesystem.write"),
+    input: FilesystemWriteInputSchema,
     timeoutMs: z.number().int().positive().max(60_000)
   }),
   z.object({
@@ -112,6 +138,7 @@ export const ALL_TOOL_NAMES: ToolName[] = [
   "filesystem.read",
   "filesystem.search",
   "filesystem.patch",
+  "filesystem.write",
   "shell.execute",
   "filesystem.list",
   "git.status",

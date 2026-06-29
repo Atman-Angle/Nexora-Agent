@@ -5,6 +5,7 @@ import {
   AgentActionSchema,
   ApprovalDecisionSchema,
   createEvent,
+  createProgressLedger,
   createRun,
   createTask,
   type AgentAction,
@@ -148,6 +149,27 @@ export async function runCodingHarness(input: HarnessRunInput): Promise<HarnessR
     evidenceRefs.push(`reproduction:${reproduction.command}:${String(reproduction.exitCode)}`);
 
     const inspectEvents = await runInspectPhase({ manifest, env, appendEvent, now: input.now, evidenceRefs });
+
+    const seedLedger = createProgressLedger({
+      runId: run.runId,
+      anchor: {
+        goal: task.input.text,
+        constraints: [
+          "State Machine is the only writer of Run status.",
+          "Tool runtime must stay inside the authorized workspace.",
+          "Only one primary action is allowed per iteration.",
+          "Final cannot bypass the completion gate."
+        ],
+        successCriteria: [
+          "Apply a fix that satisfies the verification command.",
+          "Pass the validation plan.",
+          "Produce a final artifact that passes the completion gate."
+        ]
+      },
+      now: input.now()
+    });
+    seedLedger.evidenceRefs = [...new Set(evidenceRefs)];
+    ledgerStore.upsertLedger(seedLedger);
 
     const modelProvider = createModelProvider({
       fakeModelText: "ok",

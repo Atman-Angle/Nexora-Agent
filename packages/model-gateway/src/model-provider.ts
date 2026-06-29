@@ -64,6 +64,7 @@ export interface AgentLoopModelProvider {
     workingSet: WorkingSet | null;
     recentToolResult: ToolResult | null;
     recentValidationResult: ValidationResult | null;
+    validationRequest?: TaskValidationRequest;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
     availableTools: ToolName[];

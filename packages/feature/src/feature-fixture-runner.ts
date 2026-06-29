@@ -36,6 +36,7 @@ export async function prepareFeatureFixtureEnvironment(input: {
   templateRoot: string;
   options?: FeatureRunnerOptions;
 }): Promise<FeatureFixtureEnvironment> {
+  ensureNodeExecutableOnPath();
   const manifest = input.manifest;
   if (!existsSync(input.templateRoot)) {
     throw new FeatureFixtureError("FEATURE_FIXTURE_NOT_FOUND", `Feature fixture template not found: ${input.templateRoot}`);
@@ -215,6 +216,20 @@ export function buildChildEnv(workspaceRoot: string, port?: number, databasePath
   }
   env.NODE_OPTIONS = "";
   return env;
+}
+
+function ensureNodeExecutableOnPath(): void {
+  const nodeDirectory = dirname(process.execPath);
+  const currentPath = process.env.PATH ?? "";
+  const separator = process.platform === "win32" ? ";" : ":";
+  const entries = currentPath
+    .split(separator)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (entries.some((entry) => entry.toLowerCase() === nodeDirectory.toLowerCase())) {
+    return;
+  }
+  process.env.PATH = currentPath.length === 0 ? nodeDirectory : `${nodeDirectory}${separator}${currentPath}`;
 }
 
 function copyTemplate(templateRoot: string, workspaceRoot: string): void {

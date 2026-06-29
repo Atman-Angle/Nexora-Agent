@@ -5,6 +5,8 @@ import {
   createRun,
   createTask,
   ToolResultSchema,
+  type TaskAcceptanceCriterion,
+  type TaskType,
   type ApprovalDecision,
   type ApprovalScope,
   type CheckpointPhase,
@@ -12,7 +14,7 @@ import {
   type ProgressLedger,
   type ToolResult
 } from "../../../packages/contracts/src/index.js";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -41,7 +43,7 @@ import {
   UserInputStore,
   ValidationResultStore
 } from "../../../packages/storage/src/index.js";
-import { createDefaultToolRegistry, ToolRuntime } from "../../../packages/tool-runtime/src/index.js";
+import { createDefaultToolRegistry, resolveWorkspaceFilePath, ToolRuntime } from "../../../packages/tool-runtime/src/index.js";
 import { createModelProvider, resolveProviderKind, ModelConfigError, ModelHttpError, ModelTimeoutError, ModelJsonParseError } from "../../../packages/model-gateway/src/index.js";
 
 type CliError = {
@@ -320,6 +322,7 @@ export async function runAskCommand(text: string): Promise<{
     const task = createTask({
       taskId: randomUUID(),
       text,
+      taskType: "analysis",
       createdAt: now()
     });
     taskStore.insertTask(task);
@@ -387,6 +390,7 @@ export async function runReadCommand(filePath: string): Promise<{
     const task = createTask({
       taskId: randomUUID(),
       text: `Read file ${filePath}`,
+      taskType: "read_only",
       filePath,
       createdAt: now()
     });
@@ -464,6 +468,7 @@ export async function runSearchCommand(searchQuery: string): Promise<{
     const task = createTask({
       taskId: randomUUID(),
       text: searchQuery,
+      taskType: "read_only",
       searchQuery,
       createdAt: now()
     });
@@ -547,6 +552,7 @@ export async function runPatchCommand(command: {
     const task = createTask({
       taskId: randomUUID(),
       text: `Patch file ${command.path}`,
+      taskType: "workspace_mutation",
       patchRequest: {
         path: command.path,
         expectedHash: command.expectedHash,
@@ -640,6 +646,7 @@ export async function runVerifyCommand(command: {
     const task = createTask({
       taskId: randomUUID(),
       text: `Verify command ${command.command}`,
+      taskType: parseTaskTypeEnv(process.env.NEXORA_VERIFY_TASK_TYPE, "analysis"),
       validationRequest: {
         command: command.command,
         args: command.args,
@@ -665,6 +672,7 @@ export async function runVerifyCommand(command: {
                 ]
         }
       },
+      acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_VERIFY_ACCEPTANCE_CRITERIA_JSON),
       createdAt: now()
     });
     taskStore.insertTask(task);
@@ -755,6 +763,7 @@ export async function runAgentCommand(command: {
     const task = createTask({
       taskId: randomUUID(),
       text: command.goal,
+      taskType: parseTaskTypeEnv(process.env.NEXORA_AGENT_TASK_TYPE, "feature"),
       validationRequest: {
         command: command.command,
         args: command.args,
@@ -788,6 +797,7 @@ export async function runAgentCommand(command: {
           maxDurationMs: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_DURATION_MS) ?? 300_000
         }
       },
+      acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_AGENT_ACCEPTANCE_CRITERIA_JSON),
       createdAt: now()
     });
     taskStore.insertTask(task);
@@ -1392,7 +1402,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
       if (checkpoint.phase === "pre_tool") {
         if (pendingAction.action.toolCall.toolName === "filesystem.patch") {
           const workspaceRoot = requireWorkspaceRoot();
-          const currentFileHash = readWorkspaceFileHash(workspaceRoot, pendingAction.action.toolCall.input.path);
+          const currentFileHash = await readWorkspaceFileHash(workspaceRoot, pendingAction.action.toolCall.input.path);
           if (currentFileHash === null) {
             const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
             runStore.updateRun(blockedRun);
@@ -1434,6 +1444,85 @@ async function runResumeCommand(runId: string): Promise<unknown> {
                 waitingFor: "tool_execution",
                 previousStatus: run.status,
                 reason: "workspace_changed_before_patch_resume"
+              },
+              now()
+            );
+
+            const artifactRoot = resolveArtifactRoot(databasePath);
+            const task = requireTask(taskStore, run.taskId);
+            const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
+            const replanningResumeState = {
+              ...pendingAction.resumeState,
+              regroundRequested: true,
+              replanRequested: true
+            };
+            const modelProvider = createCliModelProvider({ agentActionSliceFrom: replanningResumeState.usage.modelCalls });
+            const toolRuntime = new ToolRuntime({
+              registry: createDefaultToolRegistry(),
+              executionRecordStore,
+              artifactStore
+            });
+
+            const result = await runAgentLoop({
+              task,
+              run,
+              now,
+              idGenerator: randomUUID,
+              workspaceRoot,
+              artifactRoot,
+              modelProvider,
+              toolRuntime,
+              runStore,
+              eventStore,
+              artifactStore,
+              validationResultStore,
+              ledgerStore,
+              agentIterationStore,
+              approvalStore,
+              pendingActionStore,
+              userInputStore,
+              checkpointStore,
+              resume: {
+                ledger,
+                resumeState: replanningResumeState
+              }
+            });
+
+            return {
+              ...renderAgentLoopResult(result),
+              checkpointId: checkpoint.checkpointId,
+              recoveryAction: "replan"
+            };
+          }
+        }
+
+        if (pendingAction.action.toolCall.toolName === "filesystem.write") {
+          const workspaceRoot = requireWorkspaceRoot();
+          const currentFileHash = await readWorkspaceFileHash(workspaceRoot, pendingAction.action.toolCall.input.path);
+          const writeMode = pendingAction.action.toolCall.input.mode;
+          const expectedHash = pendingAction.action.toolCall.input.expectedHash ?? null;
+          const shouldReplan =
+            writeMode === "create"
+              ? currentFileHash !== null
+              : currentFileHash === null || expectedHash === null || currentFileHash !== expectedHash;
+
+          if (shouldReplan) {
+            pendingActionStore.updatePendingAction({
+              ...pendingAction,
+              status: "cancelled",
+              updatedAt: now()
+            });
+
+            appendRunEvent(
+              eventStore,
+              run.runId,
+              "recovery.decision",
+              {
+                action: "replan",
+                checkpointId: checkpoint.checkpointId,
+                waitingFor: "tool_execution",
+                previousStatus: run.status,
+                reason: "workspace_changed_before_write_resume"
               },
               now()
             );
@@ -1563,7 +1652,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         };
       }
 
-      if (checkpoint.phase === "post_tool" || checkpoint.phase === "post_patch") {
+      if (checkpoint.phase === "post_tool" || checkpoint.phase === "post_patch" || checkpoint.phase === "post_write") {
         if (pendingAction.action.toolCall.toolName === "shell.execute") {
           const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
           runStore.updateRun(blockedRun);
@@ -1641,12 +1730,54 @@ async function runResumeCommand(runId: string): Promise<unknown> {
             ...pendingAction.resumeState.usage,
             toolCalls: pendingAction.resumeState.usage.toolCalls + 1
           },
+          changedFiles:
+            recoveredToolResult.status === "success" &&
+            (recoveredToolResult.toolName === "filesystem.patch" || recoveredToolResult.toolName === "filesystem.write")
+              ? [
+                  ...new Set([
+                    ...pendingAction.resumeState.changedFiles,
+                    recoveredToolResult.output.result.path
+                  ])
+                ]
+              : pendingAction.resumeState.changedFiles,
           recentToolResult: recoveredToolResult,
+          recentValidationResult:
+            recoveredToolResult.status === "success" &&
+            (recoveredToolResult.toolName === "filesystem.patch" || recoveredToolResult.toolName === "filesystem.write")
+              ? null
+              : pendingAction.resumeState.recentValidationResult,
           currentWorkingSet:
             recoveredToolResult.toolName === "filesystem.search" && recoveredToolResult.status === "success"
               ? recoveredToolResult.output.workingSet
               : pendingAction.resumeState.currentWorkingSet
         };
+
+        if (recoveredToolResult.status === "success" && recoveredToolResult.toolName === "filesystem.patch") {
+          appendRunEvent(
+            eventStore,
+            run.runId,
+            "patch.applied",
+            {
+              path: recoveredToolResult.output.result.path,
+              status: recoveredToolResult.output.result.status,
+              changed: recoveredToolResult.output.result.changed
+            },
+            now()
+          );
+        }
+        if (recoveredToolResult.status === "success" && recoveredToolResult.toolName === "filesystem.write") {
+          appendRunEvent(
+            eventStore,
+            run.runId,
+            "patch.applied",
+            {
+              path: recoveredToolResult.output.result.path,
+              status: recoveredToolResult.output.result.mode,
+              changed: true
+            },
+            now()
+          );
+        }
 
         appendRunEvent(
           eventStore,
@@ -1935,10 +2066,9 @@ function collectArtifactRefs(toolResult: ToolResult): string[] {
   return [];
 }
 
-function readWorkspaceFileHash(workspaceRoot: string, relativePath: string): string | null {
-  const absolutePath = join(workspaceRoot, relativePath);
+async function readWorkspaceFileHash(workspaceRoot: string, relativePath: string): Promise<string | null> {
   try {
-    statSync(absolutePath);
+    const absolutePath = await resolveWorkspaceFilePath(workspaceRoot, relativePath);
     return computeArtifactHash(readFileSync(absolutePath, "utf8"));
   } catch {
     return null;
@@ -2242,6 +2372,30 @@ function requireWorkspaceRoot(): string {
 
 function resolveArtifactRoot(databasePath: string): string {
   return process.env.NEXORA_ARTIFACT_ROOT?.trim().length ? process.env.NEXORA_ARTIFACT_ROOT : join(dirname(databasePath), "artifacts");
+}
+
+function parseTaskTypeEnv(value: string | undefined, fallback: TaskType): TaskType {
+  const normalized = value?.trim();
+  if (
+    normalized === "read_only" ||
+    normalized === "analysis" ||
+    normalized === "workspace_mutation" ||
+    normalized === "bug_fix" ||
+    normalized === "feature"
+  ) {
+    return normalized;
+  }
+
+  return fallback;
+}
+
+function parseAcceptanceCriteriaEnv(value: string | undefined): TaskAcceptanceCriterion[] {
+  const normalized = value?.trim();
+  if (normalized === undefined || normalized.length === 0) {
+    return [];
+  }
+
+  return JSON.parse(normalized) as TaskAcceptanceCriterion[];
 }
 
 function requireRun(runStore: RunStore, runId: string) {

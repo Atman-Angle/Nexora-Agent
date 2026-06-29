@@ -11,7 +11,7 @@ import {
   type ToolResult
 } from "../../contracts/src/index.js";
 import { ToolRuntimeError } from "./errors.js";
-import { resolveWorkspacePath } from "./workspace-boundary.js";
+import { resolveWorkspaceFilePath } from "./workspace-boundary.js";
 
 export async function executeFilesystemPatch(input: {
   runId: string;
@@ -30,7 +30,7 @@ export async function executeFilesystemPatch(input: {
     throw new ToolRuntimeError("EXPECTED_HASH_MISSING", "Patch expectedHash must not be empty.", false);
   }
 
-  const resolvedPath = await resolveWorkspacePath(input.workspaceRoot, input.toolCall.input.path);
+  const resolvedPath = await resolveWorkspaceFilePath(input.workspaceRoot, input.toolCall.input.path);
   const originalBuffer = await readTextFile(resolvedPath, input.signal);
   const originalText = originalBuffer.toString("utf8");
   const oldHash = computeArtifactHash(originalText);

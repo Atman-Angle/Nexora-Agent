@@ -31,7 +31,7 @@ export class ExecutionRecordStore {
   }
 
   public findByIdempotency(input: {
-    toolName: "filesystem.patch" | "shell.execute";
+    toolName: "filesystem.patch" | "filesystem.write" | "shell.execute";
     targetPath: string;
     idempotencyKey: string;
   }): ExecutionRecord | null {
@@ -51,7 +51,7 @@ export class ExecutionRecordStore {
           schema_version: string;
           run_id: string;
           tool_call_id: string;
-          tool_name: "filesystem.patch" | "shell.execute";
+          tool_name: "filesystem.patch" | "filesystem.write" | "shell.execute";
           status: "success" | "error";
           target_path: string | null;
           idempotency_key: string | null;

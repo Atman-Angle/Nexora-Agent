@@ -72,6 +72,10 @@ export function measureToolResultFootprint(toolResult: ToolResult): number {
     return JSON.stringify(toolResult.output.result).length;
   }
 
+  if (toolResult.toolName === "filesystem.write") {
+    return JSON.stringify(toolResult.output.result).length;
+  }
+
   if (toolResult.toolName === "shell.execute") {
     return JSON.stringify(toolResult.output.result).length;
   }
@@ -140,6 +144,20 @@ export function summarizeToolResult(toolResult: ToolResult, budget: ContextBudge
       status: "success",
       summary,
       artifactRefs: [result.diffArtifactRef],
+      truncated: summary.length < inlineSummary.length
+    });
+  }
+
+  if (toolResult.toolName === "filesystem.write") {
+    const result = toolResult.output.result;
+    const inlineSummary = `Wrote ${result.path}: ${result.mode} (created ${String(result.created)}).`;
+    const summary = truncate(inlineSummary, budget.maxToolResultSummaryChars);
+    return ToolResultSummarySchema.parse({
+      toolCallId: toolResult.toolCallId,
+      toolName: toolResult.toolName,
+      status: "success",
+      summary,
+      artifactRefs: [],
       truncated: summary.length < inlineSummary.length
     });
   }

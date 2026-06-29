@@ -4,7 +4,7 @@ import { dirname, extname, join } from "node:path";
 import { createFileArtifact, type Artifact, type ToolCall, type ToolResult } from "../../contracts/src/index.js";
 import { computeArtifactHash } from "../../contracts/src/artifact.js";
 import { ToolRuntimeError } from "./errors.js";
-import { resolveWorkspacePath } from "./workspace-boundary.js";
+import { resolveWorkspaceFilePath } from "./workspace-boundary.js";
 
 const INLINE_TEXT_LIMIT_BYTES = 16 * 1024;
 const PREVIEW_TEXT_LIMIT = 200;
@@ -21,7 +21,7 @@ export async function executeFilesystemRead(input: {
   toolResult: ToolResult;
   artifacts?: Artifact[];
 }> {
-  const resolvedPath = await resolveWorkspacePath(input.workspaceRoot, input.toolCall.input.path);
+  const resolvedPath = await resolveWorkspaceFilePath(input.workspaceRoot, input.toolCall.input.path);
 
   let fileBuffer: Buffer;
   try {

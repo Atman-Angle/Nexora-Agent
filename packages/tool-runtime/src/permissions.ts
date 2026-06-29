@@ -5,6 +5,7 @@ export type Permission = {
     | "filesystem.read"
     | "filesystem.search"
     | "filesystem.patch"
+    | "filesystem.write"
     | "shell.execute"
     | "filesystem.list"
     | "git.status"
@@ -29,7 +30,7 @@ const READ_OPERATIONS = new Set<Permission["operation"]>([
 ]);
 
 export function classifyRisk(operation: Permission["operation"]): RiskLevel {
-  if (operation === "filesystem.patch") {
+  if (operation === "filesystem.patch" || operation === "filesystem.write") {
     return "write";
   }
 
@@ -44,6 +45,7 @@ const ALL_OPERATIONS = new Set<Permission["operation"]>([
   "filesystem.read",
   "filesystem.search",
   "filesystem.patch",
+  "filesystem.write",
   "shell.execute",
   "filesystem.list",
   "git.status",

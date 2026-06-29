@@ -59,7 +59,7 @@ export function readDatabaseState(path: string): {
   try {
     const tasks = database.connection
       .prepare(
-        `SELECT id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, source, created_at
+        `SELECT id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, task_type, acceptance_criteria_json, source, created_at
          FROM tasks
          ORDER BY created_at ASC`
       )
@@ -132,7 +132,22 @@ export function readDatabaseState(path: string): {
                       maxDurationMs: number;
                     };
                   }
-                })
+                }),
+            taskType: (((row as Record<string, unknown>).task_type as string | null) ?? null) ?? undefined,
+            acceptanceCriteria:
+              (((row as Record<string, unknown>).acceptance_criteria_json as string | null) ?? null) === null
+                ? []
+                : (JSON.parse(String((row as Record<string, unknown>).acceptance_criteria_json)) as Array<{
+                    id: string;
+                    description: string;
+                    required?: boolean;
+                    check:
+                      | { type: "changed_files_non_empty" }
+                      | { type: "file_exists"; path: string }
+                      | { type: "file_non_empty"; path: string }
+                      | { type: "directory_non_empty"; path: string }
+                      | { type: "file_contains"; path: string; text: string };
+                  }>)
           },
           source: (row as Record<string, unknown>).source,
           createdAt: (row as Record<string, unknown>).created_at

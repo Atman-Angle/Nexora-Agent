@@ -210,6 +210,13 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
       };
     }
 
+    if (input.toolResult.toolName === "filesystem.write" && input.toolResult.status === "success") {
+      return {
+        type: "final",
+        text: `Wrote ${input.toolResult.output.result.path} with mode ${input.toolResult.output.result.mode}.`
+      };
+    }
+
     if (input.toolResult.toolName === "shell.execute" && input.toolResult.status === "success") {
       const exitCodeLabel = input.toolResult.output.result.exitCode === null ? "null" : String(input.toolResult.output.result.exitCode);
       return {
@@ -257,6 +264,7 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
     workingSet: WorkingSet | null;
     recentToolResult: ToolResult | null;
     recentValidationResult: ValidationResult | null;
+    validationRequest?: TaskValidationRequest;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
     availableTools: ToolName[];

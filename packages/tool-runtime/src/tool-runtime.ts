@@ -53,7 +53,7 @@ export class ToolRuntime {
         scope: "workspace"
       });
 
-      const replayed = this.replayIdempotentPatch(parsedToolCall);
+      const replayed = this.replayIdempotentExecution(parsedToolCall);
       if (replayed !== null) {
         return replayed;
       }
@@ -126,21 +126,23 @@ export class ToolRuntime {
     }
   }
 
-  private replayIdempotentPatch(
+  public getAvailableTools(): ToolCall["toolName"][] {
+    return this.dependencies.registry.listNames();
+  }
+
+  private replayIdempotentExecution(
     toolCall: ToolCall
   ): {
     toolResult: ToolResult;
     executionRecord: ExecutionRecord;
   } | null {
-    if (toolCall.toolName !== "filesystem.patch") {
-      if (toolCall.toolName !== "shell.execute") {
-        return null;
-      }
+    if (toolCall.toolName !== "filesystem.patch" && toolCall.toolName !== "filesystem.write" && toolCall.toolName !== "shell.execute") {
+      return null;
     }
 
     const existingRecord = this.dependencies.executionRecordStore.findByIdempotency({
       toolName: toolCall.toolName,
-      targetPath: toolCall.toolName === "filesystem.patch" ? toolCall.input.path : toolCall.input.cwd,
+      targetPath: toolCall.toolName === "shell.execute" ? toolCall.input.cwd : toolCall.input.path,
       idempotencyKey: toolCall.input.idempotencyKey
     });
     if (existingRecord === null) {
@@ -158,16 +160,10 @@ export class ToolRuntime {
 
     const replayedResult = ToolResultSchema.parse(JSON.parse(existingRecord.outputJson) as ToolResult);
     return {
-      toolResult:
-        replayedResult.status === "success" && replayedResult.toolName === "filesystem.patch"
-          ? {
-              ...replayedResult,
-              toolCallId: toolCall.toolCallId
-            }
-          : {
-              ...replayedResult,
-              toolCallId: toolCall.toolCallId
-            },
+      toolResult: {
+        ...replayedResult,
+        toolCallId: toolCall.toolCallId
+      },
       executionRecord: existingRecord
     };
   }
@@ -192,9 +188,20 @@ function hasSameIdempotentSemantics(left: ToolCall, right: ToolCall): boolean {
     );
   }
 
-  if (left.toolName === "shell.execute" && right.toolName === "shell.execute") {
+  if (left.toolName === "filesystem.write" && right.toolName === "filesystem.write") {
     return (
       left.timeoutMs === right.timeoutMs &&
+      left.input.path === right.input.path &&
+      left.input.content === right.input.content &&
+      left.input.encoding === right.input.encoding &&
+      left.input.mode === right.input.mode &&
+      (left.input.expectedHash ?? null) === (right.input.expectedHash ?? null) &&
+      left.input.idempotencyKey === right.input.idempotencyKey
+    );
+  }
+
+  if (left.toolName === "shell.execute" && right.toolName === "shell.execute") {
+    return (
       left.input.command === right.input.command &&
       left.input.cwd === right.input.cwd &&
       left.input.purpose === right.input.purpose &&
@@ -226,8 +233,10 @@ function persistExecutionRecord(input: {
     toolName: input.toolCall.toolName,
     status: input.toolResult.status,
     ...(input.toolCall.toolName === "filesystem.patch" ? { targetPath: input.toolCall.input.path } : {}),
+    ...(input.toolCall.toolName === "filesystem.write" ? { targetPath: input.toolCall.input.path } : {}),
     ...(input.toolCall.toolName === "shell.execute" ? { targetPath: input.toolCall.input.cwd } : {}),
     ...(input.toolCall.toolName === "filesystem.patch" ? { idempotencyKey: input.toolCall.input.idempotencyKey } : {}),
+    ...(input.toolCall.toolName === "filesystem.write" ? { idempotencyKey: input.toolCall.input.idempotencyKey } : {}),
     ...(input.toolCall.toolName === "shell.execute" ? { idempotencyKey: input.toolCall.input.idempotencyKey } : {}),
     inputJson: JSON.stringify(input.toolCall),
     outputJson: JSON.stringify(input.toolResult),

@@ -3,6 +3,7 @@ export * from "./filesystem-list.js";
 export * from "./filesystem-patch.js";
 export * from "./filesystem-read.js";
 export * from "./filesystem-search.js";
+export * from "./filesystem-write.js";
 export * from "./git-diff.js";
 export * from "./git-runner.js";
 export * from "./git-show.js";

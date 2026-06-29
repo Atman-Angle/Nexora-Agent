@@ -1,9 +1,14 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import {
   AgentActionSchema,
   AgentIterationSchema,
   AgentBudgetUsageSchema,
+  ALL_TOOL_NAMES,
   type AgentBudgetUsage,
   ApprovalRequestSchema,
+  ValidationResultSchema,
   ValidationPlanSchema,
   computeArtifactHash,
   createCheckpoint,
@@ -27,7 +32,6 @@ import {
   type TestResult,
   type ToolCall,
   type ToolResult,
-  ALL_TOOL_NAMES,
   type UserInputRequest,
   type ValidationResult,
   type WorkingSet
@@ -145,6 +149,7 @@ export async function runAgentLoop(input: {
       ? Math.max(1, input.eventStore.listEventsByRun(input.run.runId).length + 1)
       : Math.max(input.resume.resumeState.nextSequence, input.eventStore.listEventsByRun(input.run.runId).length + 1);
   let currentWorkingSet = input.resume?.resumeState.currentWorkingSet ?? null;
+  let changedFiles = input.resume?.resumeState.changedFiles ?? [];
   let recentToolResult = input.resume?.resumeState.recentToolResult ?? null;
   let recentValidationResult = input.resume?.resumeState.recentValidationResult ?? null;
   let latestIterationIndex = input.resume?.resumeState.latestIterationIndex ?? 0;
@@ -180,19 +185,21 @@ export async function runAgentLoop(input: {
   };
   let ledger =
     input.resume?.ledger ??
+    input.ledgerStore.getByRun(activeRun.runId) ??
     createProgressLedger({
       runId: activeRun.runId,
       anchor,
       now: input.now()
     });
 
-  const appendEvent = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
+  const appendEventWithSequence = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
     Promise.resolve().then(() => {
+      const sequence = nextSequence;
       input.eventStore.appendEvent(
         createEvent({
           eventId: input.idGenerator(),
           runId: activeRun.runId,
-          sequence: nextSequence,
+          sequence,
           type,
           timestamp,
           payload
@@ -200,7 +207,10 @@ export async function runAgentLoop(input: {
       );
       maybeAbortAfterEvent(type);
       nextSequence += 1;
+      return sequence;
     });
+  const appendEvent = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
+    appendEventWithSequence(type, payload, timestamp).then(() => undefined);
 
   const persistLedger = async (nextLedger: ProgressLedger) => {
     ledger = nextLedger;
@@ -283,6 +293,7 @@ export async function runAgentLoop(input: {
     };
   let seededAction = input.resume?.seedAction ?? null;
   let bypassApprovalForSeedAction = input.resume?.bypassApprovalForSeedAction ?? false;
+  const availableTools = input.toolRuntime.getAvailableTools().filter((toolName) => ALL_TOOL_NAMES.includes(toolName));
 
   for (;;) {
     let action: AgentAction | undefined;
@@ -377,9 +388,12 @@ export async function runAgentLoop(input: {
               workingSet: currentWorkingSet,
               recentToolResult,
               recentValidationResult,
+              ...(input.task.input.validationRequest === undefined
+                ? {}
+                : { validationRequest: input.task.input.validationRequest }),
               budget: input.task.input.agentRequest.budget,
               usage,
-              availableTools: ALL_TOOL_NAMES,
+              availableTools,
               regroundRequested,
               replanRequested,
               contextSnapshot,
@@ -501,6 +515,7 @@ export async function runAgentLoop(input: {
         nextSequence,
         latestIterationIndex,
         currentWorkingSet,
+        changedFiles,
         recentToolResult,
         recentValidationResult,
         regroundRequested,
@@ -524,76 +539,66 @@ export async function runAgentLoop(input: {
     }
 
     if (action.type === "final") {
-      if (input.approvalStore.hasPendingByRun(activeRun.runId) || input.userInputStore.hasPendingByRun(activeRun.runId)) {
-        return failRun({
-          input,
-          run: activeRun,
-          appendEvent,
-          code: "PENDING_REQUEST_UNRESOLVED",
-          message: "Final cannot bypass unresolved approvals or user input requests.",
-          retryable: false
-        });
-      }
-
-      if (
-        recentToolResult === null ||
-        recentToolResult.toolName !== "shell.execute" ||
-        recentToolResult.status !== "success" ||
-        recentValidationResult?.status !== "passed"
-      ) {
-        return failRun({
-          input,
-          run: activeRun,
-          appendEvent,
-          code: "MODEL_FINAL_REJECTED",
-          message: "Final was proposed before a passing verification result was available.",
-          retryable: false
-        });
-      }
-
       const knownEvidenceRefs = new Set([
         ...ledger.evidenceRefs,
-        ...(recentValidationResult.evidenceRecords?.map((record) => record.evidenceId) ?? [])
+        ...(recentValidationResult?.evidenceRecords?.map((record) => record.evidenceId) ?? [])
       ]);
-      for (const evidenceRef of action.evidenceRefs ?? []) {
-        if (!knownEvidenceRefs.has(evidenceRef)) {
-          return failRun({
-            input,
-            run: activeRun,
-            appendEvent,
-            code: "FINAL_EVIDENCE_MISSING",
-            message: `Final referenced unknown evidence ${evidenceRef}.`,
-            retryable: false
-          });
-        }
-      }
+      const invalidFinalEvidenceRefs = (action.evidenceRefs ?? []).filter((evidenceRef) => !knownEvidenceRefs.has(evidenceRef));
+      const finalProposedAt = input.now();
+      await appendEvent(
+        "model.final.proposed",
+        {
+          evidenceRefs: action.evidenceRefs ?? [],
+          textLength: action.text.length
+        },
+        finalProposedAt
+      );
 
       const artifact = createTextArtifact({
         artifactId: input.idGenerator(),
         runId: activeRun.runId,
         content: action.text,
-        createdAt: input.now()
+        createdAt: finalProposedAt
       });
-      input.artifactStore.insertArtifact(artifact);
-      await appendEvent("artifact.created", { artifactId: artifact.artifactId }, artifact.createdAt);
 
       const verifyingAt = input.now();
       activeRun = transitionRun(activeRun, "verifying", verifyingAt);
       input.runStore.updateRun(activeRun);
       await checkpoint("pre_validation");
-      await appendEvent("validation.started", { status: activeRun.status }, verifyingAt);
+      const validationStartSequence = await appendEventWithSequence("validation.started", { status: activeRun.status }, verifyingAt);
 
-      const validation = (
+      let validation = (
         await runCompletionGate({
           run: activeRun,
           task: input.task,
+          ledger,
           toolResult: recentToolResult,
+          latestValidationResult: recentValidationResult,
           finalArtifact: artifact,
           artifacts: input.artifactStore.getArtifactsByRun(activeRun.runId),
+          events: input.eventStore.listEventsByRun(activeRun.runId),
+          workspaceRoot: input.workspaceRoot,
           now: input.now(),
           idGenerator: input.idGenerator
         })
       ).validation;
+      if (invalidFinalEvidenceRefs.length > 0) {
+        validation = ValidationResultSchema.parse({
+          ...validation,
+          status: "failed",
+          evidence: [
+            ...validation.evidence,
+            ...invalidFinalEvidenceRefs.map((evidenceRef) => ({
+              code: "FINAL_EVIDENCE_MISSING",
+              message: `Final referenced unknown evidence ${evidenceRef}.`
+            }))
+          ]
+        });
+      }
+      validation = ValidationResultSchema.parse({
+        ...validation,
+        validationSequence: validationStartSequence
+      });
 
       input.validationResultStore.upsertValidationResult({
         runId: activeRun.runId,
@@ -611,7 +616,8 @@ export async function runAgentLoop(input: {
         status: validation.status === "passed" ? "completed" : "failed",
         usage,
         summary: "Final artifact proposed.",
-        evidenceRefs: action.evidenceRefs ?? [],
+        latestValidationStatus: validation.status,
+        evidenceRefs: validation.evidenceRecords.map((record) => record.evidenceId),
         now: input.now()
       });
       input.agentIterationStore.insertIteration(iteration);
@@ -620,18 +626,88 @@ export async function runAgentLoop(input: {
         { index: iteration.index, actionType: iteration.actionType },
         iteration.createdAt
       );
+      latestIterationIndex += 1;
 
       if (validation.status === "failed") {
-        return failRun({
-          input,
-          run: activeRun,
-          appendEvent,
-          code: "VALIDATION_FAILED",
-          message: "Completion gate rejected the final artifact.",
-          retryable: false
+        const evidenceRefs = validation.evidenceRecords.map((record) => record.evidenceId);
+        const rejectionMessages = [
+          ...new Set(
+            [
+              ...(input.approvalStore.hasPendingByRun(activeRun.runId) || input.userInputStore.hasPendingByRun(activeRun.runId)
+                ? ["Cannot finalize: unresolved approval or user input request is still pending."]
+                : []),
+              ...validation.evidence.map((entry) => entry.message),
+              ...invalidFinalEvidenceRefs.map(
+                (evidenceRef) => `Final referenced unknown evidence ${evidenceRef}.`
+              )
+            ].filter((message) => message.trim().length > 0)
+          )
+        ];
+        await appendEvent(
+          "model.final.rejected",
+          {
+            reasons: rejectionMessages,
+            evidenceRefs
+          },
+          input.now()
+        );
+        ledger = appendFailedAttempt({
+          ledger,
+          now: input.now(),
+          actionType: "final",
+          summary: rejectionMessages.join(" "),
+          errorCode: "MODEL_FINAL_REJECTED",
+          retryable: false,
+          evidenceRefs
         });
+        ledger = applyLedgerPatch({
+          ledger,
+          patch: {
+            appendEvidenceRefs: evidenceRefs,
+            appendDecisions: rejectionMessages
+          },
+          now: input.now()
+        });
+        await persistLedger(ledger);
+        recentValidationResult = validation;
+        activeRun = transitionRun(activeRun, "running", input.now());
+        input.runStore.updateRun(activeRun);
+
+        const noProgressSignals = detectNoProgress({
+          previous: previousSnapshot,
+          current: {
+            actionSignature,
+            errorCode: "MODEL_FINAL_REJECTED",
+            ledgerVersion: ledger.version,
+            evidenceCount: ledger.evidenceRefs.length,
+            validationStatus: validation.status,
+            artifactHash: null
+          }
+        });
+        previousSnapshot = {
+          actionSignature,
+          errorCode: "MODEL_FINAL_REJECTED",
+          ledgerVersion: ledger.version,
+          evidenceCount: ledger.evidenceRefs.length,
+          validationStatus: validation.status,
+          artifactHash: null
+        };
+        ({ ledger, noProgressCount, regroundRequested, replanRequested } = await handleNoProgress({
+          input: {
+            now: input.now,
+            ledgerStore: input.ledgerStore
+          },
+          appendEvent,
+          ledger,
+          noProgressCount,
+          signals: noProgressSignals
+        }));
+        continue;
       }
 
+      await appendEvent("model.final.accepted", { evidenceRefs: validation.evidenceRecords.map((record) => record.evidenceId) }, input.now());
+      input.artifactStore.insertArtifact(artifact);
+      await appendEvent("artifact.created", { artifactId: artifact.artifactId }, artifact.createdAt);
       const succeededAt = input.now();
       activeRun = transitionRun(activeRun, "succeeded", succeededAt);
       input.runStore.updateRun(activeRun);
@@ -677,11 +753,12 @@ export async function runAgentLoop(input: {
           ledger,
           appendEvent,
           checkpoint,
-          nextSequence,
-          latestIterationIndex,
-          currentWorkingSet,
-          recentToolResult,
-          recentValidationResult,
+        nextSequence,
+        latestIterationIndex,
+        currentWorkingSet,
+        changedFiles,
+        recentToolResult,
+        recentValidationResult,
           regroundRequested,
           replanRequested,
           noProgressCount,
@@ -716,10 +793,11 @@ export async function runAgentLoop(input: {
       },
       resumeState: buildResumeState({
         usage,
-        nextSequence: nextSequence + 1,
-        currentWorkingSet,
-        recentToolResult,
-        recentValidationResult,
+          nextSequence: nextSequence + 1,
+          currentWorkingSet,
+          changedFiles,
+          recentToolResult,
+          recentValidationResult,
         latestIterationIndex,
         regroundRequested,
         replanRequested,
@@ -735,6 +813,11 @@ export async function runAgentLoop(input: {
     });
     if (toolCall.toolName === "filesystem.patch") {
       await checkpoint("pre_patch", {
+        pendingActionId: toolPendingAction.pendingActionId,
+        pendingActionFingerprint: actionFingerprint
+      });
+    } else if (toolCall.toolName === "filesystem.write") {
+      await checkpoint("pre_write", {
         pendingActionId: toolPendingAction.pendingActionId,
         pendingActionFingerprint: actionFingerprint
       });
@@ -775,6 +858,11 @@ export async function runAgentLoop(input: {
     });
     if (toolCall.toolName === "filesystem.patch") {
       await checkpoint("post_patch", {
+        pendingActionId: toolPendingAction.pendingActionId,
+        pendingActionFingerprint: actionFingerprint
+      });
+    } else if (toolCall.toolName === "filesystem.write") {
+      await checkpoint("post_write", {
         pendingActionId: toolPendingAction.pendingActionId,
         pendingActionFingerprint: actionFingerprint
       });
@@ -935,6 +1023,18 @@ export async function runAgentLoop(input: {
         input.now()
       );
     }
+
+    if (execution.toolResult.toolName === "filesystem.write") {
+      await appendEvent(
+        "patch.applied",
+        {
+          path: execution.toolResult.output.result.path,
+          status: execution.toolResult.output.result.mode,
+          changed: true
+        },
+        input.now()
+      );
+    }
     await appendEvent("tool.completed", { toolName: execution.toolResult.toolName }, input.now());
 
     const resumedAt = input.now();
@@ -946,6 +1046,12 @@ export async function runAgentLoop(input: {
 
     if (execution.toolResult.toolName === "filesystem.patch") {
       artifactHash = execution.toolResult.output.result.newHash;
+      changedFiles = appendChangedFile(changedFiles, execution.toolResult.output.result.path);
+      recentValidationResult = null;
+    } else if (execution.toolResult.toolName === "filesystem.write") {
+      artifactHash = execution.toolResult.output.result.hash;
+      changedFiles = appendChangedFile(changedFiles, execution.toolResult.output.result.path);
+      recentValidationResult = null;
     }
 
     if (
@@ -958,6 +1064,8 @@ export async function runAgentLoop(input: {
         task: input.task,
         toolResult: execution.toolResult,
         artifacts: input.artifactStore.getArtifactsByRun(activeRun.runId),
+        changedFiles,
+        workspaceRoot: input.workspaceRoot,
         now: input.now(),
         idGenerator: input.idGenerator
       });
@@ -994,6 +1102,18 @@ export async function runAgentLoop(input: {
       }
       await persistLedger(ledger);
     }
+
+    ledger = completePlanStepFromTool({
+      ledger,
+      toolResult: execution.toolResult,
+      executionEvidenceRefs: [`execution:${execution.executionRecord.executionId}`],
+      validationEvidenceRefs:
+        execution.toolResult.toolName === "shell.execute" && recentValidationResult !== null
+          ? recentValidationResult.evidenceRecords.map((record) => record.evidenceId)
+          : [],
+      now: input.now()
+    });
+    await persistLedger(ledger);
 
     const iteration = createIteration({
       iterationId: input.idGenerator(),
@@ -1075,6 +1195,7 @@ async function waitForApproval(input: {
   nextSequence: number;
   latestIterationIndex: number;
   currentWorkingSet: WorkingSet | null;
+  changedFiles: string[];
   recentToolResult: ToolResult | null;
   recentValidationResult: ValidationResult | null;
   regroundRequested: boolean;
@@ -1128,6 +1249,7 @@ async function waitForApproval(input: {
       usage: input.usage,
       nextSequence: input.nextSequence + 2,
       currentWorkingSet: input.currentWorkingSet,
+      changedFiles: input.changedFiles,
       recentToolResult: input.recentToolResult,
       recentValidationResult: input.recentValidationResult,
       latestIterationIndex: input.latestIterationIndex,
@@ -1168,6 +1290,7 @@ async function waitForUser(input: {
   nextSequence: number;
   latestIterationIndex: number;
   currentWorkingSet: WorkingSet | null;
+  changedFiles: string[];
   recentToolResult: ToolResult | null;
   recentValidationResult: ValidationResult | null;
   regroundRequested: boolean;
@@ -1220,6 +1343,7 @@ async function waitForUser(input: {
       usage: input.usage,
       nextSequence: input.nextSequence + 2,
       currentWorkingSet: input.currentWorkingSet,
+      changedFiles: input.changedFiles,
       recentToolResult: input.recentToolResult,
       recentValidationResult: input.recentValidationResult,
       latestIterationIndex: input.latestIterationIndex,
@@ -1253,6 +1377,7 @@ function buildResumeState(input: {
   };
   nextSequence: number;
   currentWorkingSet: WorkingSet | null;
+  changedFiles: string[];
   recentToolResult: ToolResult | null;
   recentValidationResult: ValidationResult | null;
   latestIterationIndex: number;
@@ -1265,6 +1390,7 @@ function buildResumeState(input: {
     usage: AgentBudgetUsageSchema.parse(input.usage),
     nextSequence: input.nextSequence,
     currentWorkingSet: input.currentWorkingSet,
+    changedFiles: input.changedFiles,
     recentToolResult: input.recentToolResult,
     recentValidationResult: input.recentValidationResult,
     latestIterationIndex: input.latestIterationIndex,
@@ -1360,7 +1486,7 @@ function applyLedgerPatch(input: {
   now: string;
 }): ProgressLedger {
   const unique = (values: string[]) => [...new Set(values)];
-  return {
+  const patched = {
     ...input.ledger,
     ...(input.patch.currentStep === undefined ? {} : { currentStep: input.patch.currentStep }),
     plannedSteps: unique([...input.ledger.plannedSteps, ...(input.patch.appendPlannedSteps ?? [])]),
@@ -1372,6 +1498,177 @@ function applyLedgerPatch(input: {
     version: input.ledger.version + 1,
     updatedAt: input.now
   };
+  return reconcilePlanSteps(patched, input.patch, input.now);
+}
+
+function reconcilePlanSteps(
+  ledger: ProgressLedger,
+  patch: {
+    currentStep?: string | null | undefined;
+    appendPlannedSteps?: string[] | undefined;
+    appendCompletedSteps?: string[] | undefined;
+  },
+  now: string
+): ProgressLedger {
+  const planSteps = ledger.planSteps.map((step) => ({ ...step, evidenceRefs: [...step.evidenceRefs] }));
+  const ensureStep = (description: string, status: "planned" | "in_progress" | "completed") => {
+    const existing = planSteps.find((step) => step.description === description);
+    const inferredEvidenceRefs =
+      status === "completed"
+        ? inferPlanStepEvidenceRefs(description, ledger.evidenceRefs).length > 0
+          ? inferPlanStepEvidenceRefs(description, ledger.evidenceRefs)
+          : [...ledger.evidenceRefs]
+        : inferPlanStepEvidenceRefs(description, ledger.evidenceRefs);
+    if (existing !== undefined) {
+      if (existing.status !== "completed") {
+        existing.status = status;
+        existing.updatedAt = now;
+        if (status === "completed" && existing.evidenceRefs.length === 0 && inferredEvidenceRefs.length > 0) {
+          existing.evidenceRefs = inferredEvidenceRefs;
+        }
+      }
+      return existing;
+    }
+
+    const created = {
+      stepId: `plan-step-${planSteps.length + 1}`,
+      description,
+      required: true,
+      status,
+      evidenceRefs: status === "completed" ? inferredEvidenceRefs : [],
+      createdAt: now,
+      updatedAt: now
+    };
+    planSteps.push(created);
+    return created;
+  };
+
+  for (const description of patch.appendPlannedSteps ?? []) {
+    ensureStep(description, "planned");
+  }
+  if (patch.currentStep !== undefined && patch.currentStep !== null) {
+    ensureStep(patch.currentStep, "in_progress");
+  }
+  for (const description of patch.appendCompletedSteps ?? []) {
+    ensureStep(description, "completed");
+  }
+
+  return {
+    ...ledger,
+    planSteps
+  };
+}
+
+function inferPlanStepEvidenceRefs(descriptionText: string, ledgerEvidenceRefs: string[]): string[] {
+  const description = descriptionText.toLowerCase();
+  if (description.includes("reproduction")) {
+    return ledgerEvidenceRefs.filter((ref) => ref.startsWith("reproduction:"));
+  }
+  if (description.includes("inspect")) {
+    return ledgerEvidenceRefs.filter((ref) => ref.startsWith("inspect:") || ref.startsWith("git-status:"));
+  }
+  return [];
+}
+
+function completePlanStepFromTool(input: {
+  ledger: ProgressLedger;
+  toolResult: Extract<ToolResult, { status: "success" }>;
+  executionEvidenceRefs: string[];
+  validationEvidenceRefs: string[];
+  now: string;
+}): ProgressLedger {
+  if (input.ledger.planSteps.length === 0) {
+    return input.ledger;
+  }
+
+  const matchingSteps = input.ledger.planSteps.filter(
+    (step) => step.status !== "completed" && stepMatchesTool(step.description, input.toolResult.toolName)
+  );
+
+  if (matchingSteps.length === 0) {
+    return input.ledger;
+  }
+
+  const matchingStepIds = new Set(matchingSteps.map((step) => step.stepId));
+  const planSteps = input.ledger.planSteps.map((step) =>
+    matchingStepIds.has(step.stepId)
+      ? {
+          ...step,
+          status: "completed" as const,
+          evidenceRefs: [...new Set([...step.evidenceRefs, ...input.executionEvidenceRefs, ...input.validationEvidenceRefs])],
+          updatedAt: input.now
+        }
+      : step
+  );
+  const completedSteps = [...new Set([...input.ledger.completedSteps, ...matchingSteps.map((step) => step.description)])];
+  const nextCurrentStep =
+    input.ledger.currentStep !== null && matchingSteps.some((step) => step.description === input.ledger.currentStep)
+      ? planSteps.find((step) => step.status !== "completed")?.description ?? null
+      : input.ledger.currentStep;
+  const appendedEvidenceRefs = [
+    ...new Set([
+      ...input.ledger.evidenceRefs,
+      ...matchingSteps.flatMap((step) => step.evidenceRefs),
+      ...input.executionEvidenceRefs,
+      ...input.validationEvidenceRefs
+    ])
+  ];
+
+  return {
+    ...input.ledger,
+    currentStep: nextCurrentStep,
+    completedSteps,
+    planSteps,
+    evidenceRefs: appendedEvidenceRefs,
+    version: input.ledger.version + 1,
+    updatedAt: input.now
+  };
+}
+
+function stepMatchesTool(descriptionText: string, toolName: ToolResult["toolName"]): boolean {
+  const description = descriptionText.toLowerCase();
+  if (toolName === "filesystem.search") {
+    return description.includes("search") || description.includes("find") || description.includes("locate");
+  }
+  if (toolName === "filesystem.read") {
+    return description.includes("read") || description.includes("inspect");
+  }
+  if (toolName === "filesystem.patch") {
+    return description.includes("patch") || description.includes("fix") || description.includes("modify");
+  }
+  if (toolName === "filesystem.write") {
+    return description.includes("write") || description.includes("create") || description.includes("add file");
+  }
+  if (toolName === "shell.execute") {
+    return (
+      description.includes("verify") ||
+      description.includes("verification") ||
+      description.includes("validation") ||
+      description.includes("build") ||
+      description.includes("test") ||
+      description.includes("acceptance") ||
+      description.includes("reproduction")
+    );
+  }
+  if (toolName === "project.inspect") {
+    return description.includes("inspect") || description.includes("repository") || description.includes("understand");
+  }
+  if (toolName === "project.commands") {
+    return description.includes("command");
+  }
+  if (toolName === "git.status") {
+    return description.includes("git status") || description.includes("status");
+  }
+  if (toolName === "git.diff") {
+    return description.includes("diff") || description.includes("review");
+  }
+  if (toolName === "git.show") {
+    return description.includes("show") || description.includes("history");
+  }
+  if (toolName === "filesystem.list") {
+    return description.includes("list");
+  }
+  return false;
 }
 
 function appendFailedAttempt(input: {
@@ -1441,6 +1738,8 @@ async function runCommandValidation(input: {
   task: Task;
   toolResult: Extract<ToolResult, { toolName: "shell.execute"; status: "success" }>;
   artifacts: Artifact[];
+  changedFiles: string[];
+  workspaceRoot: string;
   now: string;
   idGenerator: () => string;
 }): Promise<ValidationResult> {
@@ -1542,8 +1841,35 @@ async function runCommandValidation(input: {
     executedValidatorIds,
     ...(validationRequest === undefined ? {} : { plan: validationRequest.validationPlan }),
     testResult,
-    evidenceRecords
+    evidenceRecords,
+    taskType: input.task.input.taskType,
+    validationCwd: validationRequest?.cwd,
+    changedFiles: input.changedFiles,
+    acceptanceResults: [],
+    artifactChecks: [],
+    ...(input.changedFiles.length === 0
+      ? {}
+      : { workspaceFingerprint: await computeChangedFilesFingerprint(input.workspaceRoot, input.changedFiles) })
   };
+}
+
+function appendChangedFile(changedFiles: string[], nextPath: string): string[] {
+  return [...new Set([...changedFiles, nextPath])];
+}
+
+async function computeChangedFilesFingerprint(workspaceRoot: string, changedFiles: string[]): Promise<string | undefined> {
+  if (changedFiles.length === 0) {
+    return undefined;
+  }
+
+  const parts: string[] = [];
+  for (const changedFile of [...new Set(changedFiles)].sort()) {
+    const absolutePath = join(workspaceRoot, changedFile);
+    const content = await readFile(absolutePath, "utf8").catch(() => null);
+    parts.push(`${changedFile}:${content === null ? "missing" : computeArtifactHash(content)}`);
+  }
+
+  return computeArtifactHash(parts.join("|"));
 }
 
 function detectNoProgress(input: {
@@ -1784,6 +2110,9 @@ function describeToolSuccess(toolResult: Extract<ToolResult, { status: "success"
   if (toolResult.toolName === "filesystem.patch") {
     return `Patched ${toolResult.output.result.path}.`;
   }
+  if (toolResult.toolName === "filesystem.write") {
+    return `Wrote ${toolResult.output.result.path}.`;
+  }
   if (toolResult.toolName === "shell.execute") {
     return `Executed ${toolResult.output.result.executionRecordId}.`;
   }
@@ -1809,7 +2138,7 @@ function describeToolSuccess(toolResult: Extract<ToolResult, { status: "success"
 }
 
 function describeCapabilities(toolCall: ToolCall): string[] {
-  if (toolCall.toolName === "filesystem.patch") {
+  if (toolCall.toolName === "filesystem.patch" || toolCall.toolName === "filesystem.write") {
     return ["filesystem.write"];
   }
   if (toolCall.toolName === "shell.execute") {
@@ -1824,6 +2153,10 @@ function describeApprovalSummary(toolCall: ToolCall): string {
     return `Patch ${toolCall.input.path}`;
   }
 
+  if (toolCall.toolName === "filesystem.write") {
+    return `Write ${toolCall.input.path} (${toolCall.input.mode})`;
+  }
+
   if (toolCall.toolName === "shell.execute") {
     return `Execute ${toolCall.input.command}`;
   }
@@ -1832,7 +2165,7 @@ function describeApprovalSummary(toolCall: ToolCall): string {
 }
 
 function describeApprovalReason(toolCall: ToolCall): string {
-  if (toolCall.toolName === "filesystem.patch") {
+  if (toolCall.toolName === "filesystem.patch" || toolCall.toolName === "filesystem.write") {
     return "Write access requires approval before mutating workspace files.";
   }
 
@@ -1920,7 +2253,7 @@ function maybeAbortAfterEvent(type: Event["type"]): void {
 }
 
 function describeResourceScope(toolCall: ToolCall): string {
-  if (toolCall.toolName === "filesystem.patch") {
+  if (toolCall.toolName === "filesystem.patch" || toolCall.toolName === "filesystem.write") {
     return `workspace:${toolCall.input.path}`;
   }
 
@@ -1944,6 +2277,16 @@ export function fingerprintToolCall(toolCall: ToolCall): string {
       path: toolCall.input.path,
       patch: toolCall.input.patch,
       encoding: toolCall.input.encoding
+    });
+  }
+  if (toolCall.toolName === "filesystem.write") {
+    return JSON.stringify({
+      toolName: toolCall.toolName,
+      path: toolCall.input.path,
+      content: toolCall.input.content,
+      encoding: toolCall.input.encoding,
+      mode: toolCall.input.mode,
+      expectedHash: toolCall.input.expectedHash ?? null
     });
   }
   if (toolCall.toolName === "shell.execute") {

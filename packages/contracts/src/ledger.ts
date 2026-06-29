@@ -15,6 +15,16 @@ export const FailedAttemptSchema = z.object({
   createdAt: z.string().datetime()
 });
 
+export const PlanStepSchema = z.object({
+  stepId: z.string().min(1),
+  description: z.string().min(1),
+  required: z.boolean(),
+  status: z.enum(["planned", "in_progress", "completed", "blocked"]),
+  evidenceRefs: z.array(z.string().min(1)),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+
 export const ProgressLedgerSchema = z.object({
   runId: z.string().min(1),
   goal: z.string().min(1),
@@ -23,6 +33,7 @@ export const ProgressLedgerSchema = z.object({
   currentStep: z.string().min(1).nullable(),
   plannedSteps: z.array(z.string().min(1)),
   completedSteps: z.array(z.string().min(1)),
+  planSteps: z.array(PlanStepSchema).default([]),
   failedAttempts: z.array(FailedAttemptSchema),
   decisions: z.array(z.string().min(1)),
   evidenceRefs: z.array(z.string().min(1)),
@@ -44,6 +55,7 @@ export const LedgerPatchSchema = z.object({
 
 export type TaskAnchor = z.infer<typeof TaskAnchorSchema>;
 export type FailedAttempt = z.infer<typeof FailedAttemptSchema>;
+export type PlanStep = z.infer<typeof PlanStepSchema>;
 export type ProgressLedger = z.infer<typeof ProgressLedgerSchema>;
 export type LedgerPatch = z.infer<typeof LedgerPatchSchema>;
 
@@ -60,6 +72,7 @@ export function createProgressLedger(input: {
     currentStep: null,
     plannedSteps: [],
     completedSteps: [],
+    planSteps: [],
     failedAttempts: [],
     decisions: [],
     evidenceRefs: [],

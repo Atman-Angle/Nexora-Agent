@@ -179,7 +179,7 @@ function buildChildEnvironment(environment: Record<string, string>): Record<stri
   const childEnvironment: Record<string, string> = {};
   const safeParentKeys =
     process.platform === "win32"
-      ? ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP"]
+      ? ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP", "Path", "PATH"]
       : ["PATH", "HOME", "TMPDIR"];
 
   for (const key of safeParentKeys) {

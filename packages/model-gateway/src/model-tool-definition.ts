@@ -71,6 +71,24 @@ const TOOL_FIELD_MAP: Record<ToolName, {
       idempotencyKey: "patch-src-app-1"
     }
   },
+  "filesystem.write": {
+    description: "Atomically write a UTF-8 text file. mode=create creates a new file and MUST NOT overwrite; mode=overwrite requires expectedHash from the most recent filesystem.read of the same path. Requires approval.",
+    inputFields: [
+      { name: "path", type: "string", required: true, description: "Workspace-relative file path." },
+      { name: "content", type: "string", required: true, description: "Full UTF-8 file content to write." },
+      { name: "encoding", type: "enum", required: true, enum: ["utf8"], description: "Must be the literal \"utf8\"." },
+      { name: "mode", type: "enum", required: true, enum: ["create", "overwrite"], description: "create forbids overwrite; overwrite requires expectedHash." },
+      { name: "expectedHash", type: "string", required: false, description: "Required for overwrite; must equal currentHash from the most recent filesystem.read of this path. Never invent." },
+      { name: "idempotencyKey", type: "string", required: true, description: "Any unique non-empty string you invent; reuse only for the same write." }
+    ],
+    minimalExample: {
+      path: "src/components/Hero.tsx",
+      content: "export function Hero() {}\n",
+      encoding: "utf8",
+      mode: "create",
+      idempotencyKey: "write-src-components-hero-1"
+    }
+  },
   "shell.execute": {
     description: "Execute a shell command inside the workspace. Requires approval. Do not use to bypass tool boundaries.",
     inputFields: [
@@ -227,6 +245,7 @@ export function buildModelToolSchemaText(availableTools: ToolName[]): string {
   lines.push(`  - timeoutMs: integer, > 0, <= ${String(TIMEOUT_MS_MAX)}.`);
   lines.push("  - Only use a toolName listed in \"Available tools\".");
   lines.push("  - Never invent expectedHash; it must equal currentHash from the most recent filesystem.read of that path.");
+  lines.push("  - filesystem.write mode=create must not include overwrite semantics; mode=overwrite requires expectedHash.");
   return lines.join("\n");
 }
 

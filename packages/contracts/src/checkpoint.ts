@@ -6,6 +6,8 @@ export const CheckpointPhaseSchema = z.enum([
   "post_tool",
   "pre_patch",
   "post_patch",
+  "pre_write",
+  "post_write",
   "waiting_for_approval",
   "waiting_for_user",
   "post_approval",

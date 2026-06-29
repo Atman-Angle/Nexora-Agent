@@ -6,7 +6,7 @@ const allowedTransitions: Record<RunStatus, RunStatus[]> = {
   waiting_for_tool: ["running", "blocked", "failed"],
   waiting_for_approval: ["running", "blocked", "failed", "cancelled"],
   waiting_for_user: ["running", "blocked", "failed", "cancelled"],
-  verifying: ["succeeded", "blocked", "failed"],
+  verifying: ["running", "succeeded", "blocked", "failed"],
   blocked: ["running", "waiting_for_user", "failed", "cancelled"],
   cancelled: [],
   succeeded: [],

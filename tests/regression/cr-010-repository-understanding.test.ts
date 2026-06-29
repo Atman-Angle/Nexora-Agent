@@ -98,7 +98,7 @@ describe("CR-010 Repository Understanding", () => {
       beforeRun: ({ workspaceRoot }) => {
         copyTree(workspace, workspaceRoot);
       },
-      extraEnv: { NEXORA_FAKE_AGENT_SCRIPT_JSON: INSPECT_SCRIPT }
+      extraEnv: { NEXORA_AGENT_TASK_TYPE: "read_only", NEXORA_FAKE_AGENT_SCRIPT_JSON: INSPECT_SCRIPT }
     });
 
     const first = session.run(["agent", "Summarize this repository", process.execPath, "verify.js"]);
@@ -153,7 +153,7 @@ describe("CR-010 Repository Understanding", () => {
     const session = await createCliTestSession({
       workspaceFiles: [],
       beforeRun: ({ workspaceRoot }) => copyTree(workspace, workspaceRoot),
-      extraEnv: { NEXORA_FAKE_AGENT_SCRIPT_JSON: script }
+      extraEnv: { NEXORA_AGENT_TASK_TYPE: "read_only", NEXORA_FAKE_AGENT_SCRIPT_JSON: script }
     });
     const first = session.run(["agent", "Find the main implementation", process.execPath, "verify.js"]);
     expect(first.exitCode).toBe(0);
@@ -195,7 +195,7 @@ describe("CR-010 Repository Understanding", () => {
     const session = await createCliTestSession({
       workspaceFiles: [],
       beforeRun: ({ workspaceRoot }) => copyTree(workspace, workspaceRoot),
-      extraEnv: { NEXORA_FAKE_AGENT_SCRIPT_JSON: script }
+      extraEnv: { NEXORA_AGENT_TASK_TYPE: "read_only", NEXORA_FAKE_AGENT_SCRIPT_JSON: script }
     });
     const result = session.run(["agent", "Analyze Nexora integration candidates", process.execPath, "verify.js"]);
     expect(result.exitCode).toBe(0);
@@ -216,7 +216,7 @@ describe("CR-010 Repository Understanding", () => {
     const session = await createCliTestSession({
       workspaceFiles: [],
       beforeRun: ({ workspaceRoot }) => copyTree(workspace, workspaceRoot),
-      extraEnv: { NEXORA_FAKE_AGENT_SCRIPT_JSON: INSPECT_SCRIPT }
+      extraEnv: { NEXORA_AGENT_TASK_TYPE: "read_only", NEXORA_FAKE_AGENT_SCRIPT_JSON: INSPECT_SCRIPT }
     });
     const result = session.run(["agent", "Summarize", process.execPath, "verify.js"]);
     expect(result.exitCode).toBe(0);
@@ -252,7 +252,7 @@ describe("CR-010 Repository Understanding", () => {
     const session = await createCliTestSession({
       workspaceFiles: [],
       beforeRun: ({ workspaceRoot }) => copyTree(workspace, workspaceRoot),
-      extraEnv: { NEXORA_FAKE_AGENT_SCRIPT_JSON: script }
+      extraEnv: { NEXORA_AGENT_TASK_TYPE: "read_only", NEXORA_FAKE_AGENT_SCRIPT_JSON: script }
     });
     const result = session.run(["agent", "List repo entries", process.execPath, "verify.js"]);
     expect(result.exitCode).toBe(0);
