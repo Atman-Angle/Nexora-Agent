@@ -16,3 +16,6 @@ temp/
 tmp/
 
 .nexora/
+
+# Local tool settings
+.local-tool-settings/
