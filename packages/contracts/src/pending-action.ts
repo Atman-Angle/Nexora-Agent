@@ -5,6 +5,7 @@ import { AgentBudgetUsageSchema } from "./agent-budget.js";
 import { ToolResultSchema } from "./tool-result.js";
 import { ValidationResultSchema } from "./validation.js";
 import { WorkingSetSchema } from "./working-set.js";
+import { RecoveryCheckpointStateSchema } from "./recovery.js";
 
 const NoProgressSnapshotSchema = z.object({
   actionSignature: z.string().min(1).nullable(),
@@ -26,7 +27,9 @@ export const PendingActionResumeStateSchema = z.object({
   regroundRequested: z.boolean(),
   replanRequested: z.boolean(),
   noProgressCount: z.number().int().nonnegative(),
-  previousSnapshot: NoProgressSnapshotSchema
+  previousSnapshot: NoProgressSnapshotSchema,
+  pendingRetryIncrement: z.boolean().default(false),
+  recoveryState: RecoveryCheckpointStateSchema.optional()
 });
 
 export const PendingActionSchema = z.object({

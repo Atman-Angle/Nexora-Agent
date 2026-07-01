@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { RecoveryCheckpointStateSchema } from "./recovery.js";
+
 export const CheckpointPhaseSchema = z.enum([
   "plan_formed",
   "pre_tool",
@@ -14,11 +16,13 @@ export const CheckpointPhaseSchema = z.enum([
   "post_response",
   "pre_validation",
   "post_validation",
+  "recovery_state",
   "runtime_shutdown"
 ]);
 
 export const CheckpointSchema = z.object({
   schemaVersion: z.literal("1"),
+  envelopeVersion: z.literal("1").default("1"),
   checkpointId: z.string().min(1),
   runId: z.string().min(1),
   runStateVersion: z.number().int().nonnegative(),
@@ -28,13 +32,14 @@ export const CheckpointSchema = z.object({
   pendingActionFingerprint: z.string().min(1).optional(),
   workspaceHash: z.string().min(1).optional(),
   note: z.string().min(1).optional(),
+  recovery: RecoveryCheckpointStateSchema.optional(),
   createdAt: z.string().datetime()
 });
 
-export const RecoveryActionSchema = z.enum(["resume", "wait", "replan", "blocked", "rejected"]);
+export const CheckpointRecoveryActionSchema = z.enum(["resume", "wait", "replan", "blocked", "rejected"]);
 
-export const RecoveryDecisionSchema = z.object({
-  action: RecoveryActionSchema,
+export const CheckpointRecoveryDecisionSchema = z.object({
+  action: CheckpointRecoveryActionSchema,
   reason: z.string().min(1),
   runId: z.string().min(1),
   pendingActionId: z.string().min(1).optional(),
@@ -44,8 +49,8 @@ export const RecoveryDecisionSchema = z.object({
 
 export type CheckpointPhase = z.infer<typeof CheckpointPhaseSchema>;
 export type Checkpoint = z.infer<typeof CheckpointSchema>;
-export type RecoveryAction = z.infer<typeof RecoveryActionSchema>;
-export type RecoveryDecision = z.infer<typeof RecoveryDecisionSchema>;
+export type CheckpointRecoveryAction = z.infer<typeof CheckpointRecoveryActionSchema>;
+export type CheckpointRecoveryDecision = z.infer<typeof CheckpointRecoveryDecisionSchema>;
 
 export function createCheckpoint(input: {
   checkpointId: string;
@@ -57,10 +62,12 @@ export function createCheckpoint(input: {
   pendingActionFingerprint?: string;
   workspaceHash?: string;
   note?: string;
+  recovery?: z.infer<typeof RecoveryCheckpointStateSchema>;
   createdAt: string;
 }): Checkpoint {
   return CheckpointSchema.parse({
     schemaVersion: "1",
+    envelopeVersion: "1",
     checkpointId: input.checkpointId,
     runId: input.runId,
     runStateVersion: input.runStateVersion,
@@ -70,6 +77,7 @@ export function createCheckpoint(input: {
     ...(input.pendingActionFingerprint === undefined ? {} : { pendingActionFingerprint: input.pendingActionFingerprint }),
     ...(input.workspaceHash === undefined ? {} : { workspaceHash: input.workspaceHash }),
     ...(input.note === undefined ? {} : { note: input.note }),
+    ...(input.recovery === undefined ? {} : { recovery: input.recovery }),
     createdAt: input.createdAt
   });
 }

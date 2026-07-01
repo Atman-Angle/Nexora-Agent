@@ -26,6 +26,7 @@ import {
   type PendingAction,
   type PendingActionResumeState,
   type ProgressLedger,
+  type RecoveryCheckpointState,
   type Run,
   type Task,
   type TaskAnchor,
@@ -63,6 +64,12 @@ import type { ToolRuntime } from "../../tool-runtime/src/index.js";
 import { classifyRisk } from "../../tool-runtime/src/index.js";
 import { transitionRun } from "./state-machine.js";
 import { runCompletionGate } from "./validation-gate.js";
+import {
+  RecoveryOrchestrator,
+  createProgressFingerprint,
+  normalizeToolFailure,
+  normalizeValidationFailure
+} from "./recovery/index.js";
 
 type NoProgressSnapshot = {
   actionSignature: string | null;
@@ -156,6 +163,10 @@ export async function runAgentLoop(input: {
   let regroundRequested = input.resume?.resumeState.regroundRequested ?? false;
   let replanRequested = input.resume?.resumeState.replanRequested ?? false;
   let noProgressCount = input.resume?.resumeState.noProgressCount ?? 0;
+  let recoveryState = input.resume?.resumeState.recoveryState;
+  const recoveryOrchestrator = new RecoveryOrchestrator();
+  const recoveryBudget = input.task.input.agentRequest?.recoveryBudget ?? {};
+  let pendingRetryIncrement = input.resume?.resumeState.pendingRetryIncrement ?? false;
   const usage =
     input.resume?.resumeState.usage ??
     AgentBudgetUsageSchema.parse({
@@ -252,11 +263,12 @@ export async function runAgentLoop(input: {
       ...(options?.pendingActionFingerprint === undefined ? {} : { pendingActionFingerprint: options.pendingActionFingerprint }),
       ...(workspaceHash === undefined ? {} : { workspaceHash }),
       ...(options?.note === undefined ? {} : { note: options.note }),
+      ...(recoveryState === undefined ? {} : { recovery: recoveryState }),
       createdAt
     });
     input.checkpointStore.insertCheckpoint(checkpointRecord);
     await appendEvent("checkpoint.created", { checkpointId: checkpointRecord.checkpointId, phase }, createdAt);
-    maybeAbortAfterCheckpoint(phase);
+    maybeAbortAfterCheckpoint(phase, options?.note);
     return checkpointRecord;
   };
 
@@ -269,8 +281,10 @@ export async function runAgentLoop(input: {
     await persistLedger(ledger);
   } else {
     const resumedAt = input.now();
-    activeRun = transitionRun(activeRun, "running", resumedAt);
-    input.runStore.updateRun(activeRun);
+    if (activeRun.status !== "running") {
+      activeRun = transitionRun(activeRun, "running", resumedAt);
+      input.runStore.updateRun(activeRun);
+    }
     await appendEvent("run.resumed", { status: activeRun.status }, resumedAt);
   }
 
@@ -523,6 +537,8 @@ export async function runAgentLoop(input: {
         noProgressCount,
         usage,
         previousSnapshot,
+        pendingRetryIncrement,
+        recoveryState,
         action
       });
     }
@@ -764,6 +780,8 @@ export async function runAgentLoop(input: {
           noProgressCount,
           usage,
           previousSnapshot,
+          pendingRetryIncrement,
+          recoveryState,
           toolCall,
           actionReason: action.type === "request_approval" ? action.reason : describeApprovalReason(toolCall)
         });
@@ -793,16 +811,18 @@ export async function runAgentLoop(input: {
       },
       resumeState: buildResumeState({
         usage,
-          nextSequence: nextSequence + 1,
-          currentWorkingSet,
-          changedFiles,
-          recentToolResult,
-          recentValidationResult,
+        nextSequence: nextSequence + 1,
+        currentWorkingSet,
+        changedFiles,
+        recentToolResult,
+        recentValidationResult,
         latestIterationIndex,
         regroundRequested,
         replanRequested,
         noProgressCount,
-        previousSnapshot
+        previousSnapshot,
+        pendingRetryIncrement,
+        recoveryState
       }),
       now: input.now()
     });
@@ -851,6 +871,10 @@ export async function runAgentLoop(input: {
       idGenerator: input.idGenerator
     });
     usage.toolCalls += 1;
+    if (pendingRetryIncrement) {
+      usage.retryCount += 1;
+      pendingRetryIncrement = false;
+    }
     input.pendingActionStore.updatePendingAction({
       ...toolPendingAction,
       status: "resolved",
@@ -917,7 +941,85 @@ export async function runAgentLoop(input: {
       activeRun = transitionRun(activeRun, "running", resumedAt);
       input.runStore.updateRun(activeRun);
 
-      if (!execution.toolResult.error.retryable) {
+      const failure = normalizeToolFailure({
+        failureId: input.idGenerator(),
+        runId: activeRun.runId,
+        taskId: input.task.taskId,
+        iteration: latestIterationIndex,
+        toolResult: execution.toolResult,
+        executionRecordId: execution.executionRecord.executionId,
+        occurredAt: input.now()
+      });
+      const progressFingerprint = createProgressFingerprint({
+        ledgerVersion: ledger.version,
+        evidenceRefs: ledger.evidenceRefs,
+        changedFiles,
+        validationStatus: recentValidationResult?.status ?? null,
+        validationEvidenceCodes: recentValidationResult?.evidence.map((entry) => entry.code) ?? [],
+        workingSetPaths: currentWorkingSet?.items.map((item) => item.path) ?? []
+      });
+      const recoveryOutcome = recoveryOrchestrator.decide({
+        failure,
+        previousFailure: recoveryState?.latestFailure,
+        previousState: recoveryState,
+        progressFingerprint,
+        previousProgressFingerprint: recoveryState?.progressFingerprint,
+        ledger,
+        workingSet: currentWorkingSet,
+        recoveryBudget,
+        now: input.now,
+        idGenerator: input.idGenerator
+      });
+      recoveryState = recoveryOutcome.state;
+      await checkpoint("recovery_state", {
+        pendingActionId: toolPendingAction.pendingActionId,
+        pendingActionFingerprint: actionFingerprint,
+        note: "tool_failure_recovery"
+      });
+      await appendEvent(
+        "failure.detected",
+        {
+          failureId: failure.failureId,
+          source: failure.source,
+          code: failure.code ?? null,
+          category: failure.category
+        },
+        failure.occurredAt
+      );
+      await appendEvent(
+        "failure.classified",
+        {
+          failureId: failure.failureId,
+          category: failure.category,
+          retryable: failure.retryable
+        },
+        input.now()
+      );
+      await appendEvent(
+        "recovery.decision.created",
+        {
+          failureId: failure.failureId,
+          decisionId: recoveryOutcome.decision.decisionId,
+          category: failure.category,
+          disposition: recoveryOutcome.decision.disposition,
+          attempt: recoveryOutcome.decision.attempt,
+          maxAttempts: recoveryOutcome.decision.maxAttempts,
+          usage: recoveryOutcome.state.usage
+        },
+        recoveryOutcome.decision.decidedAt
+      );
+
+      if (recoveryOutcome.terminal) {
+        await appendEvent(
+          "recovery.terminal",
+          {
+            failureId: failure.failureId,
+            decisionId: recoveryOutcome.decision.decisionId,
+            category: failure.category,
+            reason: recoveryOutcome.decision.reason
+          },
+          input.now()
+        );
         return failRun({
           input,
           run: activeRun,
@@ -928,7 +1030,66 @@ export async function runAgentLoop(input: {
         });
       }
 
-      usage.retryCount += 1;
+      if (
+        recoveryOutcome.decision.disposition === "re_ground" ||
+        recoveryOutcome.decision.disposition === "replan"
+      ) {
+        await appendEvent(
+          "recovery.started",
+          {
+            failureId: failure.failureId,
+            decisionId: recoveryOutcome.decision.decisionId,
+            disposition: recoveryOutcome.decision.disposition
+          },
+          input.now()
+        );
+        if (recoveryOutcome.regroundManifest !== undefined) {
+          await appendEvent(
+            "recovery.reground.completed",
+            {
+              failureId: failure.failureId,
+              manifestId: recoveryOutcome.regroundManifest.manifestId,
+              inspectedPaths: recoveryOutcome.regroundManifest.inspectedPaths
+            },
+            recoveryOutcome.regroundManifest.createdAt
+          );
+        }
+        if (recoveryOutcome.recoveryPlan !== undefined) {
+          await appendEvent(
+            "recovery.replan.created",
+            {
+              failureId: failure.failureId,
+              recoveryPlanId: recoveryOutcome.recoveryPlan.recoveryPlanId,
+              preservedStepIds: recoveryOutcome.recoveryPlan.preservedStepIds,
+              invalidatedStepIds: recoveryOutcome.recoveryPlan.invalidatedStepIds
+            },
+            recoveryOutcome.recoveryPlan.createdAt
+          );
+        }
+        ledger = applyLedgerPatch({
+          ledger,
+          patch: {
+            appendDecisions: [
+              `Recovery ${recoveryOutcome.decision.disposition}: ${recoveryOutcome.decision.reason}`
+            ]
+          },
+          now: input.now()
+        });
+        await persistLedger(ledger);
+        regroundRequested = recoveryOutcome.decision.disposition === "re_ground";
+        replanRequested = recoveryOutcome.decision.disposition === "replan";
+        noProgressCount = 0;
+        await checkpoint("post_tool", {
+          pendingActionId: toolPendingAction.pendingActionId,
+          pendingActionFingerprint: actionFingerprint,
+          note: "recovery_decision"
+        });
+        continue;
+      }
+
+      if (recoveryOutcome.decision.disposition === "retry_same_action") {
+        pendingRetryIncrement = true;
+      }
       const noProgressSignals = detectNoProgress({
         previous: previousSnapshot,
         current: {
@@ -1065,6 +1226,7 @@ export async function runAgentLoop(input: {
         toolResult: execution.toolResult,
         artifacts: input.artifactStore.getArtifactsByRun(activeRun.runId),
         changedFiles,
+        validationCwd: toolCall.toolName === "shell.execute" ? toolCall.input.cwd : ".",
         workspaceRoot: input.workspaceRoot,
         now: input.now(),
         idGenerator: input.idGenerator
@@ -1099,6 +1261,105 @@ export async function runAgentLoop(input: {
           retryable: false,
           evidenceRefs: recentValidationResult.evidenceRecords.map((record) => record.evidenceId)
         });
+        const failure = normalizeValidationFailure({
+          failureId: input.idGenerator(),
+          runId: activeRun.runId,
+          taskId: input.task.taskId,
+          iteration: latestIterationIndex,
+          validation: recentValidationResult,
+          occurredAt: input.now()
+        });
+        const progressFingerprint = createProgressFingerprint({
+          ledgerVersion: ledger.version,
+          evidenceRefs: ledger.evidenceRefs,
+          changedFiles,
+          validationStatus: recentValidationResult.status,
+          validationEvidenceCodes: recentValidationResult.evidence.map((entry) => entry.code),
+          workingSetPaths: currentWorkingSet?.items.map((item) => item.path) ?? []
+        });
+        const recoveryOutcome = recoveryOrchestrator.decide({
+          failure,
+          previousFailure: recoveryState?.latestFailure,
+          previousState: recoveryState,
+          progressFingerprint,
+          previousProgressFingerprint: recoveryState?.progressFingerprint,
+          ledger,
+          workingSet: currentWorkingSet,
+          recoveryBudget,
+          now: input.now,
+          idGenerator: input.idGenerator
+        });
+        recoveryState = recoveryOutcome.state;
+        await checkpoint("recovery_state", {
+          note: "validation_recovery"
+        });
+        await appendEvent(
+          "failure.detected",
+          {
+            failureId: failure.failureId,
+            source: failure.source,
+            code: failure.code ?? null,
+            category: failure.category
+          },
+          failure.occurredAt
+        );
+        await appendEvent(
+          "failure.classified",
+          {
+            failureId: failure.failureId,
+            category: failure.category,
+            retryable: failure.retryable
+          },
+          input.now()
+        );
+        await appendEvent(
+          "recovery.decision.created",
+          {
+            failureId: failure.failureId,
+            decisionId: recoveryOutcome.decision.decisionId,
+            category: failure.category,
+            disposition: recoveryOutcome.decision.disposition,
+            attempt: recoveryOutcome.decision.attempt,
+            maxAttempts: recoveryOutcome.decision.maxAttempts,
+            usage: recoveryOutcome.state.usage
+          },
+          recoveryOutcome.decision.decidedAt
+        );
+        if (recoveryOutcome.recoveryPlan !== undefined) {
+          await appendEvent(
+            "recovery.replan.created",
+            {
+              failureId: failure.failureId,
+              recoveryPlanId: recoveryOutcome.recoveryPlan.recoveryPlanId,
+              preservedStepIds: recoveryOutcome.recoveryPlan.preservedStepIds,
+              invalidatedStepIds: recoveryOutcome.recoveryPlan.invalidatedStepIds
+            },
+            recoveryOutcome.recoveryPlan.createdAt
+          );
+        }
+        if (recoveryOutcome.terminal) {
+          await appendEvent(
+            "recovery.terminal",
+            {
+              failureId: failure.failureId,
+              decisionId: recoveryOutcome.decision.decisionId,
+              category: failure.category,
+              reason: recoveryOutcome.decision.reason
+            },
+            input.now()
+          );
+          await persistLedger(ledger);
+          return failRun({
+            input,
+            run: activeRun,
+            appendEvent,
+            code: "RECOVERY_TERMINAL",
+            message: recoveryOutcome.decision.reason,
+            retryable: false
+          });
+        }
+        replanRequested = recoveryOutcome.decision.disposition === "replan";
+        regroundRequested = recoveryOutcome.decision.disposition === "re_ground";
       }
       await persistLedger(ledger);
     }
@@ -1206,9 +1467,13 @@ async function waitForApproval(input: {
     modelCalls: number;
     toolCalls: number;
     retryCount: number;
+    actionRepairCount?: number | undefined;
+    providerRetryCount?: number | undefined;
     startedAt: string;
   };
   previousSnapshot: NoProgressSnapshot;
+  pendingRetryIncrement: boolean;
+  recoveryState?: RecoveryCheckpointState | undefined;
   toolCall: ToolCall;
   actionReason: string;
 }): Promise<AgentLoopWaitingForApprovalResult> {
@@ -1256,7 +1521,9 @@ async function waitForApproval(input: {
       regroundRequested: input.regroundRequested,
       replanRequested: input.replanRequested,
       noProgressCount: input.noProgressCount,
-      previousSnapshot: input.previousSnapshot
+      previousSnapshot: input.previousSnapshot,
+      pendingRetryIncrement: input.pendingRetryIncrement,
+      ...(input.recoveryState === undefined ? {} : { recoveryState: input.recoveryState })
     }),
     now: input.input.now()
   });
@@ -1304,6 +1571,8 @@ async function waitForUser(input: {
     startedAt: string;
   };
   previousSnapshot: NoProgressSnapshot;
+  pendingRetryIncrement: boolean;
+  recoveryState?: RecoveryCheckpointState | undefined;
   action: Extract<AgentAction, { type: "ask_user" }>;
 }): Promise<AgentLoopWaitingForUserResult> {
   const request = {
@@ -1350,7 +1619,9 @@ async function waitForUser(input: {
       regroundRequested: input.regroundRequested,
       replanRequested: input.replanRequested,
       noProgressCount: input.noProgressCount,
-      previousSnapshot: input.previousSnapshot
+      previousSnapshot: input.previousSnapshot,
+      pendingRetryIncrement: input.pendingRetryIncrement,
+      ...(input.recoveryState === undefined ? {} : { recoveryState: input.recoveryState })
     }),
     now: input.input.now()
   });
@@ -1385,6 +1656,8 @@ function buildResumeState(input: {
   replanRequested: boolean;
   noProgressCount: number;
   previousSnapshot: NoProgressSnapshot;
+  pendingRetryIncrement: boolean;
+  recoveryState?: RecoveryCheckpointState | undefined;
 }): PendingActionResumeState {
   return {
     usage: AgentBudgetUsageSchema.parse(input.usage),
@@ -1397,7 +1670,9 @@ function buildResumeState(input: {
     regroundRequested: input.regroundRequested,
     replanRequested: input.replanRequested,
     noProgressCount: input.noProgressCount,
-    previousSnapshot: input.previousSnapshot
+    previousSnapshot: input.previousSnapshot,
+    pendingRetryIncrement: input.pendingRetryIncrement,
+    ...(input.recoveryState === undefined ? {} : { recoveryState: input.recoveryState })
   };
 }
 
@@ -1739,6 +2014,7 @@ async function runCommandValidation(input: {
   toolResult: Extract<ToolResult, { toolName: "shell.execute"; status: "success" }>;
   artifacts: Artifact[];
   changedFiles: string[];
+  validationCwd: string;
   workspaceRoot: string;
   now: string;
   idGenerator: () => string;
@@ -1843,7 +2119,7 @@ async function runCommandValidation(input: {
     testResult,
     evidenceRecords,
     taskType: input.task.input.taskType,
-    validationCwd: validationRequest?.cwd,
+    validationCwd: input.validationCwd,
     changedFiles: input.changedFiles,
     acceptanceResults: [],
     artifactChecks: [],
@@ -1937,6 +2213,7 @@ async function handleNoProgress(input: {
 
   const now = input.input.now();
   await input.appendEvent("no_progress.detected", { signals: input.signals }, now);
+  await input.appendEvent("recovery.no_progress.detected", { signals: input.signals }, now);
   const nextCount = input.noProgressCount + 1;
 
   if (nextCount === 1) {
@@ -2226,13 +2503,18 @@ function reGroundNow(
   return facts.regroundedAt;
 }
 
-function maybeAbortAfterCheckpoint(phase: CheckpointPhase): void {
+function maybeAbortAfterCheckpoint(phase: CheckpointPhase, note: string | undefined): void {
   const configuredPhase = process.env.NEXORA_TEST_EXIT_AFTER_CHECKPOINT_PHASE?.trim();
   if (configuredPhase === undefined || configuredPhase.length === 0) {
     return;
   }
 
   if (configuredPhase !== phase) {
+    return;
+  }
+
+  const configuredNote = process.env.NEXORA_TEST_EXIT_AFTER_CHECKPOINT_NOTE?.trim();
+  if (configuredNote !== undefined && configuredNote.length > 0 && configuredNote !== note) {
     return;
   }
 

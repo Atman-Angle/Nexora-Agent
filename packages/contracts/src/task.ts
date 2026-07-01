@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { AgentBudgetSchema } from "./agent-budget.js";
 import { PatchOperationSchema } from "./patch-result.js";
+import { RecoveryBudgetSchema } from "./recovery.js";
 import { ValidationPlanSchema } from "./validation-plan.js";
 
 export const TaskTypeSchema = z.enum(["read_only", "analysis", "workspace_mutation", "bug_fix", "feature"]);
@@ -56,7 +57,8 @@ export const TaskValidationRequestSchema = z.object({
 });
 
 export const TaskAgentRequestSchema = z.object({
-  budget: AgentBudgetSchema
+  budget: AgentBudgetSchema,
+  recoveryBudget: RecoveryBudgetSchema.optional()
 });
 
 export const TaskSchema = z.object({

@@ -4,6 +4,7 @@ import {
   createEvent,
   createRun,
   createTask,
+  RecoveryBudgetSchema,
   ToolResultSchema,
   type TaskAcceptanceCriterion,
   type TaskType,
@@ -12,6 +13,7 @@ import {
   type CheckpointPhase,
   type PendingAction,
   type ProgressLedger,
+  type RecoveryBudget,
   type ToolResult
 } from "../../../packages/contracts/src/index.js";
 import { readFileSync } from "node:fs";
@@ -795,7 +797,11 @@ export async function runAgentCommand(command: {
           maxToolCalls: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_TOOL_CALLS) ?? 50,
           maxRetries: parseNonNegativeInteger(process.env.NEXORA_AGENT_MAX_RETRIES) ?? 20,
           maxDurationMs: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_DURATION_MS) ?? 300_000
-        }
+        },
+        ...(() => {
+          const recoveryBudget = parseRecoveryBudgetEnv();
+          return recoveryBudget === undefined ? {} : { recoveryBudget };
+        })()
       },
       acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_AGENT_ACCEPTANCE_CRITERIA_JSON),
       createdAt: now()
@@ -1042,6 +1048,27 @@ function parsePositiveInteger(rawValue: string | undefined): number | undefined 
   }
 
   return parsedValue;
+}
+
+function parseRecoveryBudgetEnv(): RecoveryBudget | undefined {
+  const entries: [string, number][] = [];
+  const push = (env: string, key: string): void => {
+    const value = parsePositiveInteger(process.env[env]);
+    if (value !== undefined) {
+      entries.push([key, value]);
+    }
+  };
+  push("NEXORA_AGENT_MAX_RECOVERY_ATTEMPTS", "maxRecoveryAttempts");
+  push("NEXORA_AGENT_MAX_SAME_FAILURE_ATTEMPTS", "maxSameFailureAttempts");
+  push("NEXORA_AGENT_MAX_REGROUND_ATTEMPTS", "maxRegroundAttempts");
+  push("NEXORA_AGENT_MAX_REPLAN_ATTEMPTS", "maxReplanAttempts");
+  push("NEXORA_AGENT_MAX_UNKNOWN_FAILURE_ATTEMPTS", "maxUnknownFailureAttempts");
+  push("NEXORA_AGENT_MAX_RECOVERY_DURATION_MS", "maxRecoveryDurationMs");
+  if (entries.length === 0) {
+    return undefined;
+  }
+  const partial = Object.fromEntries(entries) as Record<string, number>;
+  return RecoveryBudgetSchema.parse(partial);
 }
 
 function parseNonNegativeInteger(rawValue: string | undefined): number | undefined {
@@ -1838,6 +1865,100 @@ async function runResumeCommand(runId: string): Promise<unknown> {
           recoveryAction: "resume"
         };
       }
+    }
+
+    if (run.status === "running" && checkpoint.phase === "recovery_state" && checkpoint.recovery !== undefined) {
+      const task = requireTask(taskStore, run.taskId);
+      const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
+      const workspaceRoot = requireWorkspaceRoot();
+      const artifactRoot = resolveArtifactRoot(databasePath);
+      const baseResumeState = pendingAction?.resumeState ?? {
+        usage: {
+          loopCount: 0,
+          modelCalls: 0,
+          toolCalls: 0,
+          retryCount: 0,
+          actionRepairCount: 0,
+          providerRetryCount: 0,
+          startedAt: now()
+        },
+        nextSequence: eventStore.listEventsByRun(run.runId).length + 1,
+        currentWorkingSet: null,
+        changedFiles: [],
+        recentToolResult: null,
+        recentValidationResult: null,
+        latestIterationIndex: 0,
+        regroundRequested: false,
+        replanRequested: false,
+        noProgressCount: 0,
+        pendingRetryIncrement: false,
+        previousSnapshot: {
+          actionSignature: null,
+          errorCode: null,
+          ledgerVersion: ledger.version,
+          evidenceCount: ledger.evidenceRefs.length,
+          validationStatus: null,
+          artifactHash: null
+        }
+      };
+      const resumeState = {
+        ...baseResumeState,
+        nextSequence: Math.max(baseResumeState.nextSequence, eventStore.listEventsByRun(run.runId).length + 1),
+        latestIterationIndex: Math.max(
+          baseResumeState.latestIterationIndex,
+          agentIterationStore.listByRun(run.runId).length
+        ),
+        regroundRequested: checkpoint.recovery.latestDecision?.disposition === "re_ground",
+        replanRequested: checkpoint.recovery.latestDecision?.disposition === "replan",
+        recoveryState: checkpoint.recovery
+      };
+      appendRunEvent(
+        eventStore,
+        run.runId,
+        "recovery.decision",
+        {
+          action: "resume",
+          checkpointId: checkpoint.checkpointId,
+          waitingFor: "recovery_state",
+          disposition: checkpoint.recovery.latestDecision?.disposition ?? null
+        },
+        now()
+      );
+      const modelProvider = createCliModelProvider({ agentActionSliceFrom: resumeState.usage.modelCalls });
+      const toolRuntime = new ToolRuntime({
+        registry: createDefaultToolRegistry(),
+        executionRecordStore,
+        artifactStore
+      });
+      const result = await runAgentLoop({
+        task,
+        run,
+        now,
+        idGenerator: randomUUID,
+        workspaceRoot,
+        artifactRoot,
+        modelProvider,
+        toolRuntime,
+        runStore,
+        eventStore,
+        artifactStore,
+        validationResultStore,
+        ledgerStore,
+        agentIterationStore,
+        approvalStore,
+        pendingActionStore,
+        userInputStore,
+        checkpointStore,
+        resume: {
+          ledger,
+          resumeState
+        }
+      });
+      return {
+        ...renderAgentLoopResult(result),
+        checkpointId: checkpoint.checkpointId,
+        recoveryAction: "resume"
+      };
     }
 
     if (run.status === "running" || run.status === "waiting_for_tool" || run.status === "verifying") {

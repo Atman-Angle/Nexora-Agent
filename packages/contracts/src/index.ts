@@ -15,6 +15,7 @@ export * from "./fullstack-feature.js";
 export * from "./patch-result.js";
 export * from "./pending-action.js";
 export * from "./repository-profile.js";
+export * from "./recovery.js";
 export * from "./run.js";
 export * from "./search-query.js";
 export * from "./search-result.js";

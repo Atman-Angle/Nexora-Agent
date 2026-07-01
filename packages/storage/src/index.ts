@@ -6,6 +6,7 @@ export * from "./database.js";
 export * from "./execution-record-store.js";
 export * from "./event-store.js";
 export * from "./ledger-store.js";
+export * from "./migration-runner.js";
 export * from "./pending-action-store.js";
 export * from "./run-store.js";
 export * from "./task-store.js";
