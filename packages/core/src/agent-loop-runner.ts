@@ -4,12 +4,10 @@ import {
   ALL_TOOL_NAMES,
   type AgentBudgetUsage,
   ApprovalRequestSchema,
-  ValidationResultSchema,
   computeArtifactHash,
   createCheckpoint,
   createEvent,
   createProgressLedger,
-  createTextArtifact,
   type AgentAction,
   type BuilderState,
   type Checkpoint,
@@ -46,7 +44,6 @@ import type { ValidationResultStore } from "../../storage/src/validation-result-
 import type { ToolRuntime } from "../../tool-runtime/src/index.js";
 import { classifyRisk } from "../../tool-runtime/src/index.js";
 import { transitionRun } from "./state-machine.js";
-import { runCompletionGate } from "./validation-gate.js";
 import {
   runCommandValidation,
   isFreshPassingValidation,
@@ -89,6 +86,7 @@ import { buildLoopContextSnapshot, reGroundNow } from "./agent-loop/context-snap
 import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
 import { handleSubmitExecutionPlan } from "./agent-loop/handlers/submit-execution-plan.js";
 import { handleUpdatePlan } from "./agent-loop/handlers/update-plan.js";
+import { handleFinal } from "./agent-loop/handlers/final.js";
 import type { HandlerContext, StateDelta } from "./agent-loop/outcome.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
@@ -1005,195 +1003,22 @@ export async function runAgentLoop(input: {
     }
 
     if (action.type === "final") {
-      const knownEvidenceRefs = new Set([
-        ...ledger.evidenceRefs,
-        ...(recentValidationResult?.evidenceRecords?.map((record) => record.evidenceId) ?? [])
-      ]);
-      const invalidFinalEvidenceRefs = (action.evidenceRefs ?? []).filter((evidenceRef) => !knownEvidenceRefs.has(evidenceRef));
-      const finalProposedAt = input.now();
-      await appendEvent(
-        "model.final.proposed",
-        {
-          evidenceRefs: action.evidenceRefs ?? [],
-          textLength: action.text.length
-        },
-        finalProposedAt
-      );
-
-      const artifact = createTextArtifact({
-        artifactId: input.idGenerator(),
-        runId: activeRun.runId,
-        content: action.text,
-        createdAt: finalProposedAt
-      });
-
-      const verifyingAt = input.now();
-      activeRun = transitionRun(activeRun, "verifying", verifyingAt);
-      input.runStore.updateRun(activeRun);
-      await checkpoint("pre_validation");
-      const validationStartSequence = await appendEventWithSequence("validation.started", { status: activeRun.status }, verifyingAt);
-
-      let validation = (
-        await runCompletionGate({
+      const outcome = await handleFinal(buildHandlerContext(actionSignature), action);
+      if (outcome.kind === "fail") {
+        return failRun({
+          input,
           run: activeRun,
-          task: input.task,
-          ledger,
-          toolResult: recentToolResult,
-          latestValidationResult: recentValidationResult,
-          finalArtifact: artifact,
-          artifacts: input.artifactStore.getArtifactsByRun(activeRun.runId),
-          events: input.eventStore.listEventsByRun(activeRun.runId),
-          workspaceRoot: input.workspaceRoot,
-          now: input.now(),
-          idGenerator: input.idGenerator
-        })
-      ).validation;
-      if (invalidFinalEvidenceRefs.length > 0) {
-        validation = ValidationResultSchema.parse({
-          ...validation,
-          status: "failed",
-          evidence: [
-            ...validation.evidence,
-            ...invalidFinalEvidenceRefs.map((evidenceRef) => ({
-              code: "FINAL_EVIDENCE_MISSING",
-              message: `Final referenced unknown evidence ${evidenceRef}.`
-            }))
-          ]
-        });
-      }
-      validation = ValidationResultSchema.parse({
-        ...validation,
-        validationSequence: validationStartSequence
-      });
-
-      input.validationResultStore.upsertValidationResult({
-        runId: activeRun.runId,
-        result: validation,
-        createdAt: input.now()
-      });
-      await checkpoint("post_validation");
-      await appendEvent(
-        "validation.completed",
-        {
-          status: validation.status,
-          evidence: validation.evidence,
-          ...(validation.failureSummary === undefined ? {} : { failureSummary: validation.failureSummary })
-        },
-        input.now()
-      );
-
-      const iteration = createIteration({
-        iterationId: input.idGenerator(),
-        runId: activeRun.runId,
-        index: latestIterationIndex,
-        actionType: action.type,
-        status: validation.status === "passed" ? "completed" : "failed",
-        usage,
-        summary: "Final artifact proposed.",
-        latestValidationStatus: validation.status,
-        evidenceRefs: validation.evidenceRecords.map((record) => record.evidenceId),
-        now: input.now()
-      });
-      input.agentIterationStore.insertIteration(iteration);
-      await appendEvent(
-        validation.status === "passed" ? "iteration.completed" : "iteration.failed",
-        { index: iteration.index, actionType: iteration.actionType },
-        iteration.createdAt
-      );
-      latestIterationIndex += 1;
-
-      if (validation.status === "failed") {
-        const evidenceRefs = validation.evidenceRecords.map((record) => record.evidenceId);
-        const rejectionMessages = [
-          ...new Set(
-            [
-              ...(input.approvalStore.hasPendingByRun(activeRun.runId) || input.userInputStore.hasPendingByRun(activeRun.runId)
-                ? ["Cannot finalize: unresolved approval or user input request is still pending."]
-                : []),
-              ...validation.evidence.map((entry) => entry.message),
-              ...invalidFinalEvidenceRefs.map(
-                (evidenceRef) => `Final referenced unknown evidence ${evidenceRef}.`
-              )
-            ].filter((message) => message.trim().length > 0)
-          )
-        ];
-        await appendEvent(
-          "model.final.rejected",
-          {
-            reasons: rejectionMessages,
-            evidenceRefs
-          },
-          input.now()
-        );
-        ledger = appendFailedAttempt({
-          ledger,
-          now: input.now(),
-          actionType: "final",
-          summary: rejectionMessages.join(" "),
-          errorCode: "MODEL_FINAL_REJECTED",
-          retryable: false,
-          evidenceRefs
-        });
-        ledger = applyLedgerPatch({
-          ledger,
-          patch: {
-            appendEvidenceRefs: evidenceRefs,
-            appendDecisions: rejectionMessages
-          },
-          now: input.now()
-        });
-        await persistLedger(ledger);
-        recentValidationResult = validation;
-        activeRun = transitionRun(activeRun, "running", input.now());
-        input.runStore.updateRun(activeRun);
-
-        const noProgressSignals = detectNoProgress({
-          previous: previousSnapshot,
-          current: {
-            actionSignature,
-            errorCode: "MODEL_FINAL_REJECTED",
-            ledgerVersion: ledger.version,
-            evidenceCount: ledger.evidenceRefs.length,
-            validationStatus: validation.status,
-            artifactHash: null
-          }
-        });
-        previousSnapshot = {
-          actionSignature,
-          errorCode: "MODEL_FINAL_REJECTED",
-          ledgerVersion: ledger.version,
-          evidenceCount: ledger.evidenceRefs.length,
-          validationStatus: validation.status,
-          artifactHash: null
-        };
-        ({ ledger, noProgressCount, regroundRequested, replanRequested } = await handleNoProgress({
-          input: {
-            now: input.now,
-            ledgerStore: input.ledgerStore
-          },
           appendEvent,
-          ledger,
-          noProgressCount,
-          signals: noProgressSignals
-        }));
-        continue;
+          code: outcome.code,
+          message: outcome.message,
+          retryable: outcome.retryable
+        });
       }
-
-      await appendEvent("model.final.accepted", { evidenceRefs: validation.evidenceRecords.map((record) => record.evidenceId) }, input.now());
-      input.artifactStore.insertArtifact(artifact);
-      await appendEvent("artifact.created", { artifactId: artifact.artifactId }, artifact.createdAt);
-      const succeededAt = input.now();
-      activeRun = transitionRun(activeRun, "succeeded", succeededAt);
-      input.runStore.updateRun(activeRun);
-      await appendEvent("run.completed", { status: activeRun.status }, succeededAt);
-
-      return {
-        kind: "completed",
-        run: activeRun,
-        artifact,
-        validation,
-        ledger
-      };
+      if (outcome.kind === "return") {
+        return outcome.result;
+      }
+      applyStateDelta(outcome.delta);
+      continue;
     }
 
     if (action.type === "submit_execution_plan") {
