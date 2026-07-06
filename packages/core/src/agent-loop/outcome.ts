@@ -151,6 +151,7 @@ export type StateDelta = {
   recentValidationResult?: ValidationResult | null;
   latestIterationIndex?: number;
   regroundedAt?: string | null;
+  ledger?: ProgressLedger;
   noProgressCount?: number;
   previousSnapshot?: NoProgressSnapshot;
   recoveryState?: RecoveryCheckpointState | undefined;

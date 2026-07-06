@@ -88,6 +88,7 @@ import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.j
 import { buildLoopContextSnapshot, reGroundNow } from "./agent-loop/context-snapshot.js";
 import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
 import { handleSubmitExecutionPlan } from "./agent-loop/handlers/submit-execution-plan.js";
+import { handleUpdatePlan } from "./agent-loop/handlers/update-plan.js";
 import type { HandlerContext, StateDelta } from "./agent-loop/outcome.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
@@ -98,11 +99,8 @@ import {
   afterActionStrategy,
   beforeModelStrategy,
   buildStrategyPromptContext,
-  clearPlanRepair,
-  deriveExecutionPlan,
   deriveExecutionPlanFromAction,
   evaluateExecutionPlanCompleteness,
-  handlePlanRepair,
   normalizeStrategyState,
   onStrategyRejection,
   validateActionWithStrategy
@@ -337,6 +335,7 @@ export async function runAgentLoop(input: {
     if ("recentValidationResult" in delta) recentValidationResult = (delta.recentValidationResult as ValidationResult | null) ?? null;
     if ("latestIterationIndex" in delta) latestIterationIndex = delta.latestIterationIndex as number;
     if ("regroundedAt" in delta) regroundedAt = (delta.regroundedAt as string | null) ?? null;
+    if ("ledger" in delta) ledger = delta.ledger as ProgressLedger;
     if ("noProgressCount" in delta) noProgressCount = delta.noProgressCount as number;
     if ("previousSnapshot" in delta) previousSnapshot = delta.previousSnapshot as NoProgressSnapshot;
     if ("recoveryState" in delta) recoveryState = delta.recoveryState;
@@ -940,194 +939,21 @@ export async function runAgentLoop(input: {
     }
 
     if (action.type === "update_plan") {
-      ledger = applyLedgerPatch({
-        ledger,
-        patch: action.patch,
-        now: input.now()
-      });
-      await persistLedger(ledger);
-      await checkpoint("plan_formed");
-      const iteration = createIteration({
-        iterationId: input.idGenerator(),
-        runId: activeRun.runId,
-        index: latestIterationIndex,
-        actionType: action.type,
-        status: "completed",
-        usage,
-        summary: action.reason,
-        evidenceRefs: [],
-        now: input.now()
-      });
-      input.agentIterationStore.insertIteration(iteration);
-      await appendEvent("iteration.completed", { index: iteration.index, actionType: iteration.actionType }, iteration.createdAt);
-      latestIterationIndex += 1;
-      if (builderState.planAccepted) {
-        const noProgressSignals = detectNoProgress({
-          previous: previousSnapshot,
-          current: {
-            actionSignature,
-            errorCode: null,
-            ledgerVersion: ledger.version,
-            evidenceCount: ledger.evidenceRefs.length,
-            validationStatus: recentValidationResult?.status ?? null,
-            artifactHash: null
-          }
-        });
-        previousSnapshot = {
-          actionSignature,
-          errorCode: null,
-          ledgerVersion: ledger.version,
-          evidenceCount: ledger.evidenceRefs.length,
-          validationStatus: recentValidationResult?.status ?? null,
-          artifactHash: null
-        };
-        ({ ledger, noProgressCount, regroundRequested, replanRequested } = await handleNoProgress({
-          input: {
-            now: input.now,
-            ledgerStore: input.ledgerStore
-          },
+      const outcome = await handleUpdatePlan(buildHandlerContext(actionSignature), action);
+      if (outcome.kind === "fail") {
+        return failRun({
+          input,
+          run: activeRun,
           appendEvent,
-          ledger,
-          noProgressCount,
-          signals: noProgressSignals
-        }));
-        continue;
-      }
-      const derivedPlan = deriveExecutionPlan({
-        ledger,
-        validationCommand: input.task.input.validationRequest?.command,
-        validationArgs: input.task.input.validationRequest?.args
-      });
-      if (derivedPlan === undefined) {
-        const strategyAfterPlan = afterActionStrategy({
-          task: input.task,
-          state: strategyState,
-          iteration: latestIterationIndex,
-          action,
-          previousWorkingSet: currentWorkingSet,
-          currentWorkingSet,
-          previousChangedFiles: changedFiles,
-          currentChangedFiles: changedFiles,
-          previousValidationResult: recentValidationResult,
-          currentValidationResult: recentValidationResult
+          code: outcome.code,
+          message: outcome.message,
+          retryable: outcome.retryable
         });
-        strategyState = strategyAfterPlan.state;
-      } else {
-        const completeness = evaluateExecutionPlanCompleteness(derivedPlan);
-        if (completeness.complete) {
-          const strategyAfterPlan = afterActionStrategy({
-            task: input.task,
-            state: clearPlanRepair(strategyState),
-            iteration: latestIterationIndex,
-            action,
-            previousWorkingSet: currentWorkingSet,
-            currentWorkingSet,
-            previousChangedFiles: changedFiles,
-            currentChangedFiles: changedFiles,
-            previousValidationResult: recentValidationResult,
-            currentValidationResult: recentValidationResult,
-            plan: derivedPlan
-          });
-          strategyState = strategyAfterPlan.state;
-          await appendEvent(
-            "plan.created",
-            {
-              reason: "minimum_execution_plan_derived",
-              iteration: latestIterationIndex,
-              targetFiles: derivedPlan.targetFiles,
-              intendedChanges: derivedPlan.intendedChanges,
-              validationCommands: derivedPlan.validationCommands
-            },
-            input.now()
-          );
-        } else {
-          const repairDecision = handlePlanRepair({
-            state: strategyState,
-            completeness,
-            derivedPlan,
-            iteration: latestIterationIndex
-          });
-          strategyState = repairDecision.state;
-          await appendEvent(
-            "plan.partial",
-            {
-              reason: "execution_plan_incomplete",
-              iteration: latestIterationIndex,
-              targetFiles: derivedPlan.targetFiles,
-              intendedChanges: derivedPlan.intendedChanges,
-              validationCommands: derivedPlan.validationCommands,
-              missingFields: completeness.missingFields,
-              attempt: repairDecision.repair.attempt,
-              remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
-            },
-            input.now()
-          );
-          if (repairDecision.kind === "exhaust") {
-            await appendEvent(
-              "strategy.plan_repair.exhausted",
-              {
-                reason: "plan_repair_budget_exhausted",
-                iteration: latestIterationIndex,
-                missingFields: completeness.missingFields,
-                attempt: repairDecision.repair.attempt,
-                remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
-              },
-              input.now()
-            );
-            return failRun({
-              input,
-              run: activeRun,
-              appendEvent,
-              code: "AGENT_STRATEGY_NO_PROGRESS",
-              message: "Agent strategy exhausted plan repair attempts without producing a complete execution plan.",
-              retryable: false
-            });
-          }
-          await appendEvent(
-            "strategy.plan_repair.requested",
-            {
-              reason: "execution_plan_incomplete",
-              iteration: latestIterationIndex,
-              missingFields: completeness.missingFields,
-              attempt: repairDecision.repair.attempt,
-              remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
-            },
-            input.now()
-          );
-          await checkpoint("post_response", { note: "strategy_plan_repair" });
-          continue;
-        }
       }
-
-      const noProgressSignals = detectNoProgress({
-        previous: previousSnapshot,
-        current: {
-          actionSignature,
-          errorCode: null,
-          ledgerVersion: ledger.version,
-          evidenceCount: ledger.evidenceRefs.length,
-          validationStatus: recentValidationResult?.status ?? null,
-          artifactHash: null
-        }
-      });
-      previousSnapshot = {
-        actionSignature,
-        errorCode: null,
-        ledgerVersion: ledger.version,
-        evidenceCount: ledger.evidenceRefs.length,
-        validationStatus: recentValidationResult?.status ?? null,
-        artifactHash: null
-      };
-      ({ ledger, noProgressCount, regroundRequested, replanRequested } = await handleNoProgress({
-        input: {
-          now: input.now,
-          ledgerStore: input.ledgerStore
-        },
-        appendEvent,
-        ledger,
-        noProgressCount,
-        signals: noProgressSignals
-      }));
+      if (outcome.kind === "return") {
+        return outcome.result;
+      }
+      applyStateDelta(outcome.delta);
       continue;
     }
 
