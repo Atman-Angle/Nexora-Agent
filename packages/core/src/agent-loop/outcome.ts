@@ -103,6 +103,7 @@ export type HandlerContext = {
     note?: string;
   }) => Promise<Checkpoint>;
   persistLedger: (nextLedger: ProgressLedger) => Promise<void>;
+  mutate: (delta: StateDelta) => void;
   recoveryOrchestrator: RecoveryOrchestrator;
   recoveryBudget: AgentBudget | Record<string, never>;
   availableTools: ToolCall["toolName"][];
@@ -180,7 +181,7 @@ export type StateDelta = {
  * the global safety net (Phase A).
  */
 export type HandlerOutcome =
-  | { kind: "continue"; delta?: StateDelta }
+  | { kind: "continue" }
   | { kind: "return"; result: AgentLoopResult }
   | { kind: "fail"; code: string; message: string; retryable: boolean };
 

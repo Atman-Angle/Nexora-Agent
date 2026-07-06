@@ -293,6 +293,7 @@ export async function runAgentLoop(input: {
     appendEventWithSequence,
     checkpoint,
     persistLedger,
+    mutate: applyStateDelta,
     recoveryOrchestrator,
     recoveryBudget,
     availableTools,
@@ -783,7 +784,6 @@ export async function runAgentLoop(input: {
       if (outcome.kind === "return") {
         return outcome.result;
       }
-      applyStateDelta(outcome.delta);
       continue;
     }
 
@@ -951,7 +951,6 @@ export async function runAgentLoop(input: {
       if (outcome.kind === "return") {
         return outcome.result;
       }
-      applyStateDelta(outcome.delta);
       continue;
     }
 
@@ -1017,7 +1016,6 @@ export async function runAgentLoop(input: {
       if (outcome.kind === "return") {
         return outcome.result;
       }
-      applyStateDelta(outcome.delta);
       continue;
     }
 

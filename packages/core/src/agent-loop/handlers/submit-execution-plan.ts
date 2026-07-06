@@ -14,7 +14,7 @@ import {
 } from "../../builder/index.js";
 import { clearPlanRepair } from "../../strategy/index.js";
 import { createIteration } from "../iteration.js";
-import type { HandlerContext, HandlerOutcome, StateDelta } from "../outcome.js";
+import type { HandlerContext, HandlerOutcome } from "../outcome.js";
 
 /**
  * handleSubmitExecutionPlan — processes a Builder structured plan submission:
@@ -69,6 +69,7 @@ export async function handleSubmitExecutionPlan(
       planAccepted: false,
       version: ctx.builderState.version + 1
     });
+    ctx.mutate({ builderState: nextBuilderState });
     await ctx.appendEvent(
       "builder.execution_plan.rejected",
       {
@@ -109,7 +110,7 @@ export async function handleSubmitExecutionPlan(
       ctx.input.now()
     );
     await ctx.checkpoint("post_response", { note: "builder_execution_plan_repair" });
-    return { kind: "continue", delta: { builderState: nextBuilderState } };
+    return { kind: "continue" };
   }
 
   const nextStrategyState: StrategyState = clearPlanRepair({
@@ -156,6 +157,15 @@ export async function handleSubmitExecutionPlan(
       artifactHash: null
     };
   }
+  ctx.mutate({
+    strategyState: nextStrategyState,
+    builderState: nextBuilderState,
+    validationRepairActionRejectionCount: 0,
+    recoveryState: nextRecoveryState,
+    replanRequested: nextReplanRequested,
+    regroundRequested: nextRegroundRequested,
+    noProgressCount: nextNoProgressCount
+  });
   await ctx.appendEvent(
     "plan.created",
     {
@@ -191,16 +201,9 @@ export async function handleSubmitExecutionPlan(
     validationStatus: ctx.recentValidationResult?.status ?? null,
     artifactHash: null
   };
-  const delta: StateDelta = {
-    builderState: nextBuilderState,
-    strategyState: nextStrategyState,
-    validationRepairActionRejectionCount: 0,
-    recoveryState: nextRecoveryState,
-    replanRequested: nextReplanRequested,
-    regroundRequested: nextRegroundRequested,
-    noProgressCount: nextNoProgressCount,
-    previousSnapshot: nextPreviousSnapshot,
-    latestIterationIndex: nextLatestIterationIndex
-  };
-  return { kind: "continue", delta };
+  ctx.mutate({
+    latestIterationIndex: nextLatestIterationIndex,
+    previousSnapshot: nextPreviousSnapshot
+  });
+  return { kind: "continue" };
 }

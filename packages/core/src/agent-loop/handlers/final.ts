@@ -61,6 +61,7 @@ export async function handleFinal(
   const verifyingAt = ctx.input.now();
   let activeRun: Run = transitionRun(ctx.activeRun, "verifying", verifyingAt);
   ctx.input.runStore.updateRun(activeRun);
+  ctx.mutate({ activeRun });
   await ctx.checkpoint("pre_validation");
   const validationStartSequence = await ctx.appendEventWithSequence("validation.started", { status: activeRun.status }, verifyingAt);
 
@@ -187,19 +188,17 @@ export async function handleFinal(
       noProgressCount: ctx.noProgressCount,
       signals: noProgressSignals
     });
-    return {
-      kind: "continue",
-      delta: {
-        activeRun,
-        recentValidationResult: validation,
-        ledger: noProgress.ledger,
-        latestIterationIndex: nextLatestIterationIndex,
-        previousSnapshot,
-        noProgressCount: noProgress.noProgressCount,
-        regroundRequested: noProgress.regroundRequested,
-        replanRequested: noProgress.replanRequested
-      }
-    };
+    ctx.mutate({
+      activeRun,
+      recentValidationResult: validation,
+      ledger: noProgress.ledger,
+      latestIterationIndex: nextLatestIterationIndex,
+      previousSnapshot,
+      noProgressCount: noProgress.noProgressCount,
+      regroundRequested: noProgress.regroundRequested,
+      replanRequested: noProgress.replanRequested
+    });
+    return { kind: "continue" };
   }
 
   await ctx.appendEvent("model.final.accepted", { evidenceRefs: validation.evidenceRecords.map((record) => record.evidenceId) }, ctx.input.now());

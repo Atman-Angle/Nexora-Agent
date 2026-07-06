@@ -77,17 +77,15 @@ export async function handleUpdatePlan(
       noProgressCount: ctx.noProgressCount,
       signals: noProgressSignals
     });
-    return {
-      kind: "continue",
-      delta: {
-        latestIterationIndex: nextLatestIterationIndex,
-        previousSnapshot,
-        ledger: noProgress.ledger,
-        noProgressCount: noProgress.noProgressCount,
-        regroundRequested: noProgress.regroundRequested,
-        replanRequested: noProgress.replanRequested
-      }
-    };
+    ctx.mutate({
+      latestIterationIndex: nextLatestIterationIndex,
+      previousSnapshot,
+      ledger: noProgress.ledger,
+      noProgressCount: noProgress.noProgressCount,
+      regroundRequested: noProgress.regroundRequested,
+      replanRequested: noProgress.replanRequested
+    });
+    return { kind: "continue" };
   }
 
   let nextStrategyState: StrategyState = ctx.strategyState;
@@ -190,8 +188,9 @@ export async function handleUpdatePlan(
         },
         ctx.input.now()
       );
+      ctx.mutate({ strategyState: nextStrategyState, latestIterationIndex: nextLatestIterationIndex });
       await ctx.checkpoint("post_response", { note: "strategy_plan_repair" });
-      return { kind: "continue", delta: { latestIterationIndex: nextLatestIterationIndex, strategyState: nextStrategyState } };
+      return { kind: "continue" };
     }
   }
 
@@ -207,16 +206,14 @@ export async function handleUpdatePlan(
     noProgressCount: ctx.noProgressCount,
     signals: noProgressSignals
   });
-  return {
-    kind: "continue",
-    delta: {
-      latestIterationIndex: nextLatestIterationIndex,
-      strategyState: nextStrategyState,
-      previousSnapshot,
-      ledger: noProgress.ledger,
-      noProgressCount: noProgress.noProgressCount,
-      regroundRequested: noProgress.regroundRequested,
-      replanRequested: noProgress.replanRequested
-    }
-  };
+  ctx.mutate({
+    latestIterationIndex: nextLatestIterationIndex,
+    strategyState: nextStrategyState,
+    previousSnapshot,
+    ledger: noProgress.ledger,
+    noProgressCount: noProgress.noProgressCount,
+    regroundRequested: noProgress.regroundRequested,
+    replanRequested: noProgress.replanRequested
+  });
+  return { kind: "continue" };
 }
