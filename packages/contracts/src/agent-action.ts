@@ -1,9 +1,11 @@
 import { z } from "zod";
 
+import { PlanningActionSchema } from "./builder.js";
 import { LedgerPatchSchema } from "./ledger.js";
 import { ToolCallSchema } from "./tool-call.js";
 
 export const AgentActionSchema = z.union([
+  PlanningActionSchema,
   z.object({
     type: z.literal("tool_call"),
     toolCall: ToolCallSchema

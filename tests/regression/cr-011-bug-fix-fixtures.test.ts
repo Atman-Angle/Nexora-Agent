@@ -16,6 +16,7 @@ function loadManifest() {
 
 function correctScript(buggyHash: string) {
   return parseAgentScript([
+    { type: "update_plan", reason: "Plan bug fix.", patch: { currentStep: "Patch src/math.js", appendPlannedSteps: ["Patch src/math.js", "Run node test.js"] } },
     { type: "tool_call", toolCall: { toolCallId: "p", toolName: "filesystem.patch", input: { path: "src/math.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "return a - b;", replace: "return a + b;" }, encoding: "utf8", idempotencyKey: "p" }, timeoutMs: 5000 } },
     { type: "tool_call", toolCall: { toolCallId: "v", toolName: "shell.execute", input: { command: "node", args: ["test.js"], cwd: ".", environment: {}, purpose: "acceptance", idempotencyKey: "v" }, timeoutMs: 10000 } },
     { type: "final", text: "Fixed." }
@@ -65,6 +66,7 @@ describe("CR-011 Bug Fix Fixtures", () => {
     const manifest = loadManifest();
     const buggyHash = computeArtifactHash(buggyContent);
     const wrongScript = parseAgentScript([
+      { type: "update_plan", reason: "Plan wrong fix for negative case.", patch: { currentStep: "Patch src/math.js", appendPlannedSteps: ["Patch src/math.js", "Run node test.js"] } },
       { type: "tool_call", toolCall: { toolCallId: "p", toolName: "filesystem.patch", input: { path: "src/math.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "return a - b;", replace: "return a * b;" }, encoding: "utf8", idempotencyKey: "p" }, timeoutMs: 5000 } },
       { type: "tool_call", toolCall: { toolCallId: "v", toolName: "shell.execute", input: { command: "node", args: ["test.js"], cwd: ".", environment: {}, purpose: "acceptance", idempotencyKey: "v" }, timeoutMs: 10000 } },
       { type: "final", text: "Fixed." }
@@ -79,6 +81,7 @@ describe("CR-011 Bug Fix Fixtures", () => {
     const manifest = loadManifest();
     const buggyHash = computeArtifactHash(buggyContent);
     const script = parseAgentScript([
+      { type: "update_plan", reason: "Plan fix before regression phase.", patch: { currentStep: "Patch src/math.js", appendPlannedSteps: ["Patch src/math.js", "Run node test.js"] } },
       { type: "tool_call", toolCall: { toolCallId: "p", toolName: "filesystem.patch", input: { path: "src/math.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "return a - b;", replace: "return a + b;" }, encoding: "utf8", idempotencyKey: "p" }, timeoutMs: 5000 } },
       { type: "tool_call", toolCall: { toolCallId: "v", toolName: "shell.execute", input: { command: "node", args: ["test.js"], cwd: ".", environment: {}, purpose: "acceptance", idempotencyKey: "v" }, timeoutMs: 10000 } },
       { type: "final", text: "Fixed." }
@@ -131,6 +134,7 @@ describe("CR-011 Bug Fix Fixtures", () => {
     const manifest = loadManifest();
     const buggyHash = computeArtifactHash(buggyContent);
     const noVerifyScript = parseAgentScript([
+      { type: "update_plan", reason: "Plan fix without verification for negative case.", patch: { currentStep: "Patch src/math.js", appendPlannedSteps: ["Patch src/math.js", "Run node test.js"] } },
       { type: "tool_call", toolCall: { toolCallId: "p", toolName: "filesystem.patch", input: { path: "src/math.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "return a - b;", replace: "return a + b;" }, encoding: "utf8", idempotencyKey: "p" }, timeoutMs: 5000 } },
       { type: "final", text: "Fixed without verification." }
     ]);

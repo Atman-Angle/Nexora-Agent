@@ -5,7 +5,7 @@ export const AgentIterationSchema = z.object({
   iterationId: z.string().min(1),
   runId: z.string().min(1),
   index: z.number().int().nonnegative(),
-  actionType: z.enum(["tool_call", "request_approval", "ask_user", "update_plan", "final", "fail"]),
+  actionType: z.enum(["submit_execution_plan", "tool_call", "request_approval", "ask_user", "update_plan", "final", "fail"]),
   status: z.enum(["completed", "failed"]),
   modelCallCount: z.number().int().nonnegative(),
   toolCallCount: z.number().int().nonnegative(),

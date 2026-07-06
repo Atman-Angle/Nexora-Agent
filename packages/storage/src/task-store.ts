@@ -9,9 +9,9 @@ export class TaskStore {
     this.database.connection
       .prepare(
         `INSERT INTO tasks (
-          id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, task_type, acceptance_criteria_json, source, created_at
+          id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, task_type, acceptance_criteria_json, execution_constraints_json, source, created_at
         ) VALUES (
-          @id, @schemaVersion, @inputText, @filePath, @searchQuery, @patchPath, @expectedHash, @patchJson, @patchEncoding, @idempotencyKey, @validationRequestJson, @agentRequestJson, @taskType, @acceptanceCriteriaJson, @source, @createdAt
+          @id, @schemaVersion, @inputText, @filePath, @searchQuery, @patchPath, @expectedHash, @patchJson, @patchEncoding, @idempotencyKey, @validationRequestJson, @agentRequestJson, @taskType, @acceptanceCriteriaJson, @executionConstraintsJson, @source, @createdAt
         )`
       )
       .run({
@@ -30,6 +30,8 @@ export class TaskStore {
         agentRequestJson: parsedTask.input.agentRequest === undefined ? null : JSON.stringify(parsedTask.input.agentRequest),
         taskType: parsedTask.input.taskType,
         acceptanceCriteriaJson: JSON.stringify(parsedTask.input.acceptanceCriteria),
+        executionConstraintsJson:
+          parsedTask.input.executionConstraints === undefined ? null : JSON.stringify(parsedTask.input.executionConstraints),
         source: parsedTask.source,
         createdAt: parsedTask.createdAt
       });
@@ -38,7 +40,7 @@ export class TaskStore {
   public getTask(taskId: string): Task | null {
     const row = this.database.connection
       .prepare(
-        `SELECT id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, task_type, acceptance_criteria_json, source, created_at
+        `SELECT id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, task_type, acceptance_criteria_json, execution_constraints_json, source, created_at
          FROM tasks
          WHERE id = ?`
       )
@@ -58,6 +60,7 @@ export class TaskStore {
           agent_request_json: string | null;
           task_type: string | null;
           acceptance_criteria_json: string | null;
+          execution_constraints_json: string | null;
           source: "cli";
           created_at: string;
         }
@@ -143,7 +146,18 @@ export class TaskStore {
                   | { type: "file_non_empty"; path: string }
                   | { type: "directory_non_empty"; path: string }
                   | { type: "file_contains"; path: string; text: string };
-              }>)
+              }>),
+        ...(row.execution_constraints_json === null
+          ? {}
+          : {
+              executionConstraints: JSON.parse(row.execution_constraints_json) as {
+                allowedEditFiles: string[];
+                allowedNewFiles: string[];
+                requiredEditFiles: string[];
+                requiredNewFiles: string[];
+                protectedFiles: string[];
+              }
+            })
       },
       source: row.source,
       createdAt: row.created_at

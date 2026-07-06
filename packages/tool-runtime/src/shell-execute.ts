@@ -338,5 +338,65 @@ function summarize(text: string): string {
     return trimmed;
   }
 
-  return `${trimmed.slice(0, SUMMARY_CHAR_LIMIT)}...`;
+  const diagnostic = summarizeDiagnosticLines(trimmed);
+  if (diagnostic.length > 0) {
+    return diagnostic;
+  }
+
+  const headLength = Math.floor((SUMMARY_CHAR_LIMIT - 5) / 2);
+  const tailLength = SUMMARY_CHAR_LIMIT - 5 - headLength;
+  return `${trimmed.slice(0, headLength)}\n...\n${trimmed.slice(trimmed.length - tailLength)}`;
+}
+
+function summarizeDiagnosticLines(text: string): string {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const concreteIndex = lines.findIndex((line) => isConcreteDiagnosticLine(line));
+  const fallbackIndex = lines.findIndex((line) => isDiagnosticLine(line));
+  const startIndex = concreteIndex >= 0 ? concreteIndex : fallbackIndex;
+  if (startIndex < 0) {
+    return "";
+  }
+
+  const selected: string[] = [];
+  const header = findNearbyDiagnosticHeader(lines, startIndex);
+  if (header !== undefined) {
+    selected.push(header);
+  }
+  for (const nearby of lines.slice(Math.max(0, startIndex - 1), startIndex + 6)) {
+    if (nearby.length > 0) {
+      selected.push(nearby);
+    }
+    if (selected.join("\n").length >= SUMMARY_CHAR_LIMIT) {
+      break;
+    }
+  }
+  const unique = [...new Set(selected)];
+  const summary = unique.join("\n");
+  if (summary.length <= SUMMARY_CHAR_LIMIT) {
+    return summary;
+  }
+  return `${summary.slice(0, SUMMARY_CHAR_LIMIT - 3)}...`;
+}
+
+function findNearbyDiagnosticHeader(lines: string[], diagnosticIndex: number): string | undefined {
+  const searchStart = Math.max(0, diagnosticIndex - 20);
+  for (let index = diagnosticIndex - 1; index >= searchStart; index -= 1) {
+    const line = lines[index] ?? "";
+    if (/error during build|build failed|test failed|failed tests|failures|\.(?:test|spec)\.[cm]?[jt]sx?/i.test(line)) {
+      return line;
+    }
+  }
+  return undefined;
+}
+
+function isConcreteDiagnosticLine(line: string): boolean {
+  return (
+    /[A-Za-z0-9_.\-\\/]+\.[cm]?[jt]sx?\s*(?:\(\d+:\d+\)|:\d+:\d+)/i.test(line) ||
+    /(TestingLibraryElementError|AssertionError|SyntaxError|TypeError|ReferenceError|RollupError|TransformPluginContext)/i.test(line) ||
+    /(Expected|Unexpected|Cannot|Could not resolve|Unable to find|Found a label|Received)/i.test(line)
+  );
+}
+
+function isDiagnosticLine(line: string): boolean {
+  return isConcreteDiagnosticLine(line) || /(error during build|build failed|test failed|failed|FAIL)/i.test(line);
 }

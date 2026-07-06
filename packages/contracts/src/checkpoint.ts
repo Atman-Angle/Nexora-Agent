@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import { RecoveryCheckpointStateSchema } from "./recovery.js";
+import { StrategyStateSchema } from "./strategy.js";
+import { BuilderStateSchema } from "./builder.js";
 
 export const CheckpointPhaseSchema = z.enum([
   "plan_formed",
@@ -33,6 +35,8 @@ export const CheckpointSchema = z.object({
   workspaceHash: z.string().min(1).optional(),
   note: z.string().min(1).optional(),
   recovery: RecoveryCheckpointStateSchema.optional(),
+  strategy: StrategyStateSchema.optional(),
+  builder: BuilderStateSchema.optional(),
   createdAt: z.string().datetime()
 });
 
@@ -63,6 +67,8 @@ export function createCheckpoint(input: {
   workspaceHash?: string;
   note?: string;
   recovery?: z.infer<typeof RecoveryCheckpointStateSchema>;
+  strategy?: z.infer<typeof StrategyStateSchema>;
+  builder?: z.infer<typeof BuilderStateSchema>;
   createdAt: string;
 }): Checkpoint {
   return CheckpointSchema.parse({
@@ -78,6 +84,8 @@ export function createCheckpoint(input: {
     ...(input.workspaceHash === undefined ? {} : { workspaceHash: input.workspaceHash }),
     ...(input.note === undefined ? {} : { note: input.note }),
     ...(input.recovery === undefined ? {} : { recovery: input.recovery }),
+    ...(input.strategy === undefined ? {} : { strategy: input.strategy }),
+    ...(input.builder === undefined ? {} : { builder: input.builder }),
     createdAt: input.createdAt
   });
 }

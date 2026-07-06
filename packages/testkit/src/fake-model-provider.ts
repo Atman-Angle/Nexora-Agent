@@ -3,8 +3,12 @@ import type {
   AgentAction,
   AgentBudget,
   AgentBudgetUsage,
+  BuilderPromptContext,
   ContextSnapshot,
+  ExecutionPlanRepairContext,
+  PlanningPolicyContext,
   ProgressLedger,
+  StrategyPromptContext,
   TaskPatchRequest,
   TaskValidationRequest,
   ToolResult,
@@ -17,6 +21,15 @@ import type { AgentLoopModelProvider, ModelActionRejection, ModelProvider, ToolM
 export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, AgentLoopModelProvider {
   public callCount = 0;
   public lastModelError: ModelActionRejection | null = null;
+  public lastStrategyContext: StrategyPromptContext | null = null;
+  public lastBuilderContext: BuilderPromptContext | null = null;
+  public lastPlanningPolicyContext: PlanningPolicyContext | null = null;
+  public lastExecutionPlanRepairContext: ExecutionPlanRepairContext | null = null;
+  public lastValidationFailureSummary: ValidationResult["failureSummary"] | null = null;
+  public readonly modelErrors: Array<ModelActionRejection | null> = [];
+  public readonly strategyContexts: Array<StrategyPromptContext | null> = [];
+  public readonly builderContexts: Array<BuilderPromptContext | null> = [];
+  public readonly validationFailureSummaries: Array<ValidationResult["failureSummary"] | null> = [];
   private agentScriptIndex = 0;
 
   public constructor(
@@ -271,9 +284,22 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;
+    strategyContext?: StrategyPromptContext;
+    builderContext?: BuilderPromptContext;
+    planningPolicyContext?: PlanningPolicyContext | null;
+    executionPlanRepairContext?: ExecutionPlanRepairContext | null;
     lastModelError?: ModelActionRejection | null;
   }): Promise<AgentAction> {
     this.lastModelError = input.lastModelError ?? null;
+    this.lastStrategyContext = input.strategyContext ?? null;
+    this.lastBuilderContext = input.builderContext ?? null;
+    this.lastPlanningPolicyContext = input.planningPolicyContext ?? null;
+    this.lastExecutionPlanRepairContext = input.executionPlanRepairContext ?? null;
+    this.lastValidationFailureSummary = input.recentValidationResult?.failureSummary ?? null;
+    this.modelErrors.push(this.lastModelError);
+    this.strategyContexts.push(this.lastStrategyContext);
+    this.builderContexts.push(this.lastBuilderContext);
+    this.validationFailureSummaries.push(this.lastValidationFailureSummary);
     void input;
     this.callCount += 1;
 

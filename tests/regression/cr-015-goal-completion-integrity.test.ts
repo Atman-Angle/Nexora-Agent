@@ -225,6 +225,14 @@ describe("CR-015 Goal Completion Integrity", () => {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
           { type: "final", text: "done too early" },
           {
+            type: "update_plan",
+            reason: "Plan the real write and validation.",
+            patch: {
+              currentStep: "Create src/Hero.tsx",
+              appendPlannedSteps: ["Create src/Hero.tsx", "Run node verify.js"]
+            }
+          },
+          {
             type: "tool_call",
             toolCall: {
               toolCallId: "write-hero",
@@ -361,6 +369,18 @@ describe("CR-015 Goal Completion Integrity", () => {
           },
           { type: "final", text: "Directory created, task complete." },
           {
+            type: "update_plan",
+            reason: "Plan the file creation and build validation.",
+            patch: {
+              currentStep: "Create src/components/Hero.tsx and write src/App.tsx",
+              appendPlannedSteps: [
+                "Create src/components/Hero.tsx",
+                "Write src/App.tsx",
+                "Run node build.js"
+              ]
+            }
+          },
+          {
             type: "tool_call",
             toolCall: {
               toolCallId: "write-hero",
@@ -424,12 +444,14 @@ describe("CR-015 Goal Completion Integrity", () => {
     const thirdPayload = JSON.parse(third.stdout) as { approvalId: string; status: string };
     expect(thirdPayload.status).toBe("waiting_for_approval");
 
-    const fourth = session.run(["approve", thirdPayload.approvalId]);
-    const fourthPayload = JSON.parse(fourth.stdout) as { approvalId: string; status: string };
-    expect(fourthPayload.status).toBe("waiting_for_approval");
-
-    const fifth = session.run(["approve", fourthPayload.approvalId]);
-    expect(fifth.exitCode).toBe(0);
+    let payload: { approvalId?: string; status: string } = thirdPayload;
+    for (let index = 0; index < 5 && payload.status === "waiting_for_approval"; index += 1) {
+      expect(payload.approvalId).toBeTruthy();
+      const next = session.run(["approve", String(payload.approvalId)]);
+      expect(next.exitCode).toBe(0);
+      payload = JSON.parse(next.stdout) as { approvalId?: string; status: string };
+    }
+    expect(payload.status).toBe("succeeded");
 
     const state = session.readDatabaseState();
     const rejected = state.events.filter((event) => event.type === "model.final.rejected");

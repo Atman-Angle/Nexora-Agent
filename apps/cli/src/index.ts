@@ -7,6 +7,7 @@ import {
   RecoveryBudgetSchema,
   ToolResultSchema,
   type TaskAcceptanceCriterion,
+  type TaskExecutionConstraints,
   type TaskType,
   type ApprovalDecision,
   type ApprovalScope,
@@ -762,6 +763,7 @@ export async function runAgentCommand(command: {
     const now = () => new Date().toISOString();
     const timeoutMs = parseOptionalDelay(process.env.NEXORA_AGENT_VERIFY_TIMEOUT_MS) ?? 5_000;
     const expectedExitCode = parseOptionalExpectedExitCode(process.env.NEXORA_AGENT_EXPECTED_EXIT_CODE) ?? 0;
+    const executionConstraints = parseExecutionConstraintsEnv(process.env.NEXORA_AGENT_EXECUTION_CONSTRAINTS_JSON);
     const task = createTask({
       taskId: randomUUID(),
       text: command.goal,
@@ -804,6 +806,7 @@ export async function runAgentCommand(command: {
         })()
       },
       acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_AGENT_ACCEPTANCE_CRITERIA_JSON),
+      ...(executionConstraints === undefined ? {} : { executionConstraints }),
       createdAt: now()
     });
     taskStore.insertTask(task);
@@ -1739,16 +1742,13 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
         const recoveredToolResult = ToolResultSchema.parse(JSON.parse(executionRecord.outputJson) as unknown);
         const artifactRefs = collectArtifactRefs(recoveredToolResult);
-        const reconciledLedger: ProgressLedger =
-          artifactRefs.length === 0
-            ? ledger
-            : {
-                ...ledger,
-                artifactRefs: [...new Set([...ledger.artifactRefs, ...artifactRefs])],
-                version: ledger.version + 1,
-                updatedAt: now()
-              };
-        if (artifactRefs.length > 0) {
+        const reconciledLedger = reconcileLedgerAfterRecoveredTool({
+          ledger,
+          toolName: recoveredToolResult.toolName,
+          artifactRefs,
+          now: now()
+        });
+        if (reconciledLedger.version !== ledger.version) {
           ledgerStore.upsertLedger(reconciledLedger);
         }
         const reconciledResumeState = {
@@ -2187,6 +2187,91 @@ function collectArtifactRefs(toolResult: ToolResult): string[] {
   return [];
 }
 
+function reconcileLedgerAfterRecoveredTool(input: {
+  ledger: ProgressLedger;
+  toolName: ToolResult["toolName"];
+  artifactRefs: string[];
+  now: string;
+}): ProgressLedger {
+  const matchingSteps = input.ledger.planSteps.filter(
+    (step) => step.status !== "completed" && stepMatchesRecoveredTool(step.description, input.toolName)
+  );
+  if (matchingSteps.length === 0 && input.artifactRefs.length === 0) {
+    return input.ledger;
+  }
+
+  const matchingStepIds = new Set(matchingSteps.map((step) => step.stepId));
+  const planSteps = input.ledger.planSteps.map((step) =>
+    matchingStepIds.has(step.stepId)
+      ? {
+          ...step,
+          status: "completed" as const,
+          evidenceRefs: [...new Set([...step.evidenceRefs, ...input.artifactRefs])],
+          updatedAt: input.now
+        }
+      : step
+  );
+  const completedSteps = [...new Set([...input.ledger.completedSteps, ...matchingSteps.map((step) => step.description)])];
+  const currentStep =
+    input.ledger.currentStep !== null && matchingSteps.some((step) => step.description === input.ledger.currentStep)
+      ? planSteps.find((step) => step.status !== "completed")?.description ?? null
+      : input.ledger.currentStep;
+
+  return {
+    ...input.ledger,
+    currentStep,
+    completedSteps,
+    planSteps,
+    artifactRefs: [...new Set([...input.ledger.artifactRefs, ...input.artifactRefs])],
+    version: input.ledger.version + 1,
+    updatedAt: input.now
+  };
+}
+
+function stepMatchesRecoveredTool(descriptionText: string, toolName: ToolResult["toolName"]): boolean {
+  const description = descriptionText.toLowerCase();
+  if (toolName === "filesystem.search") {
+    return description.includes("search") || description.includes("find") || description.includes("locate");
+  }
+  if (toolName === "filesystem.read") {
+    return description.includes("read") || description.includes("inspect");
+  }
+  if (toolName === "filesystem.patch") {
+    return description.includes("patch") || description.includes("fix") || description.includes("modify");
+  }
+  if (toolName === "filesystem.write") {
+    return description.includes("write") || description.includes("create") || description.includes("add file");
+  }
+  if (toolName === "shell.execute") {
+    return (
+      description.includes("verify") ||
+      description.includes("verification") ||
+      description.includes("validation") ||
+      description.includes("build") ||
+      description.includes("test") ||
+      description.includes("run ") ||
+      description.includes("acceptance") ||
+      description.includes("reproduction")
+    );
+  }
+  if (toolName === "project.inspect") {
+    return description.includes("inspect") || description.includes("repository") || description.includes("understand");
+  }
+  if (toolName === "project.commands") {
+    return description.includes("command");
+  }
+  if (toolName === "git.status") {
+    return description.includes("git status") || description.includes("status");
+  }
+  if (toolName === "git.diff") {
+    return description.includes("diff");
+  }
+  if (toolName === "git.show") {
+    return description.includes("show");
+  }
+  return false;
+}
+
 async function readWorkspaceFileHash(workspaceRoot: string, relativePath: string): Promise<string | null> {
   try {
     const absolutePath = await resolveWorkspaceFilePath(workspaceRoot, relativePath);
@@ -2517,6 +2602,15 @@ function parseAcceptanceCriteriaEnv(value: string | undefined): TaskAcceptanceCr
   }
 
   return JSON.parse(normalized) as TaskAcceptanceCriterion[];
+}
+
+function parseExecutionConstraintsEnv(value: string | undefined): TaskExecutionConstraints | undefined {
+  const normalized = value?.trim();
+  if (normalized === undefined || normalized.length === 0) {
+    return undefined;
+  }
+
+  return JSON.parse(normalized) as TaskExecutionConstraints;
 }
 
 function requireRun(runStore: RunStore, runId: string) {

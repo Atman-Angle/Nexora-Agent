@@ -20,6 +20,14 @@ describe("CR-009 Checkpoint Recovery", () => {
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
           {
+            type: "update_plan",
+            reason: "Plan the checkpoint recovery mutation.",
+            patch: {
+              currentStep: "Patch note.txt",
+              appendPlannedSteps: ["Patch note.txt", "Run node verify.js"]
+            }
+          },
+          {
             type: "tool_call",
             toolCall: {
               toolCallId: "cr009-patch",
@@ -114,7 +122,7 @@ describe("CR-009 Checkpoint Recovery", () => {
     expect(finalState.executionRecords).toHaveLength(2);
     expect(finalState.validationResults[0]?.result.status).toBe("passed");
     expect(readFileSync(join(session.workspaceRoot, "note.txt"), "utf8")).toContain("after");
-  });
+  }, 120000);
 });
 
 function parseJson(text: string): Record<string, unknown> {

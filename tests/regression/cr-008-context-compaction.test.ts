@@ -22,8 +22,8 @@ describe("CR-008 Context Compaction", () => {
             type: "update_plan",
             reason: "Plan the fix.",
             patch: {
-              currentStep: "Patch math.js",
-              appendPlannedSteps: ["Read math.js", "Patch math.js", "Run verification"]
+              currentStep: "Patch src/math.js",
+              appendPlannedSteps: ["Read src/math.js", "Patch src/math.js", "Run node verify.js"]
             }
           },
           {
@@ -119,6 +119,14 @@ describe("CR-008 Context Compaction", () => {
       ],
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
+          {
+            type: "update_plan",
+            reason: "Plan the resume mutation.",
+            patch: {
+              currentStep: "Patch note.txt",
+              appendPlannedSteps: ["Patch note.txt", "Run node verify.js"]
+            }
+          },
           {
             type: "tool_call",
             toolCall: {

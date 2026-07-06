@@ -239,7 +239,7 @@ export async function runCodingHarness(input: HarnessRunInput): Promise<HarnessR
     } catch (error) {
       if (error instanceof AgentLoopRunFailure) {
         const isBudget = error.code === "BUDGET_EXCEEDED";
-        const isNoProgress = error.code === "NO_PROGRESS";
+        const isNoProgress = error.code === "NO_PROGRESS" || error.code === "AGENT_STRATEGY_NO_PROGRESS";
         const status: HarnessRunOutput["status"] = isBudget || isNoProgress ? "blocked" : "failed";
         const reason = isBudget || isNoProgress ? "REPAIR_BUDGET_EXHAUSTED" : "TARGET_VERIFICATION_FAILED";
         appendEvent("bugfix.completion-gate.failed", { reason: error.code }, input.now());

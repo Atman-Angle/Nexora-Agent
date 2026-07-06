@@ -17,5 +17,10 @@ tmp/
 
 .nexora/
 
+# E001 temp workspaces
+.tmp-e001/
+.tmp-e0013/
+.tmp-e0014/
+
 # Local tool settings
 .local-tool-settings/

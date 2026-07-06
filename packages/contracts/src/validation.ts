@@ -32,6 +32,25 @@ export const ValidationFreshnessSchema = z.object({
   valid: z.boolean()
 });
 
+export const ValidationFailureSummarySchema = z.object({
+  schemaVersion: z.literal("1").default("1"),
+  status: z.literal("failed"),
+  command: z.string().min(1),
+  cwd: z.string().min(1),
+  exitCode: z.number().int().nullable(),
+  freshness: z.enum(["fresh", "stale", "unknown"]),
+  changedFiles: z.array(z.string().min(1)).default([]),
+  failingFile: z.string().min(1).nullable().default(null),
+  failingTestName: z.string().min(1).nullable().default(null),
+  message: z.string().min(1),
+  suggestedRepair: z.string().min(1).optional(),
+  stdoutExcerpt: z.string().default(""),
+  stderrExcerpt: z.string().default(""),
+  evidenceRefs: z.array(z.string().min(1)).default([]),
+  attempt: z.number().int().positive(),
+  afterLatestMutation: z.boolean()
+});
+
 export const CompletionGateResultSchema = z.object({
   taskType: TaskTypeSchema,
   finalProposalAttempt: z.number().int().positive(),
@@ -61,6 +80,7 @@ export const ValidationResultSchema = z.object({
   acceptanceResults: z.array(CompletionAcceptanceCriterionResultSchema).default([]),
   artifactChecks: z.array(ArtifactCheckSchema).default([]),
   freshness: ValidationFreshnessSchema.optional(),
+  failureSummary: ValidationFailureSummarySchema.optional(),
   completionGate: CompletionGateResultSchema.optional()
 });
 
@@ -68,4 +88,5 @@ export type ValidationResult = z.infer<typeof ValidationResultSchema>;
 export type CompletionAcceptanceCriterionResult = z.infer<typeof CompletionAcceptanceCriterionResultSchema>;
 export type ArtifactCheck = z.infer<typeof ArtifactCheckSchema>;
 export type ValidationFreshness = z.infer<typeof ValidationFreshnessSchema>;
+export type ValidationFailureSummary = z.infer<typeof ValidationFailureSummarySchema>;
 export type CompletionGateResult = z.infer<typeof CompletionGateResultSchema>;

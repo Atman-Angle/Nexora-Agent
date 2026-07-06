@@ -17,6 +17,14 @@ describe("CR-007 Approval", () => {
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
           {
+            type: "update_plan",
+            reason: "Plan the approval regression mutation.",
+            patch: {
+              currentStep: "Patch note.txt",
+              appendPlannedSteps: ["Patch note.txt", "Run node verify.js"]
+            }
+          },
+          {
             type: "tool_call",
             toolCall: {
               toolCallId: "cr-approval-patch",

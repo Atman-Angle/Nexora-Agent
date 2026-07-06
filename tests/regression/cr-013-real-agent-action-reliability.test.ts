@@ -100,6 +100,14 @@ describe("CR-013 Real Agent Action Reliability", () => {
 
   it("11. Action Repair and Provider Retry are counted separately (usage fields exist)", async () => {
     const bad = JSON.stringify({ type: "tool_call", toolCall: { toolCallId: "x" } });
+    const plan = JSON.stringify({
+      type: "update_plan",
+      reason: "Plan verification.",
+      patch: {
+        currentStep: "Run verification",
+        appendPlannedSteps: ["Run node verify.js"]
+      }
+    });
     const good = JSON.stringify({
       type: "tool_call",
       toolCall: {
@@ -109,10 +117,14 @@ describe("CR-013 Real Agent Action Reliability", () => {
         timeoutMs: 2000
       }
     });
+    const final = JSON.stringify({ type: "final", text: "Verified." });
     const result = await runCliForTest(
       ["agent", "goal", process.execPath, "verify.js"],
       {
-        extraEnv: { NEXORA_FAKE_AGENT_RAW_RESPONSES_JSON: JSON.stringify([bad, good]) },
+        extraEnv: {
+          NEXORA_AGENT_TASK_TYPE: "analysis",
+          NEXORA_FAKE_AGENT_RAW_RESPONSES_JSON: JSON.stringify([bad, plan, good, final])
+        },
         workspaceFiles: [{ relativePath: "verify.js", content: "process.exit(0);\n" }]
       }
     );

@@ -44,7 +44,7 @@ const TOOL_FIELD_MAP: Record<ToolName, {
     inputFields: [
       { name: "path", type: "string", required: true, description: "Workspace-relative file path." }
     ],
-    minimalExample: { path: "src/App.tsx" }
+    minimalExample: { path: "src/example.ts" }
   },
   "filesystem.search": {
     description: "Search the workspace for files matching a query.",
@@ -64,11 +64,11 @@ const TOOL_FIELD_MAP: Record<ToolName, {
       { name: "idempotencyKey", type: "string", required: true, description: "Any unique non-empty string you invent; reuse only for the same patch." }
     ],
     minimalExample: {
-      path: "src/App.tsx",
+      path: "src/example.ts",
       expectedHash: "<currentHash from last read>",
       patch: { type: "replace_text", find: "old", replace: "new" },
       encoding: "utf8",
-      idempotencyKey: "patch-src-app-1"
+      idempotencyKey: "patch-src-example-1"
     }
   },
   "filesystem.write": {
@@ -141,7 +141,7 @@ const TOOL_FIELD_MAP: Record<ToolName, {
       { name: "path", type: "string", required: false, description: "Optional path filter." },
       { name: "maxBytes", type: "number", required: false, minimum: 1, maximum: 2_000_000, default: 16_384, description: "Default 16384." }
     ],
-    minimalExample: { revision: "HEAD", path: "src/App.tsx" }
+    minimalExample: { revision: "HEAD", path: "src/example.ts" }
   },
   "project.commands": {
     description: "Discover the project's available commands (build/test/etc.).",
@@ -275,6 +275,7 @@ export function buildAgentActionSchemaText(availableTools: ToolName[]): string {
     "Decide the next action and return ONLY a single JSON object. No markdown fence, no prose, no explanation.",
     "Match this TypeScript union exactly (field names and string-literal values are case-sensitive):",
     "type AgentAction =",
+    "  | { type: \"submit_execution_plan\"; plan: ExecutionPlan; steps: BuilderPlanStep[]; rationale: string }",
     "  | { type: \"tool_call\"; toolCall: ToolCall }",
     "  | { type: \"request_approval\"; reason: string; toolCall: ToolCall }   // reason non-empty; use when a tool requires approval",
     "  | { type: \"ask_user\"; question: string; expectedInputType: string; required: boolean }",
@@ -294,6 +295,28 @@ export function buildAgentActionSchemaText(availableTools: ToolName[]): string {
     "  appendOpenQuestions?: string[]",
     "}   // all arrays of non-empty strings; every field optional; currentStep may be null.",
     "",
+    "type ExecutionPlan = {",
+    "  targetFiles: string[];        // non-empty, exact workspace-relative files to create/modify",
+    "  intendedChanges: string[];    // non-empty concrete intended changes",
+    "  validationCommands: string[]; // non-empty complete executable validation commands",
+    "}",
+    "",
+    "type BuilderPlanStep = {",
+    "  stepId: string;",
+    "  description: string;",
+    "  operation: \"create\" | \"modify\" | \"delete\" | \"rename\";",
+    "  targetFiles: string[];",
+    "  rationale: string;",
+    "  expectedEffects: string[];",
+    "  preferredToolCategory?: \"patch\" | \"write\" | \"structured_edit\";",
+    "  required: boolean;",
+    "  status: \"planned\" | \"in_progress\" | \"completed\" | \"blocked\";",
+    "  evidenceRefs: string[];",
+    "  dependsOn: string[];",
+    "  createdAt: string; // ISO datetime",
+    "  updatedAt: string; // ISO datetime",
+    "}",
+    "",
     toolSchema,
     "",
     "Rules:",
@@ -301,6 +324,9 @@ export function buildAgentActionSchemaText(availableTools: ToolName[]): string {
     "  - No markdown code fence, no surrounding text.",
     "  - Only call tools listed in \"Available tools\".",
     "  - Tool input must satisfy the ToolCall schema for that toolName.",
+    "  - When Strategy decision is require_plan, prefer submit_execution_plan over update_plan.",
+    "  - submit_execution_plan must use only files allowed by PlanningPolicyContext and must include every required file.",
+    "  - Do not use update_plan prose as the authoritative implementation plan once a structured execution plan has been accepted.",
     "  - Do not output \"final\" before validation has passed.",
     "  - Do not call tools that are not listed.",
     "  - Do not guess facts only the Runtime can determine (e.g. expectedHash).",

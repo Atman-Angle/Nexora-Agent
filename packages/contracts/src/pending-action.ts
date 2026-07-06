@@ -6,6 +6,8 @@ import { ToolResultSchema } from "./tool-result.js";
 import { ValidationResultSchema } from "./validation.js";
 import { WorkingSetSchema } from "./working-set.js";
 import { RecoveryCheckpointStateSchema } from "./recovery.js";
+import { StrategyStateSchema } from "./strategy.js";
+import { BuilderStateSchema } from "./builder.js";
 
 const NoProgressSnapshotSchema = z.object({
   actionSignature: z.string().min(1).nullable(),
@@ -29,7 +31,9 @@ export const PendingActionResumeStateSchema = z.object({
   noProgressCount: z.number().int().nonnegative(),
   previousSnapshot: NoProgressSnapshotSchema,
   pendingRetryIncrement: z.boolean().default(false),
-  recoveryState: RecoveryCheckpointStateSchema.optional()
+  recoveryState: RecoveryCheckpointStateSchema.optional(),
+  strategyState: StrategyStateSchema.optional(),
+  builderState: BuilderStateSchema.optional()
 });
 
 export const PendingActionSchema = z.object({

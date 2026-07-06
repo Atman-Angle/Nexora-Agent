@@ -7,6 +7,106 @@ import { ValidationPlanSchema } from "./validation-plan.js";
 
 export const TaskTypeSchema = z.enum(["read_only", "analysis", "workspace_mutation", "bug_fix", "feature"]);
 
+function normalizeWorkspacePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\.\/+/, "");
+}
+
+function isUnsafeWorkspacePath(path: string): boolean {
+  const normalized = normalizeWorkspacePath(path);
+  return (
+    normalized.length === 0 ||
+    normalized.includes("\0") ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized.split("/").includes("..")
+  );
+}
+
+const TaskExecutionConstraintPathSchema = z.string().transform(normalizeWorkspacePath).pipe(z.string().min(1));
+
+export const TaskExecutionConstraintsSchema = z.object({
+  allowedEditFiles: z.array(TaskExecutionConstraintPathSchema).default([]),
+  allowedNewFiles: z.array(TaskExecutionConstraintPathSchema).default([]),
+  requiredEditFiles: z.array(TaskExecutionConstraintPathSchema).default([]),
+  requiredNewFiles: z.array(TaskExecutionConstraintPathSchema).default([]),
+  protectedFiles: z.array(TaskExecutionConstraintPathSchema).default([])
+}).superRefine((value, ctx) => {
+  const entries = [
+    ["allowedEditFiles", value.allowedEditFiles],
+    ["allowedNewFiles", value.allowedNewFiles],
+    ["requiredEditFiles", value.requiredEditFiles],
+    ["requiredNewFiles", value.requiredNewFiles],
+    ["protectedFiles", value.protectedFiles]
+  ] as const;
+
+  for (const [field, paths] of entries) {
+    const seen = new Set<string>();
+    for (const path of paths) {
+      if (isUnsafeWorkspacePath(path)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${field} contains unsafe workspace path: ${path}`
+        });
+      }
+      if (seen.has(path)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: `${field} contains duplicate path after normalization: ${path}`
+        });
+      }
+      seen.add(path);
+    }
+  }
+
+  const allowedEdit = new Set(value.allowedEditFiles);
+  const allowedNew = new Set(value.allowedNewFiles);
+  const requiredEdit = new Set(value.requiredEditFiles);
+  const requiredNew = new Set(value.requiredNewFiles);
+  const protectedFiles = new Set(value.protectedFiles);
+  const editSide = new Set([...allowedEdit, ...requiredEdit]);
+  const newSide = new Set([...allowedNew, ...requiredNew]);
+
+  for (const path of editSide) {
+    if (newSide.has(path)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["allowedEditFiles"],
+        message: `file cannot appear in both edit and new constraint sets: ${path}`
+      });
+    }
+  }
+  for (const path of [...editSide, ...newSide]) {
+    if (protectedFiles.has(path)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["protectedFiles"],
+        message: `protectedFiles must not overlap allowed or required files: ${path}`
+      });
+    }
+  }
+  for (const path of value.requiredEditFiles) {
+    if (!allowedEdit.has(path)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["requiredEditFiles"],
+        message: `requiredEditFiles must be a subset of allowedEditFiles: ${path}`
+      });
+    }
+  }
+  for (const path of value.requiredNewFiles) {
+    if (!allowedNew.has(path)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["requiredNewFiles"],
+        message: `requiredNewFiles must be a subset of allowedNewFiles: ${path}`
+      });
+    }
+  }
+});
+export type TaskExecutionConstraints = z.infer<typeof TaskExecutionConstraintsSchema>;
+
 export const TaskAcceptanceCheckSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("changed_files_non_empty")
@@ -72,6 +172,7 @@ export const TaskSchema = z.object({
     patchRequest: TaskPatchRequestSchema.optional(),
     validationRequest: TaskValidationRequestSchema.optional(),
     agentRequest: TaskAgentRequestSchema.optional(),
+    executionConstraints: TaskExecutionConstraintsSchema.optional(),
     acceptanceCriteria: z.array(TaskAcceptanceCriterionSchema).default([])
   }),
   source: z.literal("cli"),
@@ -95,6 +196,7 @@ export function createTask(input: {
   patchRequest?: TaskPatchRequest;
   validationRequest?: TaskValidationRequest;
   agentRequest?: TaskAgentRequest;
+  executionConstraints?: TaskExecutionConstraints;
   acceptanceCriteria?: TaskAcceptanceCriterion[];
 }): Task {
   const inferredTaskType =
@@ -111,6 +213,7 @@ export function createTask(input: {
       ...(input.patchRequest === undefined ? {} : { patchRequest: input.patchRequest }),
       ...(input.validationRequest === undefined ? {} : { validationRequest: input.validationRequest }),
       ...(input.agentRequest === undefined ? {} : { agentRequest: input.agentRequest }),
+      ...(input.executionConstraints === undefined ? {} : { executionConstraints: input.executionConstraints }),
       acceptanceCriteria: input.acceptanceCriteria ?? []
     },
     source: "cli",

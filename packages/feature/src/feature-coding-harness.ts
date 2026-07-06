@@ -180,7 +180,7 @@ export async function runFeatureCodingHarness(input: FeatureHarnessRunInput): Pr
       }
     } catch (error) {
       if (error instanceof AgentLoopRunFailure) {
-        const isBudget = error.code === "BUDGET_EXCEEDED" || error.code === "NO_PROGRESS";
+        const isBudget = error.code === "BUDGET_EXCEEDED" || error.code === "NO_PROGRESS" || error.code === "AGENT_STRATEGY_NO_PROGRESS";
         appendEvent("feature.completion-gate.failed", { reason: error.code }, input.now());
         return finalizeFeatureHarness({
           run: runStore.getRun(env.runId) ?? run,

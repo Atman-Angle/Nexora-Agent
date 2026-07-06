@@ -3,8 +3,12 @@ import type {
   AgentAction,
   AgentBudget,
   AgentBudgetUsage,
+  BuilderPromptContext,
+  ExecutionPlanRepairContext,
   ContextSnapshot,
+  PlanningPolicyContext,
   ProgressLedger,
+  StrategyPromptContext,
   TaskPatchRequest,
   TaskValidationRequest,
   ToolResult,
@@ -17,7 +21,11 @@ export type ModelActionRejectionCategory =
   | "json_parse"
   | "schema_validation"
   | "unknown_tool"
-  | "tool_not_available";
+  | "tool_not_available"
+  | "validation_repair"
+  | "completion_guidance"
+  | "strategy_policy"
+  | "tool_failure_recovery";
 
 export type ModelActionRejection = {
   category: ModelActionRejectionCategory;
@@ -71,6 +79,10 @@ export interface AgentLoopModelProvider {
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;
+    strategyContext?: StrategyPromptContext;
+    builderContext?: BuilderPromptContext;
+    planningPolicyContext?: PlanningPolicyContext | null;
+    executionPlanRepairContext?: ExecutionPlanRepairContext | null;
     lastModelError?: ModelActionRejection | null;
   }): Promise<AgentAction>;
 }

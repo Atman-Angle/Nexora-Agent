@@ -24,6 +24,14 @@ describe("CR-006 Multi-round Agent", () => {
             }
           },
           {
+            type: "update_plan",
+            reason: "Plan the targeted fix before mutation.",
+            patch: {
+              currentStep: "Patch src/math.js",
+              appendPlannedSteps: ["Patch src/math.js", "Run node verify.js"]
+            }
+          },
+          {
             type: "tool_call",
             toolCall: {
               toolCallId: "cr-patch-1",

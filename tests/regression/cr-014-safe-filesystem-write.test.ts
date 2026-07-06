@@ -64,6 +64,14 @@ describe("CR-014 Safe Filesystem Write", () => {
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
           {
+            type: "update_plan",
+            reason: "Plan the safe write regression.",
+            patch: {
+              currentStep: "Create src/Hero.tsx",
+              appendPlannedSteps: ["Create src/Hero.tsx", "Run node verify.js"]
+            }
+          },
+          {
             type: "tool_call",
             toolCall: {
               toolCallId: "cr014-write",

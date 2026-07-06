@@ -44,11 +44,14 @@ const fixedCreate = `  create(text) {
 const fixedList = `  list() {
     return this.listNotes();
   }`;
+const fixedService = buggyService
+  .replace("  create(text) {\n    // BUG: does not persist and returns wrong shape\n    return { id: null, text: text.toUpperCase() };\n  }", fixedCreate)
+  .replace("  list() {\n    // BUG: returns empty instead of persisted notes\n    return [];\n  }", fixedList);
 
 function correctScript(buggyHash: string) {
   return parseFeatureAgentScript([
-    { type: "tool_call", toolCall: { toolCallId: "p1", toolName: "filesystem.patch", input: { path: "src/note/service.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "  create(text) {\n    // BUG: does not persist and returns wrong shape\n    return { id: null, text: text.toUpperCase() };\n  }", replace: fixedCreate }, encoding: "utf8", idempotencyKey: "p1" }, timeoutMs: 5000 } },
-    { type: "tool_call", toolCall: { toolCallId: "p2", toolName: "filesystem.patch", input: { path: "src/note/service.js", expectedHash: computeArtifactHash(buggyService.replace("  create(text) {\n    // BUG: does not persist and returns wrong shape\n    return { id: null, text: text.toUpperCase() };\n  }", fixedCreate)), patch: { type: "replace_text", find: "  list() {\n    // BUG: returns empty instead of persisted notes\n    return [];\n  }", replace: fixedList }, encoding: "utf8", idempotencyKey: "p2" }, timeoutMs: 5000 } },
+    { type: "update_plan", reason: "Plan service fix.", patch: { currentStep: "Write src/note/service.js", appendPlannedSteps: ["Write src/note/service.js", "Run node test.js"] } },
+    { type: "tool_call", toolCall: { toolCallId: "w1", toolName: "filesystem.write", input: { path: "src/note/service.js", content: fixedService, encoding: "utf8", mode: "overwrite", expectedHash: buggyHash, idempotencyKey: "w1" }, timeoutMs: 5000 } },
     { type: "tool_call", toolCall: { toolCallId: "v", toolName: "shell.execute", input: { command: "node", args: ["test.js"], cwd: ".", environment: {}, purpose: "acceptance", idempotencyKey: "v" }, timeoutMs: 10000 } },
     { type: "final", text: "Fixed." }
   ]);
@@ -89,6 +92,7 @@ describe("CR-012 Full-stack Feature", () => {
     const f = loadFixture("data-management");
     const buggyHash = computeArtifactHash(readFileSync(join(f.templateRoot, "src/note/service.js"), "utf8"));
     const wrongScript = parseFeatureAgentScript([
+      { type: "update_plan", reason: "Plan wrong data fix for negative case.", patch: { currentStep: "Patch src/note/service.js", appendPlannedSteps: ["Patch src/note/service.js", "Run node test.js"] } },
       { type: "tool_call", toolCall: { toolCallId: "p", toolName: "filesystem.patch", input: { path: "src/note/service.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "return { id: null, text: text.toUpperCase() };", replace: "return { id: null, text: text };" }, encoding: "utf8", idempotencyKey: "p" }, timeoutMs: 5000 } },
       { type: "tool_call", toolCall: { toolCallId: "v", toolName: "shell.execute", input: { command: "node", args: ["test.js"], cwd: ".", environment: {}, purpose: "acceptance", idempotencyKey: "v" }, timeoutMs: 10000 } },
       { type: "final", text: "done" }
@@ -102,6 +106,7 @@ describe("CR-012 Full-stack Feature", () => {
     const f = loadFixture("data-management");
     const buggyHash = computeArtifactHash(readFileSync(join(f.templateRoot, "src/note/service.js"), "utf8"));
     const partialScript = parseFeatureAgentScript([
+      { type: "update_plan", reason: "Plan partial feature for negative case.", patch: { currentStep: "Patch src/note/service.js", appendPlannedSteps: ["Patch src/note/service.js", "Run node test.js"] } },
       { type: "tool_call", toolCall: { toolCallId: "p", toolName: "filesystem.patch", input: { path: "src/note/service.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "  create(text) {\n    // BUG: does not persist and returns wrong shape\n    return { id: null, text: text.toUpperCase() };\n  }", replace: fixedCreate }, encoding: "utf8", idempotencyKey: "p" }, timeoutMs: 5000 } },
       { type: "tool_call", toolCall: { toolCallId: "v", toolName: "shell.execute", input: { command: "node", args: ["test.js"], cwd: ".", environment: {}, purpose: "acceptance", idempotencyKey: "v" }, timeoutMs: 10000 } },
       { type: "final", text: "partial" }
@@ -146,8 +151,8 @@ describe("CR-012 Full-stack Feature", () => {
     const f = loadFixture("data-management");
     const buggyHash = computeArtifactHash(readFileSync(join(f.templateRoot, "src/note/service.js"), "utf8"));
     const noVerifyScript = parseFeatureAgentScript([
-      { type: "tool_call", toolCall: { toolCallId: "p1", toolName: "filesystem.patch", input: { path: "src/note/service.js", expectedHash: buggyHash, patch: { type: "replace_text", find: "  create(text) {\n    // BUG: does not persist and returns wrong shape\n    return { id: null, text: text.toUpperCase() };\n  }", replace: fixedCreate }, encoding: "utf8", idempotencyKey: "p1" }, timeoutMs: 5000 } },
-      { type: "tool_call", toolCall: { toolCallId: "p2", toolName: "filesystem.patch", input: { path: "src/note/service.js", expectedHash: computeArtifactHash(buggyService.replace("  create(text) {\n    // BUG: does not persist and returns wrong shape\n    return { id: null, text: text.toUpperCase() };\n  }", fixedCreate)), patch: { type: "replace_text", find: "  list() {\n    // BUG: returns empty instead of persisted notes\n    return [];\n  }", replace: fixedList }, encoding: "utf8", idempotencyKey: "p2" }, timeoutMs: 5000 } },
+      { type: "update_plan", reason: "Plan no-verify feature for negative case.", patch: { currentStep: "Write src/note/service.js", appendPlannedSteps: ["Write src/note/service.js", "Run node test.js"] } },
+      { type: "tool_call", toolCall: { toolCallId: "w1", toolName: "filesystem.write", input: { path: "src/note/service.js", content: fixedService, encoding: "utf8", mode: "overwrite", expectedHash: buggyHash, idempotencyKey: "w1" }, timeoutMs: 5000 } },
       { type: "final", text: "done without verify" }
     ]);
     const { result } = await runFeatureFixture({ manifest: f.manifest, templateRoot: f.templateRoot, agentScript: noVerifyScript, idGenerator: randomUUID });

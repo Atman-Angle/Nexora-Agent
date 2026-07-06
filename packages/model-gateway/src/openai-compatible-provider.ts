@@ -4,7 +4,11 @@ import type {
   AgentBudget,
   AgentBudgetUsage,
   Action,
+  BuilderPromptContext,
+  ExecutionPlanRepairContext,
   ProgressLedger,
+  PlanningPolicyContext,
+  StrategyPromptContext,
   TaskPatchRequest,
   TaskValidationRequest,
   ToolResult,
@@ -175,6 +179,10 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
     regroundRequested: boolean;
     replanRequested: boolean;
     lastModelError?: ModelActionRejection | null;
+    strategyContext?: StrategyPromptContext;
+    builderContext?: BuilderPromptContext;
+    planningPolicyContext?: PlanningPolicyContext | null;
+    executionPlanRepairContext?: ExecutionPlanRepairContext | null;
   }): Promise<AgentAction> {
     const prompt = buildNextActionPrompt(input);
     const json = await this.chatCompletionJson(prompt, () => {
@@ -388,7 +396,7 @@ function buildFinalizePrompt(input: {
   ].join("\n");
 }
 
-function buildNextActionPrompt(input: {
+export function buildNextActionPrompt(input: {
   runId: string;
   goal: string;
   constraints: string[];
@@ -404,6 +412,10 @@ function buildNextActionPrompt(input: {
   regroundRequested: boolean;
   replanRequested: boolean;
   lastModelError?: ModelActionRejection | null;
+  strategyContext?: StrategyPromptContext;
+  builderContext?: BuilderPromptContext;
+  planningPolicyContext?: PlanningPolicyContext | null;
+  executionPlanRepairContext?: ExecutionPlanRepairContext | null;
 }): string {
   const ledgerSummary = JSON.stringify({
     currentStep: input.ledger.currentStep,
@@ -436,13 +448,117 @@ function buildNextActionPrompt(input: {
     `Usage: ${JSON.stringify(input.usage)}`,
     `Ledger: ${ledgerSummary}`,
     `Working set: ${workingSetSummary}`,
+    `Strategy: ${renderStrategyContext(input.strategyContext)}`,
+    `PlanningPolicyContext: ${JSON.stringify(input.planningPolicyContext ?? null)}`,
+    `ExecutionPlanRepairContext: ${JSON.stringify(input.executionPlanRepairContext ?? null)}`,
+    `Builder: ${renderBuilderContext(input.builderContext)}`,
     `Recent tool result: ${toolSummary}`,
     `Recent validation status: ${input.recentValidationResult?.status ?? "null"}`,
+    `Validation repair context: ${renderValidationFailureSummary(input.recentValidationResult ?? null)}`,
+    renderValidationRepairInstruction(input.recentValidationResult ?? null),
+    renderValidationSuccessInstruction(input.recentValidationResult ?? null),
     `Reground requested: ${String(input.regroundRequested)}`,
     `Replan requested: ${String(input.replanRequested)}`,
     ...(repairLines.length === 0 ? [] : ["", ...repairLines]),
     "Return a single JSON object, no prose, no markdown fence."
   ].join("\n");
+}
+
+function renderValidationFailureSummary(validation: ValidationResult | null): string {
+  if (validation?.status !== "failed" || validation.failureSummary === undefined) {
+    return "null";
+  }
+  return JSON.stringify(validation.failureSummary);
+}
+
+function renderValidationRepairInstruction(validation: ValidationResult | null): string {
+  if (validation?.status !== "failed" || validation.failureSummary === undefined) {
+    return "Validation repair instruction: null";
+  }
+  const moduleDiagnosticInstruction = renderModuleDiagnosticInstruction(validation.failureSummary);
+  return [
+    "Validation repair instruction: Treat the failed validation summary as repair evidence.",
+    "If validation repair context includes suggestedRepair, make the next repair plan or mutation directly address that suggestion.",
+    "If suggestedRepair describes an import/export mismatch, inspect the importing file named in the summary and align every local import in that same file with the referenced module exports; do not stop after changing only the first reported import when similar local imports remain.",
+    "Prefer changing the importing file when it is listed in failureSummary.changedFiles or is the current Builder target; do not assume files outside Task executionConstraints can be edited.",
+    "Do not final yet.",
+    "Submit a focused repair execution plan or perform the next Builder-directed repair mutation using the same Task executionConstraints.",
+    "Do not use broad filesystem.read, off-target filesystem.read, filesystem.search, filesystem.list, project inspection, git tools, or update_plan as the next action after this fresh failed validation.",
+    "A filesystem.read is repair evidence only when the path is in failureSummary.changedFiles, or when Builder has selected a modify step and the read path is exactly that current Builder target, for current content/hash acquisition before repair.",
+    "Repeated reads of the same repair-evidence path do not count as repair progress; use them only to confirm current content/hash, then submit a concrete repair mutation and rerun validation.",
+    "Do not use shell.execute to mutate source files; shell.execute is only for rerunning validation, tests, or builds.",
+    moduleDiagnosticInstruction,
+    "The repair must address the failure summary, stay within the existing Builder plan/constraints, and rerun the validation command after mutation."
+  ].join(" ");
+}
+
+function renderModuleDiagnosticInstruction(summary: NonNullable<ValidationResult["failureSummary"]>): string {
+  const diagnostic = `${summary.message}\n${summary.stderrExcerpt}\n${summary.stdoutExcerpt}`;
+  if (/not exported by|is not exported by/i.test(diagnostic)) {
+    return "For JavaScript or TypeScript module diagnostics such as not exported by, repair the importing file's import form or the exporting file's export so it matches the diagnostic exactly; do not leave the same import/export mismatch for the next validation.";
+  }
+  if (/Could not resolve|Cannot resolve|Failed to resolve|module not found/i.test(diagnostic)) {
+    return "For module resolution diagnostics, repair the import path or exported module reference named in the failure summary before rerunning validation.";
+  }
+  if (/Unexpected|Expected|Transform failed|SyntaxError/i.test(diagnostic)) {
+    return "For syntax or transform diagnostics, repair the exact file and line reported in the failure summary before rerunning validation.";
+  }
+  return "";
+}
+
+function renderValidationSuccessInstruction(validation: ValidationResult | null): string {
+  if (validation?.status !== "passed") {
+    return "Validation success instruction: null";
+  }
+  if (validation.freshness !== undefined && !validation.freshness.valid) {
+    return "Validation success instruction: Validation passed, but it is not fresh after the latest mutation. Rerun validation before final.";
+  }
+  return [
+    "Validation success instruction: The latest validation is a fresh passing validation.",
+    "If no newer mutation has happened, submit a final action with concise evidence.",
+    "Do not submit a new execution plan or perform additional mutation just to restate completed work."
+  ].join(" ");
+}
+
+function renderStrategyContext(context: StrategyPromptContext | undefined): string {
+  if (context === undefined) {
+    return "null";
+  }
+  return JSON.stringify({
+    phase: context.phase,
+    decision: context.decision,
+    plan: context.plan,
+    explorationUsage: context.explorationUsage,
+    remainingExplorationBudget: context.remainingExplorationBudget,
+    workingSetSummary: context.workingSetSummary,
+    changedFiles: context.changedFiles,
+    validationState: context.validationState,
+    allowedActionCategories: context.allowedActionCategories,
+    lastStrategyRejection: context.lastStrategyRejection,
+    planRepair: context.planRepair,
+    transitionRequired: context.transitionRequired,
+    guidance: context.guidance
+  });
+}
+
+function renderBuilderContext(context: BuilderPromptContext | undefined): string {
+  if (context === undefined) {
+    return "null";
+  }
+  if (context.stepId === null) {
+    return JSON.stringify({ stepBound: false, redirect: context.redirect ?? null });
+  }
+  return JSON.stringify({
+    stepBound: true,
+    stepId: context.stepId,
+    operation: context.operation,
+    targetFiles: context.targetFiles,
+    rationale: context.rationale,
+    expectedEffects: context.expectedEffects,
+    contextBundle: context.contextBundle,
+    redirect: context.redirect,
+    productiveAction: context.productiveAction
+  });
 }
 
 function renderLastModelError(rejection: ModelActionRejection | null): string[] {
