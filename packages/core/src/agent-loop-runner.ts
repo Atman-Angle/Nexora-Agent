@@ -87,6 +87,8 @@ import {
 import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.js";
 import { buildLoopContextSnapshot, reGroundNow } from "./agent-loop/context-snapshot.js";
 import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
+import { handleSubmitExecutionPlan } from "./agent-loop/handlers/submit-execution-plan.js";
+import type { HandlerContext, StateDelta } from "./agent-loop/outcome.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
 export { redactForEvidence } from "./agent-loop/redact.js";
@@ -108,12 +110,9 @@ import {
 import {
   applyBuilderToolEvidence,
   buildPlanningPolicyContext,
-  createExecutionPlanRepairContext,
   evaluateBuilderAction,
-  installAcceptedExecutionPlan,
   normalizeBuilderState,
-  prepareBuilderTurn,
-  validateSubmittedExecutionPlan
+  prepareBuilderTurn
 } from "./builder/index.js";
 
 type NoProgressSnapshot = {
@@ -285,6 +284,71 @@ export async function runAgentLoop(input: {
     await appendEvent("checkpoint.created", { checkpointId: checkpointRecord.checkpointId, phase }, createdAt);
     maybeAbortAfterCheckpoint(phase, options?.note);
     return checkpointRecord;
+  };
+
+  // F025-C: build a HandlerContext snapshot from the current locals for
+  // extracted handlers, and apply a StateDelta back. These collapse into a
+  // single mutable AgentLoopState reference once the body->state convergence
+  // completes (final step of F025-C).
+  const buildHandlerContext = (actionSignature: string): HandlerContext => ({
+    input,
+    anchor,
+    appendEvent,
+    appendEventWithSequence,
+    checkpoint,
+    persistLedger,
+    recoveryOrchestrator,
+    recoveryBudget,
+    availableTools,
+    maxActionRepairs: MAX_ACTION_REPAIRS,
+    actionSignature,
+    activeRun,
+    nextSequence,
+    latestIterationIndex,
+    currentWorkingSet,
+    changedFiles,
+    recentToolResult,
+    recentValidationResult,
+    regroundedAt,
+    ledger,
+    noProgressCount,
+    previousSnapshot,
+    recoveryState,
+    strategyState,
+    builderState,
+    strategyDecision,
+    regroundRequested,
+    replanRequested,
+    pendingRetryIncrement,
+    finalizationPlanRejectionCount,
+    validationRepairActionRejectionCount,
+    pendingActionRejection,
+    usage
+  });
+
+  const applyStateDelta = (delta: StateDelta | undefined) => {
+    if (delta === undefined) {
+      return;
+    }
+    if ("activeRun" in delta) activeRun = delta.activeRun as Run;
+    if ("currentWorkingSet" in delta) currentWorkingSet = (delta.currentWorkingSet as WorkingSet | null) ?? null;
+    if ("changedFiles" in delta) changedFiles = delta.changedFiles as string[];
+    if ("recentToolResult" in delta) recentToolResult = (delta.recentToolResult as ToolResult | null) ?? null;
+    if ("recentValidationResult" in delta) recentValidationResult = (delta.recentValidationResult as ValidationResult | null) ?? null;
+    if ("latestIterationIndex" in delta) latestIterationIndex = delta.latestIterationIndex as number;
+    if ("regroundedAt" in delta) regroundedAt = (delta.regroundedAt as string | null) ?? null;
+    if ("noProgressCount" in delta) noProgressCount = delta.noProgressCount as number;
+    if ("previousSnapshot" in delta) previousSnapshot = delta.previousSnapshot as NoProgressSnapshot;
+    if ("recoveryState" in delta) recoveryState = delta.recoveryState;
+    if ("strategyState" in delta) strategyState = delta.strategyState as StrategyState;
+    if ("builderState" in delta) builderState = delta.builderState as BuilderState;
+    if ("strategyDecision" in delta) strategyDecision = delta.strategyDecision as StrategyDecision;
+    if ("regroundRequested" in delta) regroundRequested = delta.regroundRequested as boolean;
+    if ("replanRequested" in delta) replanRequested = delta.replanRequested as boolean;
+    if ("pendingRetryIncrement" in delta) pendingRetryIncrement = delta.pendingRetryIncrement as boolean;
+    if ("finalizationPlanRejectionCount" in delta) finalizationPlanRejectionCount = delta.finalizationPlanRejectionCount as number;
+    if ("validationRepairActionRejectionCount" in delta) validationRepairActionRejectionCount = delta.validationRepairActionRejectionCount as number;
+    if ("pendingActionRejection" in delta) pendingActionRejection = (delta.pendingActionRejection as ModelActionRejection | null) ?? null;
   };
 
   if (input.resume === undefined) {
@@ -708,161 +772,21 @@ export async function runAgentLoop(input: {
       await appendEvent(event.type, event.payload, input.now());
     }
     if (!strategyBypassedForRecovery && action.type === "submit_execution_plan") {
-      const proposedAt = input.now();
-      await appendEvent(
-        "builder.execution_plan.proposed",
-        {
-          iteration: latestIterationIndex,
-          targetFiles: action.plan.targetFiles,
-          stepIds: action.steps.map((step) => step.stepId)
-        },
-        proposedAt
-      );
-      const policy = buildPlanningPolicyContext({
-        task: input.task,
-        workspaceRoot: input.workspaceRoot,
-        knownExistingFiles: currentWorkingSet?.items.map((item) => item.path) ?? []
-      });
-      const validation = validateSubmittedExecutionPlan({
-        plan: action.plan,
-        steps: action.steps,
-        policy,
-        satisfiedRequiredTargets: changedFiles
-      });
-      if (!validation.valid) {
-        const repairDecision = createExecutionPlanRepairContext({
-          previous: builderState.executionPlanRepair,
-          issues: validation.issues,
-          previousPlan: action.plan,
-          previousSteps: action.steps
+      const outcome = await handleSubmitExecutionPlan(buildHandlerContext(actionSignature), action);
+      if (outcome.kind === "fail") {
+        return failRun({
+          input,
+          run: activeRun,
+          appendEvent,
+          code: outcome.code,
+          message: outcome.message,
+          retryable: outcome.retryable
         });
-        builderState = normalizeBuilderState({
-          ...builderState,
-          planningPolicy: null,
-          executionPlanRepair: repairDecision.repair,
-          planAccepted: false,
-          version: builderState.version + 1
-        });
-        await appendEvent(
-          "builder.execution_plan.rejected",
-          {
-            iteration: latestIterationIndex,
-            issueCodes: validation.issues.map((issue) => issue.code),
-            issues: validation.issues,
-            attempt: repairDecision.repair.attempt,
-            remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
-          },
-          input.now()
-        );
-        if (repairDecision.kind === "exhaust") {
-          await appendEvent(
-            "builder.execution_plan.repair_exhausted",
-            {
-              iteration: latestIterationIndex,
-              issueCodes: validation.issues.map((issue) => issue.code),
-              attempt: repairDecision.repair.attempt,
-              remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
-            },
-            input.now()
-          );
-          return failRun({
-            input,
-            run: activeRun,
-            appendEvent,
-            code: "EXECUTION_PLAN_INVALID",
-            message: "Builder exhausted execution-plan repair attempts without a valid structured plan.",
-            retryable: false
-          });
-        }
-        await appendEvent(
-          "builder.execution_plan.repair_requested",
-          {
-            iteration: latestIterationIndex,
-            issueCodes: validation.issues.map((issue) => issue.code),
-            attempt: repairDecision.repair.attempt,
-            remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
-          },
-          input.now()
-        );
-        await checkpoint("post_response", { note: "builder_execution_plan_repair" });
-        continue;
       }
-
-      strategyState = clearPlanRepair({
-        ...strategyState,
-        plan: validation.plan,
-        noProgressCount: 0,
-        explorationUsage: {
-          ...strategyState.explorationUsage,
-          iterationsWithoutProgress: 0
-        },
-        lastProgressIteration: latestIterationIndex
-      });
-      builderState = installAcceptedExecutionPlan({
-        state: builderState,
-        plan: validation.plan,
-        steps: validation.steps,
-        policy
-      });
-      await appendEvent(
-        "builder.execution_plan.accepted",
-        {
-          iteration: latestIterationIndex,
-          targetFiles: validation.plan.targetFiles,
-          stepIds: validation.steps.map((step) => step.stepId)
-        },
-        input.now()
-      );
-      validationRepairActionRejectionCount = 0;
-      if (recoveryState?.latestFailure?.source === "validation") {
-        recoveryState = undefined;
-        replanRequested = false;
-        regroundRequested = false;
-        noProgressCount = 0;
-        previousSnapshot = {
-          actionSignature: null,
-          errorCode: null,
-          ledgerVersion: ledger.version,
-          evidenceCount: ledger.evidenceRefs.length,
-          validationStatus: null,
-          artifactHash: null
-        };
+      if (outcome.kind === "return") {
+        return outcome.result;
       }
-      await appendEvent(
-        "plan.created",
-        {
-          reason: "structured_execution_plan_accepted",
-          iteration: latestIterationIndex,
-          targetFiles: validation.plan.targetFiles,
-          intendedChanges: validation.plan.intendedChanges,
-          validationCommands: validation.plan.validationCommands,
-          builderPlanStepCount: builderState.planSteps.length
-        },
-        input.now()
-      );
-      await checkpoint("plan_formed", { note: "structured_execution_plan_accepted" });
-      const iteration = createIteration({
-        iterationId: input.idGenerator(),
-        runId: activeRun.runId,
-        index: latestIterationIndex,
-        actionType: action.type,
-        status: "completed",
-        usage,
-        summary: action.rationale,
-        evidenceRefs: [],
-        now: input.now()
-      });
-      input.agentIterationStore.insertIteration(iteration);
-      await appendEvent("iteration.completed", { index: iteration.index, actionType: iteration.actionType }, iteration.createdAt);
-      latestIterationIndex += 1;
-      previousSnapshot = {
-        actionSignature,
-        errorCode: null,
-        ledgerVersion: ledger.version,
-        evidenceCount: ledger.evidenceRefs.length,
-        validationStatus: recentValidationResult?.status ?? null,
-        artifactHash: null
-      };
+      applyStateDelta(outcome.delta);
       continue;
     }
 
