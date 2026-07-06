@@ -1899,7 +1899,9 @@ async function runResumeCommand(runId: string): Promise<unknown> {
           evidenceCount: ledger.evidenceRefs.length,
           validationStatus: null,
           artifactHash: null
-        }
+        },
+        finalizationPlanRejectionCount: 0,
+        validationRepairActionRejectionCount: 0
       };
       const resumeState = {
         ...baseResumeState,

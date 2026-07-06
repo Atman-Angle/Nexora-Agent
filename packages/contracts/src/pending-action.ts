@@ -33,7 +33,9 @@ export const PendingActionResumeStateSchema = z.object({
   pendingRetryIncrement: z.boolean().default(false),
   recoveryState: RecoveryCheckpointStateSchema.optional(),
   strategyState: StrategyStateSchema.optional(),
-  builderState: BuilderStateSchema.optional()
+  builderState: BuilderStateSchema.optional(),
+  finalizationPlanRejectionCount: z.number().int().nonnegative().optional().default(0),
+  validationRepairActionRejectionCount: z.number().int().nonnegative().optional().default(0)
 });
 
 export const PendingActionSchema = z.object({

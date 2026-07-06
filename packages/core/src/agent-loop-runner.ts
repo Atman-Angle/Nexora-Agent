@@ -74,7 +74,8 @@ import {
   normalizeToolFailure,
   normalizeValidationFailure
 } from "./recovery/index.js";
-import { buildResumeState, createPendingAction } from "./recovery/resume-boundary.js";
+import { createPendingAction } from "./recovery/resume-boundary.js";
+import { serializeResumeState } from "./agent-loop/state.js";
 import { applyLedgerPatch, completePlanStepFromTool } from "./ledger-progress/index.js";
 import {
   afterActionStrategy,
@@ -345,8 +346,8 @@ export async function runAgentLoop(input: {
   let bypassApprovalForSeedAction = input.resume?.bypassApprovalForSeedAction ?? false;
   const availableTools = input.toolRuntime.getAvailableTools().filter((toolName) => ALL_TOOL_NAMES.includes(toolName));
   const MAX_ACTION_REPAIRS = 2;
-  let finalizationPlanRejectionCount = 0;
-  let validationRepairActionRejectionCount = 0;
+  let finalizationPlanRejectionCount = input.resume?.resumeState.finalizationPlanRejectionCount ?? 0;
+  let validationRepairActionRejectionCount = input.resume?.resumeState.validationRepairActionRejectionCount ?? 0;
   let pendingActionRejection: ModelActionRejection | null = null;
 
   for (;;) {
@@ -1250,7 +1251,9 @@ export async function runAgentLoop(input: {
         recoveryState,
         strategyState,
         builderState,
-        action
+        action,
+        finalizationPlanRejectionCount,
+        validationRepairActionRejectionCount
       });
     }
 
@@ -1515,7 +1518,9 @@ export async function runAgentLoop(input: {
           strategyState,
           builderState,
           toolCall,
-          actionReason: action.type === "request_approval" ? action.reason : describeApprovalReason(toolCall)
+          actionReason: action.type === "request_approval" ? action.reason : describeApprovalReason(toolCall),
+          finalizationPlanRejectionCount,
+          validationRepairActionRejectionCount
         });
       }
     }
@@ -1541,7 +1546,7 @@ export async function runAgentLoop(input: {
         type: "tool_call",
         toolCall
       },
-      resumeState: buildResumeState({
+      resumeState: serializeResumeState({
         usage,
         nextSequence: nextSequence + 1,
         currentWorkingSet,
@@ -1556,7 +1561,9 @@ export async function runAgentLoop(input: {
         pendingRetryIncrement,
         recoveryState,
         strategyState,
-        builderState
+        builderState,
+        finalizationPlanRejectionCount,
+        validationRepairActionRejectionCount
       }),
       now: input.now()
     });
@@ -2315,15 +2322,7 @@ async function waitForApproval(input: {
   regroundRequested: boolean;
   replanRequested: boolean;
   noProgressCount: number;
-  usage: {
-    loopCount: number;
-    modelCalls: number;
-    toolCalls: number;
-    retryCount: number;
-    actionRepairCount?: number | undefined;
-    providerRetryCount?: number | undefined;
-    startedAt: string;
-  };
+  usage: AgentBudgetUsage;
   previousSnapshot: NoProgressSnapshot;
   pendingRetryIncrement: boolean;
   recoveryState?: RecoveryCheckpointState | undefined;
@@ -2331,6 +2330,8 @@ async function waitForApproval(input: {
   builderState: BuilderState;
   toolCall: ToolCall;
   actionReason: string;
+  finalizationPlanRejectionCount: number;
+  validationRepairActionRejectionCount: number;
 }): Promise<AgentLoopWaitingForApprovalResult> {
   const approval = ApprovalRequestSchema.parse({
     approvalId: input.input.idGenerator(),
@@ -2365,7 +2366,7 @@ async function waitForApproval(input: {
       type: "tool_call",
       toolCall: input.toolCall
     },
-    resumeState: buildResumeState({
+    resumeState: serializeResumeState({
       usage: input.usage,
       nextSequence: input.nextSequence + 2,
       currentWorkingSet: input.currentWorkingSet,
@@ -2378,9 +2379,11 @@ async function waitForApproval(input: {
       noProgressCount: input.noProgressCount,
       previousSnapshot: input.previousSnapshot,
       pendingRetryIncrement: input.pendingRetryIncrement,
-      ...(input.recoveryState === undefined ? {} : { recoveryState: input.recoveryState }),
+      recoveryState: input.recoveryState,
       strategyState: input.strategyState,
-      builderState: input.builderState
+      builderState: input.builderState,
+      finalizationPlanRejectionCount: input.finalizationPlanRejectionCount,
+      validationRepairActionRejectionCount: input.validationRepairActionRejectionCount
     }),
     now: input.input.now()
   });
@@ -2420,19 +2423,15 @@ async function waitForUser(input: {
   regroundRequested: boolean;
   replanRequested: boolean;
   noProgressCount: number;
-  usage: {
-    loopCount: number;
-    modelCalls: number;
-    toolCalls: number;
-    retryCount: number;
-    startedAt: string;
-  };
+  usage: AgentBudgetUsage;
   previousSnapshot: NoProgressSnapshot;
   pendingRetryIncrement: boolean;
   recoveryState?: RecoveryCheckpointState | undefined;
   strategyState: StrategyState;
   builderState: BuilderState;
   action: Extract<AgentAction, { type: "ask_user" }>;
+  finalizationPlanRejectionCount: number;
+  validationRepairActionRejectionCount: number;
 }): Promise<AgentLoopWaitingForUserResult> {
   const request = {
     requestId: input.input.idGenerator(),
@@ -2467,7 +2466,7 @@ async function waitForUser(input: {
     waitingFor: "user_input",
     requestId: request.requestId,
     action: input.action,
-    resumeState: buildResumeState({
+    resumeState: serializeResumeState({
       usage: input.usage,
       nextSequence: input.nextSequence + 2,
       currentWorkingSet: input.currentWorkingSet,
@@ -2480,9 +2479,11 @@ async function waitForUser(input: {
       noProgressCount: input.noProgressCount,
       previousSnapshot: input.previousSnapshot,
       pendingRetryIncrement: input.pendingRetryIncrement,
-      ...(input.recoveryState === undefined ? {} : { recoveryState: input.recoveryState }),
+      recoveryState: input.recoveryState,
       strategyState: input.strategyState,
-      builderState: input.builderState
+      builderState: input.builderState,
+      finalizationPlanRejectionCount: input.finalizationPlanRejectionCount,
+      validationRepairActionRejectionCount: input.validationRepairActionRejectionCount
     }),
     now: input.input.now()
   });
