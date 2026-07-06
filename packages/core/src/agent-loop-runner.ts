@@ -2,8 +2,6 @@ import {
   AgentActionSchema,
   AgentBudgetUsageSchema,
   ALL_TOOL_NAMES,
-  type AgentBudgetUsage,
-  ApprovalRequestSchema,
   computeArtifactHash,
   createCheckpoint,
   createEvent,
@@ -15,12 +13,10 @@ import {
   type Event,
   type PendingActionResumeState,
   type ProgressLedger,
-  type RecoveryCheckpointState,
   type Run,
   type StrategyDecision,
   type StrategyState,
   type Task,
-  type ToolCall,
   type ToolResult,
   type ValidationResult,
   type WorkingSet
@@ -67,8 +63,6 @@ import {
 } from "./agent-loop/fingerprint.js";
 import {
   describeApprovalReason,
-  describeApprovalSummary,
-  describeCapabilities,
   describeToolSuccess
 } from "./agent-loop/tool-description.js";
 import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/test-abort.js";
@@ -84,6 +78,7 @@ import {
 import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.js";
 import { buildLoopContextSnapshot, reGroundNow } from "./agent-loop/context-snapshot.js";
 import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
+import { handleApproval } from "./agent-loop/handlers/approval.js";
 import { handleSubmitExecutionPlan } from "./agent-loop/handlers/submit-execution-plan.js";
 import { handleUpdatePlan } from "./agent-loop/handlers/update-plan.js";
 import { handleFinal } from "./agent-loop/handlers/final.js";
@@ -121,7 +116,7 @@ type NoProgressSnapshot = {
 };
 
 export { type AgentLoopResult } from "./agent-loop/outcome.js";
-import type { AgentLoopResult, AgentLoopWaitingForApprovalResult } from "./agent-loop/outcome.js";
+import type { AgentLoopResult } from "./agent-loop/outcome.js";
 
 export async function runAgentLoop(input: {
   task: Task;
@@ -1055,32 +1050,38 @@ export async function runAgentLoop(input: {
         now: input.now()
       });
       if (reusableGrant === null) {
-        return waitForApproval({
-          input,
-          run: activeRun,
-          ledger,
-          appendEvent,
-          checkpoint,
-          nextSequence,
-          latestIterationIndex,
-          currentWorkingSet,
-          changedFiles,
-          recentToolResult,
-          recentValidationResult,
-          regroundRequested,
-          replanRequested,
-          noProgressCount,
-          usage,
-          previousSnapshot,
-          pendingRetryIncrement,
-          recoveryState,
-          strategyState,
-          builderState,
+        const outcome = await handleApproval(
+          {
+            input,
+            run: activeRun,
+            ledger,
+            appendEvent,
+            checkpoint,
+            nextSequence,
+            latestIterationIndex,
+            currentWorkingSet,
+            changedFiles,
+            recentToolResult,
+            recentValidationResult,
+            regroundRequested,
+            replanRequested,
+            noProgressCount,
+            usage,
+            previousSnapshot,
+            pendingRetryIncrement,
+            recoveryState,
+            strategyState,
+            builderState,
+            finalizationPlanRejectionCount,
+            validationRepairActionRejectionCount
+          },
           toolCall,
-          actionReason: action.type === "request_approval" ? action.reason : describeApprovalReason(toolCall),
-          finalizationPlanRejectionCount,
-          validationRepairActionRejectionCount
-        });
+          action.type === "request_approval" ? action.reason : describeApprovalReason(toolCall)
+        );
+        if (outcome.kind === "return") {
+          return outcome.result;
+        }
+        continue;
       }
     }
 
@@ -1857,105 +1858,4 @@ export async function runAgentLoop(input: {
       throw new AgentLoopRunFailure("RUNTIME_ERROR", redacted, false);
     }
   }
-}
-
-async function waitForApproval(input: {
-  input: Parameters<typeof runAgentLoop>[0];
-  run: Run;
-  ledger: ProgressLedger;
-  appendEvent: (type: Event["type"], payload: Record<string, unknown>, timestamp: string) => Promise<void>;
-  checkpoint: (
-    phase: CheckpointPhase,
-    options?: {
-      pendingActionId?: string;
-      pendingActionFingerprint?: string;
-      note?: string;
-    }
-  ) => Promise<Checkpoint>;
-  nextSequence: number;
-  latestIterationIndex: number;
-  currentWorkingSet: WorkingSet | null;
-  changedFiles: string[];
-  recentToolResult: ToolResult | null;
-  recentValidationResult: ValidationResult | null;
-  regroundRequested: boolean;
-  replanRequested: boolean;
-  noProgressCount: number;
-  usage: AgentBudgetUsage;
-  previousSnapshot: NoProgressSnapshot;
-  pendingRetryIncrement: boolean;
-  recoveryState?: RecoveryCheckpointState | undefined;
-  strategyState: StrategyState;
-  builderState: BuilderState;
-  toolCall: ToolCall;
-  actionReason: string;
-  finalizationPlanRejectionCount: number;
-  validationRepairActionRejectionCount: number;
-}): Promise<AgentLoopWaitingForApprovalResult> {
-  const approval = ApprovalRequestSchema.parse({
-    approvalId: input.input.idGenerator(),
-    runId: input.run.runId,
-    actionId: input.toolCall.toolCallId,
-    toolCallId: input.toolCall.toolCallId,
-    riskLevel: classifyRisk(input.toolCall.toolName),
-    reason: input.actionReason,
-    requestedCapabilities: describeCapabilities(input.toolCall),
-    resourceScope: describeResourceScope(input.toolCall),
-    actionSummary: describeApprovalSummary(input.toolCall),
-    expiresAt: new Date(new Date(input.input.now()).getTime() + 15 * 60_000).toISOString(),
-    status: "pending",
-    createdAt: input.input.now()
-  });
-  input.input.approvalStore.insertApproval(approval);
-  input.input.approvalStore.setActionFingerprint(approval.approvalId, fingerprintAction(input.toolCall));
-
-  const waitingAt = input.input.now();
-  const waitingRun = transitionRun(input.run, "waiting_for_approval", waitingAt);
-  input.input.runStore.updateRun(waitingRun);
-  await input.appendEvent("approval.requested", { approvalId: approval.approvalId, toolCallId: approval.toolCallId }, waitingAt);
-  await input.appendEvent("run.waiting", { status: waitingRun.status, waitingFor: "approval" }, waitingAt);
-
-  const pendingAction = createPendingAction({
-    pendingActionId: input.input.idGenerator(),
-    runId: input.run.runId,
-    actionId: input.toolCall.toolCallId,
-    waitingFor: "approval",
-    approvalId: approval.approvalId,
-    action: {
-      type: "tool_call",
-      toolCall: input.toolCall
-    },
-    resumeState: serializeResumeState({
-      usage: input.usage,
-      nextSequence: input.nextSequence + 2,
-      currentWorkingSet: input.currentWorkingSet,
-      changedFiles: input.changedFiles,
-      recentToolResult: input.recentToolResult,
-      recentValidationResult: input.recentValidationResult,
-      latestIterationIndex: input.latestIterationIndex,
-      regroundRequested: input.regroundRequested,
-      replanRequested: input.replanRequested,
-      noProgressCount: input.noProgressCount,
-      previousSnapshot: input.previousSnapshot,
-      pendingRetryIncrement: input.pendingRetryIncrement,
-      recoveryState: input.recoveryState,
-      strategyState: input.strategyState,
-      builderState: input.builderState,
-      finalizationPlanRejectionCount: input.finalizationPlanRejectionCount,
-      validationRepairActionRejectionCount: input.validationRepairActionRejectionCount
-    }),
-    now: input.input.now()
-  });
-  input.input.pendingActionStore.insertPendingAction(pendingAction);
-  await input.checkpoint("waiting_for_approval", {
-    pendingActionId: pendingAction.pendingActionId,
-    pendingActionFingerprint: fingerprintAction(input.toolCall)
-  });
-
-  return {
-    kind: "waiting_for_approval",
-    run: waitingRun,
-    ledger: input.ledger,
-    approval
-  };
 }
