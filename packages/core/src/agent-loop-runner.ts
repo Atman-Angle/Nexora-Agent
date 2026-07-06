@@ -11,8 +11,6 @@ import {
   createProgressLedger,
   createTextArtifact,
   type AgentAction,
-  type ApprovalRequest,
-  type Artifact,
   type BuilderState,
   type Checkpoint,
   type CheckpointPhase,
@@ -26,7 +24,6 @@ import {
   type Task,
   type ToolCall,
   type ToolResult,
-  type UserInputRequest,
   type ValidationResult,
   type WorkingSet
 } from "../../contracts/src/index.js";
@@ -89,6 +86,7 @@ import {
 } from "./agent-loop/model-action-error.js";
 import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.js";
 import { buildLoopContextSnapshot, reGroundNow } from "./agent-loop/context-snapshot.js";
+import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
 export { redactForEvidence } from "./agent-loop/redact.js";
@@ -127,32 +125,8 @@ type NoProgressSnapshot = {
   artifactHash: string | null;
 };
 
-type AgentLoopCompletedResult = {
-  kind: "completed";
-  run: Run;
-  artifact: Artifact;
-  validation: ValidationResult;
-  ledger: ProgressLedger;
-};
-
-type AgentLoopWaitingForApprovalResult = {
-  kind: "waiting_for_approval";
-  run: Run;
-  ledger: ProgressLedger;
-  approval: ApprovalRequest;
-};
-
-type AgentLoopWaitingForUserResult = {
-  kind: "waiting_for_user";
-  run: Run;
-  ledger: ProgressLedger;
-  request: UserInputRequest;
-};
-
-export type AgentLoopResult =
-  | AgentLoopCompletedResult
-  | AgentLoopWaitingForApprovalResult
-  | AgentLoopWaitingForUserResult;
+export { type AgentLoopResult } from "./agent-loop/outcome.js";
+import type { AgentLoopResult, AgentLoopWaitingForApprovalResult } from "./agent-loop/outcome.js";
 
 export async function runAgentLoop(input: {
   task: Task;
@@ -1234,31 +1208,39 @@ export async function runAgentLoop(input: {
     }
 
     if (action.type === "ask_user") {
-      return waitForUser({
-        input,
-        run: activeRun,
-        ledger,
-        appendEvent,
-        checkpoint,
-        nextSequence,
-        latestIterationIndex,
-        currentWorkingSet,
-        changedFiles,
-        recentToolResult,
-        recentValidationResult,
-        regroundRequested,
-        replanRequested,
-        noProgressCount,
-        usage,
-        previousSnapshot,
-        pendingRetryIncrement,
-        recoveryState,
-        strategyState,
-        builderState,
-        action,
-        finalizationPlanRejectionCount,
-        validationRepairActionRejectionCount
-      });
+      {
+        const outcome = await handleAskUser(
+          {
+            input,
+            run: activeRun,
+            ledger,
+            appendEvent,
+            checkpoint,
+            nextSequence,
+            latestIterationIndex,
+            currentWorkingSet,
+            changedFiles,
+            recentToolResult,
+            recentValidationResult,
+            regroundRequested,
+            replanRequested,
+            noProgressCount,
+            usage,
+            previousSnapshot,
+            pendingRetryIncrement,
+            recoveryState,
+            strategyState,
+            builderState,
+            finalizationPlanRejectionCount,
+            validationRepairActionRejectionCount
+          },
+          action
+        );
+        if (outcome.kind === "return") {
+          return outcome.result;
+        }
+        continue;
+      }
     }
 
     if (action.type === "fail") {
@@ -2404,103 +2386,3 @@ async function waitForApproval(input: {
     approval
   };
 }
-
-async function waitForUser(input: {
-  input: Parameters<typeof runAgentLoop>[0];
-  run: Run;
-  ledger: ProgressLedger;
-  appendEvent: (type: Event["type"], payload: Record<string, unknown>, timestamp: string) => Promise<void>;
-  checkpoint: (
-    phase: CheckpointPhase,
-    options?: {
-      pendingActionId?: string;
-      pendingActionFingerprint?: string;
-      note?: string;
-    }
-  ) => Promise<Checkpoint>;
-  nextSequence: number;
-  latestIterationIndex: number;
-  currentWorkingSet: WorkingSet | null;
-  changedFiles: string[];
-  recentToolResult: ToolResult | null;
-  recentValidationResult: ValidationResult | null;
-  regroundRequested: boolean;
-  replanRequested: boolean;
-  noProgressCount: number;
-  usage: AgentBudgetUsage;
-  previousSnapshot: NoProgressSnapshot;
-  pendingRetryIncrement: boolean;
-  recoveryState?: RecoveryCheckpointState | undefined;
-  strategyState: StrategyState;
-  builderState: BuilderState;
-  action: Extract<AgentAction, { type: "ask_user" }>;
-  finalizationPlanRejectionCount: number;
-  validationRepairActionRejectionCount: number;
-}): Promise<AgentLoopWaitingForUserResult> {
-  const request = {
-    requestId: input.input.idGenerator(),
-    runId: input.run.runId,
-    question: input.action.question,
-    expectedInputType: input.action.expectedInputType,
-    required: input.action.required,
-    createdAt: input.input.now(),
-    status: "pending" as const
-  };
-  input.input.userInputStore.insertRequest(request);
-
-  const waitingLedger = applyLedgerPatch({
-    ledger: input.ledger,
-    patch: {
-      appendOpenQuestions: [request.question]
-    },
-    now: input.input.now()
-  });
-  input.input.ledgerStore.upsertLedger(waitingLedger);
-
-  const waitingAt = input.input.now();
-  const waitingRun = transitionRun(input.run, "waiting_for_user", waitingAt);
-  input.input.runStore.updateRun(waitingRun);
-  await input.appendEvent("user_input.requested", { requestId: request.requestId }, waitingAt);
-  await input.appendEvent("run.waiting", { status: waitingRun.status, waitingFor: "user_input" }, waitingAt);
-
-  const pendingAction = createPendingAction({
-    pendingActionId: input.input.idGenerator(),
-    runId: input.run.runId,
-    actionId: request.requestId,
-    waitingFor: "user_input",
-    requestId: request.requestId,
-    action: input.action,
-    resumeState: serializeResumeState({
-      usage: input.usage,
-      nextSequence: input.nextSequence + 2,
-      currentWorkingSet: input.currentWorkingSet,
-      changedFiles: input.changedFiles,
-      recentToolResult: input.recentToolResult,
-      recentValidationResult: input.recentValidationResult,
-      latestIterationIndex: input.latestIterationIndex,
-      regroundRequested: input.regroundRequested,
-      replanRequested: input.replanRequested,
-      noProgressCount: input.noProgressCount,
-      previousSnapshot: input.previousSnapshot,
-      pendingRetryIncrement: input.pendingRetryIncrement,
-      recoveryState: input.recoveryState,
-      strategyState: input.strategyState,
-      builderState: input.builderState,
-      finalizationPlanRejectionCount: input.finalizationPlanRejectionCount,
-      validationRepairActionRejectionCount: input.validationRepairActionRejectionCount
-    }),
-    now: input.input.now()
-  });
-  input.input.pendingActionStore.insertPendingAction(pendingAction);
-  await input.checkpoint("waiting_for_user", {
-    pendingActionId: pendingAction.pendingActionId
-  });
-
-  return {
-    kind: "waiting_for_user",
-    run: waitingRun,
-    ledger: waitingLedger,
-    request
-  };
-}
-
