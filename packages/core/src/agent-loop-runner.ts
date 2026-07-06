@@ -1,5 +1,4 @@
 import {
-  AgentActionSchema,
   AgentBudgetUsageSchema,
   ALL_TOOL_NAMES,
   computeArtifactHash,
@@ -23,8 +22,7 @@ import {
 } from "../../contracts/src/index.js";
 import {
   collectRehydrationFilePaths,
-  rehydrateWorkspaceFacts,
-  validateCompactionIntegrity
+  rehydrateWorkspaceFacts
 } from "../../context/src/index.js";
 import type { AgentLoopModelProvider, ModelActionRejection } from "../../model-gateway/src/index.js";
 import type { AgentIterationStore } from "../../storage/src/agent-iteration-store.js";
@@ -48,19 +46,15 @@ import { RecoveryOrchestrator } from "./recovery/index.js";
 import { AgentLoopRunFailure } from "./agent-loop/errors.js";
 import { redactForEvidence } from "./agent-loop/redact.js";
 import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/test-abort.js";
-import { ensureBudget } from "./agent-loop/budget.js";
 import { failRun } from "./agent-loop/fail-run.js";
-import {
-  describeModelActionError,
-  isActionRepairable
-} from "./agent-loop/model-action-error.js";
 import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.js";
-import { buildLoopContextSnapshot, reGroundNow } from "./agent-loop/context-snapshot.js";
+import { reGroundNow } from "./agent-loop/context-snapshot.js";
 import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
 import { handleSubmitExecutionPlan } from "./agent-loop/handlers/submit-execution-plan.js";
 import { handleUpdatePlan } from "./agent-loop/handlers/update-plan.js";
 import { handleFinal } from "./agent-loop/handlers/final.js";
 import { handleToolCall } from "./agent-loop/handlers/tool-call.js";
+import { handleGenerateAction } from "./agent-loop/handlers/generate-action.js";
 import type { HandlerContext, StateDelta } from "./agent-loop/outcome.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
@@ -68,8 +62,6 @@ export { redactForEvidence } from "./agent-loop/redact.js";
 export { fingerprintToolCall } from "./agent-loop/fingerprint.js";
 import { applyLedgerPatch } from "./ledger-progress/index.js";
 import {
-  beforeModelStrategy,
-  buildStrategyPromptContext,
   deriveExecutionPlanFromAction,
   evaluateExecutionPlanCompleteness,
   normalizeStrategyState,
@@ -77,10 +69,8 @@ import {
   validateActionWithStrategy
 } from "./strategy/index.js";
 import {
-  buildPlanningPolicyContext,
   evaluateBuilderAction,
-  normalizeBuilderState,
-  prepareBuilderTurn
+  normalizeBuilderState
 } from "./builder/index.js";
 
 type NoProgressSnapshot = {
@@ -374,243 +364,18 @@ export async function runAgentLoop(input: {
       seededAction = null;
       bypassApprovalForSeedAction = false;
     } else {
-      await ensureBudget({
-        appendEvent,
-        now: input.now(),
-        phase: "model",
-        budget: input.task.input.agentRequest.budget,
-        usage,
-        reserveVerification: input.task.input.validationRequest !== undefined
-      });
-
-      const iterationStartedAt = input.now();
-      await appendEvent("iteration.started", { index: latestIterationIndex }, iterationStartedAt);
-      usage.loopCount += 1;
-      usage.modelCalls += 1;
-
-      const contextSnapshot = buildLoopContextSnapshot({
-        runId: activeRun.runId,
-        anchor,
-        ledger,
-        workingSet: currentWorkingSet,
-        recentToolResult,
-        recentValidationResult,
-        approvalStore: input.approvalStore,
-        userInputStore: input.userInputStore,
-        regroundedAt,
-        now: iterationStartedAt
-      });
-      const integrity = validateCompactionIntegrity(
-        {
-          anchor,
-          ledger,
-          openApprovals: contextSnapshot.openApprovals,
-          openUserInputs: contextSnapshot.openUserInputs
-        },
-        contextSnapshot
-      );
-      if (!integrity.valid) {
+      const outcome = await handleGenerateAction(buildHandlerContext(""));
+      if (outcome.kind === "fail") {
         return failRun({
           input,
           run: activeRun,
           appendEvent,
-          code: "CONTEXT_COMPACTION_FAILED",
-          message: `Context compaction lost required fields: ${integrity.violations.map((violation) => violation.field).join(", ")}`,
-          retryable: false
+          code: outcome.code,
+          message: outcome.message,
+          retryable: outcome.retryable
         });
       }
-      await appendEvent(
-        "context.compacted",
-        {
-          trims: contextSnapshot.trims.map((trim) => ({ field: trim.field, droppedCount: trim.droppedCount })),
-          regroundedAt: contextSnapshot.regroundedAt,
-          openApprovals: contextSnapshot.openApprovals,
-          openUserInputs: contextSnapshot.openUserInputs
-        },
-        iterationStartedAt
-      );
-
-      let lastRejection: ModelActionRejection | null = null;
-      const strategyBeforeModel = beforeModelStrategy({
-        task: input.task,
-        state: strategyState,
-        changedFiles,
-        recentValidationResult
-      });
-      if (strategyBeforeModel.phaseChanged) {
-        await appendEvent(
-          "strategy.phase.changed",
-          {
-            fromPhase: strategyBeforeModel.previousPhase,
-            toPhase: strategyBeforeModel.state.phase,
-            reason: strategyBeforeModel.decision,
-            iteration: latestIterationIndex,
-            consecutiveReadActions: strategyBeforeModel.state.explorationUsage.consecutiveReadActions,
-            iterationsWithoutProgress: strategyBeforeModel.state.explorationUsage.iterationsWithoutProgress
-          },
-          input.now()
-        );
-      }
-      strategyState = strategyBeforeModel.state;
-      strategyDecision = strategyBeforeModel.decision;
-      if (strategyDecision === "fail_no_progress") {
-        await appendEvent(
-          "strategy.no_progress.terminal",
-          {
-            reason: "no_progress_threshold_reached",
-            iteration: latestIterationIndex,
-            consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
-            iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress
-          },
-          input.now()
-        );
-        return failRun({
-          input,
-          run: activeRun,
-          appendEvent,
-          code: "AGENT_STRATEGY_NO_PROGRESS",
-          message: "Agent strategy detected repeated exploration without progress.",
-          retryable: false
-        });
-      }
-      if (strategyDecision !== "continue_explore") {
-        await appendEvent(
-          "strategy.transition.required",
-          {
-            reason: strategyDecision,
-            iteration: latestIterationIndex,
-            consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
-            iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress
-          },
-          input.now()
-        );
-      }
-      const builderPromptContext = prepareBuilderTurn({
-        strategyState,
-        builderState,
-        workingSet: currentWorkingSet,
-        workspaceRoot: input.workspaceRoot,
-        now: input.now()
-      });
-      if (builderPromptContext !== null) {
-        builderState = builderPromptContext.state;
-        for (const event of builderPromptContext.events) {
-          await appendEvent(event.type, event.payload, input.now());
-        }
-      }
-      const planningPolicyContext = buildPlanningPolicyContext({
-        task: input.task,
-        workspaceRoot: input.workspaceRoot,
-        knownExistingFiles: currentWorkingSet?.items.map((item) => item.path) ?? []
-      });
-      builderState = normalizeBuilderState({
-        ...builderState,
-        planningPolicy: null
-      });
-      const strategyContext = buildStrategyPromptContext({
-        state: strategyState,
-        decision: strategyDecision,
-        workingSet: currentWorkingSet,
-        changedFiles,
-        recentValidationResult,
-        currentStepId: builderState.currentStepId
-      });
-      for (let attempt = 0; attempt <= MAX_ACTION_REPAIRS; attempt += 1) {
-        if (attempt > 0) {
-          usage.actionRepairCount += 1;
-          usage.modelCalls += 1;
-          await ensureBudget({
-            appendEvent,
-            now: input.now(),
-            phase: "model",
-            budget: input.task.input.agentRequest.budget,
-            usage,
-            reserveVerification: input.task.input.validationRequest !== undefined
-          });
-        }
-        try {
-          action = AgentActionSchema.parse(
-            await input.modelProvider.nextAction({
-              runId: activeRun.runId,
-              goal: anchor.goal,
-              constraints: anchor.constraints,
-              successCriteria: anchor.successCriteria,
-              ledger,
-              workingSet: currentWorkingSet,
-              recentToolResult,
-              recentValidationResult,
-              ...(input.task.input.validationRequest === undefined
-                ? {}
-                : { validationRequest: input.task.input.validationRequest }),
-              budget: input.task.input.agentRequest.budget,
-              usage,
-              availableTools,
-              regroundRequested,
-              replanRequested,
-              contextSnapshot,
-              strategyContext,
-              ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
-              planningPolicyContext,
-              executionPlanRepairContext: builderState.executionPlanRepair,
-              lastModelError: lastRejection ?? pendingActionRejection
-            })
-          );
-          pendingActionRejection = null;
-          break;
-        } catch (error) {
-          const failure = describeModelActionError(error);
-          const category = failure.category ?? "schema_validation";
-          lastRejection = {
-            category,
-            attempt: attempt + 1,
-            message: failure.message,
-            ...(failure.issues === null ? {} : { issues: failure.issues })
-          };
-          await appendEvent(
-            "model.action.rejected",
-            {
-              code: failure.code,
-              message: redactForEvidence(failure.message),
-              category,
-              attempt: attempt + 1,
-              ...(failure.issues === null ? {} : { issues: failure.issues }),
-              raw: failure.raw ?? null
-            },
-            input.now()
-          );
-          if (!isActionRepairable(error) || attempt === MAX_ACTION_REPAIRS) {
-            return failRun({
-              input,
-              run: activeRun,
-              appendEvent,
-              code: failure.code,
-              message: failure.message,
-              retryable: failure.retryable
-            });
-          }
-        }
-      }
-      if (action === undefined) {
-        return failRun({
-          input,
-          run: activeRun,
-          appendEvent,
-          code: "MODEL_ACTION_INVALID",
-          message: "Agent model action repair did not produce a valid action.",
-          retryable: false
-        });
-      }
-
-      await appendEvent(
-        "model.action.generated",
-        {
-          type: action.type,
-          ...(action.type === "tool_call" || action.type === "request_approval"
-            ? { toolCallId: action.toolCall.toolCallId, toolName: action.toolCall.toolName }
-            : {})
-        },
-        input.now()
-      );
+      action = outcome.action;
     }
 
     const actionSignature = JSON.stringify(action);
