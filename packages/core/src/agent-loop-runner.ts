@@ -1,6 +1,5 @@
 import {
   AgentActionSchema,
-  AgentIterationSchema,
   AgentBudgetUsageSchema,
   ALL_TOOL_NAMES,
   type AgentBudgetUsage,
@@ -12,23 +11,19 @@ import {
   createProgressLedger,
   createTextArtifact,
   type AgentAction,
-  type AgentIteration,
   type ApprovalRequest,
   type Artifact,
   type BuilderState,
   type Checkpoint,
   type CheckpointPhase,
-  type ContextSnapshot,
   type Event,
   type PendingActionResumeState,
   type ProgressLedger,
   type RecoveryCheckpointState,
   type Run,
   type StrategyDecision,
-  type StrategyRejectionContext,
   type StrategyState,
   type Task,
-  type TaskAnchor,
   type ToolCall,
   type ToolResult,
   type UserInputRequest,
@@ -36,18 +31,11 @@ import {
   type WorkingSet
 } from "../../contracts/src/index.js";
 import {
-  buildContextSnapshot,
   collectRehydrationFilePaths,
   rehydrateWorkspaceFacts,
   validateCompactionIntegrity
 } from "../../context/src/index.js";
-import type { AgentLoopModelProvider, ModelActionRejection, ModelActionRejectionCategory } from "../../model-gateway/src/index.js";
-import {
-  ModelConfigError,
-  ModelHttpError,
-  ModelJsonParseError,
-  ModelTimeoutError
-} from "../../model-gateway/src/index.js";
+import type { AgentLoopModelProvider, ModelActionRejection } from "../../model-gateway/src/index.js";
 import type { AgentIterationStore } from "../../storage/src/agent-iteration-store.js";
 import type { ApprovalStore } from "../../storage/src/approval-store.js";
 import type { ArtifactStore } from "../../storage/src/artifact-store.js";
@@ -76,13 +64,40 @@ import {
 } from "./recovery/index.js";
 import { createPendingAction } from "./recovery/resume-boundary.js";
 import { serializeResumeState } from "./agent-loop/state.js";
+import { AgentLoopRunFailure } from "./agent-loop/errors.js";
+import { redactForEvidence } from "./agent-loop/redact.js";
+import {
+  fingerprintAction,
+  isCriticalAction,
+  describeResourceScope
+} from "./agent-loop/fingerprint.js";
+import {
+  describeApprovalReason,
+  describeApprovalSummary,
+  describeCapabilities,
+  describeToolSuccess
+} from "./agent-loop/tool-description.js";
+import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/test-abort.js";
+import { ensureBudget } from "./agent-loop/budget.js";
+import { appendChangedFile, appendFailedAttempt, createIteration } from "./agent-loop/iteration.js";
+import { detectNoProgress, handleNoProgress } from "./agent-loop/no-progress.js";
+import { failRun } from "./agent-loop/fail-run.js";
+import {
+  buildToolFailureRejection,
+  describeModelActionError,
+  isActionRepairable
+} from "./agent-loop/model-action-error.js";
+import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.js";
+import { buildLoopContextSnapshot, reGroundNow } from "./agent-loop/context-snapshot.js";
+
+export { AgentLoopRunFailure } from "./agent-loop/errors.js";
+export { redactForEvidence } from "./agent-loop/redact.js";
+export { fingerprintToolCall } from "./agent-loop/fingerprint.js";
 import { applyLedgerPatch, completePlanStepFromTool } from "./ledger-progress/index.js";
 import {
   afterActionStrategy,
-  allowedActionCategories,
   beforeModelStrategy,
   buildStrategyPromptContext,
-  categorizeToolCall,
   clearPlanRepair,
   deriveExecutionPlan,
   deriveExecutionPlanFromAction,
@@ -138,17 +153,6 @@ export type AgentLoopResult =
   | AgentLoopCompletedResult
   | AgentLoopWaitingForApprovalResult
   | AgentLoopWaitingForUserResult;
-
-export class AgentLoopRunFailure extends Error {
-  public readonly code: string;
-  public readonly retryable: boolean;
-
-  public constructor(code: string, message: string, retryable: boolean) {
-    super(message);
-    this.code = code;
-    this.retryable = retryable;
-  }
-}
 
 export async function runAgentLoop(input: {
   task: Task;
@@ -2500,633 +2504,3 @@ async function waitForUser(input: {
   };
 }
 
-async function ensureBudget(input: {
-  appendEvent: (type: Event["type"], payload: Record<string, unknown>, timestamp: string) => Promise<void>;
-  now: string;
-  phase: "model" | "tool";
-  budget: NonNullable<Task["input"]["agentRequest"]>["budget"];
-  usage: AgentBudgetUsage;
-  reserveVerification: boolean;
-}): Promise<void> {
-  await input.appendEvent(
-    "budget.checked",
-    {
-      phase: input.phase,
-      usage: {
-        loopCount: input.usage.loopCount,
-        modelCalls: input.usage.modelCalls,
-        toolCalls: input.usage.toolCalls,
-        retryCount: input.usage.retryCount,
-        actionRepairCount: input.usage.actionRepairCount,
-        providerRetryCount: input.usage.providerRetryCount
-      }
-    },
-    input.now
-  );
-
-  const durationMs = new Date(input.now).getTime() - new Date(input.usage.startedAt).getTime();
-  const wouldExceed =
-    input.usage.loopCount >= input.budget.maxLoopCount ||
-    input.usage.modelCalls >= input.budget.maxModelCalls ||
-    input.usage.toolCalls >= input.budget.maxToolCalls ||
-    input.usage.retryCount > input.budget.maxRetries ||
-    input.usage.actionRepairCount + input.usage.providerRetryCount > input.budget.maxRetries ||
-    durationMs >= input.budget.maxDurationMs ||
-    (input.reserveVerification &&
-      input.phase === "tool" &&
-      input.usage.toolCalls + 1 >= input.budget.maxToolCalls &&
-      input.usage.modelCalls + 1 >= input.budget.maxModelCalls);
-
-  if (!wouldExceed) {
-    return;
-  }
-
-  await input.appendEvent("budget.exceeded", { phase: input.phase }, input.now);
-  throw new AgentLoopRunFailure("BUDGET_EXCEEDED", "Agent budget was exhausted.", false);
-}
-
-function appendFailedAttempt(input: {
-  ledger: ProgressLedger;
-  now: string;
-  actionType: "tool_call" | "update_plan" | "final" | "fail";
-  summary: string;
-  errorCode?: string;
-  retryable: boolean;
-  evidenceRefs: string[];
-}): ProgressLedger {
-  return {
-    ...input.ledger,
-    failedAttempts: [
-      ...input.ledger.failedAttempts,
-      {
-        actionType: input.actionType,
-        summary: input.summary,
-        ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
-        retryable: input.retryable,
-        evidenceRefs: [...new Set(input.evidenceRefs)],
-        createdAt: input.now
-      }
-    ],
-    version: input.ledger.version + 1,
-    updatedAt: input.now
-  };
-}
-
-function createIteration(input: {
-  iterationId: string;
-  runId: string;
-  index: number;
-  actionType: AgentIteration["actionType"];
-  status: AgentIteration["status"];
-  usage: {
-    modelCalls: number;
-    toolCalls: number;
-  };
-  summary: string;
-  latestToolCallId?: string | undefined;
-  latestExecutionRecordId?: string | undefined;
-  latestValidationStatus?: "passed" | "failed" | undefined;
-  evidenceRefs: string[];
-  now: string;
-}): AgentIteration {
-  return AgentIterationSchema.parse({
-    schemaVersion: "1",
-    iterationId: input.iterationId,
-    runId: input.runId,
-    index: input.index,
-    actionType: input.actionType,
-    status: input.status,
-    modelCallCount: input.usage.modelCalls,
-    toolCallCount: input.usage.toolCalls,
-    summary: input.summary,
-    ...(input.latestToolCallId === undefined ? {} : { latestToolCallId: input.latestToolCallId }),
-    ...(input.latestExecutionRecordId === undefined ? {} : { latestExecutionRecordId: input.latestExecutionRecordId }),
-    ...(input.latestValidationStatus === undefined ? {} : { latestValidationStatus: input.latestValidationStatus }),
-    evidenceRefs: [...new Set(input.evidenceRefs)],
-    createdAt: input.now
-  });
-}
-
-function appendChangedFile(changedFiles: string[], nextPath: string): string[] {
-  return [...new Set([...changedFiles, nextPath])];
-}
-
-function detectNoProgress(input: {
-  previous: NoProgressSnapshot;
-  current: NoProgressSnapshot;
-}): string[] {
-  const signals: string[] = [];
-  const sameAction =
-    input.previous.actionSignature !== null && input.previous.actionSignature === input.current.actionSignature;
-  const sameError = input.previous.errorCode !== null && input.previous.errorCode === input.current.errorCode;
-  const sameFailedValidation =
-    input.previous.validationStatus !== null &&
-    input.previous.validationStatus === input.current.validationStatus &&
-    input.current.validationStatus === "failed";
-  const sameArtifactHash =
-    input.previous.artifactHash !== null &&
-    input.current.artifactHash !== null &&
-    input.previous.artifactHash === input.current.artifactHash;
-
-  if (sameAction) {
-    signals.push("same_action");
-  }
-  if (sameError) {
-    signals.push("same_error");
-  }
-  if (sameAction && input.previous.ledgerVersion === input.current.ledgerVersion) {
-    signals.push("ledger_unchanged");
-  }
-  if ((sameAction || sameError || sameFailedValidation) && input.previous.evidenceCount === input.current.evidenceCount) {
-    signals.push("no_new_evidence");
-  }
-  if (sameFailedValidation) {
-    signals.push("validation_not_improved");
-  }
-  if (sameArtifactHash) {
-    signals.push("file_hash_unchanged");
-  }
-
-  return [...new Set(signals)];
-}
-
-async function handleNoProgress(input: {
-  input: {
-    now: () => string;
-    ledgerStore: LedgerStore;
-  };
-  appendEvent: (type: Event["type"], payload: Record<string, unknown>, timestamp: string) => Promise<void>;
-  ledger: ProgressLedger;
-  noProgressCount: number;
-  signals: string[];
-}): Promise<{
-  ledger: ProgressLedger;
-  noProgressCount: number;
-  regroundRequested: boolean;
-  replanRequested: boolean;
-}> {
-  if (input.signals.length === 0) {
-    return {
-      ledger: input.ledger,
-      noProgressCount: 0,
-      regroundRequested: false,
-      replanRequested: false
-    };
-  }
-
-  const now = input.input.now();
-  await input.appendEvent("no_progress.detected", { signals: input.signals }, now);
-  await input.appendEvent("recovery.no_progress.detected", { signals: input.signals }, now);
-  const nextCount = input.noProgressCount + 1;
-
-  if (nextCount === 1) {
-    const ledger = applyLedgerPatch({
-      ledger: input.ledger,
-      patch: {
-        appendDecisions: [`Re-ground requested due to: ${input.signals.join(", ")}`]
-      },
-      now
-    });
-    input.input.ledgerStore.upsertLedger(ledger);
-    await input.appendEvent("reground.requested", { signals: input.signals }, now);
-    return {
-      ledger,
-      noProgressCount: nextCount,
-      regroundRequested: true,
-      replanRequested: false
-    };
-  }
-
-  if (nextCount === 2) {
-    const ledger = applyLedgerPatch({
-      ledger: input.ledger,
-      patch: {
-        appendDecisions: [`Re-plan requested due to: ${input.signals.join(", ")}`]
-      },
-      now
-    });
-    input.input.ledgerStore.upsertLedger(ledger);
-    await input.appendEvent("replan.requested", { signals: input.signals }, now);
-    return {
-      ledger,
-      noProgressCount: nextCount,
-      regroundRequested: false,
-      replanRequested: true
-    };
-  }
-
-  throw new AgentLoopRunFailure("NO_PROGRESS", `Agent loop stalled: ${input.signals.join(", ")}.`, false);
-}
-
-async function failRun(input: {
-  input: {
-    now: () => string;
-    runStore: RunStore;
-  };
-  run: Run;
-  appendEvent: (type: Event["type"], payload: Record<string, unknown>, timestamp: string) => Promise<void>;
-  code: string;
-  message: string;
-  retryable: boolean;
-}): Promise<never> {
-  const failedAt = input.input.now();
-  const failedRun = transitionRun(input.run, "failed", failedAt, input.code);
-  input.input.runStore.updateRun(failedRun);
-  await input.appendEvent("run.failed", { code: input.code, message: input.message }, failedAt);
-  throw new AgentLoopRunFailure(input.code, input.message, input.retryable);
-}
-
-type ModelActionFailure = {
-  code: string;
-  message: string;
-  retryable: boolean;
-  raw: unknown;
-  category: ModelActionRejectionCategory | null;
-  issues: Array<{ path: string; message: string }> | null;
-};
-
-function summarizeZodIssues(issues: Array<{ path: PropertyKey[]; message: string }>): {
-  summary: string;
-  plain: Array<{ path: string; message: string }>;
-} {
-  const plain = issues.slice(0, 5).map((issue) => ({
-    path: issue.path.length > 0 ? issue.path.join(".") : "(root)",
-    message: issue.message
-  }));
-  const summary = plain.map((i) => `${i.path}: ${i.message}`).join("; ");
-  const suffix = issues.length > 5 ? `; (+${String(issues.length - 5)} more)` : "";
-  return { summary: `${summary}${suffix}`, plain };
-}
-
-function describeModelActionError(error: unknown): ModelActionFailure {
-  if (error instanceof ModelConfigError) {
-    return { code: "MODEL_CONFIG_ERROR", message: error.message, retryable: false, raw: null, category: null, issues: null };
-  }
-  if (error instanceof ModelTimeoutError) {
-    return { code: error.code, message: error.message, retryable: error.retryable, raw: null, category: null, issues: null };
-  }
-  if (error instanceof ModelHttpError) {
-    return { code: error.code, message: error.message, retryable: error.retryable, raw: null, category: null, issues: null };
-  }
-  if (error instanceof ModelJsonParseError) {
-    return {
-      code: error.code,
-      message: error.message,
-      retryable: error.retryable,
-      raw: null,
-      category: "json_parse",
-      issues: null
-    };
-  }
-  if (error instanceof Error && Array.isArray((error as { issues?: unknown[] }).issues)) {
-    const issues = (error as unknown as { issues: Array<{ path: PropertyKey[]; message: string }> }).issues;
-    const { summary, plain } = summarizeZodIssues(issues);
-    return {
-      code: "MODEL_ACTION_INVALID",
-      message: `Agent model produced an action that failed schema validation. ${summary}`,
-      retryable: false,
-      raw: { issues: plain },
-      category: "schema_validation",
-      issues: plain
-    };
-  }
-  if (error instanceof Error) {
-    return {
-      code: "MODEL_ACTION_INVALID",
-      message: `Agent model produced an invalid action: ${error.message}`,
-      retryable: false,
-      raw: null,
-      category: null,
-      issues: null
-    };
-  }
-  return {
-    code: "MODEL_ACTION_INVALID",
-    message: "Agent model produced an invalid action.",
-    retryable: false,
-    raw: null,
-    category: null,
-    issues: null
-  };
-}
-
-function buildToolFailureRejection(input: {
-  toolCall: ToolCall;
-  code: string;
-  message: string;
-}): ModelActionRejection | null {
-  if (!/(PATCH_|IDEMPOTENCY_CONFLICT)/i.test(input.code)) {
-    return null;
-  }
-  if (input.toolCall.toolName === "shell.execute") {
-    const toolInput = input.toolCall.input as { idempotencyKey?: string; purpose?: string };
-    const idempotencyKey = toolInput.idempotencyKey ?? input.toolCall.toolCallId;
-    return {
-      category: "tool_failure_recovery",
-      attempt: 1,
-      message: [
-        `Tool shell.execute failed with ${input.code}: ${input.message}`,
-        `Do not repeat the same toolCallId or idempotencyKey (${idempotencyKey}).`,
-        "If this was a validation, test, or build rerun, submit the same validation command again with a fresh toolCallId and fresh idempotencyKey.",
-        "Do not mutate source through shell.execute; use it only for validation, tests, or builds after Builder-controlled mutations."
-      ].join(" ")
-    };
-  }
-  if (input.toolCall.toolName !== "filesystem.patch" && input.toolCall.toolName !== "filesystem.write") {
-    return null;
-  }
-  const toolInput = input.toolCall.input as { path?: string; idempotencyKey?: string };
-  const path = toolInput.path ?? "the Builder-bound target file";
-  const idempotencyKey = toolInput.idempotencyKey ?? input.toolCall.toolCallId;
-  return {
-    category: "tool_failure_recovery",
-    attempt: 1,
-    message: [
-      `Tool ${input.toolCall.toolName} failed with ${input.code}: ${input.message}`,
-      `Target path: ${path}.`,
-      `Do not repeat the same patch, toolCallId, or idempotencyKey (${idempotencyKey}).`,
-      "Use a new idempotencyKey and either submit a focused repair execution plan, use filesystem.write for the same Builder-bound target, or create a new filesystem.patch from current file content.",
-      "Stay within Task.input.executionConstraints and rerun validation after the mutation."
-    ].join(" ")
-  };
-}
-
-function buildStrategyRejectionContext(input: {
-  action: AgentAction;
-  policy: { code: string; reason: string; message: string };
-  state: StrategyState;
-  decision: StrategyDecision;
-  maxActionRepairs: number;
-}): StrategyRejectionContext {
-  const previousAttempt = input.state.lastStrategyRejection?.attempt ?? 0;
-  const attempt = previousAttempt + 1;
-  return {
-    rejectedActionType: input.action.type,
-    rejectedActionCategory: describeActionCategory(input.action),
-    rejectionCode: input.policy.code,
-    rejectionReason: input.policy.reason,
-    currentPhase: input.state.phase,
-    requiredDecision: input.decision,
-    allowedActionCategories: allowedActionCategories(input.state.phase, input.decision),
-    activePlan: input.state.plan ?? null,
-    attempt,
-    remainingCorrectionAttempts: Math.max(0, input.maxActionRepairs + 1 - attempt)
-  };
-}
-
-function describeActionCategory(action: AgentAction): string {
-  if (action.type !== "tool_call" && action.type !== "request_approval") {
-    return action.type;
-  }
-  return categorizeToolCall(action.toolCall);
-}
-
-function isActionRepairable(error: unknown): boolean {
-  if (error instanceof ModelConfigError) {
-    return false;
-  }
-  if (error instanceof ModelJsonParseError) {
-    return true;
-  }
-  if (error instanceof ModelTimeoutError || error instanceof ModelHttpError) {
-    return false;
-  }
-  if (error instanceof Error && Array.isArray((error as { issues?: unknown[] }).issues)) {
-    return true;
-  }
-  return false;
-}
-
-const SECRET_PATTERNS: Array<{ re: RegExp; replacement: string }> = [
-  { re: /Bearer\s+[A-Za-z0-9._-]+/g, replacement: "Bearer ***" },
-  { re: /sk-[A-Za-z0-9_-]{8,}/g, replacement: "sk-***" },
-  { re: /[Aa]uthorization[:\s]+[A-Za-z0-9._-]+/g, replacement: "authorization ***" }
-];
-
-export function redactForEvidence(text: string): string {
-  let result = text;
-  for (const pattern of SECRET_PATTERNS) {
-    result = result.replace(pattern.re, pattern.replacement);
-  }
-  return result;
-}
-
-function describeToolSuccess(toolResult: Extract<ToolResult, { status: "success" }>): string {
-  if (toolResult.toolName === "filesystem.read") {
-    return `Read ${toolResult.output.path}.`;
-  }
-  if (toolResult.toolName === "filesystem.search") {
-    return `Search returned ${String(toolResult.output.result.returnedMatches)} matches.`;
-  }
-  if (toolResult.toolName === "filesystem.patch") {
-    return `Patched ${toolResult.output.result.path}.`;
-  }
-  if (toolResult.toolName === "filesystem.write") {
-    return `Wrote ${toolResult.output.result.path}.`;
-  }
-  if (toolResult.toolName === "shell.execute") {
-    return `Executed ${toolResult.output.result.executionRecordId}.`;
-  }
-  if (toolResult.toolName === "filesystem.list") {
-    if (toolResult.output.kind === "list_inline") {
-      return `Listed ${String(toolResult.output.entries.length)} entries.`;
-    }
-    return `Listed ${String(toolResult.output.entryCount)} entries (artifact).`;
-  }
-  if (toolResult.toolName === "git.status") {
-    return `Git status: dirty ${String(toolResult.output.result.isDirty)}.`;
-  }
-  if (toolResult.toolName === "git.diff") {
-    return `Git diff: ${String(toolResult.output.changedFiles.length)} files.`;
-  }
-  if (toolResult.toolName === "git.show") {
-    return `Git show ${toolResult.output.revision}.`;
-  }
-  if (toolResult.toolName === "project.commands") {
-    return `Discovered ${String(toolResult.output.commands.length)} commands.`;
-  }
-  return `Inspected repository ${toolResult.output.profile.root}.`;
-}
-
-function describeCapabilities(toolCall: ToolCall): string[] {
-  if (toolCall.toolName === "filesystem.patch" || toolCall.toolName === "filesystem.write") {
-    return ["filesystem.write"];
-  }
-  if (toolCall.toolName === "shell.execute") {
-    return ["process.execute"];
-  }
-
-  return ["filesystem.read"];
-}
-
-function describeApprovalSummary(toolCall: ToolCall): string {
-  if (toolCall.toolName === "filesystem.patch") {
-    return `Patch ${toolCall.input.path}`;
-  }
-
-  if (toolCall.toolName === "filesystem.write") {
-    return `Write ${toolCall.input.path} (${toolCall.input.mode})`;
-  }
-
-  if (toolCall.toolName === "shell.execute") {
-    return `Execute ${toolCall.input.command}`;
-  }
-
-  return toolCall.toolName;
-}
-
-function describeApprovalReason(toolCall: ToolCall): string {
-  if (toolCall.toolName === "filesystem.patch" || toolCall.toolName === "filesystem.write") {
-    return "Write access requires approval before mutating workspace files.";
-  }
-
-  return "Command execution requires approval before running a process.";
-}
-
-function buildLoopContextSnapshot(input: {
-  runId: string;
-  anchor: TaskAnchor;
-  ledger: ProgressLedger;
-  workingSet: WorkingSet | null;
-  recentToolResult: ToolResult | null;
-  recentValidationResult: ValidationResult | null;
-  approvalStore: ApprovalStore;
-  userInputStore: UserInputStore;
-  regroundedAt: string | null;
-  now: string;
-}): ContextSnapshot {
-  const openApprovals = input.approvalStore.hasPendingByRun(input.runId) ? countPendingApprovals(input.approvalStore, input.runId) : 0;
-  const openUserInputs = input.userInputStore.hasPendingByRun(input.runId) ? countPendingUserInputs(input.userInputStore, input.runId) : 0;
-  return buildContextSnapshot({
-    runId: input.runId,
-    anchor: input.anchor,
-    ledger: input.ledger,
-    workingSet: input.workingSet,
-    recentToolResult: input.recentToolResult,
-    recentValidationResult: input.recentValidationResult,
-    openApprovals,
-    openUserInputs,
-    regroundedAt: input.regroundedAt,
-    now: input.now
-  });
-}
-
-function countPendingApprovals(approvalStore: ApprovalStore, runId: string): number {
-  return approvalStore.listByRun(runId).filter((entry) => entry.request.status === "pending").length;
-}
-
-function countPendingUserInputs(userInputStore: UserInputStore, runId: string): number {
-  return userInputStore.listByRun(runId).filter((entry) => entry.request.status === "pending").length;
-}
-
-function reGroundNow(
-  input: {
-    workspaceRoot: string;
-    task: Task;
-  },
-  workingSet: WorkingSet | null,
-  now: string
-): string | null {
-  const workingSetPaths = workingSet?.items.map((item) => item.path) ?? [];
-  const pendingPatchPath = input.task.input.patchRequest?.path;
-  const facts = rehydrateWorkspaceFacts({
-    workspaceRoot: input.workspaceRoot,
-    filePaths: collectRehydrationFilePaths({ workingSetPaths, pendingPatchPath }),
-    now
-  });
-  return facts.regroundedAt;
-}
-
-function maybeAbortAfterCheckpoint(phase: CheckpointPhase, note: string | undefined): void {
-  const configuredPhase = process.env.NEXORA_TEST_EXIT_AFTER_CHECKPOINT_PHASE?.trim();
-  if (configuredPhase === undefined || configuredPhase.length === 0) {
-    return;
-  }
-
-  if (configuredPhase !== phase) {
-    return;
-  }
-
-  const configuredNote = process.env.NEXORA_TEST_EXIT_AFTER_CHECKPOINT_NOTE?.trim();
-  if (configuredNote !== undefined && configuredNote.length > 0 && configuredNote !== note) {
-    return;
-  }
-
-  throw new AgentLoopRunFailure("TEST_ABORT", `Test abort after checkpoint phase ${phase}`, false);
-}
-
-function maybeAbortAfterEvent(type: Event["type"]): void {
-  const configuredType = process.env.NEXORA_TEST_EXIT_AFTER_EVENT_TYPE?.trim();
-  if (configuredType === undefined || configuredType.length === 0) {
-    return;
-  }
-
-  if (configuredType !== type) {
-    return;
-  }
-
-  throw new AgentLoopRunFailure("TEST_ABORT", `Test abort after event ${type}`, false);
-}
-
-function describeResourceScope(toolCall: ToolCall): string {
-  if (toolCall.toolName === "filesystem.patch" || toolCall.toolName === "filesystem.write") {
-    return `workspace:${toolCall.input.path}`;
-  }
-
-  if (toolCall.toolName === "shell.execute") {
-    return `workspace:${toolCall.input.cwd}`;
-  }
-
-  return "workspace";
-}
-
-export function fingerprintToolCall(toolCall: ToolCall): string {
-  if (toolCall.toolName === "filesystem.read") {
-    return JSON.stringify({ toolName: toolCall.toolName, path: toolCall.input.path });
-  }
-  if (toolCall.toolName === "filesystem.search") {
-    return JSON.stringify({ toolName: toolCall.toolName, query: toolCall.input.query, limit: toolCall.input.limit });
-  }
-  if (toolCall.toolName === "filesystem.patch") {
-    return JSON.stringify({
-      toolName: toolCall.toolName,
-      path: toolCall.input.path,
-      patch: toolCall.input.patch,
-      encoding: toolCall.input.encoding
-    });
-  }
-  if (toolCall.toolName === "filesystem.write") {
-    return JSON.stringify({
-      toolName: toolCall.toolName,
-      path: toolCall.input.path,
-      content: toolCall.input.content,
-      encoding: toolCall.input.encoding,
-      mode: toolCall.input.mode,
-      expectedHash: toolCall.input.expectedHash ?? null
-    });
-  }
-  if (toolCall.toolName === "shell.execute") {
-    return JSON.stringify({
-      toolName: toolCall.toolName,
-      command: toolCall.input.command,
-      args: toolCall.input.args,
-      cwd: toolCall.input.cwd,
-      environment: toolCall.input.environment,
-      purpose: toolCall.input.purpose
-    });
-  }
-  return JSON.stringify({ toolName: toolCall.toolName, input: toolCall.input });
-}
-
-function fingerprintAction(toolCall: ToolCall): string {
-  return fingerprintToolCall(toolCall);
-}
-
-function isCriticalAction(toolCall: ToolCall): boolean {
-  if (toolCall.toolName !== "shell.execute") {
-    return false;
-  }
-
-  const tokens = [toolCall.input.command, ...toolCall.input.args].join(" ").toLowerCase();
-  return ["rm -rf", "del /f", "format ", "diskpart", "shutdown", "reboot", "mkfs"].some((pattern) => tokens.includes(pattern));
-}
