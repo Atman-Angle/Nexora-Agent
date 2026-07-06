@@ -350,6 +350,7 @@ export async function runAgentLoop(input: {
   let pendingActionRejection: ModelActionRejection | null = null;
 
   for (;;) {
+    try {
     let action: AgentAction | undefined;
     const currentSeededAction = seededAction;
     const usedSeededAction = currentSeededAction !== null;
@@ -2262,6 +2263,33 @@ export async function runAgentLoop(input: {
       noProgressCount,
       signals: noProgressSignals
     }));
+    } catch (error) {
+      if (error instanceof AgentLoopRunFailure) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : "Unknown runtime error";
+      const redacted = redactForEvidence(message);
+      try {
+        const failedAt = input.now();
+        const failedRun = transitionRun(activeRun, "failed", failedAt, "RUNTIME_ERROR");
+        input.runStore.updateRun(failedRun);
+        activeRun = failedRun;
+        await appendEvent(
+          "run.failed",
+          {
+            code: "RUNTIME_ERROR",
+            message: redacted,
+            handler: "global_safety_net"
+          },
+          failedAt
+        );
+      } catch {
+        // Safety net itself failed (e.g. disk full). Do not recurse or hang.
+        // The run may remain in its pre-failure status, but the caller still
+        // receives a deterministic AgentLoopRunFailure(RUNTIME_ERROR) below.
+      }
+      throw new AgentLoopRunFailure("RUNTIME_ERROR", redacted, false);
+    }
   }
 }
 
@@ -3023,7 +3051,7 @@ function maybeAbortAfterCheckpoint(phase: CheckpointPhase, note: string | undefi
     return;
   }
 
-  throw new Error(`Test abort after checkpoint phase ${phase}`);
+  throw new AgentLoopRunFailure("TEST_ABORT", `Test abort after checkpoint phase ${phase}`, false);
 }
 
 function maybeAbortAfterEvent(type: Event["type"]): void {
@@ -3036,7 +3064,7 @@ function maybeAbortAfterEvent(type: Event["type"]): void {
     return;
   }
 
-  throw new Error(`Test abort after event ${type}`);
+  throw new AgentLoopRunFailure("TEST_ABORT", `Test abort after event ${type}`, false);
 }
 
 function describeResourceScope(toolCall: ToolCall): string {
