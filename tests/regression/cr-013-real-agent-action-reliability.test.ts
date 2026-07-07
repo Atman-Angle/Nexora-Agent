@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
 
+import { AgentActionSchema, ActionSchema, computeArtifactHash } from "../../packages/contracts/src/index.js";
 import {
-  AgentActionSchema,
-  ActionSchema,
-  ALL_TOOL_NAMES,
-  computeArtifactHash
-} from "../../packages/contracts/src/index.js";
-import {
-  ALL_MODEL_TOOL_DEFINITIONS,
   buildAgentActionSchemaText,
+  buildModelToolDefinitions,
   buildModelToolSchemaText
 } from "../../packages/model-gateway/src/model-tool-definition.js";
+import { createCodingToolRegistry } from "../../packages/tool-runtime/src/index.js";
 import { runCliForTest } from "../integration/cli-test-helper.js";
+
+const registry = createCodingToolRegistry();
+const ALL_TOOL_NAMES = registry.listNames();
+const ALL_MODEL_TOOL_DEFINITIONS = buildModelToolDefinitions(registry);
+
+function defsFor(names: string[]): ReturnType<typeof registry.list> {
+  const all = registry.list();
+  const want = new Set(names);
+  return all.filter((d) => want.has(d.name));
+}
 
 describe("CR-013 Real Agent Action Reliability", () => {
   it("1. Model-visible Tool Schema comes from a single source (all tools have definitions)", () => {
@@ -21,13 +27,13 @@ describe("CR-013 Real Agent Action Reliability", () => {
   });
 
   it("2. Plan and Next Action share the same ToolCall schema builder", () => {
-    const planText = buildModelToolSchemaText(["filesystem.read", "filesystem.patch"]);
-    const agentText = buildAgentActionSchemaText(["filesystem.read", "filesystem.patch"]);
+    const planText = buildModelToolSchemaText(defsFor(["filesystem.read", "filesystem.patch"]));
+    const agentText = buildAgentActionSchemaText(defsFor(["filesystem.read", "filesystem.patch"]));
     expect(agentText).toContain(planText);
   });
 
   it("3. Only availableTools are rendered (no unlisted tools leak)", () => {
-    const text = buildModelToolSchemaText(["filesystem.read"]);
+    const text = buildModelToolSchemaText(defsFor(["filesystem.read"]));
     expect(text).toContain('toolName: "filesystem.read"');
     for (const other of ALL_TOOL_NAMES) {
       if (other === "filesystem.read") {
@@ -38,7 +44,7 @@ describe("CR-013 Real Agent Action Reliability", () => {
   });
 
   it("4. Action Union matches the runtime AgentActionSchema", () => {
-    const text = buildAgentActionSchemaText([...ALL_TOOL_NAMES]);
+    const text = buildAgentActionSchemaText(registry.list());
     expect(text).toContain('"tool_call"');
     expect(text).toContain('"request_approval"');
     expect(text).toContain('"ask_user"');

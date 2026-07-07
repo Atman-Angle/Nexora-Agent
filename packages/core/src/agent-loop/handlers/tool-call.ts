@@ -31,7 +31,6 @@ import { buildToolFailureRejection } from "../model-action-error.js";
 import { reGroundNow } from "../context-snapshot.js";
 import { createPendingAction } from "../../recovery/resume-boundary.js";
 import { serializeResumeState } from "../state.js";
-import { classifyRisk } from "../../../../tool-runtime/src/index.js";
 import { handleApproval } from "./approval.js";
 import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
@@ -94,7 +93,7 @@ export async function handleToolCall(
     };
   }
 
-  const risk = classifyRisk(toolCall.toolName);
+  const risk = deps.input.toolRuntime.getRiskLevel(toolCall.toolName);
   const actionFingerprint = fingerprintAction(toolCall);
   const resourceScope = describeResourceScope(toolCall);
   const requiresApproval = risk === "write" || risk === "execute";
@@ -204,17 +203,18 @@ export async function handleToolCall(
     "tool.started",
     {
       toolName: toolCall.toolName,
-      risk: classifyRisk(toolCall.toolName)
+      risk: deps.input.toolRuntime.getRiskLevel(toolCall.toolName)
     },
     activeRun.updatedAt
   );
   if (toolCall.toolName === "shell.execute") {
+    const shellInput = toolCall.input as { command: string; args: string[]; cwd: string };
     await deps.appendEvent(
       "command.started",
       {
-        command: toolCall.input.command,
-        args: toolCall.input.args,
-        cwd: toolCall.input.cwd
+        command: shellInput.command,
+        args: shellInput.args,
+        cwd: shellInput.cwd
       },
       activeRun.updatedAt
     );
@@ -307,10 +307,11 @@ async function handleToolError(
   let currentPendingRetryIncrement = pendingRetryIncrement;
 
   if (toolCall.toolName === "shell.execute") {
+    const shellInput = toolCall.input as { command: string };
     await deps.appendEvent(
       "command.failed",
       {
-        command: toolCall.input.command,
+        command: shellInput.command,
         error: toolResult.error
       },
       deps.input.now()
@@ -701,7 +702,7 @@ async function processToolSuccess(
       toolResult: toolResult,
       artifacts: deps.input.artifactStore.getArtifactsByRun(activeRun.runId),
       changedFiles,
-      validationCwd: toolCall.toolName === "shell.execute" ? toolCall.input.cwd : ".",
+      validationCwd: toolCall.toolName === "shell.execute" ? (toolCall.input as { cwd: string }).cwd : ".",
       workspaceRoot: deps.input.workspaceRoot,
       now: deps.input.now(),
       idGenerator: deps.input.idGenerator

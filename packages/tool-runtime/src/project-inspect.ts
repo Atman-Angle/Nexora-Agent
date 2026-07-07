@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { ToolResultSchema, createFileArtifact, type Artifact, type ToolCall, type ToolResult } from "../../contracts/src/index.js";
+import { ToolResultSchema, createFileArtifact, type Artifact, type ProjectInspectInput, type ToolResult } from "../../contracts/src/index.js";
 import { computeArtifactHash } from "../../contracts/src/artifact.js";
 import { ToolRuntimeError } from "./errors.js";
 import { inspectRepository } from "./repository-inspector.js";
@@ -11,7 +11,7 @@ const MAX_INLINE_PROFILE_BYTES = 24 * 1024;
 
 export async function executeProjectInspect(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "project.inspect" }>;
+  toolCall: { toolCallId: string; toolName: string; input: ProjectInspectInput; timeoutMs: number };
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;

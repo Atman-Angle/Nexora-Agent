@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   AgentLoopRunFailure,
+  codingProfile,
   DirectRunFailure,
   fingerprintToolCall,
   runAgentLoop,
@@ -46,7 +47,7 @@ import {
   UserInputStore,
   ValidationResultStore
 } from "../../../packages/storage/src/index.js";
-import { createDefaultToolRegistry, resolveWorkspaceFilePath, ToolRuntime } from "../../../packages/tool-runtime/src/index.js";
+import { createCodingToolRegistry, resolveWorkspaceFilePath, ToolRuntime } from "../../../packages/tool-runtime/src/index.js";
 import { createModelProvider, resolveProviderKind, ModelConfigError, ModelHttpError, ModelTimeoutError, ModelJsonParseError } from "../../../packages/model-gateway/src/index.js";
 
 type CliError = {
@@ -409,7 +410,7 @@ export async function runReadCommand(filePath: string): Promise<{
 
     const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
-      registry: createDefaultToolRegistry(),
+      registry: createCodingToolRegistry(),
       executionRecordStore,
       artifactStore
     });
@@ -487,7 +488,7 @@ export async function runSearchCommand(searchQuery: string): Promise<{
 
     const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
-      registry: createDefaultToolRegistry(),
+      registry: createCodingToolRegistry(),
       executionRecordStore,
       artifactStore
     });
@@ -581,7 +582,7 @@ export async function runPatchCommand(command: {
 
     const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
-      registry: createDefaultToolRegistry(),
+      registry: createCodingToolRegistry(),
       executionRecordStore,
       artifactStore
     });
@@ -690,7 +691,7 @@ export async function runVerifyCommand(command: {
 
     const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
-      registry: createDefaultToolRegistry(),
+      registry: createCodingToolRegistry(),
       executionRecordStore,
       artifactStore
     });
@@ -821,7 +822,7 @@ export async function runAgentCommand(command: {
 
     const modelProvider = createCliModelProvider();
     const toolRuntime = new ToolRuntime({
-      registry: createDefaultToolRegistry(),
+      registry: createCodingToolRegistry(),
       executionRecordStore,
       artifactStore
     });
@@ -844,7 +845,8 @@ export async function runAgentCommand(command: {
       approvalStore,
       pendingActionStore,
       userInputStore,
-      checkpointStore
+      checkpointStore,
+      profile: codingProfile
     });
 
     return renderAgentLoopResult(result);
@@ -1431,8 +1433,9 @@ async function runResumeCommand(runId: string): Promise<unknown> {
 
       if (checkpoint.phase === "pre_tool") {
         if (pendingAction.action.toolCall.toolName === "filesystem.patch") {
+          const patchInput = pendingAction.action.toolCall.input as { path: string; expectedHash: string };
           const workspaceRoot = requireWorkspaceRoot();
-          const currentFileHash = await readWorkspaceFileHash(workspaceRoot, pendingAction.action.toolCall.input.path);
+          const currentFileHash = await readWorkspaceFileHash(workspaceRoot, patchInput.path);
           if (currentFileHash === null) {
             const blockedRun = transitionRun(run, "blocked", now(), "RECOVERY_REQUIRES_REVIEW");
             runStore.updateRun(blockedRun);
@@ -1457,7 +1460,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
               text: `Run ${runId} target file is missing after checkpoint and patch resume needs manual review.`
             };
           }
-          if (currentFileHash !== pendingAction.action.toolCall.input.expectedHash) {
+          if (currentFileHash !== patchInput.expectedHash) {
             pendingActionStore.updatePendingAction({
               ...pendingAction,
               status: "cancelled",
@@ -1488,7 +1491,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
             };
             const modelProvider = createCliModelProvider({ agentActionSliceFrom: replanningResumeState.usage.modelCalls });
             const toolRuntime = new ToolRuntime({
-              registry: createDefaultToolRegistry(),
+              registry: createCodingToolRegistry(),
               executionRecordStore,
               artifactStore
             });
@@ -1512,6 +1515,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
               pendingActionStore,
               userInputStore,
               checkpointStore,
+              profile: codingProfile,
               resume: {
                 ledger,
                 resumeState: replanningResumeState
@@ -1527,10 +1531,11 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         }
 
         if (pendingAction.action.toolCall.toolName === "filesystem.write") {
+          const writeInput = pendingAction.action.toolCall.input as { path: string; mode: string; expectedHash?: string };
           const workspaceRoot = requireWorkspaceRoot();
-          const currentFileHash = await readWorkspaceFileHash(workspaceRoot, pendingAction.action.toolCall.input.path);
-          const writeMode = pendingAction.action.toolCall.input.mode;
-          const expectedHash = pendingAction.action.toolCall.input.expectedHash ?? null;
+          const currentFileHash = await readWorkspaceFileHash(workspaceRoot, writeInput.path);
+          const writeMode = writeInput.mode;
+          const expectedHash = writeInput.expectedHash ?? null;
           const shouldReplan =
             writeMode === "create"
               ? currentFileHash !== null
@@ -1567,7 +1572,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
             };
             const modelProvider = createCliModelProvider({ agentActionSliceFrom: replanningResumeState.usage.modelCalls });
             const toolRuntime = new ToolRuntime({
-              registry: createDefaultToolRegistry(),
+              registry: createCodingToolRegistry(),
               executionRecordStore,
               artifactStore
             });
@@ -1591,6 +1596,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
               pendingActionStore,
               userInputStore,
               checkpointStore,
+              profile: codingProfile,
               resume: {
                 ledger,
                 resumeState: replanningResumeState
@@ -1644,7 +1650,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
         const modelProvider = createCliModelProvider({ agentActionSliceFrom: pendingAction.resumeState.usage.modelCalls });
         const toolRuntime = new ToolRuntime({
-          registry: createDefaultToolRegistry(),
+          registry: createCodingToolRegistry(),
           executionRecordStore,
           artifactStore
         });
@@ -1668,6 +1674,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
           pendingActionStore,
           userInputStore,
           checkpointStore,
+          profile: codingProfile,
           resume: {
             ledger,
             resumeState: pendingAction.resumeState,
@@ -1829,7 +1836,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         const artifactRoot = resolveArtifactRoot(databasePath);
         const modelProvider = createCliModelProvider({ agentActionSliceFrom: reconciledResumeState.usage.modelCalls });
         const toolRuntime = new ToolRuntime({
-          registry: createDefaultToolRegistry(),
+          registry: createCodingToolRegistry(),
           executionRecordStore,
           artifactStore
         });
@@ -1853,6 +1860,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
           pendingActionStore,
           userInputStore,
           checkpointStore,
+          profile: codingProfile,
           resume: {
             ledger: reconciledLedger,
             resumeState: reconciledResumeState
@@ -1928,7 +1936,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
       );
       const modelProvider = createCliModelProvider({ agentActionSliceFrom: resumeState.usage.modelCalls });
       const toolRuntime = new ToolRuntime({
-        registry: createDefaultToolRegistry(),
+        registry: createCodingToolRegistry(),
         executionRecordStore,
         artifactStore
       });
@@ -1951,6 +1959,7 @@ async function runResumeCommand(runId: string): Promise<unknown> {
         pendingActionStore,
         userInputStore,
         checkpointStore,
+        profile: codingProfile,
         resume: {
           ledger,
           resumeState
@@ -2109,7 +2118,7 @@ async function runApproveCommand(command: {
     const ledger = requireLedger(ledgerStore.getByRun(run.runId), run.runId);
     const modelProvider = createCliModelProvider({ agentActionSliceFrom: pendingAction.resumeState.usage.modelCalls });
     const toolRuntime = new ToolRuntime({
-      registry: createDefaultToolRegistry(),
+      registry: createCodingToolRegistry(),
       executionRecordStore,
       artifactStore
     });
@@ -2133,6 +2142,7 @@ async function runApproveCommand(command: {
       pendingActionStore,
       userInputStore,
       checkpointStore,
+      profile: codingProfile,
       resume: {
         ledger,
         resumeState: pendingAction.resumeState,
@@ -2472,7 +2482,7 @@ async function runRespondCommand(command: {
 
     const modelProvider = createCliModelProvider({ agentActionSliceFrom: pendingAction.resumeState.usage.modelCalls });
     const toolRuntime = new ToolRuntime({
-      registry: createDefaultToolRegistry(),
+      registry: createCodingToolRegistry(),
       executionRecordStore,
       artifactStore
     });
@@ -2496,6 +2506,7 @@ async function runRespondCommand(command: {
       pendingActionStore,
       userInputStore,
       checkpointStore,
+      profile: codingProfile,
       resume: {
         ledger: resumedLedger,
         resumeState: pendingAction.resumeState

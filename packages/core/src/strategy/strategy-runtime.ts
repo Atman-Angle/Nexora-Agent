@@ -56,11 +56,12 @@ export function deriveExecutionPlanFromAction(input: {
   if (toolCall.toolName !== "filesystem.patch" && toolCall.toolName !== "filesystem.write") {
     return undefined;
   }
-  const targetFile = toolCall.input.path;
+  const writeInput = toolCall.input as { path: string; mode?: string };
+  const targetFile = writeInput.path;
   const intendedChange =
     toolCall.toolName === "filesystem.patch"
       ? `Patch ${targetFile} using the proposed filesystem.patch operation.`
-      : `${toolCall.input.mode === "create" ? "Create" : "Overwrite"} ${targetFile} using the proposed filesystem.write operation.`;
+      : `${writeInput.mode === "create" ? "Create" : "Overwrite"} ${targetFile} using the proposed filesystem.write operation.`;
   return {
     targetFiles: [targetFile],
     intendedChanges: [intendedChange],

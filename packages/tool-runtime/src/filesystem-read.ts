@@ -1,17 +1,24 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 
-import { createFileArtifact, type Artifact, type ToolCall, type ToolResult } from "../../contracts/src/index.js";
+import { createFileArtifact, type Artifact, type FilesystemReadInput, type ToolResult } from "../../contracts/src/index.js";
 import { computeArtifactHash } from "../../contracts/src/artifact.js";
 import { ToolRuntimeError } from "./errors.js";
 import { resolveWorkspaceFilePath } from "./workspace-boundary.js";
+
+export type FilesystemReadToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: FilesystemReadInput;
+  timeoutMs: number;
+};
 
 const INLINE_TEXT_LIMIT_BYTES = 16 * 1024;
 const PREVIEW_TEXT_LIMIT = 200;
 
 export async function executeFilesystemRead(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "filesystem.read" }>;
+  toolCall: FilesystemReadToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;

@@ -1,7 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import type { ProjectCommand, ProjectCommandKind, ToolCall, ToolResult } from "../../contracts/src/index.js";
+import type { Artifact, ProjectCommand, ProjectCommandKind, ProjectCommandsInput, ToolResult } from "../../contracts/src/index.js";
 import { ToolRuntimeError } from "./errors.js";
 
 const COMMAND_KIND_FIELDS: Array<{ kind: ProjectCommandKind; fields: string[] }> = [
@@ -205,13 +205,13 @@ function relativeFromRoot(root: string, path: string): string {
 
 export async function executeProjectCommands(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "project.commands" }>;
+  toolCall: { toolCallId: string; toolName: string; input: ProjectCommandsInput; timeoutMs: number };
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;
   now: string;
   signal?: AbortSignal;
-}): Promise<{ toolResult: ToolResult; artifacts?: undefined }> {
+}): Promise<{ toolResult: ToolResult; artifacts?: Artifact[] }> {
   void input.artifactRoot;
   void input.artifactId;
   void input.now;

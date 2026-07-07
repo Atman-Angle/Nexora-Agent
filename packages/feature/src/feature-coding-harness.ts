@@ -34,9 +34,9 @@ import {
   UserInputStore,
   ValidationResultStore
 } from "../../storage/src/index.js";
-import { createDefaultToolRegistry, ToolRuntime, executeGitStatus, executeProjectInspect } from "../../tool-runtime/src/index.js";
+import { createCodingToolRegistry, ToolRuntime, executeGitStatus, executeProjectInspect } from "../../tool-runtime/src/index.js";
 import { createModelProvider } from "../../model-gateway/src/index.js";
-import { AgentLoopRunFailure, runAgentLoop } from "../../core/src/index.js";
+import { AgentLoopRunFailure, codingProfile, runAgentLoop } from "../../core/src/index.js";
 import type { FeatureFixtureEnvironment } from "./feature-fixture-runner.js";
 
 export type FeatureHarnessRunInput = {
@@ -145,7 +145,7 @@ export async function runFeatureCodingHarness(input: FeatureHarnessRunInput): Pr
     let loopResult: Awaited<ReturnType<typeof runAgentLoop>>;
     let autoApproveAttempts = 0;
     const modelProvider = createModelProvider({ fakeModelText: "ok", fakeModelMode: "success", agentActions: input.agentScript });
-    const toolRuntime = new ToolRuntime({ registry: createDefaultToolRegistry(), executionRecordStore, artifactStore });
+    const toolRuntime = new ToolRuntime({ registry: createCodingToolRegistry(), executionRecordStore, artifactStore });
 
     appendEvent("feature.stage.started", { stage: "execute" }, input.now());
     try {
@@ -167,7 +167,8 @@ export async function runFeatureCodingHarness(input: FeatureHarnessRunInput): Pr
         approvalStore,
         pendingActionStore,
         userInputStore,
-        checkpointStore
+        checkpointStore,
+        profile: codingProfile
       });
 
       while (loopResult.kind === "waiting_for_approval") {
@@ -521,6 +522,7 @@ function autoApproveAndResume(input: AutoApproveInput): Promise<{ loopResult: Aw
     pendingActionStore: input.pendingActionStore,
     userInputStore: input.userInputStore,
     checkpointStore: input.checkpointStore,
+    profile: codingProfile,
     resume: { ledger, resumeState: pendingAction.resumeState, seedAction: pendingAction.action, bypassApprovalForSeedAction: true }
   }).then((loopResult) => ({ loopResult }));
 }

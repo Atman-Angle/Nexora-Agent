@@ -6,15 +6,22 @@ import {
   ToolResultSchema,
   WriteModeSchema,
   computeArtifactHash,
-  type ToolCall,
+  type FilesystemWriteInput,
   type ToolResult
 } from "../../contracts/src/index.js";
 import { ToolRuntimeError } from "./errors.js";
 import { resolveWorkspaceWritePath } from "./workspace-boundary.js";
 
+export type FilesystemWriteToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: FilesystemWriteInput;
+  timeoutMs: number;
+};
+
 export async function executeFilesystemWrite(input: {
   executionId: string;
-  toolCall: Extract<ToolCall, { toolName: "filesystem.write" }>;
+  toolCall: FilesystemWriteToolCall;
   workspaceRoot: string;
   signal?: AbortSignal;
 }): Promise<{

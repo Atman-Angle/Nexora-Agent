@@ -5,7 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import { ToolCallSchema, computeArtifactHash } from "../../packages/contracts/src/index.js";
 import { buildModelToolSchemaText } from "../../packages/model-gateway/src/model-tool-definition.js";
+import { createCodingToolRegistry } from "../../packages/tool-runtime/src/index.js";
 import { createCliTestSession } from "../integration/cli-test-helper.js";
+
+const CODING_REGISTRY = createCodingToolRegistry();
+function defsFor(names: string[]) {
+  const want = new Set(names);
+  return CODING_REGISTRY.list().filter((d) => want.has(d.name));
+}
 
 describe("CR-014 Safe Filesystem Write", () => {
   it("contract and model schema both expose filesystem.write with create/overwrite semantics", () => {
@@ -40,10 +47,10 @@ describe("CR-014 Safe Filesystem Write", () => {
       })
     ).not.toThrow();
 
-    const onlyRead = buildModelToolSchemaText(["filesystem.read"]);
+    const onlyRead = buildModelToolSchemaText(defsFor(["filesystem.read"]));
     expect(onlyRead).not.toContain('toolName: "filesystem.write"');
 
-    const readAndWrite = buildModelToolSchemaText(["filesystem.read", "filesystem.write"]);
+    const readAndWrite = buildModelToolSchemaText(defsFor(["filesystem.read", "filesystem.write"]));
     expect(readAndWrite).toContain('toolName: "filesystem.write"');
     expect(readAndWrite).toContain('"create" | "overwrite"');
     expect(readAndWrite).toContain("requires expectedHash");

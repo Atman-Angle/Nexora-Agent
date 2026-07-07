@@ -15,7 +15,7 @@ import type {
   ValidationResult,
   WorkingSet
 } from "../../contracts/src/index.js";
-import type { ToolName } from "../../contracts/src/tool-call.js";
+import type { ToolDefinition } from "../../tool-runtime/src/index.js";
 import type { AgentLoopModelProvider, ModelActionRejection, ModelProvider, ToolModeModelProvider } from "../../model-gateway/src/index.js";
 
 export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, AgentLoopModelProvider {
@@ -280,7 +280,7 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
     validationRequest?: TaskValidationRequest;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
-    availableTools: ToolName[];
+    availableTools: ToolDefinition<unknown>[];
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;

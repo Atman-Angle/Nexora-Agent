@@ -1,18 +1,25 @@
 import { resolve } from "node:path";
 
-import { GitStatusResultSchema, type GitFileChange, type ToolCall, type ToolResult } from "../../contracts/src/index.js";
+import { GitStatusResultSchema, type Artifact, type GitFileChange, type GitStatusInput, type ToolResult } from "../../contracts/src/index.js";
 import { ToolRuntimeError } from "./errors.js";
 import { runGit } from "./git-runner.js";
 
+export type GitStatusToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: GitStatusInput;
+  timeoutMs: number;
+};
+
 export async function executeGitStatus(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "git.status" }>;
+  toolCall: GitStatusToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;
   now: string;
   signal?: AbortSignal;
-}): Promise<{ toolResult: ToolResult; artifacts?: undefined }> {
+}): Promise<{ toolResult: ToolResult; artifacts?: Artifact[] }> {
   const absoluteWorkspaceRoot = resolve(input.workspaceRoot);
   const isRepository = await isInsideWorkTree(absoluteWorkspaceRoot, input.signal);
 

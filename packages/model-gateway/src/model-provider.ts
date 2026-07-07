@@ -1,3 +1,4 @@
+import type { ToolDefinition } from "../../tool-runtime/src/index.js";
 import type {
   Action,
   AgentAction,
@@ -15,7 +16,6 @@ import type {
   ValidationResult,
   WorkingSet
 } from "../../contracts/src/index.js";
-import type { ToolName } from "../../contracts/src/tool-call.js";
 
 export type ModelActionRejectionCategory =
   | "json_parse"
@@ -75,7 +75,7 @@ export interface AgentLoopModelProvider {
     validationRequest?: TaskValidationRequest;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
-    availableTools: ToolName[];
+    availableTools: ToolDefinition<unknown>[];
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;

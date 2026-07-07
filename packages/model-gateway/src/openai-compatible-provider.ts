@@ -15,7 +15,7 @@ import type {
   ValidationResult,
   WorkingSet
 } from "../../contracts/src/index.js";
-import type { ToolName } from "../../contracts/src/tool-call.js";
+import type { ToolDefinition } from "../../tool-runtime/src/index.js";
 import type { ModelActionRejection } from "./model-provider.js";
 import { buildAgentActionSchemaText, buildPlanActionSchemaText } from "./model-tool-definition.js";
 import type {
@@ -72,6 +72,7 @@ export type OpenAICompatibleConfig = {
 export type OpenAICompatibleProviderOptions = Omit<OpenAICompatibleConfig, "maxProviderRetries"> & {
   fetchImpl?: typeof fetch;
   maxProviderRetries?: number;
+  toolDefinitions?: ToolDefinition<unknown>[];
 };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -121,12 +122,14 @@ function parseNonNegativeInt(rawValue: string, name: string): number {
 
 export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelProvider, AgentLoopModelProvider {
   private readonly fetchImpl: typeof fetch;
+  private readonly toolDefinitions: ToolDefinition<unknown>[];
 
   public constructor(private readonly options: OpenAICompatibleProviderOptions) {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     if (options.apiKey.length === 0) {
       throw new ModelConfigError("OpenAI-compatible provider requires a non-empty API key.");
     }
+    this.toolDefinitions = options.toolDefinitions ?? [];
   }
 
   public async generate(input: { runId: string; text: string }): Promise<{
@@ -148,7 +151,7 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
     patchRequest?: TaskPatchRequest;
     validationRequest?: TaskValidationRequest;
   }): Promise<Action> {
-    const prompt = buildPlanPrompt(input);
+    const prompt = buildPlanPrompt({ ...input, toolDefinitions: this.toolDefinitions });
     const json = await this.chatCompletionJson(prompt);
     return ActionSchema.parse(json);
   }
@@ -175,7 +178,7 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
     validationRequest?: TaskValidationRequest;
     budget: AgentBudget;
     usage: AgentBudgetUsage;
-    availableTools: ToolName[];
+    availableTools: ToolDefinition<unknown>[];
     regroundRequested: boolean;
     replanRequested: boolean;
     lastModelError?: ModelActionRejection | null;
@@ -355,7 +358,12 @@ function buildPlanPrompt(input: {
   searchQuery?: string;
   patchRequest?: TaskPatchRequest;
   validationRequest?: TaskValidationRequest;
+  toolDefinitions: ToolDefinition<unknown>[];
 }): string {
+  const planToolNames = ["filesystem.read", "filesystem.search", "filesystem.patch", "filesystem.write", "shell.execute"];
+  const planDefs = planToolNames
+    .map((name) => input.toolDefinitions.find((d) => d.name === name))
+    .filter((d): d is ToolDefinition<unknown> => d !== undefined);
   const context: string[] = [`Task text: ${input.text}`];
   if (input.filePath !== undefined) {
     context.push(`File path: ${input.filePath}`);
@@ -370,7 +378,7 @@ function buildPlanPrompt(input: {
     context.push(`Validation request: ${JSON.stringify({ command: input.validationRequest.command, args: input.validationRequest.args })}`);
   }
   return [
-    buildPlanActionSchemaText(["filesystem.read", "filesystem.search", "filesystem.patch", "filesystem.write", "shell.execute"]),
+    buildPlanActionSchemaText(planDefs),
     ...context,
     "Return a single JSON object, no prose, no markdown fence."
   ].join("\n");
@@ -408,7 +416,7 @@ export function buildNextActionPrompt(input: {
   validationRequest?: TaskValidationRequest;
   budget: AgentBudget;
   usage: AgentBudgetUsage;
-  availableTools: ToolName[];
+  availableTools: ToolDefinition<unknown>[];
   regroundRequested: boolean;
   replanRequested: boolean;
   lastModelError?: ModelActionRejection | null;
@@ -443,7 +451,7 @@ export function buildNextActionPrompt(input: {
             purpose: input.validationRequest.purpose
           })
     }`,
-    `Available tools: ${input.availableTools.join(", ")}`,
+    `Available tools: ${input.availableTools.map((d) => d.name).join(", ")}`,
     `Budget: ${JSON.stringify(input.budget)}`,
     `Usage: ${JSON.stringify(input.usage)}`,
     `Ledger: ${ledgerSummary}`,

@@ -2,9 +2,16 @@ import { mkdir, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-import { ToolResultSchema, createFileArtifact, type Artifact, type ToolCall, type ToolResult } from "../../contracts/src/index.js";
+import { ToolResultSchema, createFileArtifact, type Artifact, type FilesystemListInput, type ToolResult } from "../../contracts/src/index.js";
 import { computeArtifactHash } from "../../contracts/src/artifact.js";
 import { ToolRuntimeError } from "./errors.js";
+
+export type FilesystemListToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: FilesystemListInput;
+  timeoutMs: number;
+};
 
 const DEFAULT_IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
@@ -27,7 +34,7 @@ const MAX_INLINE_JSON_CHARS = 12_000;
 
 export async function executeFilesystemList(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "filesystem.list" }>;
+  toolCall: FilesystemListToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;

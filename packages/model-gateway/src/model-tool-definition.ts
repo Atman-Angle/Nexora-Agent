@@ -1,29 +1,11 @@
-import { classifyRisk } from "../../tool-runtime/src/permissions.js";
+import type { ToolDefinition, ToolRegistry } from "../../tool-runtime/src/index.js";
+import type { ModelVisibleField } from "../../tool-runtime/src/tool-definition.js";
 import type { RiskLevel } from "../../tool-runtime/src/permissions.js";
-import type { ToolName } from "../../contracts/src/tool-call.js";
-import { ALL_TOOL_NAMES } from "../../contracts/src/tool-call.js";
 
-export type ModelVisibleFieldType =
-  | "string"
-  | "number"
-  | "boolean"
-  | "string[]"
-  | "record"
-  | "enum";
-
-export type ModelVisibleField = {
-  name: string;
-  type: ModelVisibleFieldType;
-  required: boolean;
-  enum?: string[];
-  minimum?: number;
-  maximum?: number;
-  default?: unknown;
-  description?: string;
-};
+export type { ModelVisibleField, ModelVisibleFieldType } from "../../tool-runtime/src/tool-definition.js";
 
 export type ModelToolDefinition = {
-  name: ToolName;
+  name: string;
   description: string;
   inputFields: ModelVisibleField[];
   timeoutMsMax: 60_000;
@@ -32,162 +14,20 @@ export type ModelToolDefinition = {
   minimalExample: Record<string, unknown>;
 };
 
+type ToolSchemaEntry = Pick<ToolDefinition, "name" | "description" | "inputFields" | "requiresApproval" | "minimalExample">;
+
 const TIMEOUT_MS_MAX = 60_000 as const;
 
-const TOOL_FIELD_MAP: Record<ToolName, {
-  description: string;
-  inputFields: ModelVisibleField[];
-  minimalExample: Record<string, unknown>;
-}> = {
-  "filesystem.read": {
-    description: "Read a UTF-8 text file inside the workspace as inline content. Returns currentHash + content.",
-    inputFields: [
-      { name: "path", type: "string", required: true, description: "Workspace-relative file path." }
-    ],
-    minimalExample: { path: "src/example.ts" }
-  },
-  "filesystem.search": {
-    description: "Search the workspace for files matching a query.",
-    inputFields: [
-      { name: "query", type: "string", required: true, description: "Search query, non-empty." },
-      { name: "limit", type: "number", required: true, minimum: 1, maximum: 100, description: "Integer 1..100." }
-    ],
-    minimalExample: { query: "App", limit: 20 }
-  },
-  "filesystem.patch": {
-    description: "Atomically patch a UTF-8 text file. expectedHash MUST equal the currentHash from the most recent filesystem.read of the same path. Requires approval.",
-    inputFields: [
-      { name: "path", type: "string", required: true, description: "Workspace-relative file path." },
-      { name: "expectedHash", type: "string", required: true, description: "currentHash returned by the most recent filesystem.read of this path. Never invent." },
-      { name: "patch", type: "record", required: true, description: "Either a single operation { type: \"replace_text\"; find: string; replace: string; replaceAll?: boolean } OR a non-empty array of such operations applied in order. Use an array to align multiple imports/lines in one mutation so earlier fixes are not lost." },
-      { name: "encoding", type: "enum", required: true, enum: ["utf8"], description: "Must be the literal \"utf8\"." },
-      { name: "idempotencyKey", type: "string", required: true, description: "Any unique non-empty string you invent; reuse only for the same patch." }
-    ],
-    minimalExample: {
-      path: "src/example.ts",
-      expectedHash: "<currentHash from last read>",
-      patch: { type: "replace_text", find: "old", replace: "new" },
-      encoding: "utf8",
-      idempotencyKey: "patch-src-example-1"
-    }
-  },
-  "filesystem.write": {
-    description: "Atomically write a UTF-8 text file. mode=create creates a new file and MUST NOT overwrite; mode=overwrite requires expectedHash from the most recent filesystem.read of the same path. Requires approval.",
-    inputFields: [
-      { name: "path", type: "string", required: true, description: "Workspace-relative file path." },
-      { name: "content", type: "string", required: true, description: "Full UTF-8 file content to write." },
-      { name: "encoding", type: "enum", required: true, enum: ["utf8"], description: "Must be the literal \"utf8\"." },
-      { name: "mode", type: "enum", required: true, enum: ["create", "overwrite"], description: "create forbids overwrite; overwrite requires expectedHash." },
-      { name: "expectedHash", type: "string", required: false, description: "Required for overwrite; must equal currentHash from the most recent filesystem.read of this path. Never invent." },
-      { name: "idempotencyKey", type: "string", required: true, description: "Any unique non-empty string you invent; reuse only for the same write." }
-    ],
-    minimalExample: {
-      path: "src/components/Hero.tsx",
-      content: "export function Hero() {}\n",
-      encoding: "utf8",
-      mode: "create",
-      idempotencyKey: "write-src-components-hero-1"
-    }
-  },
-  "shell.execute": {
-    description: "Execute a shell command inside the workspace. Requires approval. Do not use to bypass tool boundaries.",
-    inputFields: [
-      { name: "command", type: "string", required: true, description: "Executable name." },
-      { name: "args", type: "string[]", required: true, description: "Array of string arguments." },
-      { name: "cwd", type: "string", required: true, description: "Working directory, workspace-relative or \".\"." },
-      { name: "environment", type: "record", required: true, description: "Record<string,string> of env vars (may be {})." },
-      { name: "purpose", type: "string", required: true, description: "Short purpose string, e.g. \"verification\"." },
-      { name: "idempotencyKey", type: "string", required: true, description: "Any unique non-empty string you invent." }
-    ],
-    minimalExample: {
-      command: "pnpm",
-      args: ["build"],
-      cwd: ".",
-      environment: {},
-      purpose: "verification",
-      idempotencyKey: "build-1"
-    }
-  },
-  "filesystem.list": {
-    description: "List workspace entries under a path.",
-    inputFields: [
-      { name: "relativePath", type: "string", required: false, default: ".", description: "Default \".\"." },
-      { name: "maxDepth", type: "number", required: false, minimum: 1, maximum: 32, default: 4, description: "Default 4." },
-      { name: "maxEntries", type: "number", required: false, minimum: 1, maximum: 20_000, default: 2_000, description: "Default 2000." },
-      { name: "includeHidden", type: "boolean", required: false, default: false, description: "Default false." },
-      { name: "ignorePatterns", type: "string[]", required: false, default: [], description: "Default []." }
-    ],
-    minimalExample: { relativePath: "." }
-  },
-  "git.status": {
-    description: "Get the working-tree git status.",
-    inputFields: [],
-    minimalExample: {}
-  },
-  "git.diff": {
-    description: "Get a git diff.",
-    inputFields: [
-      { name: "mode", type: "enum", required: false, enum: ["working", "staged"], default: "working", description: "Default \"working\"." },
-      { name: "path", type: "string", required: false, description: "Optional path filter." },
-      { name: "statOnly", type: "boolean", required: false, default: false, description: "Default false." },
-      { name: "maxBytes", type: "number", required: false, minimum: 1, maximum: 2_000_000, default: 16_384, description: "Default 16384." }
-    ],
-    minimalExample: { mode: "working" }
-  },
-  "git.show": {
-    description: "Show a file at a git revision.",
-    inputFields: [
-      { name: "revision", type: "string", required: true, description: "Git revision, e.g. \"HEAD\"." },
-      { name: "path", type: "string", required: false, description: "Optional path filter." },
-      { name: "maxBytes", type: "number", required: false, minimum: 1, maximum: 2_000_000, default: 16_384, description: "Default 16384." }
-    ],
-    minimalExample: { revision: "HEAD", path: "src/example.ts" }
-  },
-  "project.commands": {
-    description: "Discover the project's available commands (build/test/etc.).",
-    inputFields: [],
-    minimalExample: {}
-  },
-  "project.inspect": {
-    description: "Inspect the project profile at a path.",
-    inputFields: [
-      { name: "relativePath", type: "string", required: false, default: ".", description: "Default \".\"." }
-    ],
-    minimalExample: { relativePath: "." }
-  }
-};
-
-function deriveRisk(name: ToolName): RiskLevel {
-  return classifyRisk(name);
-}
-
-function deriveRequiresApproval(name: ToolName): boolean {
-  const risk = deriveRisk(name);
-  return risk === "write" || risk === "execute";
-}
-
-export const ALL_MODEL_TOOL_DEFINITIONS: ModelToolDefinition[] = ALL_TOOL_NAMES.map((name) => {
-  const base = TOOL_FIELD_MAP[name];
-  if (base === undefined) {
-    throw new Error(`No ModelToolDefinition fields registered for tool "${name}".`);
-  }
-  return {
-    name,
-    description: base.description,
-    inputFields: base.inputFields,
+export function buildModelToolDefinitions(registry: ToolRegistry): ModelToolDefinition[] {
+  return registry.list().map((def) => ({
+    name: def.name,
+    description: def.description,
+    inputFields: [...def.inputFields],
     timeoutMsMax: TIMEOUT_MS_MAX,
-    riskLevel: deriveRisk(name),
-    requiresApproval: deriveRequiresApproval(name),
-    minimalExample: base.minimalExample
-  };
-});
-
-function lookupDefinition(name: ToolName): ModelToolDefinition {
-  const def = ALL_MODEL_TOOL_DEFINITIONS.find((entry) => entry.name === name);
-  if (def === undefined) {
-    throw new Error(`No ModelToolDefinition for tool "${name}".`);
-  }
-  return def;
+    riskLevel: def.riskLevel,
+    requiresApproval: def.requiresApproval,
+    minimalExample: def.minimalExample
+  }));
 }
 
 function renderFieldType(field: ModelVisibleField): string {
@@ -226,16 +66,15 @@ function renderFieldLine(field: ModelVisibleField): string {
   return `    ${field.name}${optional}: ${renderFieldType(field)};${boundNote}${note}`;
 }
 
-export function buildModelToolSchemaText(availableTools: ToolName[]): string {
+export function buildModelToolSchemaText(availableTools: readonly ToolSchemaEntry[]): string {
   const lines: string[] = [
     "type ToolCall ="
   ];
-  for (const name of availableTools) {
-    const def = lookupDefinition(name);
+  for (const def of availableTools) {
     const fieldLines = def.inputFields.map(renderFieldLine);
     const body = fieldLines.length === 0 ? "    // no input fields" : fieldLines.join("\n");
     const approval = def.requiresApproval ? " // requires approval" : "";
-    lines.push(`  | { toolCallId: string; toolName: "${name}"; input: {`);
+    lines.push(`  | { toolCallId: string; toolName: "${def.name}"; input: {`);
     lines.push(body);
     lines.push(`    }; timeoutMs: number }${approval}`);
   }
@@ -249,25 +88,24 @@ export function buildModelToolSchemaText(availableTools: ToolName[]): string {
   return lines.join("\n");
 }
 
-export function buildModelToolExamplesText(availableTools: ToolName[]): string {
+export function buildModelToolExamplesText(availableTools: readonly ToolSchemaEntry[]): string {
   const lines: string[] = ["Minimal legal toolCall examples:"];
-  for (const name of availableTools) {
-    const def = lookupDefinition(name);
+  for (const def of availableTools) {
     const example: Record<string, unknown> = {
       type: "tool_call",
       toolCall: {
-        toolCallId: `example-${name}`,
-        toolName: name,
+        toolCallId: `example-${def.name}`,
+        toolName: def.name,
         input: def.minimalExample,
         timeoutMs: 5_000
       }
     };
-    lines.push(`${name}: ${JSON.stringify(example)}`);
+    lines.push(`${def.name}: ${JSON.stringify(example)}`);
   }
   return lines.join("\n");
 }
 
-export function buildAgentActionSchemaText(availableTools: ToolName[]): string {
+export function buildAgentActionSchemaText(availableTools: readonly ToolSchemaEntry[]): string {
   const toolSchema = buildModelToolSchemaText(availableTools);
   const examples = buildModelToolExamplesText(availableTools);
   return [
@@ -336,7 +174,7 @@ export function buildAgentActionSchemaText(availableTools: ToolName[]): string {
   ].join("\n");
 }
 
-export function buildPlanActionSchemaText(availableTools: ToolName[]): string {
+export function buildPlanActionSchemaText(availableTools: readonly ToolSchemaEntry[]): string {
   const toolSchema = buildModelToolSchemaText(availableTools);
   const examples = buildModelToolExamplesText(availableTools);
   return [

@@ -297,4 +297,38 @@ export const ToolResultSchema = z.union([
   })
 ]);
 
+export const ToolResultEnvelopeSchema = z
+  .object({
+    toolCallId: z.string().min(1),
+    toolName: z.string().min(1),
+    status: z.enum(["success", "error"]),
+    output: z.unknown().optional(),
+    error: ToolErrorSchema.optional()
+  })
+  .superRefine((value, ctx) => {
+    if (value.status === "success" && value.error !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A success ToolResult must not carry an error.",
+        path: ["error"]
+      });
+    }
+    if (value.status === "error") {
+      if (value.error === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "An error ToolResult requires an error object.",
+          path: ["error"]
+        });
+      }
+      if (value.output !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "An error ToolResult must not carry output.",
+          path: ["output"]
+        });
+      }
+    }
+  });
+
 export type ToolResult = z.infer<typeof ToolResultSchema>;

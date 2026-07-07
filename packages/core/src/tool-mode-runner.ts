@@ -16,7 +16,6 @@ import type { EventStore } from "../../storage/src/event-store.js";
 import type { RunStore } from "../../storage/src/run-store.js";
 import type { ValidationResultStore } from "../../storage/src/validation-result-store.js";
 import type { ToolRuntime } from "../../tool-runtime/src/index.js";
-import { classifyRisk } from "../../tool-runtime/src/index.js";
 import { transitionRun } from "./state-machine.js";
 import { runCompletionGate, validateArtifactForRun } from "./validation-gate.js";
 
@@ -108,17 +107,18 @@ export async function runToolMode(input: {
     "tool.started",
     {
       toolName: plannedAction.toolCall.toolName,
-      risk: classifyRisk(plannedAction.toolCall.toolName)
+      risk: input.toolRuntime.getRiskLevel(plannedAction.toolCall.toolName)
     },
     waitingAt
   );
   if (plannedAction.toolCall.toolName === "shell.execute") {
+    const shellInput = plannedAction.toolCall.input as { command: string; args: string[]; cwd: string };
     await appendEvent(
       "command.started",
       {
-        command: plannedAction.toolCall.input.command,
-        args: plannedAction.toolCall.input.args,
-        cwd: plannedAction.toolCall.input.cwd
+        command: shellInput.command,
+        args: shellInput.args,
+        cwd: shellInput.cwd
       },
       waitingAt
     );
@@ -135,10 +135,11 @@ export async function runToolMode(input: {
 
   if (toolExecution.toolResult.status === "error") {
     if (plannedAction.toolCall.toolName === "shell.execute") {
+      const shellInput = plannedAction.toolCall.input as { command: string };
       await appendEvent(
         "command.failed",
         {
-          command: plannedAction.toolCall.input.command,
+          command: shellInput.command,
           error: toolExecution.toolResult.error
         },
         input.now()

@@ -1,5 +1,6 @@
 import { AgentActionSchema, type AgentAction } from "../../contracts/src/index.js";
 import { FakeModelProvider } from "../../testkit/src/fake-model-provider.js";
+import type { ToolDefinition } from "../../tool-runtime/src/index.js";
 import type {
   AgentLoopModelProvider,
   ModelProvider,
@@ -28,6 +29,7 @@ export type ProviderFactoryOptions = {
   agentActions?: unknown[] | undefined;
   agentActionSliceFrom?: number | undefined;
   fetchImpl?: typeof fetch | undefined;
+  toolDefinitions?: ToolDefinition<unknown>[] | undefined;
 };
 
 export function resolveProviderKind(env: Record<string, string | undefined>): ModelProviderKind {
@@ -49,7 +51,11 @@ export function createModelProvider(options: ProviderFactoryOptions = {}): Resol
 
   if (kind === "openai-compatible") {
     const config = resolveOpenAICompatibleConfig(env);
-    const provider = new OpenAICompatibleProvider({ ...config, ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }) });
+    const provider = new OpenAICompatibleProvider({
+      ...config,
+      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+      ...(options.toolDefinitions === undefined ? {} : { toolDefinitions: options.toolDefinitions })
+    });
     return Object.assign(provider, { kind });
   }
 

@@ -1,15 +1,22 @@
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
-import { ToolResultSchema, createFileArtifact, type Artifact, type ToolCall, type ToolResult } from "../../contracts/src/index.js";
+import { ToolResultSchema, createFileArtifact, type Artifact, type GitShowInput, type ToolResult } from "../../contracts/src/index.js";
 import { computeArtifactHash } from "../../contracts/src/artifact.js";
 import { ToolRuntimeError } from "./errors.js";
 import { runGit, validateRevision } from "./git-runner.js";
 import { resolveWorkspacePath } from "./workspace-boundary.js";
 
+export type GitShowToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: GitShowInput;
+  timeoutMs: number;
+};
+
 export async function executeGitShow(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "git.show" }>;
+  toolCall: GitShowToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;

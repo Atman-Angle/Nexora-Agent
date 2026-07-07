@@ -8,13 +8,20 @@ import {
   ToolResultSchema,
   createFileArtifact,
   type Artifact,
+  type FilesystemSearchInput,
   type SearchMatch,
   type SearchQuery,
-  type ToolCall,
   type ToolResult
 } from "../../contracts/src/index.js";
 import { computeArtifactHash } from "../../contracts/src/artifact.js";
 import { ToolRuntimeError } from "./errors.js";
+
+export type FilesystemSearchToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: FilesystemSearchInput;
+  timeoutMs: number;
+};
 
 const IGNORED_DIRECTORY_NAMES = new Set([".git", "node_modules", "dist", "coverage", "tmp"]);
 const MAX_SEARCH_FILE_BYTES = 64 * 1024;
@@ -22,7 +29,7 @@ const MAX_TOTAL_INLINE_JSON_CHARS = 3_500;
 
 export async function executeFilesystemSearch(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "filesystem.search" }>;
+  toolCall: FilesystemSearchToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;

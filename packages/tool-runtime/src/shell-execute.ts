@@ -7,11 +7,18 @@ import {
   computeArtifactHash,
   createFileArtifact,
   type Artifact,
-  type ToolCall,
+  type ShellExecuteInput,
   type ToolResult
 } from "../../contracts/src/index.js";
 import { ToolRuntimeError } from "./errors.js";
 import { resolveWorkspacePath } from "./workspace-boundary.js";
+
+export type ShellExecuteToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: ShellExecuteInput;
+  timeoutMs: number;
+};
 
 type ChildExitSignal = string | null;
 type ChildProcessError = Error & {
@@ -27,7 +34,7 @@ const TOTAL_CAPTURE_LIMIT_BYTES = 64 * 1024;
 export async function executeShellCommand(input: {
   runId: string;
   executionId: string;
-  toolCall: Extract<ToolCall, { toolName: "shell.execute" }>;
+  toolCall: ShellExecuteToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;
@@ -148,7 +155,7 @@ export async function executeShellCommand(input: {
   }
 }
 
-function validateCommandInput(toolCall: Extract<ToolCall, { toolName: "shell.execute" }>): void {
+function validateCommandInput(toolCall: ShellExecuteToolCall): void {
   const normalizedCommandName = basename(toolCall.input.command).toLowerCase();
   if (REJECTED_COMMAND_NAMES.has(normalizedCommandName)) {
     throw new ToolRuntimeError("COMMAND_REJECTED", "Interactive shell entrypoints are not allowed in F005.", false);

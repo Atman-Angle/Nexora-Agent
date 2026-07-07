@@ -35,9 +35,9 @@ import {
   UserInputStore,
   ValidationResultStore
 } from "../../storage/src/index.js";
-import { createDefaultToolRegistry, ToolRuntime, executeGitStatus, executeProjectInspect } from "../../tool-runtime/src/index.js";
+import { createCodingToolRegistry, ToolRuntime, executeGitStatus, executeProjectInspect } from "../../tool-runtime/src/index.js";
 import { createModelProvider } from "../../model-gateway/src/index.js";
-import { AgentLoopRunFailure, runAgentLoop } from "../../core/src/index.js";
+import { AgentLoopRunFailure, codingProfile, runAgentLoop } from "../../core/src/index.js";
 import { FixtureError } from "../../contracts/src/index.js";
 import type { FixtureEnvironment } from "./fixture-runner.js";
 
@@ -176,7 +176,7 @@ export async function runCodingHarness(input: HarnessRunInput): Promise<HarnessR
       fakeModelMode: "success",
       agentActions: input.agentScript
     });
-    const toolRuntime = new ToolRuntime({ registry: createDefaultToolRegistry(), executionRecordStore, artifactStore });
+    const toolRuntime = new ToolRuntime({ registry: createCodingToolRegistry(), executionRecordStore, artifactStore });
 
     let loopResult: Awaited<ReturnType<typeof runAgentLoop>>;
     let currentRun = run;
@@ -201,7 +201,8 @@ export async function runCodingHarness(input: HarnessRunInput): Promise<HarnessR
         approvalStore,
         pendingActionStore,
         userInputStore,
-        checkpointStore
+        checkpointStore,
+        profile: codingProfile
       });
 
       while (loopResult.kind === "waiting_for_approval") {
@@ -619,6 +620,7 @@ function autoApproveAndResume(input: AutoApproveInput): Promise<{ loopResult: Aw
     pendingActionStore: input.pendingActionStore,
     userInputStore: input.userInputStore,
     checkpointStore: input.checkpointStore,
+    profile: codingProfile,
     resume: {
       ledger,
       resumeState: pendingAction.resumeState,

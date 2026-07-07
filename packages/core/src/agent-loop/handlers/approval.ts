@@ -26,8 +26,8 @@ import {
   describeApprovalSummary,
   describeCapabilities
 } from "../tool-description.js";
-import { classifyRisk } from "../../../../tool-runtime/src/index.js";
 import { describeResourceScope, fingerprintAction } from "../fingerprint.js";
+import type { ToolRuntime } from "../../../../tool-runtime/src/index.js";
 import type { BuilderState } from "../../../../contracts/src/index.js";
 
 export type HandleApprovalInput = {
@@ -38,6 +38,7 @@ export type HandleApprovalInput = {
     ledgerStore: LedgerStore;
     runStore: RunStore;
     pendingActionStore: PendingActionStore;
+    toolRuntime: ToolRuntime;
   };
   run: Run;
   ledger: ProgressLedger;
@@ -76,7 +77,7 @@ export async function handleApproval(
     runId: ctx.run.runId,
     actionId: toolCall.toolCallId,
     toolCallId: toolCall.toolCallId,
-    riskLevel: classifyRisk(toolCall.toolName),
+    riskLevel: ctx.input.toolRuntime.getRiskLevel(toolCall.toolName),
     reason: actionReason,
     requestedCapabilities: describeCapabilities(toolCall),
     resourceScope: describeResourceScope(toolCall),

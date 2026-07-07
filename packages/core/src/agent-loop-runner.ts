@@ -1,5 +1,4 @@
 import {
-  ALL_TOOL_NAMES,
   computeArtifactHash,
   createCheckpoint,
   createEvent,
@@ -30,40 +29,20 @@ import type { UserInputStore } from "../../storage/src/user-input-store.js";
 import type { ValidationResultStore } from "../../storage/src/validation-result-store.js";
 import type { ToolRuntime } from "../../tool-runtime/src/index.js";
 import { transitionRun } from "./state-machine.js";
-import {
-  isFreshPassingValidation,
-  requiresValidationRepairAction,
-  isValidationRepairAction
-} from "./validation-repair/index.js";
 import { RecoveryOrchestrator } from "./recovery/index.js";
 import { AgentLoopRunFailure } from "./agent-loop/errors.js";
 import { redactForEvidence } from "./agent-loop/redact.js";
 import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/test-abort.js";
 import { failRun } from "./agent-loop/fail-run.js";
-import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.js";
 import { reGroundNow } from "./agent-loop/context-snapshot.js";
 import { createInitialLoopState } from "./agent-loop/state.js";
-import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
-import { handleSubmitExecutionPlan } from "./agent-loop/handlers/submit-execution-plan.js";
-import { handleUpdatePlan } from "./agent-loop/handlers/update-plan.js";
-import { handleFinal } from "./agent-loop/handlers/final.js";
-import { handleToolCall } from "./agent-loop/handlers/tool-call.js";
-import { handleGenerateAction } from "./agent-loop/handlers/generate-action.js";
+import type { AgentProfile } from "./profile/index.js";
 import type { HandlerDeps } from "./agent-loop/outcome.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
 export { redactForEvidence } from "./agent-loop/redact.js";
 export { fingerprintToolCall } from "./agent-loop/fingerprint.js";
 import { applyLedgerPatch } from "./ledger-progress/index.js";
-import {
-  deriveExecutionPlanFromAction,
-  evaluateExecutionPlanCompleteness,
-  onStrategyRejection,
-  validateActionWithStrategy
-} from "./strategy/index.js";
-import {
-  evaluateBuilderAction
-} from "./builder/index.js";
 
 export { type AgentLoopResult } from "./agent-loop/outcome.js";
 import type { AgentLoopResult } from "./agent-loop/outcome.js";
@@ -87,6 +66,7 @@ export async function runAgentLoop(input: {
   pendingActionStore: PendingActionStore;
   userInputStore: UserInputStore;
   checkpointStore: CheckpointStore;
+  profile: AgentProfile;
   resume?:
     | {
         ledger: ProgressLedger;
@@ -128,7 +108,7 @@ export async function runAgentLoop(input: {
   const state = createInitialLoopState(input, anchor, ledger);
   const recoveryOrchestrator = new RecoveryOrchestrator();
   const recoveryBudget = input.task.input.agentRequest?.recoveryBudget ?? {};
-  const availableTools = input.toolRuntime.getAvailableTools().filter((toolName) => ALL_TOOL_NAMES.includes(toolName));
+  const availableTools = input.toolRuntime.getAvailableTools();
   const MAX_ACTION_REPAIRS = 2;
 
   const appendEventWithSequence = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
@@ -251,7 +231,7 @@ export async function runAgentLoop(input: {
       state.seededAction = null;
       state.bypassApprovalForSeedAction = false;
     } else {
-      const outcome = await handleGenerateAction(state, deps);
+      const outcome = await input.profile.generateAction(state, deps);
       if (outcome.kind === "fail") {
         return failRun({
           input,
@@ -268,111 +248,7 @@ export async function runAgentLoop(input: {
     const actionSignature = JSON.stringify(action);
     deps.actionSignature = actionSignature;
 
-    if (
-      requiresValidationRepairAction(state.recentValidationResult) &&
-      !isValidationRepairAction(action, state.builderState, state.recentValidationResult)
-    ) {
-      state.validationRepairActionRejectionCount += 1;
-      const rejectedAt = input.now();
-      const message =
-        "The latest fresh validation failed after a mutation; broad filesystem.read, off-target filesystem.read, filesystem.search, filesystem.list, project inspection, git tools, update_plan, and shell.execute source mutation are not repair actions now. Submit a focused repair execution plan or a Builder-directed repair mutation within the same Task executionConstraints, then rerun validation. filesystem.read is only repair evidence when it targets a changed file named in the failure summary or the current Builder modify target; repeated reads do not count as repair progress and must lead to a concrete mutation. Use shell.execute only to rerun validation, tests, or builds.";
-      state.pendingActionRejection = {
-        category: "validation_repair",
-        attempt: state.validationRepairActionRejectionCount,
-        message
-      };
-      await appendEvent(
-        "model.action.rejected",
-        {
-          code: "VALIDATION_REPAIR_ACTION_REQUIRED",
-          message,
-          category: "validation_repair",
-          reason: "fresh_failed_validation_requires_repair_action",
-          attempt: state.validationRepairActionRejectionCount,
-          remainingCorrectionAttempts: Math.max(0, MAX_ACTION_REPAIRS + 1 - state.validationRepairActionRejectionCount)
-        },
-        rejectedAt
-      );
-      state.ledger = applyLedgerPatch({
-        ledger: state.ledger,        patch: {
-          appendDecisions: [message]
-        },
-        now: rejectedAt
-      });
-      await persistLedger(state.ledger);
-      if (state.validationRepairActionRejectionCount > MAX_ACTION_REPAIRS) {
-        return failRun({
-          input,
-          run: state.activeRun,
-          appendEvent,
-          code: "VALIDATION_REPAIR_ACTION_REQUIRED",
-          message,
-          retryable: false
-        });
-      }
-      await checkpoint("post_response", { note: "validation_repair_action_required" });
-      state.previousSnapshot = {
-        actionSignature,
-        errorCode: "VALIDATION_REPAIR_ACTION_REQUIRED",
-        ledgerVersion: state.ledger.version,
-        evidenceCount: state.ledger.evidenceRefs.length,
-        validationStatus: state.recentValidationResult.status,
-        artifactHash: null
-      };
-      continue;
-    }
-
-    if (action.type === "submit_execution_plan" && isFreshPassingValidation(state.recentValidationResult)) {
-      state.finalizationPlanRejectionCount += 1;
-      const rejectedAt = input.now();
-      const message =
-        "A fresh passing validation already exists after the latest mutation; submit a final action instead of a new execution plan.";
-      state.pendingActionRejection = {
-        category: "completion_guidance",
-        attempt: state.finalizationPlanRejectionCount,
-        message
-      };
-      await appendEvent(
-        "model.action.rejected",
-        {
-          code: "EXECUTION_PLAN_AFTER_FRESH_VALIDATION",
-          message,
-          category: "completion_guidance",
-          reason: "fresh_validation_requires_final",
-          attempt: state.finalizationPlanRejectionCount,
-          remainingCorrectionAttempts: Math.max(0, MAX_ACTION_REPAIRS + 1 - state.finalizationPlanRejectionCount)
-        },
-        rejectedAt
-      );
-      state.ledger = applyLedgerPatch({
-        ledger: state.ledger,        patch: {
-          appendDecisions: [message]
-        },
-        now: rejectedAt
-      });
-      await persistLedger(state.ledger);
-      if (state.finalizationPlanRejectionCount > MAX_ACTION_REPAIRS) {
-        return failRun({
-          input,
-          run: state.activeRun,
-          appendEvent,
-          code: "EXECUTION_PLAN_UNEXPECTED",
-          message,
-          retryable: false
-        });
-      }
-      await checkpoint("post_response", { note: "fresh_validation_final_required" });
-      state.previousSnapshot = {
-        actionSignature,
-        errorCode: "EXECUTION_PLAN_AFTER_FRESH_VALIDATION",
-        ledgerVersion: state.ledger.version,
-        evidenceCount: state.ledger.evidenceRefs.length,
-        validationStatus: state.recentValidationResult.status,
-        artifactHash: null
-      };
-      continue;
-    }
-
+    // --- Recovery bypass computation (Block C, stays in runner) ---
     const builderRecoveryAction =
       (state.recoveryState?.latestFailure?.source === "validation" || state.recoveryState?.latestFailure?.category === "patch_conflict") &&
       (action.type === "submit_execution_plan" ||
@@ -380,299 +256,146 @@ export async function runAgentLoop(input: {
           (action.toolCall.toolName === "filesystem.patch" || action.toolCall.toolName === "filesystem.write")));
     const strategyBypassedForRecovery =
       usedSeededAction || (state.recoveryState !== undefined && !builderRecoveryAction);
-    const builderActionEvaluation = evaluateBuilderAction({
-      strategyBypassedForRecovery,
-      strategyState: state.strategyState,      builderState: state.builderState,      action,
-      workspaceRoot: input.workspaceRoot,
-      now: input.now()
-    });
-    state.builderState = builderActionEvaluation.state;
-    for (const event of builderActionEvaluation.events) {
-      await appendEvent(event.type, event.payload, input.now());
-    }
-    if (!strategyBypassedForRecovery && action.type === "submit_execution_plan") {
-      const outcome = await handleSubmitExecutionPlan(state, deps, action);
-      if (outcome.kind === "fail") {
-        return failRun({
-          input,
-          run: state.activeRun,
-          appendEvent,
-          code: outcome.code,
-          message: outcome.message,
-          retryable: outcome.retryable
-        });
-      }
-      if (outcome.kind === "return") {
-        return outcome.result;
-      }
-      continue;
-    }
 
-    const strategyPolicy = strategyBypassedForRecovery
-      ? ({ allowed: true } as const)
-      : builderActionEvaluation.rejection !== null
-        ? ({
-            allowed: false as const,
-            code: builderActionEvaluation.rejection.code,
-            message: builderActionEvaluation.rejection.message,
-            reason: builderActionEvaluation.rejection.reason
-          } as const)
-        : validateActionWithStrategy({
-          task: input.task,
-          action,
-          state: state.strategyState,
-          decision: state.strategyDecision
-        });
-    if (!strategyPolicy.allowed) {
-      const rejectedAt = input.now();
-      const previousStrategyRejection = state.strategyState.lastStrategyRejection;
-      const strategyRejection = buildStrategyRejectionContext({
+    // --- Generic policy evaluation loop ---
+    let policyShortCircuited = false;
+    let policyRejected = false;
+    for (const policy of input.profile.actionPolicies) {
+      const policyOutcome = await policy.evaluate({
         action,
-        policy: strategyPolicy,
-        state: state.strategyState,
-        decision: state.strategyDecision,
-        maxActionRepairs: MAX_ACTION_REPAIRS
+        actionSignature,
+        state,
+        deps,
+        strategyBypassedForRecovery,
+        usedSeededAction
       });
-      await appendEvent(
-        "model.action.rejected",
-        {
-          code: strategyPolicy.code,
-          message: strategyPolicy.message,
-          category: "strategy_policy",
-          reason: strategyPolicy.reason,
-          attempt: strategyRejection.attempt,
-          remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
-        },
-        rejectedAt
-      );
-      if (strategyPolicy.reason === "plan_required_before_mutation" && state.strategyState.plan === undefined) {
-        const proposedPlan = deriveExecutionPlanFromAction({
-          action,
-          validationCommand: input.task.input.validationRequest?.command,
-          validationArgs: input.task.input.validationRequest?.args
-        });
-        if (proposedPlan !== undefined && evaluateExecutionPlanCompleteness(proposedPlan).complete) {
-          state.strategyState = {
-            ...state.strategyState,
-            plan: proposedPlan,
-            noProgressCount: 0,
-            explorationUsage: {
-              ...state.strategyState.explorationUsage,
-              iterationsWithoutProgress: 0
-            },
-            lastProgressIteration: state.latestIterationIndex,
-            lastStrategyRejection: {
-              ...strategyRejection,
-              activePlan: proposedPlan,
-              allowedActionCategories: ["patch", "write", "read", "git_diff", "git_status"]
-            }
-          };
-          await appendEvent(
-            "plan.created",
-            {
-              reason: "minimum_execution_plan_from_proposed_action",
-              targetFiles: proposedPlan.targetFiles,
-              intendedChanges: proposedPlan.intendedChanges,
-              validationCommands: proposedPlan.validationCommands
-            },
-            input.now()
-          );
-          await appendEvent(
-            "strategy.action_repair.requested",
-            {
-              reason: strategyPolicy.reason,
-              iteration: state.latestIterationIndex,
-              attempt: strategyRejection.attempt,
-              remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
-            },
-            input.now()
-          );
-          await checkpoint("post_response", { note: "strategy_action_repair" });
-          continue;
+
+      if (policyOutcome.kind === "accept") {
+        if (policyOutcome.stateDelta !== undefined) {
+          Object.assign(state, policyOutcome.stateDelta);
         }
+        if (policyOutcome.events !== undefined) {
+          for (const event of policyOutcome.events) {
+            await appendEvent(event.type, event.payload, input.now());
+          }
+        }
+        continue; // next policy
       }
-      if (previousStrategyRejection === undefined) {
-        state.strategyState = {
-          ...state.strategyState,
-          lastStrategyRejection: strategyRejection
-        };
-        await appendEvent(
-          "strategy.action_repair.requested",
-          {
-            reason: strategyPolicy.reason,
-            iteration: state.latestIterationIndex,
-            attempt: strategyRejection.attempt,
-            remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
-          },
-          input.now()
-        );
-        await checkpoint("post_response", { note: "strategy_action_repair" });
-        continue;
-      }
-      const rejection = onStrategyRejection({ task: input.task, state: state.strategyState, iteration: state.latestIterationIndex });
-      state.strategyState = rejection.state;
-      const repairBudgetExhausted = previousStrategyRejection.attempt >= MAX_ACTION_REPAIRS;
-      if (rejection.terminal || repairBudgetExhausted) {
-        await appendEvent(
-          "strategy.no_progress.terminal",
-          {
-            reason: repairBudgetExhausted ? "strategy_repair_budget_exhausted" : strategyPolicy.reason,
-            iteration: state.latestIterationIndex,
-            consecutiveReadActions: state.strategyState.explorationUsage.consecutiveReadActions,
-            iterationsWithoutProgress: state.strategyState.explorationUsage.iterationsWithoutProgress,
-            attempt: strategyRejection.attempt,
-            remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
-          },
-          input.now()
-        );
-        return failRun({
-          input,
-          run: state.activeRun,
-          appendEvent,
-          code: "AGENT_STRATEGY_NO_PROGRESS",
-          message: "Agent strategy detected repeated rejected actions without progress.",
-          retryable: false
-        });
-      }
-      state.strategyState = {
-        ...state.strategyState,
-        lastStrategyRejection: strategyRejection
-      };
-      await appendEvent(
-        "strategy.exploration.stalled",
-        {
-          reason: strategyPolicy.reason,
-          iteration: state.latestIterationIndex,
-          consecutiveReadActions: state.strategyState.explorationUsage.consecutiveReadActions,
-          iterationsWithoutProgress: state.strategyState.explorationUsage.iterationsWithoutProgress,
-          attempt: strategyRejection.attempt,
-          remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
-        },
-        input.now()
-      );
-      await checkpoint("post_response", { note: "strategy_action_repair" });
-      continue;
-    }
-    if (state.strategyState.lastStrategyRejection !== undefined) {
-      state.strategyState = { ...state.strategyState, lastStrategyRejection: undefined };
-    }
 
-    if (action.type === "update_plan") {
-      const outcome = await handleUpdatePlan(state, deps, action);
-      if (outcome.kind === "fail") {
-        return failRun({
-          input,
-          run: state.activeRun,
-          appendEvent,
-          code: outcome.code,
-          message: outcome.message,
-          retryable: outcome.retryable
-        });
-      }
-      if (outcome.kind === "return") {
-        return outcome.result;
-      }
-      continue;
-    }
-
-    if (action.type === "ask_user") {
-      {
-        const outcome = await handleAskUser(
-          {
-            input,
-            run: state.activeRun,
-            ledger: state.ledger,
-            appendEvent,
-            checkpoint,
-            nextSequence: state.nextSequence,
-            latestIterationIndex: state.latestIterationIndex,
-            currentWorkingSet: state.currentWorkingSet,
-            changedFiles: state.changedFiles,
-            recentToolResult: state.recentToolResult,
-            recentValidationResult: state.recentValidationResult,
-            regroundRequested: state.regroundRequested,
-            replanRequested: state.replanRequested,
-            noProgressCount: state.noProgressCount,
-            usage: state.usage,
-            previousSnapshot: state.previousSnapshot,
-            pendingRetryIncrement: state.pendingRetryIncrement,
-            recoveryState: state.recoveryState,
-            strategyState: state.strategyState,
-            builderState: state.builderState,
-            finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
-            validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
-          },
-          action
-        );
+      if (policyOutcome.kind === "shortCircuit") {
+        // Apply builder state/events from the evaluation
+        if (policyOutcome.stateDelta !== undefined) {
+          Object.assign(state, policyOutcome.stateDelta);
+        }
+        if (policyOutcome.events !== undefined) {
+          for (const event of policyOutcome.events) {
+            await appendEvent(event.type, event.payload, input.now());
+          }
+        }
+        // Handle the delegated handler outcome
+        const outcome = policyOutcome.handlerOutcome;
+        if (outcome.kind === "fail") {
+          return failRun({ input, run: state.activeRun, appendEvent, code: outcome.code, message: outcome.message, retryable: outcome.retryable });
+        }
         if (outcome.kind === "return") {
           return outcome.result;
         }
-        continue;
+        // continue → skip remaining policies, go to next iteration
+        policyShortCircuited = true;
+        break;
       }
-    }
 
-    if (action.type === "fail") {
-      return failRun({
-        input,
-        run: state.activeRun,
-        appendEvent,
-        code: action.code,
-        message: action.message,
-        retryable: action.retryable
-      });
-    }
-
-    if (action.type === "final") {
-      const outcome = await handleFinal(state, deps, action);
-      if (outcome.kind === "fail") {
-        return failRun({
-          input,
-          run: state.activeRun,
-          appendEvent,
-          code: outcome.code,
-          message: outcome.message,
-          retryable: outcome.retryable
-        });
+      // policyOutcome.kind === "reject"
+      // Apply state delta
+      if (policyOutcome.stateDelta !== undefined) {
+        Object.assign(state, policyOutcome.stateDelta);
       }
-      if (outcome.kind === "return") {
-        return outcome.result;
+      // Emit pre-reject events (e.g., builder evaluation events that precede model.action.rejected)
+      if (policyOutcome.preRejectEvents !== undefined) {
+        for (const event of policyOutcome.preRejectEvents) {
+          await appendEvent(event.type, event.payload, input.now());
+        }
       }
-      continue;
-    }
-
-    if (action.type === "submit_execution_plan") {
-      return failRun({
-        input,
-        run: state.activeRun,
-        appendEvent,
-        code: "EXECUTION_PLAN_UNEXPECTED",
-        message: "Structured execution plans cannot be processed while recovery is bypassing normal strategy.",
-        retryable: false
-      });
-    }
-
-    if (action.type === "tool_call" || action.type === "request_approval") {
-      const outcome = await handleToolCall(
-        state, deps,
-        action,
-        bypassApproval,
-        strategyBypassedForRecovery
+      // Emit the standard model.action.rejected event
+      const rejectedAt = input.now();
+      await appendEvent(
+        "model.action.rejected",
+        {
+          code: policyOutcome.code,
+          message: policyOutcome.message,
+          category: policyOutcome.category,
+          reason: policyOutcome.reason,
+          attempt: policyOutcome.attempt,
+          remainingCorrectionAttempts: Math.max(0, policyOutcome.maxAttempts - policyOutcome.attempt)
+        },
+        rejectedAt
       );
-      if (outcome.kind === "fail") {
+      // Emit additional post-reject events
+      if (policyOutcome.events !== undefined) {
+        for (const event of policyOutcome.events) {
+          await appendEvent(event.type, event.payload, input.now());
+        }
+      }
+      // Apply ledger patch
+      if (policyOutcome.ledgerPatch !== undefined) {
+        state.ledger = applyLedgerPatch({
+          ledger: state.ledger,
+          patch: policyOutcome.ledgerPatch,
+          now: rejectedAt
+        });
+        await persistLedger(state.ledger);
+      }
+      // Fail or continue
+      if (policyOutcome.failSignal !== undefined) {
         return failRun({
           input,
           run: state.activeRun,
           appendEvent,
-          code: outcome.code,
-          message: outcome.message,
-          retryable: outcome.retryable
+          code: policyOutcome.failSignal.code,
+          message: policyOutcome.failSignal.message,
+          retryable: policyOutcome.failSignal.retryable
         });
       }
-      if (outcome.kind === "return") {
-        return outcome.result;
+      // Checkpoint
+      if (policyOutcome.checkpoint === true) {
+        await checkpoint("post_response", policyOutcome.checkpointNote !== undefined ? { note: policyOutcome.checkpointNote } : undefined);
       }
+      // Set previousSnapshot
+      if (policyOutcome.previousSnapshot !== undefined) {
+        state.previousSnapshot = policyOutcome.previousSnapshot;
+      }
+      // Skip remaining policies, continue loop
+      policyRejected = true;
+      break;
+    }
+    if (policyShortCircuited || policyRejected) {
       continue;
     }
+
+    const handler = input.profile.actionHandlers[action.type];
+    if (handler === undefined) {
+      // Unknown action type — AgentActionSchema is a closed union so this
+      // is unreachable for valid actions. Continue the loop to re-generate.
+      continue;
+    }
+    const outcome = await handler(state, deps, action, {
+      bypassApproval,
+      strategyBypassedForRecovery
+    });
+    if (outcome.kind === "fail") {
+      return failRun({
+        input,
+        run: state.activeRun,
+        appendEvent,
+        code: outcome.code,
+        message: outcome.message,
+        retryable: outcome.retryable
+      });
+    }
+    if (outcome.kind === "return") {
+      return outcome.result;
+    }
+    continue;
     } catch (error) {
       if (error instanceof AgentLoopRunFailure) {
         throw error;

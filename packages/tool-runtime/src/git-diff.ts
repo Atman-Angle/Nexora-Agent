@@ -1,15 +1,22 @@
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
-import { ToolResultSchema, createFileArtifact, type Artifact, type ToolCall, type ToolResult } from "../../contracts/src/index.js";
+import { ToolResultSchema, createFileArtifact, type Artifact, type GitDiffInput, type ToolResult } from "../../contracts/src/index.js";
 import { computeArtifactHash } from "../../contracts/src/artifact.js";
 import { ToolRuntimeError } from "./errors.js";
 import { runGit } from "./git-runner.js";
 import { resolveWorkspacePath } from "./workspace-boundary.js";
 
+export type GitDiffToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: GitDiffInput;
+  timeoutMs: number;
+};
+
 export async function executeGitDiff(input: {
   runId: string;
-  toolCall: Extract<ToolCall, { toolName: "git.diff" }>;
+  toolCall: GitDiffToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;

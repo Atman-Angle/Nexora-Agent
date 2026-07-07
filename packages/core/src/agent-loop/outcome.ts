@@ -9,7 +9,6 @@ import type {
   Run,
   Task,
   TaskAnchor,
-  ToolCall,
   UserInputRequest,
   ValidationResult
 } from "../../../contracts/src/index.js";
@@ -26,7 +25,7 @@ import type { PendingActionStore } from "../../../storage/src/pending-action-sto
 import type { RunStore } from "../../../storage/src/run-store.js";
 import type { UserInputStore } from "../../../storage/src/user-input-store.js";
 import type { ValidationResultStore } from "../../../storage/src/validation-result-store.js";
-import type { ToolRuntime } from "../../../tool-runtime/src/index.js";
+import type { ToolDefinition, ToolRuntime } from "../../../tool-runtime/src/index.js";
 
 export type AgentLoopCompletedResult = {
   kind: "completed";
@@ -99,7 +98,7 @@ export type HandlerDeps = {
   persistLedger: (nextLedger: ProgressLedger) => Promise<void>;
   recoveryOrchestrator: RecoveryOrchestrator;
   recoveryBudget: AgentBudget | Record<string, never>;
-  availableTools: ToolCall["toolName"][];
+  availableTools: ToolDefinition<unknown>[];
   maxActionRepairs: number;
   actionSignature: string;
 };

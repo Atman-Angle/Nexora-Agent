@@ -50,15 +50,18 @@ export function describeCapabilities(toolCall: ToolCall): string[] {
 
 export function describeApprovalSummary(toolCall: ToolCall): string {
   if (toolCall.toolName === "filesystem.patch") {
-    return `Patch ${toolCall.input.path}`;
+    const input = toolCall.input as { path: string };
+    return `Patch ${input.path}`;
   }
 
   if (toolCall.toolName === "filesystem.write") {
-    return `Write ${toolCall.input.path} (${toolCall.input.mode})`;
+    const input = toolCall.input as { path: string; mode: string };
+    return `Write ${input.path} (${input.mode})`;
   }
 
   if (toolCall.toolName === "shell.execute") {
-    return `Execute ${toolCall.input.command}`;
+    const input = toolCall.input as { command: string };
+    return `Execute ${input.command}`;
   }
 
   return toolCall.toolName;

@@ -6,17 +6,24 @@ import {
   computeArtifactHash,
   createFileArtifact,
   type Artifact,
+  type FilesystemPatchInput,
   type PatchOperation,
-  type ToolCall,
   type ToolResult
 } from "../../contracts/src/index.js";
 import { ToolRuntimeError } from "./errors.js";
 import { resolveWorkspaceFilePath } from "./workspace-boundary.js";
 
+export type FilesystemPatchToolCall = {
+  toolCallId: string;
+  toolName: string;
+  input: FilesystemPatchInput;
+  timeoutMs: number;
+};
+
 export async function executeFilesystemPatch(input: {
   runId: string;
   executionId: string;
-  toolCall: Extract<ToolCall, { toolName: "filesystem.patch" }>;
+  toolCall: FilesystemPatchToolCall;
   workspaceRoot: string;
   artifactRoot: string;
   artifactId: string;

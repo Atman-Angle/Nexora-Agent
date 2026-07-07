@@ -1,4 +1,5 @@
 export * from "./errors.js";
+export * from "./coding-tools/index.js";
 export * from "./filesystem-list.js";
 export * from "./filesystem-patch.js";
 export * from "./filesystem-read.js";
@@ -13,6 +14,7 @@ export * from "./project-commands.js";
 export * from "./project-inspect.js";
 export * from "./repository-inspector.js";
 export * from "./shell-execute.js";
+export * from "./tool-definition.js";
 export * from "./tool-registry.js";
 export * from "./tool-runtime.js";
 export * from "./workspace-boundary.js";

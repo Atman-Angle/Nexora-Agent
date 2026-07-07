@@ -261,9 +261,14 @@ describe("CR-010 Repository Understanding", () => {
     expect((output.output?.entries ?? []).length).toBeLessThanOrEqual(5);
   });
 
-  it("Agent Loop has no F010 tool-name hardcoding (uses ALL_TOOL_NAMES)", async () => {
+  it("Agent Loop has no F010 tool-name hardcoding (uses registry-driven availableTools)", async () => {
     const source = readFileSync(join(process.cwd(), "packages", "core", "src", "agent-loop-runner.ts"), "utf8");
-    expect(source).toContain("ALL_TOOL_NAMES");
+    // After F028 the runner is driven by the tool registry, not a closed ALL_TOOL_NAMES
+    // array literal. The closed list symbol must be gone, and availableTools must flow
+    // from ToolRuntime.getAvailableTools() (ToolDefinition[]) rather than a hardcoded
+    // per-tool string array.
+    expect(source).not.toContain("ALL_TOOL_NAMES");
+    expect(source).toContain("getAvailableTools()");
     expect(source).not.toMatch(/availableTools:\s*\[\s*"filesystem\.read"/);
   });
 });
