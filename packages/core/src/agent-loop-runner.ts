@@ -1,5 +1,4 @@
 import {
-  AgentBudgetUsageSchema,
   ALL_TOOL_NAMES,
   computeArtifactHash,
   createCheckpoint,
@@ -49,6 +48,7 @@ import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/te
 import { failRun } from "./agent-loop/fail-run.js";
 import { buildStrategyRejectionContext } from "./agent-loop/strategy-rejection.js";
 import { reGroundNow } from "./agent-loop/context-snapshot.js";
+import { createInitialLoopState } from "./agent-loop/state.js";
 import { handleAskUser } from "./agent-loop/handlers/ask-user.js";
 import { handleSubmitExecutionPlan } from "./agent-loop/handlers/submit-execution-plan.js";
 import { handleUpdatePlan } from "./agent-loop/handlers/update-plan.js";
@@ -64,13 +64,11 @@ import { applyLedgerPatch } from "./ledger-progress/index.js";
 import {
   deriveExecutionPlanFromAction,
   evaluateExecutionPlanCompleteness,
-  normalizeStrategyState,
   onStrategyRejection,
   validateActionWithStrategy
 } from "./strategy/index.js";
 import {
-  evaluateBuilderAction,
-  normalizeBuilderState
+  evaluateBuilderAction
 } from "./builder/index.js";
 
 type NoProgressSnapshot = {
@@ -117,36 +115,6 @@ export async function runAgentLoop(input: {
     throw new AgentLoopRunFailure("AGENT_REQUEST_MISSING", "Agent loop requires an agent request.", false);
   }
 
-  let activeRun = input.run;
-  let nextSequence =
-    input.resume === undefined
-      ? Math.max(1, input.eventStore.listEventsByRun(input.run.runId).length + 1)
-      : Math.max(input.resume.resumeState.nextSequence, input.eventStore.listEventsByRun(input.run.runId).length + 1);
-  let currentWorkingSet = input.resume?.resumeState.currentWorkingSet ?? null;
-  let changedFiles = input.resume?.resumeState.changedFiles ?? [];
-  let recentToolResult = input.resume?.resumeState.recentToolResult ?? null;
-  let recentValidationResult = input.resume?.resumeState.recentValidationResult ?? null;
-  let latestIterationIndex = input.resume?.resumeState.latestIterationIndex ?? 0;
-  let regroundRequested = input.resume?.resumeState.regroundRequested ?? false;
-  let replanRequested = input.resume?.resumeState.replanRequested ?? false;
-  let noProgressCount = input.resume?.resumeState.noProgressCount ?? 0;
-  let recoveryState = input.resume?.resumeState.recoveryState;
-  let strategyState = normalizeStrategyState(input.resume?.resumeState.strategyState);
-  let builderState = normalizeBuilderState(input.resume?.resumeState.builderState);
-  let strategyDecision: StrategyDecision = "continue_explore";
-  const recoveryOrchestrator = new RecoveryOrchestrator();
-  const recoveryBudget = input.task.input.agentRequest?.recoveryBudget ?? {};
-  let pendingRetryIncrement = input.resume?.resumeState.pendingRetryIncrement ?? false;
-  const usage =
-    input.resume?.resumeState.usage ??
-    AgentBudgetUsageSchema.parse({
-      loopCount: 0,
-      modelCalls: 0,
-      toolCalls: 0,
-      retryCount: 0,
-      startedAt: input.now()
-    });
-
   const anchor = {
     goal: input.task.input.text,
     constraints: [
@@ -164,22 +132,27 @@ export async function runAgentLoop(input: {
             "Produce a final artifact that passes the completion gate."
           ]
   };
-  let ledger =
+  const ledger =
     input.resume?.ledger ??
-    input.ledgerStore.getByRun(activeRun.runId) ??
+    input.ledgerStore.getByRun(input.run.runId) ??
     createProgressLedger({
-      runId: activeRun.runId,
+      runId: input.run.runId,
       anchor,
       now: input.now()
     });
+  const state = createInitialLoopState(input, anchor, ledger);
+  const recoveryOrchestrator = new RecoveryOrchestrator();
+  const recoveryBudget = input.task.input.agentRequest?.recoveryBudget ?? {};
+  const availableTools = input.toolRuntime.getAvailableTools().filter((toolName) => ALL_TOOL_NAMES.includes(toolName));
+  const MAX_ACTION_REPAIRS = 2;
 
   const appendEventWithSequence = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
     Promise.resolve().then(() => {
-      const sequence = nextSequence;
+      const sequence = state.nextSequence;
       input.eventStore.appendEvent(
         createEvent({
           eventId: input.idGenerator(),
-          runId: activeRun.runId,
+          runId: state.activeRun.runId,
           sequence,
           type,
           timestamp,
@@ -187,22 +160,22 @@ export async function runAgentLoop(input: {
         })
       );
       maybeAbortAfterEvent(type);
-      nextSequence += 1;
+      state.nextSequence += 1;
       return sequence;
     });
   const appendEvent = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
     appendEventWithSequence(type, payload, timestamp).then(() => undefined);
 
   const persistLedger = async (nextLedger: ProgressLedger) => {
-    ledger = nextLedger;
-    input.ledgerStore.upsertLedger(ledger);
+    state.ledger = nextLedger;
+    input.ledgerStore.upsertLedger(state.ledger);
     await appendEvent(
-      ledger.version === 0 ? "ledger.initialized" : "ledger.updated",
+      state.ledger.version === 0 ? "ledger.initialized" : "ledger.updated",
       {
-        version: ledger.version,
-        currentStep: ledger.currentStep
+        version: state.ledger.version,
+        currentStep: state.ledger.currentStep
       },
-      ledger.updatedAt
+      state.ledger.updatedAt
     );
   };
 
@@ -214,7 +187,7 @@ export async function runAgentLoop(input: {
     const createdAt = input.now();
     const pendingPatchPath = input.task.input.patchRequest?.path;
     const filePaths = collectRehydrationFilePaths({
-      workingSetPaths: currentWorkingSet?.items.map((item) => item.path) ?? [],
+      workingSetPaths: state.currentWorkingSet?.items.map((item) => item.path) ?? [],
       pendingPatchPath
     });
     let workspaceHash: string | undefined;
@@ -225,17 +198,17 @@ export async function runAgentLoop(input: {
     }
     const checkpointRecord = createCheckpoint({
       checkpointId: input.idGenerator(),
-      runId: activeRun.runId,
-      runStateVersion: activeRun.stateVersion,
-      ledgerVersion: ledger.version,
+      runId: state.activeRun.runId,
+      runStateVersion: state.activeRun.stateVersion,
+      ledgerVersion: state.ledger.version,
       phase,
       ...(options?.pendingActionId === undefined ? {} : { pendingActionId: options.pendingActionId }),
       ...(options?.pendingActionFingerprint === undefined ? {} : { pendingActionFingerprint: options.pendingActionFingerprint }),
       ...(workspaceHash === undefined ? {} : { workspaceHash }),
       ...(options?.note === undefined ? {} : { note: options.note }),
-      ...(recoveryState === undefined ? {} : { recovery: recoveryState }),
-      strategy: strategyState,
-      builder: builderState,
+      ...(state.recoveryState === undefined ? {} : { recovery: state.recoveryState }),
+      strategy: state.strategyState,
+      builder: state.builderState,
       createdAt
     });
     input.checkpointStore.insertCheckpoint(checkpointRecord);
@@ -244,10 +217,6 @@ export async function runAgentLoop(input: {
     return checkpointRecord;
   };
 
-  // F025-C: build a HandlerContext snapshot from the current locals for
-  // extracted handlers, and apply a StateDelta back. These collapse into a
-  // single mutable AgentLoopState reference once the body->state convergence
-  // completes (final step of F025-C).
   const buildHandlerContext = (actionSignature: string): HandlerContext => ({
     input,
     anchor,
@@ -261,114 +230,96 @@ export async function runAgentLoop(input: {
     availableTools,
     maxActionRepairs: MAX_ACTION_REPAIRS,
     actionSignature,
-    activeRun,
-    nextSequence,
-    latestIterationIndex,
-    currentWorkingSet,
-    changedFiles,
-    recentToolResult,
-    recentValidationResult,
-    regroundedAt,
-    ledger,
-    noProgressCount,
-    previousSnapshot,
-    recoveryState,
-    strategyState,
-    builderState,
-    strategyDecision,
-    regroundRequested,
-    replanRequested,
-    pendingRetryIncrement,
-    finalizationPlanRejectionCount,
-    validationRepairActionRejectionCount,
-    pendingActionRejection,
-    usage
+    activeRun: state.activeRun,
+    nextSequence: state.nextSequence,
+    latestIterationIndex: state.latestIterationIndex,
+    currentWorkingSet: state.currentWorkingSet,
+    changedFiles: state.changedFiles,
+    recentToolResult: state.recentToolResult,
+    recentValidationResult: state.recentValidationResult,
+    regroundedAt: state.regroundedAt,
+    ledger: state.ledger,
+    noProgressCount: state.noProgressCount,
+    previousSnapshot: state.previousSnapshot,
+    recoveryState: state.recoveryState,
+    strategyState: state.strategyState,
+    builderState: state.builderState,
+    strategyDecision: state.strategyDecision,
+    regroundRequested: state.regroundRequested,
+    replanRequested: state.replanRequested,
+    pendingRetryIncrement: state.pendingRetryIncrement,
+    finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
+    validationRepairActionRejectionCount: state.validationRepairActionRejectionCount,
+    pendingActionRejection: state.pendingActionRejection,
+    usage: state.usage
   });
 
   const applyStateDelta = (delta: StateDelta | undefined) => {
     if (delta === undefined) {
       return;
     }
-    if ("activeRun" in delta) activeRun = delta.activeRun as Run;
-    if ("currentWorkingSet" in delta) currentWorkingSet = (delta.currentWorkingSet as WorkingSet | null) ?? null;
-    if ("changedFiles" in delta) changedFiles = delta.changedFiles as string[];
-    if ("recentToolResult" in delta) recentToolResult = (delta.recentToolResult as ToolResult | null) ?? null;
-    if ("recentValidationResult" in delta) recentValidationResult = (delta.recentValidationResult as ValidationResult | null) ?? null;
-    if ("latestIterationIndex" in delta) latestIterationIndex = delta.latestIterationIndex as number;
-    if ("regroundedAt" in delta) regroundedAt = (delta.regroundedAt as string | null) ?? null;
-    if ("ledger" in delta) ledger = delta.ledger as ProgressLedger;
-    if ("noProgressCount" in delta) noProgressCount = delta.noProgressCount as number;
-    if ("previousSnapshot" in delta) previousSnapshot = delta.previousSnapshot as NoProgressSnapshot;
-    if ("recoveryState" in delta) recoveryState = delta.recoveryState;
-    if ("strategyState" in delta) strategyState = delta.strategyState as StrategyState;
-    if ("builderState" in delta) builderState = delta.builderState as BuilderState;
-    if ("strategyDecision" in delta) strategyDecision = delta.strategyDecision as StrategyDecision;
-    if ("regroundRequested" in delta) regroundRequested = delta.regroundRequested as boolean;
-    if ("replanRequested" in delta) replanRequested = delta.replanRequested as boolean;
-    if ("pendingRetryIncrement" in delta) pendingRetryIncrement = delta.pendingRetryIncrement as boolean;
-    if ("finalizationPlanRejectionCount" in delta) finalizationPlanRejectionCount = delta.finalizationPlanRejectionCount as number;
-    if ("validationRepairActionRejectionCount" in delta) validationRepairActionRejectionCount = delta.validationRepairActionRejectionCount as number;
-    if ("pendingActionRejection" in delta) pendingActionRejection = (delta.pendingActionRejection as ModelActionRejection | null) ?? null;
+    if ("activeRun" in delta) state.activeRun = delta.activeRun as Run;
+    if ("currentWorkingSet" in delta) state.currentWorkingSet = (delta.currentWorkingSet as WorkingSet | null) ?? null;
+    if ("changedFiles" in delta) state.changedFiles = delta.changedFiles as string[];
+    if ("recentToolResult" in delta) state.recentToolResult = (delta.recentToolResult as ToolResult | null) ?? null;
+    if ("recentValidationResult" in delta) state.recentValidationResult = (delta.recentValidationResult as ValidationResult | null) ?? null;
+    if ("latestIterationIndex" in delta) state.latestIterationIndex = delta.latestIterationIndex as number;
+    if ("regroundedAt" in delta) state.regroundedAt = (delta.regroundedAt as string | null) ?? null;
+    if ("ledger" in delta) state.ledger = delta.ledger as ProgressLedger;
+    if ("noProgressCount" in delta) state.noProgressCount = delta.noProgressCount as number;
+    if ("previousSnapshot" in delta) state.previousSnapshot = delta.previousSnapshot as NoProgressSnapshot;
+    if ("recoveryState" in delta) state.recoveryState = delta.recoveryState;
+    if ("strategyState" in delta) state.strategyState = delta.strategyState as StrategyState;
+    if ("builderState" in delta) state.builderState = delta.builderState as BuilderState;
+    if ("strategyDecision" in delta) state.strategyDecision = delta.strategyDecision as StrategyDecision;
+    if ("regroundRequested" in delta) state.regroundRequested = delta.regroundRequested as boolean;
+    if ("replanRequested" in delta) state.replanRequested = delta.replanRequested as boolean;
+    if ("pendingRetryIncrement" in delta) state.pendingRetryIncrement = delta.pendingRetryIncrement as boolean;
+    if ("finalizationPlanRejectionCount" in delta) state.finalizationPlanRejectionCount = delta.finalizationPlanRejectionCount as number;
+    if ("validationRepairActionRejectionCount" in delta) state.validationRepairActionRejectionCount = delta.validationRepairActionRejectionCount as number;
+    if ("pendingActionRejection" in delta) state.pendingActionRejection = (delta.pendingActionRejection as ModelActionRejection | null) ?? null;
   };
 
   if (input.resume === undefined) {
-    await appendEvent("run.created", { status: activeRun.status }, activeRun.createdAt);
+    await appendEvent("run.created", { status: state.activeRun.status }, state.activeRun.createdAt);
     const runningAt = input.now();
-    activeRun = transitionRun(activeRun, "running", runningAt);
-    input.runStore.updateRun(activeRun);
-    await appendEvent("run.started", { status: activeRun.status }, runningAt);
-    await persistLedger(ledger);
+    state.activeRun = transitionRun(state.activeRun, "running", runningAt);
+    input.runStore.updateRun(state.activeRun);
+    await appendEvent("run.started", { status: state.activeRun.status }, runningAt);
+    await persistLedger(state.ledger);
   } else {
     const resumedAt = input.now();
-    if (activeRun.status !== "running") {
-      activeRun = transitionRun(activeRun, "running", resumedAt);
-      input.runStore.updateRun(activeRun);
+    if (state.activeRun.status !== "running") {
+      state.activeRun = transitionRun(state.activeRun, "running", resumedAt);
+      input.runStore.updateRun(state.activeRun);
     }
-    await appendEvent("run.resumed", { status: activeRun.status }, resumedAt);
+    await appendEvent("run.resumed", { status: state.activeRun.status }, resumedAt);
   }
 
-  let regroundedAt: string | null = null;
   if (input.resume !== undefined) {
-    regroundedAt = reGroundNow(input, currentWorkingSet, input.now());
-    if (regroundedAt !== null) {
-      await appendEvent("context.regrounded", { reason: "resume", at: regroundedAt }, regroundedAt);
+    state.regroundedAt = reGroundNow(input, state.currentWorkingSet, input.now());
+    if (state.regroundedAt !== null) {
+      await appendEvent("context.regrounded", { reason: "resume", at: state.regroundedAt }, state.regroundedAt);
     }
   }
-
-  let previousSnapshot: NoProgressSnapshot =
-    input.resume?.resumeState.previousSnapshot ?? {
-      actionSignature: null,
-      errorCode: null,
-      ledgerVersion: ledger.version,
-      evidenceCount: ledger.evidenceRefs.length,
-      validationStatus: null,
-      artifactHash: null
-    };
-  let seededAction = input.resume?.seedAction ?? null;
-  let bypassApprovalForSeedAction = input.resume?.bypassApprovalForSeedAction ?? false;
-  const availableTools = input.toolRuntime.getAvailableTools().filter((toolName) => ALL_TOOL_NAMES.includes(toolName));
-  const MAX_ACTION_REPAIRS = 2;
-  let finalizationPlanRejectionCount = input.resume?.resumeState.finalizationPlanRejectionCount ?? 0;
-  let validationRepairActionRejectionCount = input.resume?.resumeState.validationRepairActionRejectionCount ?? 0;
-  let pendingActionRejection: ModelActionRejection | null = null;
 
   for (;;) {
     try {
     let action: AgentAction | undefined;
-    const currentSeededAction = seededAction;
+    const currentSeededAction = state.seededAction;
     const usedSeededAction = currentSeededAction !== null;
-    const bypassApproval = usedSeededAction && bypassApprovalForSeedAction;
+    const bypassApproval = usedSeededAction && state.bypassApprovalForSeedAction;
 
     if (usedSeededAction) {
       action = currentSeededAction;
-      seededAction = null;
-      bypassApprovalForSeedAction = false;
+      state.seededAction = null;
+      state.bypassApprovalForSeedAction = false;
     } else {
       const outcome = await handleGenerateAction(buildHandlerContext(""));
       if (outcome.kind === "fail") {
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: outcome.code,
           message: outcome.message,
@@ -381,16 +332,16 @@ export async function runAgentLoop(input: {
     const actionSignature = JSON.stringify(action);
 
     if (
-      requiresValidationRepairAction(recentValidationResult) &&
-      !isValidationRepairAction(action, builderState, recentValidationResult)
+      requiresValidationRepairAction(state.recentValidationResult) &&
+      !isValidationRepairAction(action, state.builderState, state.recentValidationResult)
     ) {
-      validationRepairActionRejectionCount += 1;
+      state.validationRepairActionRejectionCount += 1;
       const rejectedAt = input.now();
       const message =
         "The latest fresh validation failed after a mutation; broad filesystem.read, off-target filesystem.read, filesystem.search, filesystem.list, project inspection, git tools, update_plan, and shell.execute source mutation are not repair actions now. Submit a focused repair execution plan or a Builder-directed repair mutation within the same Task executionConstraints, then rerun validation. filesystem.read is only repair evidence when it targets a changed file named in the failure summary or the current Builder modify target; repeated reads do not count as repair progress and must lead to a concrete mutation. Use shell.execute only to rerun validation, tests, or builds.";
-      pendingActionRejection = {
+      state.pendingActionRejection = {
         category: "validation_repair",
-        attempt: validationRepairActionRejectionCount,
+        attempt: state.validationRepairActionRejectionCount,
         message
       };
       await appendEvent(
@@ -400,23 +351,22 @@ export async function runAgentLoop(input: {
           message,
           category: "validation_repair",
           reason: "fresh_failed_validation_requires_repair_action",
-          attempt: validationRepairActionRejectionCount,
-          remainingCorrectionAttempts: Math.max(0, MAX_ACTION_REPAIRS + 1 - validationRepairActionRejectionCount)
+          attempt: state.validationRepairActionRejectionCount,
+          remainingCorrectionAttempts: Math.max(0, MAX_ACTION_REPAIRS + 1 - state.validationRepairActionRejectionCount)
         },
         rejectedAt
       );
-      ledger = applyLedgerPatch({
-        ledger,
-        patch: {
+      state.ledger = applyLedgerPatch({
+        ledger: state.ledger,        patch: {
           appendDecisions: [message]
         },
         now: rejectedAt
       });
-      await persistLedger(ledger);
-      if (validationRepairActionRejectionCount > MAX_ACTION_REPAIRS) {
+      await persistLedger(state.ledger);
+      if (state.validationRepairActionRejectionCount > MAX_ACTION_REPAIRS) {
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: "VALIDATION_REPAIR_ACTION_REQUIRED",
           message,
@@ -424,25 +374,25 @@ export async function runAgentLoop(input: {
         });
       }
       await checkpoint("post_response", { note: "validation_repair_action_required" });
-      previousSnapshot = {
+      state.previousSnapshot = {
         actionSignature,
         errorCode: "VALIDATION_REPAIR_ACTION_REQUIRED",
-        ledgerVersion: ledger.version,
-        evidenceCount: ledger.evidenceRefs.length,
-        validationStatus: recentValidationResult.status,
+        ledgerVersion: state.ledger.version,
+        evidenceCount: state.ledger.evidenceRefs.length,
+        validationStatus: state.recentValidationResult.status,
         artifactHash: null
       };
       continue;
     }
 
-    if (action.type === "submit_execution_plan" && isFreshPassingValidation(recentValidationResult)) {
-      finalizationPlanRejectionCount += 1;
+    if (action.type === "submit_execution_plan" && isFreshPassingValidation(state.recentValidationResult)) {
+      state.finalizationPlanRejectionCount += 1;
       const rejectedAt = input.now();
       const message =
         "A fresh passing validation already exists after the latest mutation; submit a final action instead of a new execution plan.";
-      pendingActionRejection = {
+      state.pendingActionRejection = {
         category: "completion_guidance",
-        attempt: finalizationPlanRejectionCount,
+        attempt: state.finalizationPlanRejectionCount,
         message
       };
       await appendEvent(
@@ -452,23 +402,22 @@ export async function runAgentLoop(input: {
           message,
           category: "completion_guidance",
           reason: "fresh_validation_requires_final",
-          attempt: finalizationPlanRejectionCount,
-          remainingCorrectionAttempts: Math.max(0, MAX_ACTION_REPAIRS + 1 - finalizationPlanRejectionCount)
+          attempt: state.finalizationPlanRejectionCount,
+          remainingCorrectionAttempts: Math.max(0, MAX_ACTION_REPAIRS + 1 - state.finalizationPlanRejectionCount)
         },
         rejectedAt
       );
-      ledger = applyLedgerPatch({
-        ledger,
-        patch: {
+      state.ledger = applyLedgerPatch({
+        ledger: state.ledger,        patch: {
           appendDecisions: [message]
         },
         now: rejectedAt
       });
-      await persistLedger(ledger);
-      if (finalizationPlanRejectionCount > MAX_ACTION_REPAIRS) {
+      await persistLedger(state.ledger);
+      if (state.finalizationPlanRejectionCount > MAX_ACTION_REPAIRS) {
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: "EXECUTION_PLAN_UNEXPECTED",
           message,
@@ -476,33 +425,31 @@ export async function runAgentLoop(input: {
         });
       }
       await checkpoint("post_response", { note: "fresh_validation_final_required" });
-      previousSnapshot = {
+      state.previousSnapshot = {
         actionSignature,
         errorCode: "EXECUTION_PLAN_AFTER_FRESH_VALIDATION",
-        ledgerVersion: ledger.version,
-        evidenceCount: ledger.evidenceRefs.length,
-        validationStatus: recentValidationResult.status,
+        ledgerVersion: state.ledger.version,
+        evidenceCount: state.ledger.evidenceRefs.length,
+        validationStatus: state.recentValidationResult.status,
         artifactHash: null
       };
       continue;
     }
 
     const builderRecoveryAction =
-      (recoveryState?.latestFailure?.source === "validation" || recoveryState?.latestFailure?.category === "patch_conflict") &&
+      (state.recoveryState?.latestFailure?.source === "validation" || state.recoveryState?.latestFailure?.category === "patch_conflict") &&
       (action.type === "submit_execution_plan" ||
         ((action.type === "tool_call" || action.type === "request_approval") &&
           (action.toolCall.toolName === "filesystem.patch" || action.toolCall.toolName === "filesystem.write")));
     const strategyBypassedForRecovery =
-      usedSeededAction || (recoveryState !== undefined && !builderRecoveryAction);
+      usedSeededAction || (state.recoveryState !== undefined && !builderRecoveryAction);
     const builderActionEvaluation = evaluateBuilderAction({
       strategyBypassedForRecovery,
-      strategyState,
-      builderState,
-      action,
+      strategyState: state.strategyState,      builderState: state.builderState,      action,
       workspaceRoot: input.workspaceRoot,
       now: input.now()
     });
-    builderState = builderActionEvaluation.state;
+    state.builderState = builderActionEvaluation.state;
     for (const event of builderActionEvaluation.events) {
       await appendEvent(event.type, event.payload, input.now());
     }
@@ -511,7 +458,7 @@ export async function runAgentLoop(input: {
       if (outcome.kind === "fail") {
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: outcome.code,
           message: outcome.message,
@@ -536,17 +483,17 @@ export async function runAgentLoop(input: {
         : validateActionWithStrategy({
           task: input.task,
           action,
-          state: strategyState,
-          decision: strategyDecision
+          state: state.strategyState,
+          decision: state.strategyDecision
         });
     if (!strategyPolicy.allowed) {
       const rejectedAt = input.now();
-      const previousStrategyRejection = strategyState.lastStrategyRejection;
+      const previousStrategyRejection = state.strategyState.lastStrategyRejection;
       const strategyRejection = buildStrategyRejectionContext({
         action,
         policy: strategyPolicy,
-        state: strategyState,
-        decision: strategyDecision,
+        state: state.strategyState,
+        decision: state.strategyDecision,
         maxActionRepairs: MAX_ACTION_REPAIRS
       });
       await appendEvent(
@@ -561,22 +508,22 @@ export async function runAgentLoop(input: {
         },
         rejectedAt
       );
-      if (strategyPolicy.reason === "plan_required_before_mutation" && strategyState.plan === undefined) {
+      if (strategyPolicy.reason === "plan_required_before_mutation" && state.strategyState.plan === undefined) {
         const proposedPlan = deriveExecutionPlanFromAction({
           action,
           validationCommand: input.task.input.validationRequest?.command,
           validationArgs: input.task.input.validationRequest?.args
         });
         if (proposedPlan !== undefined && evaluateExecutionPlanCompleteness(proposedPlan).complete) {
-          strategyState = {
-            ...strategyState,
+          state.strategyState = {
+            ...state.strategyState,
             plan: proposedPlan,
             noProgressCount: 0,
             explorationUsage: {
-              ...strategyState.explorationUsage,
+              ...state.strategyState.explorationUsage,
               iterationsWithoutProgress: 0
             },
-            lastProgressIteration: latestIterationIndex,
+            lastProgressIteration: state.latestIterationIndex,
             lastStrategyRejection: {
               ...strategyRejection,
               activePlan: proposedPlan,
@@ -597,7 +544,7 @@ export async function runAgentLoop(input: {
             "strategy.action_repair.requested",
             {
               reason: strategyPolicy.reason,
-              iteration: latestIterationIndex,
+              iteration: state.latestIterationIndex,
               attempt: strategyRejection.attempt,
               remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
             },
@@ -608,15 +555,15 @@ export async function runAgentLoop(input: {
         }
       }
       if (previousStrategyRejection === undefined) {
-        strategyState = {
-          ...strategyState,
+        state.strategyState = {
+          ...state.strategyState,
           lastStrategyRejection: strategyRejection
         };
         await appendEvent(
           "strategy.action_repair.requested",
           {
             reason: strategyPolicy.reason,
-            iteration: latestIterationIndex,
+            iteration: state.latestIterationIndex,
             attempt: strategyRejection.attempt,
             remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
           },
@@ -625,17 +572,17 @@ export async function runAgentLoop(input: {
         await checkpoint("post_response", { note: "strategy_action_repair" });
         continue;
       }
-      const rejection = onStrategyRejection({ task: input.task, state: strategyState, iteration: latestIterationIndex });
-      strategyState = rejection.state;
+      const rejection = onStrategyRejection({ task: input.task, state: state.strategyState, iteration: state.latestIterationIndex });
+      state.strategyState = rejection.state;
       const repairBudgetExhausted = previousStrategyRejection.attempt >= MAX_ACTION_REPAIRS;
       if (rejection.terminal || repairBudgetExhausted) {
         await appendEvent(
           "strategy.no_progress.terminal",
           {
             reason: repairBudgetExhausted ? "strategy_repair_budget_exhausted" : strategyPolicy.reason,
-            iteration: latestIterationIndex,
-            consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
-            iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress,
+            iteration: state.latestIterationIndex,
+            consecutiveReadActions: state.strategyState.explorationUsage.consecutiveReadActions,
+            iterationsWithoutProgress: state.strategyState.explorationUsage.iterationsWithoutProgress,
             attempt: strategyRejection.attempt,
             remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
           },
@@ -643,24 +590,24 @@ export async function runAgentLoop(input: {
         );
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: "AGENT_STRATEGY_NO_PROGRESS",
           message: "Agent strategy detected repeated rejected actions without progress.",
           retryable: false
         });
       }
-      strategyState = {
-        ...strategyState,
+      state.strategyState = {
+        ...state.strategyState,
         lastStrategyRejection: strategyRejection
       };
       await appendEvent(
         "strategy.exploration.stalled",
         {
           reason: strategyPolicy.reason,
-          iteration: latestIterationIndex,
-          consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
-          iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress,
+          iteration: state.latestIterationIndex,
+          consecutiveReadActions: state.strategyState.explorationUsage.consecutiveReadActions,
+          iterationsWithoutProgress: state.strategyState.explorationUsage.iterationsWithoutProgress,
           attempt: strategyRejection.attempt,
           remainingCorrectionAttempts: strategyRejection.remainingCorrectionAttempts
         },
@@ -669,8 +616,8 @@ export async function runAgentLoop(input: {
       await checkpoint("post_response", { note: "strategy_action_repair" });
       continue;
     }
-    if (strategyState.lastStrategyRejection !== undefined) {
-      strategyState = { ...strategyState, lastStrategyRejection: undefined };
+    if (state.strategyState.lastStrategyRejection !== undefined) {
+      state.strategyState = { ...state.strategyState, lastStrategyRejection: undefined };
     }
 
     if (action.type === "update_plan") {
@@ -678,7 +625,7 @@ export async function runAgentLoop(input: {
       if (outcome.kind === "fail") {
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: outcome.code,
           message: outcome.message,
@@ -696,27 +643,27 @@ export async function runAgentLoop(input: {
         const outcome = await handleAskUser(
           {
             input,
-            run: activeRun,
-            ledger,
+            run: state.activeRun,
+            ledger: state.ledger,
             appendEvent,
             checkpoint,
-            nextSequence,
-            latestIterationIndex,
-            currentWorkingSet,
-            changedFiles,
-            recentToolResult,
-            recentValidationResult,
-            regroundRequested,
-            replanRequested,
-            noProgressCount,
-            usage,
-            previousSnapshot,
-            pendingRetryIncrement,
-            recoveryState,
-            strategyState,
-            builderState,
-            finalizationPlanRejectionCount,
-            validationRepairActionRejectionCount
+            nextSequence: state.nextSequence,
+            latestIterationIndex: state.latestIterationIndex,
+            currentWorkingSet: state.currentWorkingSet,
+            changedFiles: state.changedFiles,
+            recentToolResult: state.recentToolResult,
+            recentValidationResult: state.recentValidationResult,
+            regroundRequested: state.regroundRequested,
+            replanRequested: state.replanRequested,
+            noProgressCount: state.noProgressCount,
+            usage: state.usage,
+            previousSnapshot: state.previousSnapshot,
+            pendingRetryIncrement: state.pendingRetryIncrement,
+            recoveryState: state.recoveryState,
+            strategyState: state.strategyState,
+            builderState: state.builderState,
+            finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
+            validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
           },
           action
         );
@@ -730,7 +677,7 @@ export async function runAgentLoop(input: {
     if (action.type === "fail") {
       return failRun({
         input,
-        run: activeRun,
+        run: state.activeRun,
         appendEvent,
         code: action.code,
         message: action.message,
@@ -743,7 +690,7 @@ export async function runAgentLoop(input: {
       if (outcome.kind === "fail") {
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: outcome.code,
           message: outcome.message,
@@ -759,7 +706,7 @@ export async function runAgentLoop(input: {
     if (action.type === "submit_execution_plan") {
       return failRun({
         input,
-        run: activeRun,
+        run: state.activeRun,
         appendEvent,
         code: "EXECUTION_PLAN_UNEXPECTED",
         message: "Structured execution plans cannot be processed while recovery is bypassing normal strategy.",
@@ -777,7 +724,7 @@ export async function runAgentLoop(input: {
       if (outcome.kind === "fail") {
         return failRun({
           input,
-          run: activeRun,
+          run: state.activeRun,
           appendEvent,
           code: outcome.code,
           message: outcome.message,
@@ -797,9 +744,9 @@ export async function runAgentLoop(input: {
       const redacted = redactForEvidence(message);
       try {
         const failedAt = input.now();
-        const failedRun = transitionRun(activeRun, "failed", failedAt, "RUNTIME_ERROR");
+        const failedRun = transitionRun(state.activeRun, "failed", failedAt, "RUNTIME_ERROR");
         input.runStore.updateRun(failedRun);
-        activeRun = failedRun;
+        state.activeRun = failedRun;
         await appendEvent(
           "run.failed",
           {
