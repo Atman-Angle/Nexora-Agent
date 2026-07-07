@@ -4,6 +4,7 @@ import {
   ToolResultSchema,
   type Artifact,
   type ExecutionRecord,
+  type PatchOperation,
   type ToolCall,
   type ToolResult
 } from "../../contracts/src/index.js";
@@ -181,10 +182,7 @@ function hasSameIdempotentSemantics(left: ToolCall, right: ToolCall): boolean {
       left.input.expectedHash === right.input.expectedHash &&
       left.input.encoding === right.input.encoding &&
       left.input.idempotencyKey === right.input.idempotencyKey &&
-      left.input.patch.type === right.input.patch.type &&
-      left.input.patch.find === right.input.patch.find &&
-      left.input.patch.replace === right.input.patch.replace &&
-      (left.input.patch.replaceAll ?? false) === (right.input.patch.replaceAll ?? false)
+      normalizePatchForCompare(left.input.patch) === normalizePatchForCompare(right.input.patch)
     );
   }
 
@@ -212,6 +210,11 @@ function hasSameIdempotentSemantics(left: ToolCall, right: ToolCall): boolean {
   }
 
   return false;
+}
+
+function normalizePatchForCompare(patch: PatchOperation | PatchOperation[]): string {
+  const operations = Array.isArray(patch) ? patch : [patch];
+  return operations.map((op) => `${op.type}|${op.find}|${op.replace}|${op.replaceAll ?? false}`).join("\n");
 }
 
 function persistExecutionRecord(input: {

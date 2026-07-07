@@ -107,7 +107,19 @@ export async function executeFilesystemPatch(input: {
   };
 }
 
-function applyPatch(sourceText: string, patch: PatchOperation): string {
+function applyPatch(sourceText: string, patch: PatchOperation | PatchOperation[]): string {
+  const operations = Array.isArray(patch) ? patch : [patch];
+  if (operations.length === 0) {
+    throw new ToolRuntimeError("PATCH_INVALID", "Patch must include at least one operation.", false);
+  }
+  let current = sourceText;
+  for (const operation of operations) {
+    current = applySinglePatch(current, operation);
+  }
+  return current;
+}
+
+function applySinglePatch(sourceText: string, patch: PatchOperation): string {
   if (patch.type !== "replace_text") {
     throw new ToolRuntimeError("PATCH_INVALID", "Unsupported patch operation.", false);
   }

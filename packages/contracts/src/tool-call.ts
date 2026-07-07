@@ -56,7 +56,7 @@ export const ToolCallSchema = z.union([
     input: z.object({
       path: z.string().min(1),
       expectedHash: z.string().min(1),
-      patch: PatchOperationSchema,
+      patch: PatchOperationSchema.or(z.array(PatchOperationSchema).min(1)),
       encoding: z.literal("utf8"),
       idempotencyKey: z.string().min(1)
     }),

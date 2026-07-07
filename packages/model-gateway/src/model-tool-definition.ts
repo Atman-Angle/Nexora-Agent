@@ -59,7 +59,7 @@ const TOOL_FIELD_MAP: Record<ToolName, {
     inputFields: [
       { name: "path", type: "string", required: true, description: "Workspace-relative file path." },
       { name: "expectedHash", type: "string", required: true, description: "currentHash returned by the most recent filesystem.read of this path. Never invent." },
-      { name: "patch", type: "record", required: true, description: "{ type: \"replace_text\"; find: string; replace: string; replaceAll?: boolean }." },
+      { name: "patch", type: "record", required: true, description: "Either a single operation { type: \"replace_text\"; find: string; replace: string; replaceAll?: boolean } OR a non-empty array of such operations applied in order. Use an array to align multiple imports/lines in one mutation so earlier fixes are not lost." },
       { name: "encoding", type: "enum", required: true, enum: ["utf8"], description: "Must be the literal \"utf8\"." },
       { name: "idempotencyKey", type: "string", required: true, description: "Any unique non-empty string you invent; reuse only for the same patch." }
     ],
@@ -284,6 +284,7 @@ export function buildAgentActionSchemaText(availableTools: ToolName[]): string {
     "  | { type: \"fail\"; code: string; message: string; retryable: boolean }",
     "",
     "type PatchOperation = { type: \"replace_text\"; find: string; replace: string; replaceAll?: boolean }   // find non-empty; replaceAll defaults to false.",
+    "type PatchInput = PatchOperation | PatchOperation[]   // single operation OR non-empty array applied in order; use an array to align multiple imports/lines in one mutation so earlier fixes are not lost.",
     "",
     "type LedgerPatch = {",
     "  currentStep?: string | null,",
@@ -349,6 +350,7 @@ export function buildPlanActionSchemaText(availableTools: ToolName[]): string {
     "  | { type: \"fail\"; code: string; message: string; retryable: boolean }",
     "",
     "type PatchOperation = { type: \"replace_text\"; find: string; replace: string; replaceAll?: boolean }   // find non-empty; replaceAll defaults to false.",
+    "type PatchInput = PatchOperation | PatchOperation[]   // single operation OR non-empty array applied in order; use an array to align multiple imports/lines in one mutation so earlier fixes are not lost.",
     "",
     "type LedgerPatch = {",
     "  currentStep?: string | null,",
