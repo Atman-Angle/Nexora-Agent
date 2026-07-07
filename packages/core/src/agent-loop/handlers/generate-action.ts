@@ -15,7 +15,8 @@ import { ensureBudget } from "../budget.js";
 import { describeModelActionError, isActionRepairable } from "../model-action-error.js";
 import { redactForEvidence } from "../redact.js";
 import { validateCompactionIntegrity } from "../../../../context/src/index.js";
-import type { HandlerContext } from "../outcome.js";
+import type { HandlerDeps } from "../outcome.js";
+import type { AgentLoopState } from "../state.js";
 
 export type GenerateActionOutcome =
   | { kind: "action"; action: AgentAction }
@@ -28,42 +29,42 @@ export type GenerateActionOutcome =
  * model.action.generated event. Returns the parsed action or a fail outcome.
  *
  * Mutates via ctx.mutate: strategyState, strategyDecision, builderState,
- * pendingActionRejection. `usage` is mutated in place (ctx.usage is the same
+ * pendingActionRejection. `usage` is mutated in place (state.usage is the same
  * object reference as the runner's const `usage`).
  */
 export async function handleGenerateAction(
-  ctx: HandlerContext
+  state: AgentLoopState, deps: HandlerDeps
 ): Promise<GenerateActionOutcome> {
   await ensureBudget({
-    appendEvent: ctx.appendEvent,
-    now: ctx.input.now(),
+    appendEvent: deps.appendEvent,
+    now: deps.input.now(),
     phase: "model",
-    budget: ctx.input.task.input.agentRequest!.budget,
-    usage: ctx.usage,
-    reserveVerification: ctx.input.task.input.validationRequest !== undefined
+    budget: deps.input.task.input.agentRequest!.budget,
+    usage: state.usage,
+    reserveVerification: deps.input.task.input.validationRequest !== undefined
   });
 
-  const iterationStartedAt = ctx.input.now();
-  await ctx.appendEvent("iteration.started", { index: ctx.latestIterationIndex }, iterationStartedAt);
-  ctx.usage.loopCount += 1;
-  ctx.usage.modelCalls += 1;
+  const iterationStartedAt = deps.input.now();
+  await deps.appendEvent("iteration.started", { index: state.latestIterationIndex }, iterationStartedAt);
+  state.usage.loopCount += 1;
+  state.usage.modelCalls += 1;
 
   const contextSnapshot = buildLoopContextSnapshot({
-    runId: ctx.activeRun.runId,
-    anchor: ctx.anchor,
-    ledger: ctx.ledger,
-    workingSet: ctx.currentWorkingSet,
-    recentToolResult: ctx.recentToolResult,
-    recentValidationResult: ctx.recentValidationResult,
-    approvalStore: ctx.input.approvalStore,
-    userInputStore: ctx.input.userInputStore,
-    regroundedAt: ctx.regroundedAt,
+    runId: state.activeRun.runId,
+    anchor: deps.anchor,
+    ledger: state.ledger,
+    workingSet: state.currentWorkingSet,
+    recentToolResult: state.recentToolResult,
+    recentValidationResult: state.recentValidationResult,
+    approvalStore: deps.input.approvalStore,
+    userInputStore: deps.input.userInputStore,
+    regroundedAt: state.regroundedAt,
     now: iterationStartedAt
   });
   const integrity = validateCompactionIntegrity(
     {
-      anchor: ctx.anchor,
-      ledger: ctx.ledger,
+      anchor: deps.anchor,
+      ledger: state.ledger,
       openApprovals: contextSnapshot.openApprovals,
       openUserInputs: contextSnapshot.openUserInputs
     },
@@ -77,7 +78,7 @@ export async function handleGenerateAction(
       retryable: false
     };
   }
-  await ctx.appendEvent(
+  await deps.appendEvent(
     "context.compacted",
     {
       trims: contextSnapshot.trims.map((trim) => ({ field: trim.field, droppedCount: trim.droppedCount })),
@@ -90,36 +91,36 @@ export async function handleGenerateAction(
 
   let lastRejection: ModelActionRejection | null = null;
   const strategyBeforeModel = beforeModelStrategy({
-    task: ctx.input.task,
-    state: ctx.strategyState,
-    changedFiles: ctx.changedFiles,
-    recentValidationResult: ctx.recentValidationResult
+    task: deps.input.task,
+    state: state.strategyState,
+    changedFiles: state.changedFiles,
+    recentValidationResult: state.recentValidationResult
   });
   if (strategyBeforeModel.phaseChanged) {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "strategy.phase.changed",
       {
         fromPhase: strategyBeforeModel.previousPhase,
         toPhase: strategyBeforeModel.state.phase,
         reason: strategyBeforeModel.decision,
-        iteration: ctx.latestIterationIndex,
+        iteration: state.latestIterationIndex,
         consecutiveReadActions: strategyBeforeModel.state.explorationUsage.consecutiveReadActions,
         iterationsWithoutProgress: strategyBeforeModel.state.explorationUsage.iterationsWithoutProgress
       },
-      ctx.input.now()
+      deps.input.now()
     );
   }
-  ctx.mutate({ strategyState: strategyBeforeModel.state, strategyDecision: strategyBeforeModel.decision });
+  Object.assign(state, { strategyState: strategyBeforeModel.state, strategyDecision: strategyBeforeModel.decision });
   if (strategyBeforeModel.decision === "fail_no_progress") {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "strategy.no_progress.terminal",
       {
         reason: "no_progress_threshold_reached",
-        iteration: ctx.latestIterationIndex,
+        iteration: state.latestIterationIndex,
         consecutiveReadActions: strategyBeforeModel.state.explorationUsage.consecutiveReadActions,
         iterationsWithoutProgress: strategyBeforeModel.state.explorationUsage.iterationsWithoutProgress
       },
-      ctx.input.now()
+      deps.input.now()
     );
     return {
       kind: "fail",
@@ -129,88 +130,88 @@ export async function handleGenerateAction(
     };
   }
   if (strategyBeforeModel.decision !== "continue_explore") {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "strategy.transition.required",
       {
         reason: strategyBeforeModel.decision,
-        iteration: ctx.latestIterationIndex,
+        iteration: state.latestIterationIndex,
         consecutiveReadActions: strategyBeforeModel.state.explorationUsage.consecutiveReadActions,
         iterationsWithoutProgress: strategyBeforeModel.state.explorationUsage.iterationsWithoutProgress
       },
-      ctx.input.now()
+      deps.input.now()
     );
   }
   const builderPromptContext = prepareBuilderTurn({
     strategyState: strategyBeforeModel.state,
-    builderState: ctx.builderState,
-    workingSet: ctx.currentWorkingSet,
-    workspaceRoot: ctx.input.workspaceRoot,
-    now: ctx.input.now()
+    builderState: state.builderState,
+    workingSet: state.currentWorkingSet,
+    workspaceRoot: deps.input.workspaceRoot,
+    now: deps.input.now()
   });
   if (builderPromptContext !== null) {
-    ctx.mutate({ builderState: builderPromptContext.state });
+    Object.assign(state, { builderState: builderPromptContext.state });
     for (const event of builderPromptContext.events) {
-      await ctx.appendEvent(event.type, event.payload, ctx.input.now());
+      await deps.appendEvent(event.type, event.payload, deps.input.now());
     }
   }
   const planningPolicyContext = buildPlanningPolicyContext({
-    task: ctx.input.task,
-    workspaceRoot: ctx.input.workspaceRoot,
-    knownExistingFiles: ctx.currentWorkingSet?.items.map((item) => item.path) ?? []
+    task: deps.input.task,
+    workspaceRoot: deps.input.workspaceRoot,
+    knownExistingFiles: state.currentWorkingSet?.items.map((item) => item.path) ?? []
   });
-  ctx.mutate({
-    builderState: normalizeBuilderState({ ...builderPromptContext === null ? ctx.builderState : builderPromptContext.state, planningPolicy: null })
+  Object.assign(state, {
+    builderState: normalizeBuilderState({ ...builderPromptContext === null ? state.builderState : builderPromptContext.state, planningPolicy: null })
   });
   const strategyContext = buildStrategyPromptContext({
     state: strategyBeforeModel.state,
     decision: strategyBeforeModel.decision,
-    workingSet: ctx.currentWorkingSet,
-    changedFiles: ctx.changedFiles,
-    recentValidationResult: ctx.recentValidationResult,
-    currentStepId: (builderPromptContext === null ? ctx.builderState : builderPromptContext.state).currentStepId
+    workingSet: state.currentWorkingSet,
+    changedFiles: state.changedFiles,
+    recentValidationResult: state.recentValidationResult,
+    currentStepId: (builderPromptContext === null ? state.builderState : builderPromptContext.state).currentStepId
   });
   let action: AgentAction | undefined;
-  for (let attempt = 0; attempt <= ctx.maxActionRepairs; attempt += 1) {
+  for (let attempt = 0; attempt <= deps.maxActionRepairs; attempt += 1) {
     if (attempt > 0) {
-      ctx.usage.actionRepairCount += 1;
-      ctx.usage.modelCalls += 1;
+      state.usage.actionRepairCount += 1;
+      state.usage.modelCalls += 1;
       await ensureBudget({
-        appendEvent: ctx.appendEvent,
-        now: ctx.input.now(),
+        appendEvent: deps.appendEvent,
+        now: deps.input.now(),
         phase: "model",
-        budget: ctx.input.task.input.agentRequest!.budget,
-        usage: ctx.usage,
-        reserveVerification: ctx.input.task.input.validationRequest !== undefined
+        budget: deps.input.task.input.agentRequest!.budget,
+        usage: state.usage,
+        reserveVerification: deps.input.task.input.validationRequest !== undefined
       });
     }
     try {
       action = AgentActionSchema.parse(
-        await ctx.input.modelProvider.nextAction({
-          runId: ctx.activeRun.runId,
-          goal: ctx.anchor.goal,
-          constraints: ctx.anchor.constraints,
-          successCriteria: ctx.anchor.successCriteria,
-          ledger: ctx.ledger,
-          workingSet: ctx.currentWorkingSet,
-          recentToolResult: ctx.recentToolResult,
-          recentValidationResult: ctx.recentValidationResult,
-          ...(ctx.input.task.input.validationRequest === undefined
+        await deps.input.modelProvider.nextAction({
+          runId: state.activeRun.runId,
+          goal: deps.anchor.goal,
+          constraints: deps.anchor.constraints,
+          successCriteria: deps.anchor.successCriteria,
+          ledger: state.ledger,
+          workingSet: state.currentWorkingSet,
+          recentToolResult: state.recentToolResult,
+          recentValidationResult: state.recentValidationResult,
+          ...(deps.input.task.input.validationRequest === undefined
             ? {}
-            : { validationRequest: ctx.input.task.input.validationRequest }),
-          budget: ctx.input.task.input.agentRequest!.budget,
-          usage: ctx.usage,
-          availableTools: ctx.availableTools,
-          regroundRequested: ctx.regroundRequested,
-          replanRequested: ctx.replanRequested,
+            : { validationRequest: deps.input.task.input.validationRequest }),
+          budget: deps.input.task.input.agentRequest!.budget,
+          usage: state.usage,
+          availableTools: deps.availableTools,
+          regroundRequested: state.regroundRequested,
+          replanRequested: state.replanRequested,
           contextSnapshot,
           strategyContext,
           ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
           planningPolicyContext,
-          executionPlanRepairContext: (builderPromptContext === null ? ctx.builderState : builderPromptContext.state).executionPlanRepair,
-          lastModelError: lastRejection ?? ctx.pendingActionRejection
+          executionPlanRepairContext: (builderPromptContext === null ? state.builderState : builderPromptContext.state).executionPlanRepair,
+          lastModelError: lastRejection ?? state.pendingActionRejection
         })
       );
-      ctx.mutate({ pendingActionRejection: null });
+      Object.assign(state, { pendingActionRejection: null });
       break;
     } catch (error) {
       const failure = describeModelActionError(error);
@@ -221,7 +222,7 @@ export async function handleGenerateAction(
         message: failure.message,
         ...(failure.issues === null ? {} : { issues: failure.issues })
       };
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "model.action.rejected",
         {
           code: failure.code,
@@ -231,9 +232,9 @@ export async function handleGenerateAction(
           ...(failure.issues === null ? {} : { issues: failure.issues }),
           raw: failure.raw ?? null
         },
-        ctx.input.now()
+        deps.input.now()
       );
-      if (!isActionRepairable(error) || attempt === ctx.maxActionRepairs) {
+      if (!isActionRepairable(error) || attempt === deps.maxActionRepairs) {
         return {
           kind: "fail",
           code: failure.code,
@@ -252,7 +253,7 @@ export async function handleGenerateAction(
     };
   }
 
-  await ctx.appendEvent(
+  await deps.appendEvent(
     "model.action.generated",
     {
       type: action.type,
@@ -260,7 +261,7 @@ export async function handleGenerateAction(
         ? { toolCallId: action.toolCall.toolCallId, toolName: action.toolCall.toolName }
         : {})
     },
-    ctx.input.now()
+    deps.input.now()
   );
   return { kind: "action", action };
 }

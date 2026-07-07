@@ -33,7 +33,8 @@ import { createPendingAction } from "../../recovery/resume-boundary.js";
 import { serializeResumeState } from "../state.js";
 import { classifyRisk } from "../../../../tool-runtime/src/index.js";
 import { handleApproval } from "./approval.js";
-import type { HandlerContext, HandlerOutcome } from "../outcome.js";
+import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
+import type { AgentLoopState } from "../state.js";
 
 type ExecutionResult = {
   toolResult: ToolResult;
@@ -48,7 +49,7 @@ type ToolExecState = {
   execution: ExecutionResult;
   activeRun: Run;
   pendingRetryIncrement: boolean;
-  strategyPreviousWorkingSet: ReturnType<HandlerContext["currentWorkingSet"] extends infer T ? () => T : never>;
+  strategyPreviousWorkingSet: AgentLoopState["currentWorkingSet"];
   strategyPreviousChangedFiles: string[];
   strategyPreviousValidationResult: ValidationResult | null;
   latestIterationIndex: number;
@@ -78,7 +79,7 @@ function buildSnapshot(
  * success processing (validation, strategy after-action, no-progress).
  */
 export async function handleToolCall(
-  ctx: HandlerContext,
+  state: AgentLoopState, deps: HandlerDeps,
   action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
   bypassApproval: boolean,
   strategyBypassedForRecovery: boolean
@@ -99,37 +100,37 @@ export async function handleToolCall(
   const requiresApproval = risk === "write" || risk === "execute";
 
   if (requiresApproval && !bypassApproval) {
-    const reusableGrant = ctx.input.approvalStore.findReusableGrant({
-      runId: ctx.activeRun.runId,
+    const reusableGrant = deps.input.approvalStore.findReusableGrant({
+      runId: state.activeRun.runId,
       actionFingerprint,
       resourceScope,
-      now: ctx.input.now()
+      now: deps.input.now()
     });
     if (reusableGrant === null) {
       const outcome = await handleApproval(
         {
-          input: ctx.input,
-          run: ctx.activeRun,
-          ledger: ctx.ledger,
-          appendEvent: ctx.appendEvent,
-          checkpoint: ctx.checkpoint,
-          nextSequence: ctx.nextSequence,
-          latestIterationIndex: ctx.latestIterationIndex,
-          currentWorkingSet: ctx.currentWorkingSet,
-          changedFiles: ctx.changedFiles,
-          recentToolResult: ctx.recentToolResult,
-          recentValidationResult: ctx.recentValidationResult,
-          regroundRequested: ctx.regroundRequested,
-          replanRequested: ctx.replanRequested,
-          noProgressCount: ctx.noProgressCount,
-          usage: ctx.usage,
-          previousSnapshot: ctx.previousSnapshot,
-          pendingRetryIncrement: ctx.pendingRetryIncrement,
-          recoveryState: ctx.recoveryState,
-          strategyState: ctx.strategyState,
-          builderState: ctx.builderState,
-          finalizationPlanRejectionCount: ctx.finalizationPlanRejectionCount,
-          validationRepairActionRejectionCount: ctx.validationRepairActionRejectionCount
+          input: deps.input,
+          run: state.activeRun,
+          ledger: state.ledger,
+          appendEvent: deps.appendEvent,
+          checkpoint: deps.checkpoint,
+          nextSequence: state.nextSequence,
+          latestIterationIndex: state.latestIterationIndex,
+          currentWorkingSet: state.currentWorkingSet,
+          changedFiles: state.changedFiles,
+          recentToolResult: state.recentToolResult,
+          recentValidationResult: state.recentValidationResult,
+          regroundRequested: state.regroundRequested,
+          replanRequested: state.replanRequested,
+          noProgressCount: state.noProgressCount,
+          usage: state.usage,
+          previousSnapshot: state.previousSnapshot,
+          pendingRetryIncrement: state.pendingRetryIncrement,
+          recoveryState: state.recoveryState,
+          strategyState: state.strategyState,
+          builderState: state.builderState,
+          finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
+          validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
         },
         toolCall,
         action.type === "request_approval" ? action.reason : describeApprovalReasonFor(toolCall)
@@ -142,19 +143,19 @@ export async function handleToolCall(
   }
 
   await ensureBudget({
-    appendEvent: ctx.appendEvent,
-    now: ctx.input.now(),
+    appendEvent: deps.appendEvent,
+    now: deps.input.now(),
     phase: "tool",
-    budget: ctx.input.task.input.agentRequest!.budget,
-    usage: ctx.usage,
+    budget: deps.input.task.input.agentRequest!.budget,
+    usage: state.usage,
     reserveVerification: false
   });
 
-  let activeRun: Run = transitionRun(ctx.activeRun, "waiting_for_tool", ctx.input.now());
-  ctx.input.runStore.updateRun(activeRun);
-  ctx.mutate({ activeRun });
+  let activeRun: Run = transitionRun(state.activeRun, "waiting_for_tool", deps.input.now());
+  deps.input.runStore.updateRun(activeRun);
+  Object.assign(state, { activeRun });
   const toolPendingAction = createPendingAction({
-    pendingActionId: ctx.input.idGenerator(),
+    pendingActionId: deps.input.idGenerator(),
     runId: activeRun.runId,
     actionId: toolCall.toolCallId,
     waitingFor: "tool_execution",
@@ -163,43 +164,43 @@ export async function handleToolCall(
       toolCall
     },
     resumeState: serializeResumeState({
-      usage: ctx.usage,
-      nextSequence: ctx.nextSequence + 1,
-      currentWorkingSet: ctx.currentWorkingSet,
-      changedFiles: ctx.changedFiles,
-      recentToolResult: ctx.recentToolResult,
-      recentValidationResult: ctx.recentValidationResult,
-      latestIterationIndex: ctx.latestIterationIndex,
-      regroundRequested: ctx.regroundRequested,
-      replanRequested: ctx.replanRequested,
-      noProgressCount: ctx.noProgressCount,
-      previousSnapshot: ctx.previousSnapshot,
-      pendingRetryIncrement: ctx.pendingRetryIncrement,
-      recoveryState: ctx.recoveryState,
-      strategyState: ctx.strategyState,
-      builderState: ctx.builderState,
-      finalizationPlanRejectionCount: ctx.finalizationPlanRejectionCount,
-      validationRepairActionRejectionCount: ctx.validationRepairActionRejectionCount
+      usage: state.usage,
+      nextSequence: state.nextSequence + 1,
+      currentWorkingSet: state.currentWorkingSet,
+      changedFiles: state.changedFiles,
+      recentToolResult: state.recentToolResult,
+      recentValidationResult: state.recentValidationResult,
+      latestIterationIndex: state.latestIterationIndex,
+      regroundRequested: state.regroundRequested,
+      replanRequested: state.replanRequested,
+      noProgressCount: state.noProgressCount,
+      previousSnapshot: state.previousSnapshot,
+      pendingRetryIncrement: state.pendingRetryIncrement,
+      recoveryState: state.recoveryState,
+      strategyState: state.strategyState,
+      builderState: state.builderState,
+      finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
+      validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
     }),
-    now: ctx.input.now()
+    now: deps.input.now()
   });
-  ctx.input.pendingActionStore.insertPendingAction(toolPendingAction);
-  await ctx.checkpoint("pre_tool", {
+  deps.input.pendingActionStore.insertPendingAction(toolPendingAction);
+  await deps.checkpoint("pre_tool", {
     pendingActionId: toolPendingAction.pendingActionId,
     pendingActionFingerprint: actionFingerprint
   });
   if (toolCall.toolName === "filesystem.patch") {
-    await ctx.checkpoint("pre_patch", {
+    await deps.checkpoint("pre_patch", {
       pendingActionId: toolPendingAction.pendingActionId,
       pendingActionFingerprint: actionFingerprint
     });
   } else if (toolCall.toolName === "filesystem.write") {
-    await ctx.checkpoint("pre_write", {
+    await deps.checkpoint("pre_write", {
       pendingActionId: toolPendingAction.pendingActionId,
       pendingActionFingerprint: actionFingerprint
     });
   }
-  await ctx.appendEvent(
+  await deps.appendEvent(
     "tool.started",
     {
       toolName: toolCall.toolName,
@@ -208,7 +209,7 @@ export async function handleToolCall(
     activeRun.updatedAt
   );
   if (toolCall.toolName === "shell.execute") {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "command.started",
       {
         command: toolCall.input.command,
@@ -219,41 +220,41 @@ export async function handleToolCall(
     );
   }
 
-  const strategyPreviousWorkingSet = ctx.currentWorkingSet;
-  const strategyPreviousChangedFiles = ctx.changedFiles;
-  const strategyPreviousValidationResult = ctx.recentValidationResult;
-  const execution = await ctx.input.toolRuntime.execute({
+  const strategyPreviousWorkingSet = state.currentWorkingSet;
+  const strategyPreviousChangedFiles = state.changedFiles;
+  const strategyPreviousValidationResult = state.recentValidationResult;
+  const execution = await deps.input.toolRuntime.execute({
     runId: activeRun.runId,
     toolCall,
-    workspaceRoot: ctx.input.workspaceRoot,
-    artifactRoot: ctx.input.artifactRoot,
-    now: ctx.input.now,
-    idGenerator: ctx.input.idGenerator
+    workspaceRoot: deps.input.workspaceRoot,
+    artifactRoot: deps.input.artifactRoot,
+    now: deps.input.now,
+    idGenerator: deps.input.idGenerator
   });
-  ctx.usage.toolCalls += 1;
-  let pendingRetryIncrement = ctx.pendingRetryIncrement;
+  state.usage.toolCalls += 1;
+  let pendingRetryIncrement = state.pendingRetryIncrement;
   if (pendingRetryIncrement) {
-    ctx.usage.retryCount += 1;
+    state.usage.retryCount += 1;
     pendingRetryIncrement = false;
-    ctx.mutate({ pendingRetryIncrement });
+    Object.assign(state, { pendingRetryIncrement });
   }
-  ctx.input.pendingActionStore.updatePendingAction({
+  deps.input.pendingActionStore.updatePendingAction({
     ...toolPendingAction,
     status: "resolved",
-    updatedAt: ctx.input.now()
+    updatedAt: deps.input.now()
   });
   if (toolCall.toolName === "filesystem.patch") {
-    await ctx.checkpoint("post_patch", {
+    await deps.checkpoint("post_patch", {
       pendingActionId: toolPendingAction.pendingActionId,
       pendingActionFingerprint: actionFingerprint
     });
   } else if (toolCall.toolName === "filesystem.write") {
-    await ctx.checkpoint("post_write", {
+    await deps.checkpoint("post_write", {
       pendingActionId: toolPendingAction.pendingActionId,
       pendingActionFingerprint: actionFingerprint
     });
   }
-  await ctx.checkpoint("post_tool", {
+  await deps.checkpoint("post_tool", {
     pendingActionId: toolPendingAction.pendingActionId,
     pendingActionFingerprint: actionFingerprint
   });
@@ -268,14 +269,14 @@ export async function handleToolCall(
     strategyPreviousWorkingSet,
     strategyPreviousChangedFiles,
     strategyPreviousValidationResult,
-    latestIterationIndex: ctx.latestIterationIndex
+    latestIterationIndex: state.latestIterationIndex
   };
 
   const toolResult = execution.toolResult;
   if (toolResult.status === "error") {
-    return handleToolError(ctx, action, execState, strategyBypassedForRecovery);
+    return handleToolError(state, deps, action, execState, strategyBypassedForRecovery);
   }
-  return processToolSuccess(ctx, action, execState, strategyBypassedForRecovery);
+  return processToolSuccess(state, deps, action, execState, strategyBypassedForRecovery);
 }
 
 function describeApprovalReasonFor(toolCall: ToolCall): string {
@@ -287,7 +288,7 @@ function describeApprovalReasonFor(toolCall: ToolCall): string {
 }
 
 async function handleToolError(
-  ctx: HandlerContext,
+  state: AgentLoopState, deps: HandlerDeps,
   action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
   execState: ToolExecState,
   _strategyBypassedForRecovery: boolean
@@ -295,27 +296,27 @@ async function handleToolError(
   const { toolCall, actionFingerprint, toolPendingActionId, execution, pendingRetryIncrement } = execState;
   const toolResult = execution.toolResult as Extract<ToolResult, { status: "error" }>;
   let activeRun = execState.activeRun;
-  let ledger = ctx.ledger;
-  let previousSnapshot = ctx.previousSnapshot;
+  let ledger = state.ledger;
+  let previousSnapshot = state.previousSnapshot;
   let latestIterationIndex = execState.latestIterationIndex;
-  let recoveryState = ctx.recoveryState;
-  let noProgressCount = ctx.noProgressCount;
-  let regroundRequested = ctx.regroundRequested;
-  let replanRequested = ctx.replanRequested;
-  let pendingActionRejection = ctx.pendingActionRejection;
+  let recoveryState = state.recoveryState;
+  let noProgressCount = state.noProgressCount;
+  let regroundRequested = state.regroundRequested;
+  let replanRequested = state.replanRequested;
+  let pendingActionRejection = state.pendingActionRejection;
   let currentPendingRetryIncrement = pendingRetryIncrement;
 
   if (toolCall.toolName === "shell.execute") {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "command.failed",
       {
         command: toolCall.input.command,
         error: toolResult.error
       },
-      ctx.input.now()
+      deps.input.now()
     );
   }
-  await ctx.appendEvent("tool.failed", { error: toolResult.error }, ctx.input.now());
+  await deps.appendEvent("tool.failed", { error: toolResult.error }, deps.input.now());
   const toolFailureRejection = buildToolFailureRejection({
     toolCall,
     code: toolResult.error.code,
@@ -327,45 +328,45 @@ async function handleToolError(
 
   ledger = appendFailedAttempt({
     ledger,
-    now: ctx.input.now(),
+    now: deps.input.now(),
     actionType: "tool_call",
     summary: toolResult.error.message,
     errorCode: toolResult.error.code,
     retryable: toolResult.error.retryable,
     evidenceRefs: []
   });
-  await ctx.persistLedger(ledger);
+  await deps.persistLedger(ledger);
 
   const iteration = createIteration({
-    iterationId: ctx.input.idGenerator(),
+    iterationId: deps.input.idGenerator(),
     runId: activeRun.runId,
     index: latestIterationIndex,
     actionType: action.type,
     status: "failed",
-    usage: ctx.usage,
+    usage: state.usage,
     summary: toolResult.error.message,
     latestToolCallId: toolCall.toolCallId,
     latestExecutionRecordId: execution.executionRecord.executionId,
     evidenceRefs: [],
-    now: ctx.input.now()
+    now: deps.input.now()
   });
-  ctx.input.agentIterationStore.insertIteration(iteration);
-  await ctx.appendEvent("iteration.failed", { index: iteration.index, actionType: iteration.actionType }, iteration.createdAt);
+  deps.input.agentIterationStore.insertIteration(iteration);
+  await deps.appendEvent("iteration.failed", { index: iteration.index, actionType: iteration.actionType }, iteration.createdAt);
   latestIterationIndex += 1;
 
-  const resumedAt = ctx.input.now();
+  const resumedAt = deps.input.now();
   activeRun = transitionRun(activeRun, "running", resumedAt);
-  ctx.input.runStore.updateRun(activeRun);
-  ctx.mutate({ activeRun });
+  deps.input.runStore.updateRun(activeRun);
+  Object.assign(state, { activeRun });
 
   if (toolFailureRejection !== null && toolCall.toolName === "shell.execute") {
-    await ctx.checkpoint("post_tool", {
+    await deps.checkpoint("post_tool", {
       pendingActionId: toolPendingActionId,
       pendingActionFingerprint: actionFingerprint,
       note: "tool_failure_action_repair"
     });
-    previousSnapshot = buildSnapshot(ctx.actionSignature, ledger, ctx.recentValidationResult, toolResult.error.code, null);
-    ctx.mutate({
+    previousSnapshot = buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult, toolResult.error.code, null);
+    Object.assign(state, {
       pendingActionRejection,
       latestIterationIndex,
       previousSnapshot,
@@ -378,42 +379,42 @@ async function handleToolError(
   }
 
   const failure = normalizeToolFailure({
-    failureId: ctx.input.idGenerator(),
+    failureId: deps.input.idGenerator(),
     runId: activeRun.runId,
-    taskId: ctx.input.task.taskId,
+    taskId: deps.input.task.taskId,
     iteration: latestIterationIndex,
     toolResult: toolResult,
     executionRecordId: execution.executionRecord.executionId,
-    occurredAt: ctx.input.now()
+    occurredAt: deps.input.now()
   });
   const progressFingerprint = createProgressFingerprint({
     ledgerVersion: ledger.version,
     evidenceRefs: ledger.evidenceRefs,
-    changedFiles: ctx.changedFiles,
-    validationStatus: ctx.recentValidationResult?.status ?? null,
-    validationEvidenceCodes: ctx.recentValidationResult?.evidence.map((entry) => entry.code) ?? [],
-    workingSetPaths: ctx.currentWorkingSet?.items.map((item) => item.path) ?? []
+    changedFiles: state.changedFiles,
+    validationStatus: state.recentValidationResult?.status ?? null,
+    validationEvidenceCodes: state.recentValidationResult?.evidence.map((entry) => entry.code) ?? [],
+    workingSetPaths: state.currentWorkingSet?.items.map((item) => item.path) ?? []
   });
-  const recoveryOutcome = ctx.recoveryOrchestrator.decide({
+  const recoveryOutcome = deps.recoveryOrchestrator.decide({
     failure,
     previousFailure: recoveryState?.latestFailure,
     previousState: recoveryState,
     progressFingerprint,
     previousProgressFingerprint: recoveryState?.progressFingerprint,
     ledger,
-    workingSet: ctx.currentWorkingSet,
-    recoveryBudget: ctx.recoveryBudget,
-    now: ctx.input.now,
-    idGenerator: ctx.input.idGenerator
+    workingSet: state.currentWorkingSet,
+    recoveryBudget: deps.recoveryBudget,
+    now: deps.input.now,
+    idGenerator: deps.input.idGenerator
   });
   recoveryState = recoveryOutcome.state;
-  ctx.mutate({ recoveryState });
-  await ctx.checkpoint("recovery_state", {
+  Object.assign(state, { recoveryState });
+  await deps.checkpoint("recovery_state", {
     pendingActionId: toolPendingActionId,
     pendingActionFingerprint: actionFingerprint,
     note: "tool_failure_recovery"
   });
-  await ctx.appendEvent(
+  await deps.appendEvent(
     "failure.detected",
     {
       failureId: failure.failureId,
@@ -423,16 +424,16 @@ async function handleToolError(
     },
     failure.occurredAt
   );
-  await ctx.appendEvent(
+  await deps.appendEvent(
     "failure.classified",
     {
       failureId: failure.failureId,
       category: failure.category,
       retryable: failure.retryable
     },
-    ctx.input.now()
+    deps.input.now()
   );
-  await ctx.appendEvent(
+  await deps.appendEvent(
     "recovery.decision.created",
     {
       failureId: failure.failureId,
@@ -447,7 +448,7 @@ async function handleToolError(
   );
 
   if (recoveryOutcome.terminal) {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "recovery.terminal",
       {
         failureId: failure.failureId,
@@ -455,7 +456,7 @@ async function handleToolError(
         category: failure.category,
         reason: recoveryOutcome.decision.reason
       },
-      ctx.input.now()
+      deps.input.now()
     );
     return {
       kind: "fail",
@@ -469,17 +470,17 @@ async function handleToolError(
     recoveryOutcome.decision.disposition === "re_ground" ||
     recoveryOutcome.decision.disposition === "replan"
   ) {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "recovery.started",
       {
         failureId: failure.failureId,
         decisionId: recoveryOutcome.decision.decisionId,
         disposition: recoveryOutcome.decision.disposition
       },
-      ctx.input.now()
+      deps.input.now()
     );
     if (recoveryOutcome.regroundManifest !== undefined) {
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "recovery.reground.completed",
         {
           failureId: failure.failureId,
@@ -490,7 +491,7 @@ async function handleToolError(
       );
     }
     if (recoveryOutcome.recoveryPlan !== undefined) {
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "recovery.replan.created",
         {
           failureId: failure.failureId,
@@ -508,18 +509,18 @@ async function handleToolError(
           `Recovery ${recoveryOutcome.decision.disposition}: ${recoveryOutcome.decision.reason}`
         ]
       },
-      now: ctx.input.now()
+      now: deps.input.now()
     });
-    await ctx.persistLedger(ledger);
+    await deps.persistLedger(ledger);
     regroundRequested = recoveryOutcome.decision.disposition === "re_ground";
     replanRequested = recoveryOutcome.decision.disposition === "replan";
     noProgressCount = 0;
-    await ctx.checkpoint("post_tool", {
+    await deps.checkpoint("post_tool", {
       pendingActionId: toolPendingActionId,
       pendingActionFingerprint: actionFingerprint,
       note: "recovery_decision"
     });
-    ctx.mutate({
+    Object.assign(state, {
       pendingActionRejection,
       latestIterationIndex,
       noProgressCount,
@@ -534,17 +535,17 @@ async function handleToolError(
   }
   const noProgressSignals = detectNoProgress({
     previous: previousSnapshot,
-    current: buildSnapshot(ctx.actionSignature, ledger, ctx.recentValidationResult, toolResult.error.code, null)
+    current: buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult, toolResult.error.code, null)
   });
-  previousSnapshot = buildSnapshot(ctx.actionSignature, ledger, ctx.recentValidationResult, toolResult.error.code, null);
+  previousSnapshot = buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult, toolResult.error.code, null);
   const noProgress = await handleNoProgress({
-    input: { now: ctx.input.now, ledgerStore: ctx.input.ledgerStore },
-    appendEvent: ctx.appendEvent,
+    input: { now: deps.input.now, ledgerStore: deps.input.ledgerStore },
+    appendEvent: deps.appendEvent,
     ledger,
     noProgressCount,
     signals: noProgressSignals
   });
-  ctx.mutate({
+  Object.assign(state, {
     pendingActionRejection,
     pendingRetryIncrement: currentPendingRetryIncrement,
     latestIterationIndex,
@@ -558,7 +559,7 @@ async function handleToolError(
 }
 
 async function processToolSuccess(
-  ctx: HandlerContext,
+  state: AgentLoopState, deps: HandlerDeps,
   action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
   execState: ToolExecState,
   strategyBypassedForRecovery: boolean
@@ -566,102 +567,102 @@ async function processToolSuccess(
   const { toolCall, actionFingerprint: _actionFingerprint, execution, strategyPreviousWorkingSet, strategyPreviousChangedFiles, strategyPreviousValidationResult } = execState;
   const toolResult = execution.toolResult as Extract<ToolResult, { status: "success" }>;
   void _actionFingerprint;
-  let ledger = ctx.ledger;
+  let ledger = state.ledger;
   let activeRun = execState.activeRun;
-  let currentWorkingSet = ctx.currentWorkingSet;
-  let changedFiles = ctx.changedFiles;
-  let recentToolResult = ctx.recentToolResult;
-  let recentValidationResult = ctx.recentValidationResult;
-  let regroundedAt = ctx.regroundedAt;
-  let builderState = ctx.builderState;
-  let strategyState = ctx.strategyState;
-  let recoveryState = ctx.recoveryState;
-  let previousSnapshot = ctx.previousSnapshot;
-  let noProgressCount = ctx.noProgressCount;
-  let regroundRequested = ctx.regroundRequested;
-  let replanRequested = ctx.replanRequested;
-  let latestIterationIndex = ctx.latestIterationIndex;
-  let validationRepairActionRejectionCount = ctx.validationRepairActionRejectionCount;
+  let currentWorkingSet = state.currentWorkingSet;
+  let changedFiles = state.changedFiles;
+  let recentToolResult = state.recentToolResult;
+  let recentValidationResult = state.recentValidationResult;
+  let regroundedAt = state.regroundedAt;
+  let builderState = state.builderState;
+  let strategyState = state.strategyState;
+  let recoveryState = state.recoveryState;
+  let previousSnapshot = state.previousSnapshot;
+  let noProgressCount = state.noProgressCount;
+  let regroundRequested = state.regroundRequested;
+  let replanRequested = state.replanRequested;
+  let latestIterationIndex = state.latestIterationIndex;
+  let validationRepairActionRejectionCount = state.validationRepairActionRejectionCount;
 
   if (execution.artifacts !== undefined) {
     for (const artifact of execution.artifacts) {
-      await ctx.appendEvent("artifact.created", { artifactId: artifact.artifactId }, artifact.createdAt);
+      await deps.appendEvent("artifact.created", { artifactId: artifact.artifactId }, artifact.createdAt);
     }
     ledger = applyLedgerPatch({
       ledger,
       patch: {
         appendArtifactRefs: execution.artifacts.map((artifact) => artifact.artifactId)
       },
-      now: ctx.input.now()
+      now: deps.input.now()
     });
-    await ctx.persistLedger(ledger);
+    await deps.persistLedger(ledger);
   }
 
   if (toolResult.toolName === "filesystem.search") {
     currentWorkingSet = toolResult.output.workingSet;
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "search.completed",
       {
         returnedMatches: toolResult.output.result.returnedMatches,
         truncated: toolResult.output.result.truncated
       },
-      ctx.input.now()
+      deps.input.now()
     );
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "working-set.built",
       {
         itemCount: toolResult.output.workingSet.itemCount
       },
-      ctx.input.now()
+      deps.input.now()
     );
   }
 
   if (toolResult.toolName === "filesystem.patch") {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "patch.applied",
       {
         path: toolResult.output.result.path,
         status: toolResult.output.result.status,
         changed: toolResult.output.result.changed
       },
-      ctx.input.now()
+      deps.input.now()
     );
     if (toolResult.output.result.changed) {
-      regroundedAt = reGroundNow(ctx.input, currentWorkingSet, ctx.input.now());
+      regroundedAt = reGroundNow(deps.input, currentWorkingSet, deps.input.now());
       if (regroundedAt !== null) {
-        await ctx.appendEvent("context.regrounded", { reason: "workspace_change", at: regroundedAt }, regroundedAt);
+        await deps.appendEvent("context.regrounded", { reason: "workspace_change", at: regroundedAt }, regroundedAt);
       }
     }
   }
 
   if (toolResult.toolName === "shell.execute") {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "command.completed",
       {
         exitCode: toolResult.output.result.exitCode,
         timedOut: toolResult.output.result.timedOut,
         cancelled: toolResult.output.result.cancelled
       },
-      ctx.input.now()
+      deps.input.now()
     );
   }
 
   if (toolResult.toolName === "filesystem.write") {
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "patch.applied",
       {
         path: toolResult.output.result.path,
         status: toolResult.output.result.mode,
         changed: true
       },
-      ctx.input.now()
+      deps.input.now()
     );
   }
-  await ctx.appendEvent("tool.completed", { toolName: toolResult.toolName }, ctx.input.now());
+  await deps.appendEvent("tool.completed", { toolName: toolResult.toolName }, deps.input.now());
 
-  const resumedAt = ctx.input.now();
+  const resumedAt = deps.input.now();
   activeRun = transitionRun(activeRun, "running", resumedAt);
-  ctx.input.runStore.updateRun(activeRun);
+  deps.input.runStore.updateRun(activeRun);
 
   recentToolResult = toolResult;
   let artifactHash: string | null = null;
@@ -675,7 +676,7 @@ async function processToolSuccess(
       builderState,
       path: toolResult.output.result.path,
       evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
-      now: ctx.input.now()
+      now: deps.input.now()
     });
   } else if (toolResult.toolName === "filesystem.write") {
     artifactHash = toolResult.output.result.hash;
@@ -686,50 +687,50 @@ async function processToolSuccess(
       builderState,
       path: toolResult.output.result.path,
       evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
-      now: ctx.input.now()
+      now: deps.input.now()
     });
   }
   if (
     toolResult.toolName === "shell.execute" &&
-    ctx.input.task.input.validationRequest !== undefined &&
+    deps.input.task.input.validationRequest !== undefined &&
     toolResult.output.result.executionRecordId.length > 0
   ) {
     recentValidationResult = await runCommandValidation({
       run: activeRun,
-      task: ctx.input.task,
+      task: deps.input.task,
       toolResult: toolResult,
-      artifacts: ctx.input.artifactStore.getArtifactsByRun(activeRun.runId),
+      artifacts: deps.input.artifactStore.getArtifactsByRun(activeRun.runId),
       changedFiles,
       validationCwd: toolCall.toolName === "shell.execute" ? toolCall.input.cwd : ".",
-      workspaceRoot: ctx.input.workspaceRoot,
-      now: ctx.input.now(),
-      idGenerator: ctx.input.idGenerator
+      workspaceRoot: deps.input.workspaceRoot,
+      now: deps.input.now(),
+      idGenerator: deps.input.idGenerator
     });
-    ctx.input.validationResultStore.upsertValidationResult({
+    deps.input.validationResultStore.upsertValidationResult({
       runId: activeRun.runId,
       result: recentValidationResult,
-      createdAt: ctx.input.now()
+      createdAt: deps.input.now()
     });
-    await ctx.appendEvent(
+    await deps.appendEvent(
       "validation.completed",
       {
         status: recentValidationResult.status,
         evidence: recentValidationResult.evidence,
         ...(recentValidationResult.failureSummary === undefined ? {} : { failureSummary: recentValidationResult.failureSummary })
       },
-      ctx.input.now()
+      deps.input.now()
     );
     ledger = applyLedgerPatch({
       ledger,
       patch: {
         appendEvidenceRefs: recentValidationResult.evidenceRecords.map((record) => record.evidenceId)
       },
-      now: ctx.input.now()
+      now: deps.input.now()
     });
     if (recentValidationResult.status === "failed") {
       ledger = appendFailedAttempt({
         ledger,
-        now: ctx.input.now(),
+        now: deps.input.now(),
         actionType: "tool_call",
         summary: recentValidationResult.testResult?.summary ?? "Verification failed.",
         errorCode: "VALIDATION_FAILED",
@@ -737,12 +738,12 @@ async function processToolSuccess(
         evidenceRefs: recentValidationResult.evidenceRecords.map((record) => record.evidenceId)
       });
       const failure = normalizeValidationFailure({
-        failureId: ctx.input.idGenerator(),
+        failureId: deps.input.idGenerator(),
         runId: activeRun.runId,
-        taskId: ctx.input.task.taskId,
+        taskId: deps.input.task.taskId,
         iteration: latestIterationIndex,
         validation: recentValidationResult,
-        occurredAt: ctx.input.now()
+        occurredAt: deps.input.now()
       });
       const progressFingerprint = createProgressFingerprint({
         ledgerVersion: ledger.version,
@@ -752,7 +753,7 @@ async function processToolSuccess(
         validationEvidenceCodes: recentValidationResult.evidence.map((entry) => entry.code),
         workingSetPaths: currentWorkingSet?.items.map((item) => item.path) ?? []
       });
-      const recoveryOutcome = ctx.recoveryOrchestrator.decide({
+      const recoveryOutcome = deps.recoveryOrchestrator.decide({
         failure,
         previousFailure: recoveryState?.latestFailure,
         previousState: recoveryState,
@@ -760,16 +761,16 @@ async function processToolSuccess(
         previousProgressFingerprint: recoveryState?.progressFingerprint,
         ledger,
         workingSet: currentWorkingSet,
-        recoveryBudget: ctx.recoveryBudget,
-        now: ctx.input.now,
-        idGenerator: ctx.input.idGenerator
+        recoveryBudget: deps.recoveryBudget,
+        now: deps.input.now,
+        idGenerator: deps.input.idGenerator
       });
       recoveryState = recoveryOutcome.state;
-      ctx.mutate({ recoveryState });
-      await ctx.checkpoint("recovery_state", {
+      Object.assign(state, { recoveryState });
+      await deps.checkpoint("recovery_state", {
         note: "validation_recovery"
       });
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "failure.detected",
         {
           failureId: failure.failureId,
@@ -779,16 +780,16 @@ async function processToolSuccess(
         },
         failure.occurredAt
       );
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "failure.classified",
         {
           failureId: failure.failureId,
           category: failure.category,
           retryable: failure.retryable
         },
-        ctx.input.now()
+        deps.input.now()
       );
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "recovery.decision.created",
         {
           failureId: failure.failureId,
@@ -802,7 +803,7 @@ async function processToolSuccess(
         recoveryOutcome.decision.decidedAt
       );
       if (recoveryOutcome.recoveryPlan !== undefined) {
-        await ctx.appendEvent(
+        await deps.appendEvent(
           "recovery.replan.created",
           {
             failureId: failure.failureId,
@@ -814,7 +815,7 @@ async function processToolSuccess(
         );
       }
       if (recoveryOutcome.terminal) {
-        await ctx.appendEvent(
+        await deps.appendEvent(
           "recovery.terminal",
           {
             failureId: failure.failureId,
@@ -822,9 +823,9 @@ async function processToolSuccess(
             category: failure.category,
             reason: recoveryOutcome.decision.reason
           },
-          ctx.input.now()
+          deps.input.now()
         );
-        await ctx.persistLedger(ledger);
+        await deps.persistLedger(ledger);
         return {
           kind: "fail",
           code: "RECOVERY_TERMINAL",
@@ -835,7 +836,7 @@ async function processToolSuccess(
       replanRequested = recoveryOutcome.decision.disposition === "replan";
       regroundRequested = recoveryOutcome.decision.disposition === "re_ground";
     }
-    await ctx.persistLedger(ledger);
+    await deps.persistLedger(ledger);
   }
 
   ledger = completePlanStepFromTool({
@@ -846,12 +847,12 @@ async function processToolSuccess(
       toolResult.toolName === "shell.execute" && recentValidationResult !== null
         ? recentValidationResult.evidenceRecords.map((record) => record.evidenceId)
         : [],
-    now: ctx.input.now()
+    now: deps.input.now()
   });
-  await ctx.persistLedger(ledger);
+  await deps.persistLedger(ledger);
 
   const iteration = createIteration({
-    iterationId: ctx.input.idGenerator(),
+    iterationId: deps.input.idGenerator(),
     runId: activeRun.runId,
     index: latestIterationIndex,
     actionType: action.type,
@@ -859,17 +860,17 @@ async function processToolSuccess(
       recentValidationResult !== null && toolResult.toolName === "shell.execute" && recentValidationResult.status === "failed"
         ? "failed"
         : "completed",
-    usage: ctx.usage,
+    usage: state.usage,
     summary: describeToolSuccess(toolResult),
     latestToolCallId: toolCall.toolCallId,
     latestExecutionRecordId: execution.executionRecord.executionId,
     latestValidationStatus:
       toolResult.toolName === "shell.execute" ? recentValidationResult?.status : undefined,
     evidenceRefs: recentValidationResult?.evidenceRecords.map((record) => record.evidenceId) ?? [],
-    now: ctx.input.now()
+    now: deps.input.now()
   });
-  ctx.input.agentIterationStore.insertIteration(iteration);
-  await ctx.appendEvent(
+  deps.input.agentIterationStore.insertIteration(iteration);
+  await deps.appendEvent(
     iteration.status === "completed" ? "iteration.completed" : "iteration.failed",
     { index: iteration.index, actionType: iteration.actionType },
     iteration.createdAt
@@ -878,7 +879,7 @@ async function processToolSuccess(
 
   if (!strategyBypassedForRecovery && recoveryState === undefined) {
     const strategyAfterAction = afterActionStrategy({
-      task: ctx.input.task,
+      task: deps.input.task,
       state: strategyState,
       iteration: latestIterationIndex,
       action,
@@ -893,7 +894,7 @@ async function processToolSuccess(
     });
     strategyState = strategyAfterAction.state;
     if (strategyAfterAction.stalled) {
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "strategy.exploration.stalled",
         {
           reason: strategyAfterAction.progressReasons.length === 0 ? "no_progress" : strategyAfterAction.progressReasons.join(","),
@@ -901,11 +902,11 @@ async function processToolSuccess(
           consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
           iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress
         },
-        ctx.input.now()
+        deps.input.now()
       );
     }
     if (strategyAfterAction.terminal) {
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "strategy.no_progress.terminal",
         {
           reason: "third_stall",
@@ -913,9 +914,9 @@ async function processToolSuccess(
           consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
           iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress
         },
-        ctx.input.now()
+        deps.input.now()
       );
-      ctx.mutate({
+      Object.assign(state, {
         activeRun,
         currentWorkingSet,
         changedFiles,
@@ -938,7 +939,7 @@ async function processToolSuccess(
   const noProgressSignals = detectNoProgress({
     previous: previousSnapshot,
     current: buildSnapshot(
-      ctx.actionSignature,
+      deps.actionSignature,
       ledger,
       recentValidationResult,
       toolResult.toolName === "shell.execute" && recentValidationResult?.status === "failed"
@@ -948,7 +949,7 @@ async function processToolSuccess(
     )
   });
   previousSnapshot = buildSnapshot(
-    ctx.actionSignature,
+    deps.actionSignature,
     ledger,
     recentValidationResult,
     toolResult.toolName === "shell.execute" && recentValidationResult?.status === "failed"
@@ -957,15 +958,15 @@ async function processToolSuccess(
     artifactHash
   );
   const noProgress = await handleNoProgress({
-    input: { now: ctx.input.now, ledgerStore: ctx.input.ledgerStore },
-    appendEvent: ctx.appendEvent,
+    input: { now: deps.input.now, ledgerStore: deps.input.ledgerStore },
+    appendEvent: deps.appendEvent,
     ledger,
     noProgressCount,
     signals: noProgressSignals
   });
   regroundRequested = noProgress.regroundRequested;
   replanRequested = noProgress.replanRequested;
-  ctx.mutate({
+  Object.assign(state, {
     activeRun,
     currentWorkingSet,
     changedFiles,

@@ -5,25 +5,19 @@ import {
   createEvent,
   createProgressLedger,
   type AgentAction,
-  type BuilderState,
   type Checkpoint,
   type CheckpointPhase,
   type Event,
   type PendingActionResumeState,
   type ProgressLedger,
   type Run,
-  type StrategyDecision,
-  type StrategyState,
-  type Task,
-  type ToolResult,
-  type ValidationResult,
-  type WorkingSet
+  type Task
 } from "../../contracts/src/index.js";
 import {
   collectRehydrationFilePaths,
   rehydrateWorkspaceFacts
 } from "../../context/src/index.js";
-import type { AgentLoopModelProvider, ModelActionRejection } from "../../model-gateway/src/index.js";
+import type { AgentLoopModelProvider } from "../../model-gateway/src/index.js";
 import type { AgentIterationStore } from "../../storage/src/agent-iteration-store.js";
 import type { ApprovalStore } from "../../storage/src/approval-store.js";
 import type { ArtifactStore } from "../../storage/src/artifact-store.js";
@@ -55,7 +49,7 @@ import { handleUpdatePlan } from "./agent-loop/handlers/update-plan.js";
 import { handleFinal } from "./agent-loop/handlers/final.js";
 import { handleToolCall } from "./agent-loop/handlers/tool-call.js";
 import { handleGenerateAction } from "./agent-loop/handlers/generate-action.js";
-import type { HandlerContext, StateDelta } from "./agent-loop/outcome.js";
+import type { HandlerDeps } from "./agent-loop/outcome.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
 export { redactForEvidence } from "./agent-loop/redact.js";
@@ -70,15 +64,6 @@ import {
 import {
   evaluateBuilderAction
 } from "./builder/index.js";
-
-type NoProgressSnapshot = {
-  actionSignature: string | null;
-  errorCode: string | null;
-  ledgerVersion: number;
-  evidenceCount: number;
-  validationStatus: "passed" | "failed" | null;
-  artifactHash: string | null;
-};
 
 export { type AgentLoopResult } from "./agent-loop/outcome.js";
 import type { AgentLoopResult } from "./agent-loop/outcome.js";
@@ -217,67 +202,18 @@ export async function runAgentLoop(input: {
     return checkpointRecord;
   };
 
-  const buildHandlerContext = (actionSignature: string): HandlerContext => ({
+  const deps: HandlerDeps = {
     input,
     anchor,
     appendEvent,
     appendEventWithSequence,
     checkpoint,
     persistLedger,
-    mutate: applyStateDelta,
     recoveryOrchestrator,
     recoveryBudget,
     availableTools,
     maxActionRepairs: MAX_ACTION_REPAIRS,
-    actionSignature,
-    activeRun: state.activeRun,
-    nextSequence: state.nextSequence,
-    latestIterationIndex: state.latestIterationIndex,
-    currentWorkingSet: state.currentWorkingSet,
-    changedFiles: state.changedFiles,
-    recentToolResult: state.recentToolResult,
-    recentValidationResult: state.recentValidationResult,
-    regroundedAt: state.regroundedAt,
-    ledger: state.ledger,
-    noProgressCount: state.noProgressCount,
-    previousSnapshot: state.previousSnapshot,
-    recoveryState: state.recoveryState,
-    strategyState: state.strategyState,
-    builderState: state.builderState,
-    strategyDecision: state.strategyDecision,
-    regroundRequested: state.regroundRequested,
-    replanRequested: state.replanRequested,
-    pendingRetryIncrement: state.pendingRetryIncrement,
-    finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
-    validationRepairActionRejectionCount: state.validationRepairActionRejectionCount,
-    pendingActionRejection: state.pendingActionRejection,
-    usage: state.usage
-  });
-
-  const applyStateDelta = (delta: StateDelta | undefined) => {
-    if (delta === undefined) {
-      return;
-    }
-    if ("activeRun" in delta) state.activeRun = delta.activeRun as Run;
-    if ("currentWorkingSet" in delta) state.currentWorkingSet = (delta.currentWorkingSet as WorkingSet | null) ?? null;
-    if ("changedFiles" in delta) state.changedFiles = delta.changedFiles as string[];
-    if ("recentToolResult" in delta) state.recentToolResult = (delta.recentToolResult as ToolResult | null) ?? null;
-    if ("recentValidationResult" in delta) state.recentValidationResult = (delta.recentValidationResult as ValidationResult | null) ?? null;
-    if ("latestIterationIndex" in delta) state.latestIterationIndex = delta.latestIterationIndex as number;
-    if ("regroundedAt" in delta) state.regroundedAt = (delta.regroundedAt as string | null) ?? null;
-    if ("ledger" in delta) state.ledger = delta.ledger as ProgressLedger;
-    if ("noProgressCount" in delta) state.noProgressCount = delta.noProgressCount as number;
-    if ("previousSnapshot" in delta) state.previousSnapshot = delta.previousSnapshot as NoProgressSnapshot;
-    if ("recoveryState" in delta) state.recoveryState = delta.recoveryState;
-    if ("strategyState" in delta) state.strategyState = delta.strategyState as StrategyState;
-    if ("builderState" in delta) state.builderState = delta.builderState as BuilderState;
-    if ("strategyDecision" in delta) state.strategyDecision = delta.strategyDecision as StrategyDecision;
-    if ("regroundRequested" in delta) state.regroundRequested = delta.regroundRequested as boolean;
-    if ("replanRequested" in delta) state.replanRequested = delta.replanRequested as boolean;
-    if ("pendingRetryIncrement" in delta) state.pendingRetryIncrement = delta.pendingRetryIncrement as boolean;
-    if ("finalizationPlanRejectionCount" in delta) state.finalizationPlanRejectionCount = delta.finalizationPlanRejectionCount as number;
-    if ("validationRepairActionRejectionCount" in delta) state.validationRepairActionRejectionCount = delta.validationRepairActionRejectionCount as number;
-    if ("pendingActionRejection" in delta) state.pendingActionRejection = (delta.pendingActionRejection as ModelActionRejection | null) ?? null;
+    actionSignature: ""
   };
 
   if (input.resume === undefined) {
@@ -315,7 +251,7 @@ export async function runAgentLoop(input: {
       state.seededAction = null;
       state.bypassApprovalForSeedAction = false;
     } else {
-      const outcome = await handleGenerateAction(buildHandlerContext(""));
+      const outcome = await handleGenerateAction(state, deps);
       if (outcome.kind === "fail") {
         return failRun({
           input,
@@ -330,6 +266,7 @@ export async function runAgentLoop(input: {
     }
 
     const actionSignature = JSON.stringify(action);
+    deps.actionSignature = actionSignature;
 
     if (
       requiresValidationRepairAction(state.recentValidationResult) &&
@@ -454,7 +391,7 @@ export async function runAgentLoop(input: {
       await appendEvent(event.type, event.payload, input.now());
     }
     if (!strategyBypassedForRecovery && action.type === "submit_execution_plan") {
-      const outcome = await handleSubmitExecutionPlan(buildHandlerContext(actionSignature), action);
+      const outcome = await handleSubmitExecutionPlan(state, deps, action);
       if (outcome.kind === "fail") {
         return failRun({
           input,
@@ -621,7 +558,7 @@ export async function runAgentLoop(input: {
     }
 
     if (action.type === "update_plan") {
-      const outcome = await handleUpdatePlan(buildHandlerContext(actionSignature), action);
+      const outcome = await handleUpdatePlan(state, deps, action);
       if (outcome.kind === "fail") {
         return failRun({
           input,
@@ -686,7 +623,7 @@ export async function runAgentLoop(input: {
     }
 
     if (action.type === "final") {
-      const outcome = await handleFinal(buildHandlerContext(actionSignature), action);
+      const outcome = await handleFinal(state, deps, action);
       if (outcome.kind === "fail") {
         return failRun({
           input,
@@ -716,7 +653,7 @@ export async function runAgentLoop(input: {
 
     if (action.type === "tool_call" || action.type === "request_approval") {
       const outcome = await handleToolCall(
-        buildHandlerContext(actionSignature),
+        state, deps,
         action,
         bypassApproval,
         strategyBypassedForRecovery

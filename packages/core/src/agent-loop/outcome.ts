@@ -1,28 +1,21 @@
 import type {
   AgentBudget,
-  AgentBudgetUsage,
   ApprovalRequest,
   Artifact,
-  BuilderState,
   Checkpoint,
   CheckpointPhase,
   Event,
   ProgressLedger,
-  RecoveryCheckpointState,
   Run,
-  StrategyDecision,
-  StrategyState,
   Task,
   TaskAnchor,
   ToolCall,
-  ToolResult,
   UserInputRequest,
-  ValidationResult,
-  WorkingSet
+  ValidationResult
 } from "../../../contracts/src/index.js";
-import type { AgentLoopModelProvider, ModelActionRejection } from "../../../model-gateway/src/index.js";
-import type { NoProgressSnapshot } from "../recovery/resume-boundary.js";
+import type { AgentLoopModelProvider } from "../../../model-gateway/src/index.js";
 import type { RecoveryOrchestrator } from "../recovery/index.js";
+import type { AgentLoopState } from "./state.js";
 import type { AgentIterationStore } from "../../../storage/src/agent-iteration-store.js";
 import type { ApprovalStore } from "../../../storage/src/approval-store.js";
 import type { ArtifactStore } from "../../../storage/src/artifact-store.js";
@@ -63,16 +56,17 @@ export type AgentLoopResult =
   | AgentLoopWaitingForUserResult;
 
 /**
- * HandlerContext — the shared dependency bundle passed to every action
- * Handler. Built once per dispatch from the runner's locals (which are the
- * source of truth during F025-C incremental extraction). Handlers read from
- * `ctx` and return a {@link StateDelta} for the locals they modify directly;
- * closure-mutated fields (nextSequence, ledger) stay owned by the runner.
+ * HandlerDeps — the immutable dependencies a Handler needs beyond the
+ * mutable AgentLoopState: the runAgentLoop input, the anchor, the closure
+ * helpers (appendEvent/checkpoint/persistLedger), and the subsystem
+ * singletons (recoveryOrchestrator, recoveryBudget, availableTools,
+ * maxActionRepairs, actionSignature).
  *
- * After F025-C state convergence, `ctx` collapses into a single mutable
- * `AgentLoopState` reference and the delta mechanism is removed.
+ * Handlers receive `(state: AgentLoopState, deps: HandlerDeps, action)` and
+ * mutate `state.X` directly (field assignment or `Object.assign(state,
+ * delta)`). No snapshot, no sync — state is the single source of truth.
  */
-export type HandlerContext = {
+export type HandlerDeps = {
   input: {
     task: Task;
     run: Run;
@@ -103,69 +97,19 @@ export type HandlerContext = {
     note?: string;
   }) => Promise<Checkpoint>;
   persistLedger: (nextLedger: ProgressLedger) => Promise<void>;
-  mutate: (delta: StateDelta) => void;
   recoveryOrchestrator: RecoveryOrchestrator;
   recoveryBudget: AgentBudget | Record<string, never>;
   availableTools: ToolCall["toolName"][];
   maxActionRepairs: number;
   actionSignature: string;
-  // Mutable loop state (read by handlers; writes go through StateDelta)
-  activeRun: Run;
-  nextSequence: number;
-  latestIterationIndex: number;
-  currentWorkingSet: WorkingSet | null;
-  changedFiles: string[];
-  recentToolResult: ToolResult | null;
-  recentValidationResult: ValidationResult | null;
-  regroundedAt: string | null;
-  ledger: ProgressLedger;
-  noProgressCount: number;
-  previousSnapshot: NoProgressSnapshot;
-  recoveryState: RecoveryCheckpointState | undefined;
-  strategyState: StrategyState;
-  builderState: BuilderState;
-  strategyDecision: StrategyDecision;
-  regroundRequested: boolean;
-  replanRequested: boolean;
-  pendingRetryIncrement: boolean;
-  finalizationPlanRejectionCount: number;
-  validationRepairActionRejectionCount: number;
-  pendingActionRejection: ModelActionRejection | null;
-  usage: AgentBudgetUsage;
 };
 
 /**
- * StateDelta — the subset of loop mutable state that an extracted Handler
- * may modify directly. Carried by a "continue" HandlerOutcome so the dispatch
- * loop can apply the changes back to its locals. Fields mutated only by
- * closures (nextSequence, ledger via persistLedger) are intentionally absent
- * — those update the locals directly through the closures.
- *
- * Optional fields: absence means "not touched"; presence (even with
- * `undefined`) means "set to this value". Callers apply with `in` checks.
+ * StateDelta — a partial AgentLoopState used as the source for
+ * `Object.assign(state, delta)` in handlers. Kept as a type alias so handler
+ * delta object literals stay typed.
  */
-export type StateDelta = {
-  activeRun?: Run;
-  currentWorkingSet?: WorkingSet | null;
-  changedFiles?: string[];
-  recentToolResult?: ToolResult | null;
-  recentValidationResult?: ValidationResult | null;
-  latestIterationIndex?: number;
-  regroundedAt?: string | null;
-  ledger?: ProgressLedger;
-  noProgressCount?: number;
-  previousSnapshot?: NoProgressSnapshot;
-  recoveryState?: RecoveryCheckpointState | undefined;
-  strategyState?: StrategyState;
-  builderState?: BuilderState;
-  strategyDecision?: StrategyDecision;
-  regroundRequested?: boolean;
-  replanRequested?: boolean;
-  pendingRetryIncrement?: boolean;
-  finalizationPlanRejectionCount?: number;
-  validationRepairActionRejectionCount?: number;
-  pendingActionRejection?: ModelActionRejection | null;
-};
+export type StateDelta = Partial<AgentLoopState>;
 
 /**
  * HandlerOutcome — the contract between an action Handler and the dispatch

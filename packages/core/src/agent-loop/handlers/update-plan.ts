@@ -10,7 +10,8 @@ import {
 } from "../../strategy/index.js";
 import { createIteration } from "../iteration.js";
 import { detectNoProgress, handleNoProgress } from "../no-progress.js";
-import type { HandlerContext, HandlerOutcome } from "../outcome.js";
+import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
+import type { AgentLoopState } from "../state.js";
 
 function buildSnapshot(
   actionSignature: string,
@@ -38,46 +39,46 @@ function buildSnapshot(
  * replanRequested.
  */
 export async function handleUpdatePlan(
-  ctx: HandlerContext,
+  state: AgentLoopState, deps: HandlerDeps,
   action: Extract<AgentAction, { type: "update_plan" }>
 ): Promise<HandlerOutcome> {
   const nextLedger = applyLedgerPatch({
-    ledger: ctx.ledger,
+    ledger: state.ledger,
     patch: action.patch,
-    now: ctx.input.now()
+    now: deps.input.now()
   });
-  await ctx.persistLedger(nextLedger);
+  await deps.persistLedger(nextLedger);
   let ledger = nextLedger;
-  await ctx.checkpoint("plan_formed");
+  await deps.checkpoint("plan_formed");
   const iteration = createIteration({
-    iterationId: ctx.input.idGenerator(),
-    runId: ctx.activeRun.runId,
-    index: ctx.latestIterationIndex,
+    iterationId: deps.input.idGenerator(),
+    runId: state.activeRun.runId,
+    index: state.latestIterationIndex,
     actionType: action.type,
     status: "completed",
-    usage: ctx.usage,
+    usage: state.usage,
     summary: action.reason,
     evidenceRefs: [],
-    now: ctx.input.now()
+    now: deps.input.now()
   });
-  ctx.input.agentIterationStore.insertIteration(iteration);
-  await ctx.appendEvent("iteration.completed", { index: iteration.index, actionType: iteration.actionType }, iteration.createdAt);
-  const nextLatestIterationIndex = ctx.latestIterationIndex + 1;
+  deps.input.agentIterationStore.insertIteration(iteration);
+  await deps.appendEvent("iteration.completed", { index: iteration.index, actionType: iteration.actionType }, iteration.createdAt);
+  const nextLatestIterationIndex = state.latestIterationIndex + 1;
 
-  if (ctx.builderState.planAccepted) {
+  if (state.builderState.planAccepted) {
     const noProgressSignals = detectNoProgress({
-      previous: ctx.previousSnapshot,
-      current: buildSnapshot(ctx.actionSignature, ledger, ctx.recentValidationResult)
+      previous: state.previousSnapshot,
+      current: buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult)
     });
-    const previousSnapshot = buildSnapshot(ctx.actionSignature, ledger, ctx.recentValidationResult);
+    const previousSnapshot = buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult);
     const noProgress = await handleNoProgress({
-      input: { now: ctx.input.now, ledgerStore: ctx.input.ledgerStore },
-      appendEvent: ctx.appendEvent,
+      input: { now: deps.input.now, ledgerStore: deps.input.ledgerStore },
+      appendEvent: deps.appendEvent,
       ledger,
-      noProgressCount: ctx.noProgressCount,
+      noProgressCount: state.noProgressCount,
       signals: noProgressSignals
     });
-    ctx.mutate({
+    Object.assign(state, {
       latestIterationIndex: nextLatestIterationIndex,
       previousSnapshot,
       ledger: noProgress.ledger,
@@ -88,44 +89,44 @@ export async function handleUpdatePlan(
     return { kind: "continue" };
   }
 
-  let nextStrategyState: StrategyState = ctx.strategyState;
+  let nextStrategyState: StrategyState = state.strategyState;
   const derivedPlan = deriveExecutionPlan({
     ledger,
-    validationCommand: ctx.input.task.input.validationRequest?.command,
-    validationArgs: ctx.input.task.input.validationRequest?.args
+    validationCommand: deps.input.task.input.validationRequest?.command,
+    validationArgs: deps.input.task.input.validationRequest?.args
   });
   if (derivedPlan === undefined) {
     const strategyAfterPlan = afterActionStrategy({
-      task: ctx.input.task,
+      task: deps.input.task,
       state: nextStrategyState,
       iteration: nextLatestIterationIndex,
       action,
-      previousWorkingSet: ctx.currentWorkingSet,
-      currentWorkingSet: ctx.currentWorkingSet,
-      previousChangedFiles: ctx.changedFiles,
-      currentChangedFiles: ctx.changedFiles,
-      previousValidationResult: ctx.recentValidationResult,
-      currentValidationResult: ctx.recentValidationResult
+      previousWorkingSet: state.currentWorkingSet,
+      currentWorkingSet: state.currentWorkingSet,
+      previousChangedFiles: state.changedFiles,
+      currentChangedFiles: state.changedFiles,
+      previousValidationResult: state.recentValidationResult,
+      currentValidationResult: state.recentValidationResult
     });
     nextStrategyState = strategyAfterPlan.state;
   } else {
     const completeness = evaluateExecutionPlanCompleteness(derivedPlan);
     if (completeness.complete) {
       const strategyAfterPlan = afterActionStrategy({
-        task: ctx.input.task,
+        task: deps.input.task,
         state: clearPlanRepair(nextStrategyState),
         iteration: nextLatestIterationIndex,
         action,
-        previousWorkingSet: ctx.currentWorkingSet,
-        currentWorkingSet: ctx.currentWorkingSet,
-        previousChangedFiles: ctx.changedFiles,
-        currentChangedFiles: ctx.changedFiles,
-        previousValidationResult: ctx.recentValidationResult,
-        currentValidationResult: ctx.recentValidationResult,
+        previousWorkingSet: state.currentWorkingSet,
+        currentWorkingSet: state.currentWorkingSet,
+        previousChangedFiles: state.changedFiles,
+        currentChangedFiles: state.changedFiles,
+        previousValidationResult: state.recentValidationResult,
+        currentValidationResult: state.recentValidationResult,
         plan: derivedPlan
       });
       nextStrategyState = strategyAfterPlan.state;
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "plan.created",
         {
           reason: "minimum_execution_plan_derived",
@@ -134,7 +135,7 @@ export async function handleUpdatePlan(
           intendedChanges: derivedPlan.intendedChanges,
           validationCommands: derivedPlan.validationCommands
         },
-        ctx.input.now()
+        deps.input.now()
       );
     } else {
       const repairDecision = handlePlanRepair({
@@ -144,7 +145,7 @@ export async function handleUpdatePlan(
         iteration: nextLatestIterationIndex
       });
       nextStrategyState = repairDecision.state;
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "plan.partial",
         {
           reason: "execution_plan_incomplete",
@@ -156,10 +157,10 @@ export async function handleUpdatePlan(
           attempt: repairDecision.repair.attempt,
           remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
         },
-        ctx.input.now()
+        deps.input.now()
       );
       if (repairDecision.kind === "exhaust") {
-        await ctx.appendEvent(
+        await deps.appendEvent(
           "strategy.plan_repair.exhausted",
           {
             reason: "plan_repair_budget_exhausted",
@@ -168,7 +169,7 @@ export async function handleUpdatePlan(
             attempt: repairDecision.repair.attempt,
             remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
           },
-          ctx.input.now()
+          deps.input.now()
         );
         return {
           kind: "fail",
@@ -177,7 +178,7 @@ export async function handleUpdatePlan(
           retryable: false
         };
       }
-      await ctx.appendEvent(
+      await deps.appendEvent(
         "strategy.plan_repair.requested",
         {
           reason: "execution_plan_incomplete",
@@ -186,27 +187,27 @@ export async function handleUpdatePlan(
           attempt: repairDecision.repair.attempt,
           remainingCorrectionAttempts: repairDecision.repair.remainingCorrectionAttempts
         },
-        ctx.input.now()
+        deps.input.now()
       );
-      ctx.mutate({ strategyState: nextStrategyState, latestIterationIndex: nextLatestIterationIndex });
-      await ctx.checkpoint("post_response", { note: "strategy_plan_repair" });
+      Object.assign(state, { strategyState: nextStrategyState, latestIterationIndex: nextLatestIterationIndex });
+      await deps.checkpoint("post_response", { note: "strategy_plan_repair" });
       return { kind: "continue" };
     }
   }
 
   const noProgressSignals = detectNoProgress({
-    previous: ctx.previousSnapshot,
-    current: buildSnapshot(ctx.actionSignature, ledger, ctx.recentValidationResult)
+    previous: state.previousSnapshot,
+    current: buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult)
   });
-  const previousSnapshot = buildSnapshot(ctx.actionSignature, ledger, ctx.recentValidationResult);
+  const previousSnapshot = buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult);
   const noProgress = await handleNoProgress({
-    input: { now: ctx.input.now, ledgerStore: ctx.input.ledgerStore },
-    appendEvent: ctx.appendEvent,
+    input: { now: deps.input.now, ledgerStore: deps.input.ledgerStore },
+    appendEvent: deps.appendEvent,
     ledger,
-    noProgressCount: ctx.noProgressCount,
+    noProgressCount: state.noProgressCount,
     signals: noProgressSignals
   });
-  ctx.mutate({
+  Object.assign(state, {
     latestIterationIndex: nextLatestIterationIndex,
     strategyState: nextStrategyState,
     previousSnapshot,
