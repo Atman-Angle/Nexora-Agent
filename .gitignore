@@ -22,5 +22,9 @@ tmp/
 .tmp-e0013/
 .tmp-e0014/
 
+# E001 real-convergence loop snapshots (ephemeral per-run JSON)
+reports/e0013-real-convergence-*/
+reports/e0014-real-validation-repair-*/
+
 # Local tool settings
 .local-tool-settings/
