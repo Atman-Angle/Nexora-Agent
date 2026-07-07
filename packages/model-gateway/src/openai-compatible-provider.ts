@@ -475,35 +475,17 @@ function renderValidationRepairInstruction(validation: ValidationResult | null):
   if (validation?.status !== "failed" || validation.failureSummary === undefined) {
     return "Validation repair instruction: null";
   }
-  const moduleDiagnosticInstruction = renderModuleDiagnosticInstruction(validation.failureSummary);
   return [
     "Validation repair instruction: Treat the failed validation summary as repair evidence.",
     "If validation repair context includes suggestedRepair, make the next repair plan or mutation directly address that suggestion.",
-    "If suggestedRepair describes an import/export mismatch, inspect the importing file named in the summary and align every local import in that same file with the referenced module exports; do not stop after changing only the first reported import when similar local imports remain.",
-    "Prefer changing the importing file when it is listed in failureSummary.changedFiles or is the current Builder target; do not assume files outside Task executionConstraints can be edited.",
     "Do not final yet.",
     "Submit a focused repair execution plan or perform the next Builder-directed repair mutation using the same Task executionConstraints.",
     "Do not use broad filesystem.read, off-target filesystem.read, filesystem.search, filesystem.list, project inspection, git tools, or update_plan as the next action after this fresh failed validation.",
     "A filesystem.read is repair evidence only when the path is in failureSummary.changedFiles, or when Builder has selected a modify step and the read path is exactly that current Builder target, for current content/hash acquisition before repair.",
     "Repeated reads of the same repair-evidence path do not count as repair progress; use them only to confirm current content/hash, then submit a concrete repair mutation and rerun validation.",
     "Do not use shell.execute to mutate source files; shell.execute is only for rerunning validation, tests, or builds.",
-    moduleDiagnosticInstruction,
     "The repair must address the failure summary, stay within the existing Builder plan/constraints, and rerun the validation command after mutation."
   ].join(" ");
-}
-
-function renderModuleDiagnosticInstruction(summary: NonNullable<ValidationResult["failureSummary"]>): string {
-  const diagnostic = `${summary.message}\n${summary.stderrExcerpt}\n${summary.stdoutExcerpt}`;
-  if (/not exported by|is not exported by/i.test(diagnostic)) {
-    return "For JavaScript or TypeScript module diagnostics such as not exported by, repair the importing file's import form or the exporting file's export so it matches the diagnostic exactly; do not leave the same import/export mismatch for the next validation.";
-  }
-  if (/Could not resolve|Cannot resolve|Failed to resolve|module not found/i.test(diagnostic)) {
-    return "For module resolution diagnostics, repair the import path or exported module reference named in the failure summary before rerunning validation.";
-  }
-  if (/Unexpected|Expected|Transform failed|SyntaxError/i.test(diagnostic)) {
-    return "For syntax or transform diagnostics, repair the exact file and line reported in the failure summary before rerunning validation.";
-  }
-  return "";
 }
 
 function renderValidationSuccessInstruction(validation: ValidationResult | null): string {
