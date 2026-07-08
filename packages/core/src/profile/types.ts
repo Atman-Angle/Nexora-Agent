@@ -1,4 +1,4 @@
-import type { AgentAction, Event } from "../../../contracts/src/index.js";
+import type { AgentAction, BuilderState, Event, Run, StrategyState, TaskAnchor } from "../../../contracts/src/index.js";
 import type { HandlerDeps, HandlerOutcome } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
 import type { GenerateActionOutcome } from "../agent-loop/handlers/generate-action.js";
@@ -155,10 +155,70 @@ export type ActionPolicy = {
  * two fields that correspond to actual variation points in the current
  * runner; future Features add fields as their corresponding call sites
  * are migrated.
+ *
+ * F029 adds `state: ProfileStateHooks` — the sole authority over the opaque
+ * `profileState` blob carried in AgentLoopState/Checkpoint/PendingActionResume.
+ * The runtime treats `profileState` as opaque `unknown`; the profile owns the
+ * content (init/serialize/restore/validate) and casts internally.
  */
+export type ProfileStateInitInput = {
+  readonly task: TaskAnchor;
+  readonly run: Run;
+  readonly now: string;
+};
+
+/**
+ * Legacy top-level field VALUES carried by pre-F029 rows. Value-semantic names
+ * (strategy/builder) — each call site maps from the correct surface's field
+ * name (checkpoint uses `strategy`/`builder`; resume uses `strategyState`/
+ * `builderState`). The runtime passes whichever values it finds.
+ */
+export type ProfileStateLegacyFields = {
+  readonly strategy?: StrategyState | undefined;
+  readonly builder?: BuilderState | undefined;
+  readonly finalizationPlanRejectionCount?: number | undefined;
+  readonly validationRepairActionRejectionCount?: number | undefined;
+};
+
+export type ProfileStateRestoreInput = {
+  /** New-shape opaque profile state (F029+ data). undefined for pre-F029 data. */
+  readonly profileState: unknown;
+  /** Legacy top-level field VALUES (pre-F029 data). undefined for F029+ data. */
+  readonly legacy: ProfileStateLegacyFields;
+  /** Persisted profileName/profileVersion from the checkpoint/resume row. */
+  readonly profileName?: string | undefined;
+  readonly profileVersion?: string | undefined;
+  readonly run: Run;
+  readonly now: string;
+};
+
+export type ProfileStateHooks = {
+  /** Profile state schema version (string, compared for equality on restore). */
+  readonly version: string;
+  /** Initialize fresh profile state for a new (non-resume) run. Must be pure. */
+  readonly initState: (input: ProfileStateInitInput) => unknown;
+  /** Serialize profile state to an opaque JSON-compatible value. Must be pure. */
+  readonly serializeState: (state: unknown) => unknown;
+  /**
+   * Restore profile state. Receives either profileState (F029+ data) or legacy
+   * field values (pre-F029 data). Must be pure. Must throw
+   * ProfileStateInvalidError when the data is unparseable or when
+   * profileVersion does not match this profile's version (after any compat lift).
+   */
+  readonly restoreState: (input: ProfileStateRestoreInput) => unknown;
+  /** Optional semantic validation of a restored state. Must be pure. */
+  readonly validateState?: (state: unknown) => void;
+};
+
 export type AgentProfile = {
   /** Human-readable profile name for logging/events. */
   readonly name: string;
+
+  /**
+   * F029: sole authority over the opaque `profileState` blob. The runtime
+   * holds the slot; these hooks own the content.
+   */
+  readonly state: ProfileStateHooks;
 
   /**
    * Generate the next action when no seeded action is available.

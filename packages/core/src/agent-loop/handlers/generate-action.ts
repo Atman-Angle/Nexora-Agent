@@ -17,6 +17,7 @@ import { redactForEvidence } from "../redact.js";
 import { validateCompactionIntegrity } from "../../../../context/src/index.js";
 import type { HandlerDeps } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
+import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
 
 export type GenerateActionOutcome =
   | { kind: "action"; action: AgentAction }
@@ -90,9 +91,10 @@ export async function handleGenerateAction(
   );
 
   let lastRejection: ModelActionRejection | null = null;
+  const strategyState = readCodingState(state).strategy;
   const strategyBeforeModel = beforeModelStrategy({
     task: deps.input.task,
-    state: state.strategyState,
+    state: strategyState,
     changedFiles: state.changedFiles,
     recentValidationResult: state.recentValidationResult
   });
@@ -110,7 +112,13 @@ export async function handleGenerateAction(
       deps.input.now()
     );
   }
-  Object.assign(state, { strategyState: strategyBeforeModel.state, strategyDecision: strategyBeforeModel.decision });
+  Object.assign(state, {
+    profileState: writeCodingState(state, (s) => ({
+      ...s,
+      strategy: strategyBeforeModel.state,
+      strategyDecision: strategyBeforeModel.decision
+    }))
+  });
   if (strategyBeforeModel.decision === "fail_no_progress") {
     await deps.appendEvent(
       "strategy.no_progress.terminal",
@@ -143,13 +151,13 @@ export async function handleGenerateAction(
   }
   const builderPromptContext = prepareBuilderTurn({
     strategyState: strategyBeforeModel.state,
-    builderState: state.builderState,
+    builderState: readCodingState(state).builder,
     workingSet: state.currentWorkingSet,
     workspaceRoot: deps.input.workspaceRoot,
     now: deps.input.now()
   });
   if (builderPromptContext !== null) {
-    Object.assign(state, { builderState: builderPromptContext.state });
+    Object.assign(state, { profileState: writeCodingState(state, (s) => ({ ...s, builder: builderPromptContext.state })) });
     for (const event of builderPromptContext.events) {
       await deps.appendEvent(event.type, event.payload, deps.input.now());
     }
@@ -159,8 +167,12 @@ export async function handleGenerateAction(
     workspaceRoot: deps.input.workspaceRoot,
     knownExistingFiles: state.currentWorkingSet?.items.map((item) => item.path) ?? []
   });
+  const baseBuilder = builderPromptContext === null ? readCodingState(state).builder : builderPromptContext.state;
   Object.assign(state, {
-    builderState: normalizeBuilderState({ ...builderPromptContext === null ? state.builderState : builderPromptContext.state, planningPolicy: null })
+    profileState: writeCodingState(state, (s) => ({
+      ...s,
+      builder: normalizeBuilderState({ ...baseBuilder, planningPolicy: null })
+    }))
   });
   const strategyContext = buildStrategyPromptContext({
     state: strategyBeforeModel.state,
@@ -168,7 +180,7 @@ export async function handleGenerateAction(
     workingSet: state.currentWorkingSet,
     changedFiles: state.changedFiles,
     recentValidationResult: state.recentValidationResult,
-    currentStepId: (builderPromptContext === null ? state.builderState : builderPromptContext.state).currentStepId
+    currentStepId: baseBuilder.currentStepId
   });
   let action: AgentAction | undefined;
   for (let attempt = 0; attempt <= deps.maxActionRepairs; attempt += 1) {
@@ -207,7 +219,7 @@ export async function handleGenerateAction(
           strategyContext,
           ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
           planningPolicyContext,
-          executionPlanRepairContext: (builderPromptContext === null ? state.builderState : builderPromptContext.state).executionPlanRepair,
+          executionPlanRepairContext: baseBuilder.executionPlanRepair,
           lastModelError: lastRejection ?? state.pendingActionRejection
         })
       );

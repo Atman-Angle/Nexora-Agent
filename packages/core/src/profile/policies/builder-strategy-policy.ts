@@ -8,6 +8,7 @@ import {
 } from "../../strategy/index.js";
 import { buildStrategyRejectionContext } from "../../agent-loop/strategy-rejection.js";
 import { handleSubmitExecutionPlan } from "../../agent-loop/handlers/submit-execution-plan.js";
+import { readCodingState, writeCodingState } from "../coding-profile-state.js";
 import type { ActionPolicy, ActionPolicyInput, ActionPolicyOutcome, EventDraft } from "../types.js";
 
 const MAX_ACTION_REPAIRS = 2;
@@ -25,12 +26,13 @@ export const builderStrategyPolicy: ActionPolicy = {
 
   async evaluate(input: ActionPolicyInput): Promise<ActionPolicyOutcome> {
     const { action, state, deps, strategyBypassedForRecovery } = input;
+    const cs = readCodingState(state);
 
     // Stage 1: Always evaluate builder action
     const builderActionEvaluation = evaluateBuilderAction({
       strategyBypassedForRecovery,
-      strategyState: state.strategyState,
-      builderState: state.builderState,
+      strategyState: cs.strategy,
+      builderState: cs.builder,
       action,
       workspaceRoot: deps.input.workspaceRoot,
       now: deps.input.now()
@@ -47,7 +49,9 @@ export const builderStrategyPolicy: ActionPolicy = {
       // the updated builder state (matching original code where line 386 runs
       // before line 391). The handler mutates state in-place, so we must not
       // overwrite its changes with a stale delta afterward.
-      state.builderState = builderActionEvaluation.state;
+      Object.assign(state, {
+        profileState: writeCodingState(state, (s) => ({ ...s, builder: builderActionEvaluation.state }))
+      });
       const handlerOutcome = await handleSubmitExecutionPlan(
         state,
         deps,
@@ -73,44 +77,40 @@ export const builderStrategyPolicy: ActionPolicy = {
         : validateActionWithStrategy({
             task: deps.input.task,
             action,
-            state: state.strategyState,
-            decision: state.strategyDecision
+            state: cs.strategy,
+            decision: cs.strategyDecision
           });
 
     // Stage 4: If strategy allows → clear lastStrategyRejection (Block F), return accept
     if (strategyPolicy.allowed) {
-      const needsClear = state.strategyState.lastStrategyRejection !== undefined;
+      const needsClear = cs.strategy.lastStrategyRejection !== undefined;
       return {
         kind: "accept",
         stateDelta: {
-          builderState: builderActionEvaluation.state,
-          ...(needsClear
-            ? {
-                strategyState: {
-                  ...state.strategyState,
-                  lastStrategyRejection: undefined
-                }
-              }
-            : {})
+          profileState: writeCodingState(state, (s) => ({
+            ...s,
+            builder: builderActionEvaluation.state,
+            ...(needsClear ? { strategy: { ...cs.strategy, lastStrategyRejection: undefined } } : {})
+          }))
         },
         events: builderEvents
       };
     }
 
     // Stage 5: Strategy rejects — complex rejection handling (E1/E2/E3 sub-paths)
-    const previousStrategyRejection = state.strategyState.lastStrategyRejection;
+    const previousStrategyRejection = cs.strategy.lastStrategyRejection;
     const strategyRejection = buildStrategyRejectionContext({
       action,
       policy: strategyPolicy,
-      state: state.strategyState,
-      decision: state.strategyDecision,
+      state: cs.strategy,
+      decision: cs.strategyDecision,
       maxActionRepairs: MAX_ACTION_REPAIRS
     });
 
     // E1: Plan derivation short-circuit
     if (
       strategyPolicy.reason === "plan_required_before_mutation" &&
-      state.strategyState.plan === undefined
+      cs.strategy.plan === undefined
     ) {
       const proposedPlan = deriveExecutionPlanFromAction({
         action,
@@ -119,11 +119,11 @@ export const builderStrategyPolicy: ActionPolicy = {
       });
       if (proposedPlan !== undefined && evaluateExecutionPlanCompleteness(proposedPlan).complete) {
         const newStrategyState = {
-          ...state.strategyState,
+          ...cs.strategy,
           plan: proposedPlan,
           noProgressCount: 0,
           explorationUsage: {
-            ...state.strategyState.explorationUsage,
+            ...cs.strategy.explorationUsage,
             iterationsWithoutProgress: 0
           },
           lastProgressIteration: state.latestIterationIndex,
@@ -142,8 +142,11 @@ export const builderStrategyPolicy: ActionPolicy = {
           attempt: strategyRejection.attempt,
           reason: "plan_required_before_mutation",
           stateDelta: {
-            builderState: builderActionEvaluation.state,
-            strategyState: newStrategyState
+            profileState: writeCodingState(state, (s) => ({
+              ...s,
+              builder: builderActionEvaluation.state,
+              strategy: newStrategyState
+            }))
           },
           preRejectEvents: builderEvents,
           events: [
@@ -183,11 +186,11 @@ export const builderStrategyPolicy: ActionPolicy = {
         attempt: strategyRejection.attempt,
         reason: strategyPolicy.reason,
         stateDelta: {
-          builderState: builderActionEvaluation.state,
-          strategyState: {
-            ...state.strategyState,
-            lastStrategyRejection: strategyRejection
-          }
+          profileState: writeCodingState(state, (s) => ({
+            ...s,
+            builder: builderActionEvaluation.state,
+            strategy: { ...cs.strategy, lastStrategyRejection: strategyRejection }
+          }))
         },
         preRejectEvents: builderEvents,
         events: [
@@ -209,7 +212,7 @@ export const builderStrategyPolicy: ActionPolicy = {
     // E3: Repeated rejection
     const rejection = onStrategyRejection({
       task: deps.input.task,
-      state: state.strategyState,
+      state: cs.strategy,
       iteration: state.latestIterationIndex
     });
     const repairBudgetExhausted = previousStrategyRejection.attempt >= MAX_ACTION_REPAIRS;
@@ -225,11 +228,11 @@ export const builderStrategyPolicy: ActionPolicy = {
         attempt: strategyRejection.attempt,
         reason: strategyPolicy.reason,
         stateDelta: {
-          builderState: builderActionEvaluation.state,
-          strategyState: {
-            ...rejection.state,
-            lastStrategyRejection: strategyRejection
-          }
+          profileState: writeCodingState(state, (s) => ({
+            ...s,
+            builder: builderActionEvaluation.state,
+            strategy: { ...rejection.state, lastStrategyRejection: strategyRejection }
+          }))
         },
         preRejectEvents: builderEvents,
         events: [
@@ -263,11 +266,11 @@ export const builderStrategyPolicy: ActionPolicy = {
       attempt: strategyRejection.attempt,
       reason: strategyPolicy.reason,
       stateDelta: {
-        builderState: builderActionEvaluation.state,
-        strategyState: {
-          ...rejection.state,
-          lastStrategyRejection: strategyRejection
-        }
+        profileState: writeCodingState(state, (s) => ({
+          ...s,
+          builder: builderActionEvaluation.state,
+          strategy: { ...rejection.state, lastStrategyRejection: strategyRejection }
+        }))
       },
       preRejectEvents: builderEvents,
       events: [

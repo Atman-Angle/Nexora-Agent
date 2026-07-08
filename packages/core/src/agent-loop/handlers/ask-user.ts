@@ -20,6 +20,7 @@ import type { RunStore } from "../../../../storage/src/run-store.js";
 import type { UserInputStore } from "../../../../storage/src/user-input-store.js";
 import type { AgentLoopWaitingForUserResult, HandlerOutcome } from "../outcome.js";
 import type { NoProgressSnapshot } from "../../recovery/resume-boundary.js";
+import type { AgentProfile } from "../../profile/types.js";
 import { applyLedgerPatch } from "../../ledger-progress/index.js";
 import { createPendingAction } from "../../recovery/resume-boundary.js";
 import { serializeResumeState } from "../state.js";
@@ -29,6 +30,11 @@ import { transitionRun } from "../../state-machine.js";
  * Input bundle for handleAskUser. During F025-C convergence this collapses
  * into a single AgentLoopState reference; until then the dispatch loop
  * assembles it from its locals at the call site.
+ *
+ * F029: coding-domain fields are carried in `profileState` (opaque) + `profile`
+ * (for serializeResumeState). The retained typed strategy/builder/counter
+ * fields are populated from readCodingState by the adapter (F029 AC #12) and
+ * are not read by this handler body.
  */
 export type HandleAskUserInput = {
   input: {
@@ -63,6 +69,8 @@ export type HandleAskUserInput = {
   previousSnapshot: NoProgressSnapshot;
   pendingRetryIncrement: boolean;
   recoveryState?: RecoveryCheckpointState | undefined;
+  profileState: unknown;
+  profile: AgentProfile;
   strategyState: StrategyState;
   builderState: BuilderState;
   finalizationPlanRejectionCount: number;
@@ -120,11 +128,8 @@ export async function handleAskUser(
       previousSnapshot: ctx.previousSnapshot,
       pendingRetryIncrement: ctx.pendingRetryIncrement,
       recoveryState: ctx.recoveryState,
-      strategyState: ctx.strategyState,
-      builderState: ctx.builderState,
-      finalizationPlanRejectionCount: ctx.finalizationPlanRejectionCount,
-      validationRepairActionRejectionCount: ctx.validationRepairActionRejectionCount
-    }),
+      profileState: ctx.profileState
+    }, ctx.profile),
     now: ctx.input.now()
   });
   ctx.input.pendingActionStore.insertPendingAction(pendingAction);

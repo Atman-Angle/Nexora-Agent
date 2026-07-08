@@ -1,4 +1,5 @@
 import type { AgentAction } from "../../../contracts/src/index.js";
+import { createInitialStrategyState } from "../../../contracts/src/index.js";
 import type { HandlerDeps, HandlerOutcome } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
 import { handleGenerateAction } from "../agent-loop/handlers/generate-action.js";
@@ -6,10 +7,69 @@ import { handleToolCall } from "../agent-loop/handlers/tool-call.js";
 import { handleAskUser, type HandleAskUserInput } from "../agent-loop/handlers/ask-user.js";
 import { handleUpdatePlan } from "../agent-loop/handlers/update-plan.js";
 import { handleFinal } from "../agent-loop/handlers/final.js";
-import type { AgentProfile, DispatchContext } from "./types.js";
+import { normalizeBuilderState } from "../builder/builder-state.js";
+import { normalizeStrategyState } from "../strategy/strategy-runtime.js";
+import type { AgentProfile, DispatchContext, ProfileStateHooks, ProfileStateInitInput, ProfileStateRestoreInput } from "./types.js";
+import { ProfileStateInvalidError } from "./profile-state-error.js";
+import {
+  parseCodingProfileState,
+  readCodingState,
+  writeCodingState,
+  type CodingProfileState
+} from "./coding-profile-state.js";
 import { validationRepairPolicy } from "./policies/validation-repair-policy.js";
 import { freshValidationFinalizationPolicy } from "./policies/fresh-validation-finalization-policy.js";
 import { builderStrategyPolicy } from "./policies/builder-strategy-policy.js";
+
+export { readCodingState, writeCodingState };
+
+function initCodingProfileState(_input: ProfileStateInitInput): CodingProfileState {
+  return {
+    strategy: createInitialStrategyState(),
+    builder: normalizeBuilderState(undefined),
+    strategyDecision: "continue_explore",
+    finalizationPlanRejectionCount: 0,
+    validationRepairActionRejectionCount: 0
+  };
+}
+
+function restoreCodingProfileState(input: ProfileStateRestoreInput): CodingProfileState {
+  if (input.profileVersion !== undefined && input.profileVersion !== "1") {
+    throw new ProfileStateInvalidError(`coding profileState version ${input.profileVersion} not supported`);
+  }
+  if (input.profileState !== undefined) {
+    try {
+      return parseCodingProfileState(input.profileState);
+    } catch (error) {
+      throw new ProfileStateInvalidError(
+        `coding profileState could not be parsed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  // Legacy pre-F029 data — lift the top-level field VALUES (passed by the
+  // runtime from whichever surface produced them: checkpoint strategy/builder
+  // or resume strategyState/builderState; the runtime normalizes to
+  // legacy.strategy/builder).
+  return {
+    strategy: normalizeStrategyState(input.legacy.strategy),
+    builder: normalizeBuilderState(input.legacy.builder),
+    strategyDecision: "continue_explore",
+    finalizationPlanRejectionCount: input.legacy.finalizationPlanRejectionCount ?? 0,
+    validationRepairActionRejectionCount: input.legacy.validationRepairActionRejectionCount ?? 0
+  };
+}
+
+function validateCodingProfileState(s: unknown): void {
+  parseCodingProfileState(s);
+}
+
+const codingStateHooks: ProfileStateHooks = {
+  version: "1",
+  initState: (input) => initCodingProfileState(input),
+  serializeState: (s) => s,
+  restoreState: (input) => restoreCodingProfileState(input),
+  validateState: (s) => validateCodingProfileState(s)
+};
 
 /**
  * adaptToolCall — extracts bypassApproval and strategyBypassedForRecovery
@@ -40,6 +100,7 @@ async function adaptAskUser(
   action: AgentAction,
   _dispatchCtx: DispatchContext
 ): Promise<HandlerOutcome> {
+  const cs = readCodingState(state);
   const ctx: HandleAskUserInput = {
     input: {
       now: deps.input.now,
@@ -66,10 +127,14 @@ async function adaptAskUser(
     previousSnapshot: state.previousSnapshot,
     pendingRetryIncrement: state.pendingRetryIncrement,
     recoveryState: state.recoveryState,
-    strategyState: state.strategyState,
-    builderState: state.builderState,
-    finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
-    validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
+    // F029: coding-domain fields migrated into profileState.
+    profileState: state.profileState,
+    profile: deps.input.profile,
+    // Retained typed fields (populated from readCodingState) per F029 AC #12.
+    strategyState: cs.strategy,
+    builderState: cs.builder,
+    finalizationPlanRejectionCount: cs.finalizationPlanRejectionCount,
+    validationRepairActionRejectionCount: cs.validationRepairActionRejectionCount
   };
   return handleAskUser(ctx, action as Extract<AgentAction, { type: "ask_user" }>);
 }
@@ -148,6 +213,7 @@ async function adaptFail(
  */
 export const codingProfile: AgentProfile = {
   name: "coding",
+  state: codingStateHooks,
   generateAction: handleGenerateAction,
   actionHandlers: {
     tool_call: adaptToolCall,

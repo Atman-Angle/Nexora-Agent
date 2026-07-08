@@ -16,6 +16,7 @@ import { clearPlanRepair } from "../../strategy/index.js";
 import { createIteration } from "../iteration.js";
 import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
+import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
 
 /**
  * handleSubmitExecutionPlan — processes a Builder structured plan submission:
@@ -57,20 +58,21 @@ export async function handleSubmitExecutionPlan(
     satisfiedRequiredTargets: state.changedFiles
   });
   if (!validation.valid) {
+    const currentBuilder = readCodingState(state).builder;
     const repairDecision = createExecutionPlanRepairContext({
-      previous: state.builderState.executionPlanRepair,
+      previous: currentBuilder.executionPlanRepair,
       issues: validation.issues,
       previousPlan: action.plan,
       previousSteps: action.steps
     });
     const nextBuilderState: BuilderState = normalizeBuilderState({
-      ...state.builderState,
+      ...currentBuilder,
       planningPolicy: null,
       executionPlanRepair: repairDecision.repair,
       planAccepted: false,
-      version: state.builderState.version + 1
+      version: currentBuilder.version + 1
     });
-    Object.assign(state, { builderState: nextBuilderState });
+    Object.assign(state, { profileState: writeCodingState(state, (s) => ({ ...s, builder: nextBuilderState })) });
     await deps.appendEvent(
       "builder.execution_plan.rejected",
       {
@@ -114,18 +116,19 @@ export async function handleSubmitExecutionPlan(
     return { kind: "continue" };
   }
 
+  const currentStrategy = readCodingState(state).strategy;
   const nextStrategyState: StrategyState = clearPlanRepair({
-    ...state.strategyState,
+    ...currentStrategy,
     plan: validation.plan,
     noProgressCount: 0,
     explorationUsage: {
-      ...state.strategyState.explorationUsage,
+      ...currentStrategy.explorationUsage,
       iterationsWithoutProgress: 0
     },
     lastProgressIteration: state.latestIterationIndex
   });
   const nextBuilderState: BuilderState = installAcceptedExecutionPlan({
-    state: state.builderState,
+    state: readCodingState(state).builder,
     plan: validation.plan,
     steps: validation.steps,
     policy
@@ -159,9 +162,12 @@ export async function handleSubmitExecutionPlan(
     };
   }
   Object.assign(state, {
-    strategyState: nextStrategyState,
-    builderState: nextBuilderState,
-    validationRepairActionRejectionCount: 0,
+    profileState: writeCodingState(state, (s) => ({
+      ...s,
+      strategy: nextStrategyState,
+      builder: nextBuilderState,
+      validationRepairActionRejectionCount: 0
+    })),
     recoveryState: nextRecoveryState,
     replanRequested: nextReplanRequested,
     regroundRequested: nextRegroundRequested,

@@ -36,7 +36,9 @@ import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/te
 import { failRun } from "./agent-loop/fail-run.js";
 import { reGroundNow } from "./agent-loop/context-snapshot.js";
 import { createInitialLoopState } from "./agent-loop/state.js";
+import type { AgentLoopState } from "./agent-loop/state.js";
 import type { AgentProfile } from "./profile/index.js";
+import { ProfileStateInvalidError } from "./profile/profile-state-error.js";
 import type { HandlerDeps } from "./agent-loop/outcome.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
@@ -105,7 +107,29 @@ export async function runAgentLoop(input: {
       anchor,
       now: input.now()
     });
-  const state = createInitialLoopState(input, anchor, ledger);
+  let state: AgentLoopState;
+  try {
+    state = createInitialLoopState(input, anchor, ledger);
+  } catch (error) {
+    if (error instanceof ProfileStateInvalidError) {
+      const failedAt = input.now();
+      const failedRun = transitionRun(input.run, "failed", failedAt, "PROFILE_STATE_INVALID");
+      input.runStore.updateRun(failedRun);
+      const sequence = Math.max(1, input.eventStore.listEventsByRun(input.run.runId).length + 1);
+      input.eventStore.appendEvent(
+        createEvent({
+          eventId: input.idGenerator(),
+          runId: input.run.runId,
+          sequence,
+          type: "run.failed",
+          timestamp: failedAt,
+          payload: { code: "PROFILE_STATE_INVALID", message: error.message }
+        })
+      );
+      throw new AgentLoopRunFailure("PROFILE_STATE_INVALID", error.message, false);
+    }
+    throw error;
+  }
   const recoveryOrchestrator = new RecoveryOrchestrator();
   const recoveryBudget = input.task.input.agentRequest?.recoveryBudget ?? {};
   const availableTools = input.toolRuntime.getAvailableTools();
@@ -172,8 +196,9 @@ export async function runAgentLoop(input: {
       ...(workspaceHash === undefined ? {} : { workspaceHash }),
       ...(options?.note === undefined ? {} : { note: options.note }),
       ...(state.recoveryState === undefined ? {} : { recovery: state.recoveryState }),
-      strategy: state.strategyState,
-      builder: state.builderState,
+      profileName: input.profile.name,
+      profileVersion: input.profile.state.version,
+      profileState: input.profile.state.serializeState(state.profileState),
       createdAt
     });
     input.checkpointStore.insertCheckpoint(checkpointRecord);
@@ -399,6 +424,16 @@ export async function runAgentLoop(input: {
     } catch (error) {
       if (error instanceof AgentLoopRunFailure) {
         throw error;
+      }
+      if (error instanceof ProfileStateInvalidError) {
+        return failRun({
+          input,
+          run: state.activeRun,
+          appendEvent,
+          code: "PROFILE_STATE_INVALID",
+          message: error.message,
+          retryable: false
+        });
       }
       const message = error instanceof Error ? error.message : "Unknown runtime error";
       const redacted = redactForEvidence(message);

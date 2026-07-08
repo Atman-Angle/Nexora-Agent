@@ -12,6 +12,7 @@ import { createIteration } from "../iteration.js";
 import { detectNoProgress, handleNoProgress } from "../no-progress.js";
 import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
+import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
 
 function buildSnapshot(
   actionSignature: string,
@@ -65,7 +66,7 @@ export async function handleUpdatePlan(
   await deps.appendEvent("iteration.completed", { index: iteration.index, actionType: iteration.actionType }, iteration.createdAt);
   const nextLatestIterationIndex = state.latestIterationIndex + 1;
 
-  if (state.builderState.planAccepted) {
+  if (readCodingState(state).builder.planAccepted) {
     const noProgressSignals = detectNoProgress({
       previous: state.previousSnapshot,
       current: buildSnapshot(deps.actionSignature, ledger, state.recentValidationResult)
@@ -89,7 +90,7 @@ export async function handleUpdatePlan(
     return { kind: "continue" };
   }
 
-  let nextStrategyState: StrategyState = state.strategyState;
+  let nextStrategyState: StrategyState = readCodingState(state).strategy;
   const derivedPlan = deriveExecutionPlan({
     ledger,
     validationCommand: deps.input.task.input.validationRequest?.command,
@@ -189,7 +190,10 @@ export async function handleUpdatePlan(
         },
         deps.input.now()
       );
-      Object.assign(state, { strategyState: nextStrategyState, latestIterationIndex: nextLatestIterationIndex });
+      Object.assign(state, {
+        profileState: writeCodingState(state, (s) => ({ ...s, strategy: nextStrategyState })),
+        latestIterationIndex: nextLatestIterationIndex
+      });
       await deps.checkpoint("post_response", { note: "strategy_plan_repair" });
       return { kind: "continue" };
     }
@@ -209,7 +213,7 @@ export async function handleUpdatePlan(
   });
   Object.assign(state, {
     latestIterationIndex: nextLatestIterationIndex,
-    strategyState: nextStrategyState,
+    profileState: writeCodingState(state, (s) => ({ ...s, strategy: nextStrategyState })),
     previousSnapshot,
     ledger: noProgress.ledger,
     noProgressCount: noProgress.noProgressCount,

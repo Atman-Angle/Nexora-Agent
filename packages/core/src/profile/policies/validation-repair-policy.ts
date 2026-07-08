@@ -2,6 +2,7 @@ import {
   requiresValidationRepairAction,
   isValidationRepairAction
 } from "../../validation-repair/index.js";
+import { readCodingState, writeCodingState } from "../coding-profile-state.js";
 import type { ActionPolicy, ActionPolicyInput, ActionPolicyOutcome } from "../types.js";
 
 const MAX_ACTION_REPAIRS = 2;
@@ -17,15 +18,16 @@ export const validationRepairPolicy: ActionPolicy = {
 
   async evaluate(input: ActionPolicyInput): Promise<ActionPolicyOutcome> {
     const { action, actionSignature, state } = input;
+    const cs = readCodingState(state);
 
     if (
       !requiresValidationRepairAction(state.recentValidationResult) ||
-      isValidationRepairAction(action, state.builderState, state.recentValidationResult)
+      isValidationRepairAction(action, cs.builder, state.recentValidationResult)
     ) {
       return { kind: "accept" };
     }
 
-    const attempt = state.validationRepairActionRejectionCount + 1;
+    const attempt = cs.validationRepairActionRejectionCount + 1;
     const message =
       "The latest fresh validation failed after a mutation; broad filesystem.read, off-target filesystem.read, filesystem.search, filesystem.list, project inspection, git tools, update_plan, and shell.execute source mutation are not repair actions now. Submit a focused repair execution plan or a Builder-directed repair mutation within the same Task executionConstraints, then rerun validation. filesystem.read is only repair evidence when it targets a changed file named in the failure summary or the current Builder modify target; repeated reads do not count as repair progress and must lead to a concrete mutation. Use shell.execute only to rerun validation, tests, or builds.";
 
@@ -40,7 +42,7 @@ export const validationRepairPolicy: ActionPolicy = {
       attempt,
       reason: "fresh_failed_validation_requires_repair_action",
       stateDelta: {
-        validationRepairActionRejectionCount: attempt,
+        profileState: writeCodingState(state, (s) => ({ ...s, validationRepairActionRejectionCount: attempt })),
         pendingActionRejection: {
           category: "validation_repair",
           attempt,

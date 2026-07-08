@@ -32,10 +32,18 @@ export const PendingActionResumeStateSchema = z.object({
   previousSnapshot: NoProgressSnapshotSchema,
   pendingRetryIncrement: z.boolean().default(false),
   recoveryState: RecoveryCheckpointStateSchema.optional(),
+  // F029: profile-owned opaque state. undefined for pre-F029 rows.
+  profileName: z.string().min(1).optional(),
+  profileVersion: z.string().min(1).optional(),
+  profileState: z.unknown().optional(),
+  // LEGACY (pre-F029): kept optional for read-compat. NOT written by F029+ code;
+  // the coding profile's restoreState lifts these (with ?? 0) when profileState
+  // is absent. Optional without default so F029 serializeResumeState can omit
+  // them (single-write profileState only, per §12.4).
   strategyState: StrategyStateSchema.optional(),
   builderState: BuilderStateSchema.optional(),
-  finalizationPlanRejectionCount: z.number().int().nonnegative().optional().default(0),
-  validationRepairActionRejectionCount: z.number().int().nonnegative().optional().default(0)
+  finalizationPlanRejectionCount: z.number().int().nonnegative().optional(),
+  validationRepairActionRejectionCount: z.number().int().nonnegative().optional()
 });
 
 export const PendingActionSchema = z.object({

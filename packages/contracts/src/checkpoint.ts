@@ -35,6 +35,13 @@ export const CheckpointSchema = z.object({
   workspaceHash: z.string().min(1).optional(),
   note: z.string().min(1).optional(),
   recovery: RecoveryCheckpointStateSchema.optional(),
+  // F029: profile-owned opaque state. The runtime holds the slot; the profile
+  // owns the content via its state hooks. undefined for pre-F029 rows.
+  profileName: z.string().min(1).optional(),
+  profileVersion: z.string().min(1).optional(),
+  profileState: z.unknown().optional(),
+  // LEGACY (pre-F029): kept optional for read-compat. NOT written by F029+ code;
+  // the coding profile's restoreState lifts these when profileState is absent.
   strategy: StrategyStateSchema.optional(),
   builder: BuilderStateSchema.optional(),
   createdAt: z.string().datetime()
@@ -67,8 +74,9 @@ export function createCheckpoint(input: {
   workspaceHash?: string;
   note?: string;
   recovery?: z.infer<typeof RecoveryCheckpointStateSchema>;
-  strategy?: z.infer<typeof StrategyStateSchema>;
-  builder?: z.infer<typeof BuilderStateSchema>;
+  profileName?: string;
+  profileVersion?: string;
+  profileState?: unknown;
   createdAt: string;
 }): Checkpoint {
   return CheckpointSchema.parse({
@@ -84,8 +92,9 @@ export function createCheckpoint(input: {
     ...(input.workspaceHash === undefined ? {} : { workspaceHash: input.workspaceHash }),
     ...(input.note === undefined ? {} : { note: input.note }),
     ...(input.recovery === undefined ? {} : { recovery: input.recovery }),
-    ...(input.strategy === undefined ? {} : { strategy: input.strategy }),
-    ...(input.builder === undefined ? {} : { builder: input.builder }),
+    ...(input.profileName === undefined ? {} : { profileName: input.profileName }),
+    ...(input.profileVersion === undefined ? {} : { profileVersion: input.profileVersion }),
+    ...(input.profileState === undefined ? {} : { profileState: input.profileState }),
     createdAt: input.createdAt
   });
 }

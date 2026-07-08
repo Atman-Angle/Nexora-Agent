@@ -29,6 +29,7 @@ import {
 import { describeResourceScope, fingerprintAction } from "../fingerprint.js";
 import type { ToolRuntime } from "../../../../tool-runtime/src/index.js";
 import type { BuilderState } from "../../../../contracts/src/index.js";
+import type { AgentProfile } from "../../profile/types.js";
 
 export type HandleApprovalInput = {
   input: {
@@ -61,6 +62,8 @@ export type HandleApprovalInput = {
   previousSnapshot: NoProgressSnapshot;
   pendingRetryIncrement: boolean;
   recoveryState?: RecoveryCheckpointState | undefined;
+  profileState: unknown;
+  profile: AgentProfile;
   strategyState: StrategyState;
   builderState: BuilderState;
   finalizationPlanRejectionCount: number;
@@ -119,11 +122,8 @@ export async function handleApproval(
       previousSnapshot: ctx.previousSnapshot,
       pendingRetryIncrement: ctx.pendingRetryIncrement,
       recoveryState: ctx.recoveryState,
-      strategyState: ctx.strategyState,
-      builderState: ctx.builderState,
-      finalizationPlanRejectionCount: ctx.finalizationPlanRejectionCount,
-      validationRepairActionRejectionCount: ctx.validationRepairActionRejectionCount
-    }),
+      profileState: ctx.profileState
+    }, ctx.profile),
     now: ctx.input.now()
   });
   ctx.input.pendingActionStore.insertPendingAction(pendingAction);

@@ -1,4 +1,5 @@
 import { isFreshPassingValidation } from "../../validation-repair/index.js";
+import { readCodingState, writeCodingState } from "../coding-profile-state.js";
 import type { ActionPolicy, ActionPolicyInput, ActionPolicyOutcome } from "../types.js";
 
 const MAX_ACTION_REPAIRS = 2;
@@ -22,7 +23,7 @@ export const freshValidationFinalizationPolicy: ActionPolicy = {
       return { kind: "accept" };
     }
 
-    const attempt = state.finalizationPlanRejectionCount + 1;
+    const attempt = readCodingState(state).finalizationPlanRejectionCount + 1;
     const message =
       "A fresh passing validation already exists after the latest mutation; submit a final action instead of a new execution plan.";
 
@@ -37,7 +38,7 @@ export const freshValidationFinalizationPolicy: ActionPolicy = {
       attempt,
       reason: "fresh_validation_requires_final",
       stateDelta: {
-        finalizationPlanRejectionCount: attempt,
+        profileState: writeCodingState(state, (s) => ({ ...s, finalizationPlanRejectionCount: attempt })),
         pendingActionRejection: {
           category: "completion_guidance",
           attempt,

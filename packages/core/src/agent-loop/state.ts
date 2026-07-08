@@ -2,22 +2,19 @@ import {
   AgentBudgetUsageSchema,
   type AgentAction,
   type AgentBudgetUsage,
-  type BuilderState,
   type PendingActionResumeState,
   type ProgressLedger,
   type RecoveryCheckpointState,
   type Run,
-  type StrategyDecision,
-  type StrategyState,
   type TaskAnchor,
   type ToolResult,
   type ValidationResult,
   type WorkingSet
 } from "../../../contracts/src/index.js";
 import type { ModelActionRejection } from "../../../model-gateway/src/index.js";
-import { normalizeBuilderState } from "../builder/builder-state.js";
-import { normalizeStrategyState } from "../strategy/strategy-runtime.js";
 import type { NoProgressSnapshot } from "../recovery/resume-boundary.js";
+import type { AgentProfile } from "../profile/types.js";
+import { ProfileStateInvalidError } from "../profile/profile-state-error.js";
 
 /**
  * AgentLoopState encapsulates all mutable per-run state that the agent loop
@@ -26,9 +23,14 @@ import type { NoProgressSnapshot } from "../recovery/resume-boundary.js";
  * conversion functions below, instead of touching every resume-serialization
  * call site.
  *
+ * F029 migrates the coding-profile domain fields (strategyState, builderState,
+ * strategyDecision, and the two repair counters) INTO the opaque
+ * `profileState` blob, owned by the profile's state hooks. The runtime treats
+ * `profileState` as opaque `unknown` — it never reads/writes fields inside it.
+ *
  * Transient fields (regroundedAt, seededAction, bypassApprovalForSeedAction,
- * strategyDecision, pendingActionRejection) are not persisted to resume state;
- * only the durable subset in {@link ResumeSerializeInput} survives resume.
+ * pendingActionRejection) are not persisted to resume state; only the durable
+ * subset in {@link ResumeSerializeInput} survives resume.
  */
 export type AgentLoopState = {
   // Run state
@@ -50,9 +52,10 @@ export type AgentLoopState = {
 
   // Subsystem state
   recoveryState: RecoveryCheckpointState | undefined;
-  strategyState: StrategyState;
-  builderState: BuilderState;
-  strategyDecision: StrategyDecision;
+
+  // F029: opaque profile-owned state. The runtime holds the slot; the profile
+  // owns the content via AgentProfile.state hooks (init/serialize/restore).
+  profileState: unknown;
 
   // Control flags
   regroundRequested: boolean;
@@ -61,9 +64,6 @@ export type AgentLoopState = {
   seededAction: AgentAction | null;
   bypassApprovalForSeedAction: boolean;
 
-  // Repair counters (persisted to resume so repair budgets are not resurrected)
-  finalizationPlanRejectionCount: number;
-  validationRepairActionRejectionCount: number;
   pendingActionRejection: ModelActionRejection | null;
 
   // Usage tracking
@@ -89,10 +89,7 @@ export type ResumeSerializeInput = Pick<
   | "previousSnapshot"
   | "pendingRetryIncrement"
   | "recoveryState"
-  | "strategyState"
-  | "builderState"
-  | "finalizationPlanRejectionCount"
-  | "validationRepairActionRejectionCount"
+  | "profileState"
 >;
 
 export type AgentLoopInput = {
@@ -108,6 +105,7 @@ export type AgentLoopInput = {
   eventStore: {
     listEventsByRun(runId: string): unknown[];
   };
+  profile: AgentProfile;
   resume?:
     | {
         ledger: ProgressLedger;
@@ -123,6 +121,12 @@ export type AgentLoopInput = {
  * resume payload. This is the single entry point for state initialization —
  * adding a new durable field only requires extending this function plus
  * {@link serializeResumeState}.
+ *
+ * F029: profileState is initialized via `profile.state.initState` for fresh
+ * runs and `profile.state.restoreState` for resume (after a profileName
+ * mismatch check). validateState (if defined) runs immediately after. A
+ * ProfileStateInvalidError thrown by any hook or the mismatch gate propagates
+ * to the runner, which converts it to failRun(PROFILE_STATE_INVALID).
  */
 export function createInitialLoopState(
   input: AgentLoopInput,
@@ -131,6 +135,35 @@ export function createInitialLoopState(
 ): AgentLoopState {
   const resume = input.resume;
   const resumeState = resume?.resumeState;
+  const now = input.now();
+
+  let profileState: unknown;
+  if (resumeState === undefined) {
+    profileState = input.profile.state.initState({ task: anchor, run: input.run, now });
+  } else {
+    if (resumeState.profileName !== undefined && resumeState.profileName !== input.profile.name) {
+      throw new ProfileStateInvalidError(
+        `Run was started under profile ${resumeState.profileName} but resumed under ${input.profile.name}`
+      );
+    }
+    profileState = input.profile.state.restoreState({
+      profileState: resumeState.profileState,
+      legacy: {
+        strategy: resumeState.strategyState,
+        builder: resumeState.builderState,
+        finalizationPlanRejectionCount: resumeState.finalizationPlanRejectionCount,
+        validationRepairActionRejectionCount: resumeState.validationRepairActionRejectionCount
+      },
+      profileName: resumeState.profileName,
+      profileVersion: resumeState.profileVersion,
+      run: input.run,
+      now
+    });
+  }
+  if (input.profile.state.validateState !== undefined) {
+    input.profile.state.validateState(profileState);
+  }
+
   return {
     activeRun: input.run,
     nextSequence:
@@ -146,9 +179,7 @@ export function createInitialLoopState(
     replanRequested: resumeState?.replanRequested ?? false,
     noProgressCount: resumeState?.noProgressCount ?? 0,
     recoveryState: resumeState?.recoveryState,
-    strategyState: normalizeStrategyState(resumeState?.strategyState),
-    builderState: normalizeBuilderState(resumeState?.builderState),
-    strategyDecision: "continue_explore",
+    profileState,
     regroundedAt: null,
     ledger,
     previousSnapshot:
@@ -170,10 +201,8 @@ export function createInitialLoopState(
         modelCalls: 0,
         toolCalls: 0,
         retryCount: 0,
-        startedAt: input.now()
+        startedAt: now
       }),
-    finalizationPlanRejectionCount: resumeState?.finalizationPlanRejectionCount ?? 0,
-    validationRepairActionRejectionCount: resumeState?.validationRepairActionRejectionCount ?? 0,
     pendingActionRejection: null
   };
 }
@@ -184,11 +213,15 @@ export function createInitialLoopState(
  * new durable field only requires extending this function plus
  * {@link createInitialLoopState}.
  *
- * The two repair counters (finalizationPlanRejectionCount,
- * validationRepairActionRejectionCount) are persisted here so that an
- * exhausted repair budget cannot be "resurrected" by resuming the run.
+ * F029: profileState is serialized via `profile.state.serializeState`; the
+ * persisted row carries profileName/profileVersion/profileState. The migrated
+ * top-level coding fields are no longer written (legacy fields remain
+ * schema-optional for read-compat with pre-F029 rows).
  */
-export function serializeResumeState(state: ResumeSerializeInput): PendingActionResumeState {
+export function serializeResumeState(
+  state: ResumeSerializeInput,
+  profile: AgentProfile
+): PendingActionResumeState {
   return {
     usage: AgentBudgetUsageSchema.parse(state.usage),
     nextSequence: state.nextSequence,
@@ -203,9 +236,8 @@ export function serializeResumeState(state: ResumeSerializeInput): PendingAction
     previousSnapshot: state.previousSnapshot,
     pendingRetryIncrement: state.pendingRetryIncrement,
     ...(state.recoveryState === undefined ? {} : { recoveryState: state.recoveryState }),
-    strategyState: state.strategyState,
-    ...(state.builderState === undefined ? {} : { builderState: state.builderState }),
-    finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
-    validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
+    profileName: profile.name,
+    profileVersion: profile.state.version,
+    profileState: profile.state.serializeState(state.profileState)
   };
 }

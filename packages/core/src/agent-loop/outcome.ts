@@ -15,6 +15,7 @@ import type {
 import type { AgentLoopModelProvider } from "../../../model-gateway/src/index.js";
 import type { RecoveryOrchestrator } from "../recovery/index.js";
 import type { AgentLoopState } from "./state.js";
+import type { AgentProfile } from "../profile/types.js";
 import type { AgentIterationStore } from "../../../storage/src/agent-iteration-store.js";
 import type { ApprovalStore } from "../../../storage/src/approval-store.js";
 import type { ArtifactStore } from "../../../storage/src/artifact-store.js";
@@ -85,6 +86,7 @@ export type HandlerDeps = {
     pendingActionStore: PendingActionStore;
     userInputStore: UserInputStore;
     checkpointStore: CheckpointStore;
+    profile: AgentProfile;
     resume?: unknown;
   };
   anchor: TaskAnchor;

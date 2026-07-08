@@ -34,6 +34,7 @@ import { serializeResumeState } from "../state.js";
 import { handleApproval } from "./approval.js";
 import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
+import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
 
 type ExecutionResult = {
   toolResult: ToolResult;
@@ -106,6 +107,7 @@ export async function handleToolCall(
       now: deps.input.now()
     });
     if (reusableGrant === null) {
+      const cs = readCodingState(state);
       const outcome = await handleApproval(
         {
           input: deps.input,
@@ -126,10 +128,14 @@ export async function handleToolCall(
           previousSnapshot: state.previousSnapshot,
           pendingRetryIncrement: state.pendingRetryIncrement,
           recoveryState: state.recoveryState,
-          strategyState: state.strategyState,
-          builderState: state.builderState,
-          finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
-          validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
+          // F029: coding-domain fields migrated into profileState.
+          profileState: state.profileState,
+          profile: deps.input.profile,
+          // Retained typed fields (populated from readCodingState) per F029 AC #12.
+          strategyState: cs.strategy,
+          builderState: cs.builder,
+          finalizationPlanRejectionCount: cs.finalizationPlanRejectionCount,
+          validationRepairActionRejectionCount: cs.validationRepairActionRejectionCount
         },
         toolCall,
         action.type === "request_approval" ? action.reason : describeApprovalReasonFor(toolCall)
@@ -176,11 +182,8 @@ export async function handleToolCall(
       previousSnapshot: state.previousSnapshot,
       pendingRetryIncrement: state.pendingRetryIncrement,
       recoveryState: state.recoveryState,
-      strategyState: state.strategyState,
-      builderState: state.builderState,
-      finalizationPlanRejectionCount: state.finalizationPlanRejectionCount,
-      validationRepairActionRejectionCount: state.validationRepairActionRejectionCount
-    }),
+      profileState: state.profileState
+    }, deps.input.profile),
     now: deps.input.now()
   });
   deps.input.pendingActionStore.insertPendingAction(toolPendingAction);
@@ -575,15 +578,16 @@ async function processToolSuccess(
   let recentToolResult = state.recentToolResult;
   let recentValidationResult = state.recentValidationResult;
   let regroundedAt = state.regroundedAt;
-  let builderState = state.builderState;
-  let strategyState = state.strategyState;
+  const initialCoding = readCodingState(state);
+  let builderState = initialCoding.builder;
+  let strategyState = initialCoding.strategy;
   let recoveryState = state.recoveryState;
   let previousSnapshot = state.previousSnapshot;
   let noProgressCount = state.noProgressCount;
   let regroundRequested = state.regroundRequested;
   let replanRequested = state.replanRequested;
   let latestIterationIndex = state.latestIterationIndex;
-  let validationRepairActionRejectionCount = state.validationRepairActionRejectionCount;
+  let validationRepairActionRejectionCount = initialCoding.validationRepairActionRejectionCount;
 
   if (execution.artifacts !== undefined) {
     for (const artifact of execution.artifacts) {
@@ -924,9 +928,12 @@ async function processToolSuccess(
         recentToolResult,
         recentValidationResult,
         regroundedAt,
-        builderState,
-        strategyState,
-        validationRepairActionRejectionCount
+        profileState: writeCodingState(state, (s) => ({
+          ...s,
+          builder: builderState,
+          strategy: strategyState,
+          validationRepairActionRejectionCount
+        }))
       });
       return {
         kind: "fail",
@@ -974,9 +981,12 @@ async function processToolSuccess(
     recentToolResult,
     recentValidationResult,
     regroundedAt,
-    builderState,
-    strategyState,
-    validationRepairActionRejectionCount,
+    profileState: writeCodingState(state, (s) => ({
+      ...s,
+      builder: builderState,
+      strategy: strategyState,
+      validationRepairActionRejectionCount
+    })),
     latestIterationIndex,
     previousSnapshot,
     ledger: noProgress.ledger,
