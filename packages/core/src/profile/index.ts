@@ -16,4 +16,5 @@ export type {
 export { codingProfile } from "./coding-profile.js";
 export { readCodingState, writeCodingState } from "./coding-profile.js";
 export { ProfileStateInvalidError } from "./profile-state-error.js";
+export { yixiangProfile } from "./yixiang/yixiang-profile.js";
 export { validationRepairPolicy, freshValidationFinalizationPolicy, builderStrategyPolicy } from "./policies/index.js";
