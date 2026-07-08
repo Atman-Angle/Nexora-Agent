@@ -10,7 +10,7 @@ import {
   type YixiangProfileState
 } from "./yixiang-profile-state.js";
 import { generateYixiangAction } from "./yixiang-generate-action.js";
-import { adaptYixiangFail, adaptYixiangFinal, handleYixiangAskUser } from "./yixiang-handlers.js";
+import { adaptYixiangFail, adaptYixiangFinal, handleYixiangAskUser, handleYixiangToolCall } from "./yixiang-handlers.js";
 
 function initYixiangProfileState(input: ProfileStateInitInput): YixiangProfileState {
   return {
@@ -81,6 +81,7 @@ export const yixiangProfile: AgentProfile = {
   state: yixiangStateHooks,
   generateAction: generateYixiangAction,
   actionHandlers: {
+    tool_call: handleYixiangToolCall,
     ask_user: handleYixiangAskUser,
     final: adaptYixiangFinal,
     fail: adaptYixiangFail

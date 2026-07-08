@@ -50,7 +50,7 @@ export type YixiangProfileState = {
   readonly artifactRefs: string[];
 };
 
-const ProductFactSchema = z.object({
+export const ProductFactSchema = z.object({
   factId: z.string().min(1),
   key: z.string().min(1),
   value: z.string().min(1),
@@ -81,6 +81,14 @@ export const YixiangProfileStateSchema = z.object({
   complianceResult: ComplianceResultSchema,
   artifactRefs: z.array(z.string().min(1))
 });
+
+export const ProductFactsInlineOutputSchema = z.object({
+  kind: z.literal("product_facts_inline"),
+  facts: z.array(ProductFactSchema)
+});
+
+/** The Yixiang tool's custom ToolResult output (envelope-valid + def.resultSchema-validated; NOT a ToolResultSchema union member). */
+export type ProductFactsInlineOutput = z.infer<typeof ProductFactsInlineOutputSchema>;
 
 /**
  * parseYixiangProfileState — Zod guard used by restoreState/validateState/
