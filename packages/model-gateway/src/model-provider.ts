@@ -84,5 +84,11 @@ export interface AgentLoopModelProvider {
     planningPolicyContext?: PlanningPolicyContext | null;
     executionPlanRepairContext?: ExecutionPlanRepairContext | null;
     lastModelError?: ModelActionRejection | null;
+    /**
+     * F031: opaque, profile-owned prompt context. The model-gateway treats this
+     * as `unknown` (renders one JSON line); each profile's generateAction builds
+     * it from its profileState. Not persisted (transient, rebuilt per call).
+     */
+    profileContext?: unknown;
   }): Promise<AgentAction>;
 }

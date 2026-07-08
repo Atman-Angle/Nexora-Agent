@@ -186,6 +186,7 @@ export class OpenAICompatibleProvider implements ModelProvider, ToolModeModelPro
     builderContext?: BuilderPromptContext;
     planningPolicyContext?: PlanningPolicyContext | null;
     executionPlanRepairContext?: ExecutionPlanRepairContext | null;
+    profileContext?: unknown;
   }): Promise<AgentAction> {
     const prompt = buildNextActionPrompt(input);
     const json = await this.chatCompletionJson(prompt, () => {
@@ -424,6 +425,7 @@ export function buildNextActionPrompt(input: {
   builderContext?: BuilderPromptContext;
   planningPolicyContext?: PlanningPolicyContext | null;
   executionPlanRepairContext?: ExecutionPlanRepairContext | null;
+  profileContext?: unknown;
 }): string {
   const ledgerSummary = JSON.stringify({
     currentStep: input.ledger.currentStep,
@@ -467,6 +469,10 @@ export function buildNextActionPrompt(input: {
     renderValidationSuccessInstruction(input.recentValidationResult ?? null),
     `Reground requested: ${String(input.regroundRequested)}`,
     `Replan requested: ${String(input.replanRequested)}`,
+    // F031: profile-owned prompt context. Only rendered when a profile passes
+    // one (coding omits it → coding prompt byte-identical). Opaque JSON; the
+    // model-gateway never imports the profile's domain types.
+    ...(input.profileContext === undefined ? [] : [`Profile context: ${JSON.stringify(input.profileContext)}`]),
     ...(repairLines.length === 0 ? [] : ["", ...repairLines]),
     "Return a single JSON object, no prose, no markdown fence."
   ].join("\n");

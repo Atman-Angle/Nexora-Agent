@@ -3,6 +3,25 @@ import { ensureBudget } from "../../agent-loop/budget.js";
 import type { HandlerDeps } from "../../agent-loop/outcome.js";
 import type { AgentLoopState } from "../../agent-loop/state.js";
 import type { GenerateActionOutcome } from "../../agent-loop/handlers/generate-action.js";
+import { readYixiangState } from "./yixiang-profile-state.js";
+
+/**
+ * buildYixiangPromptContext — a prompt-friendly subset of YixiangProfileState
+ * passed to the model via the F031 opaque `profileContext` slot. Excludes
+ * `artifactRefs` (opaque IDs) and `projectId` (not prompt-useful). The
+ * model-gateway renders this as one JSON line; it never imports the type.
+ */
+export function buildYixiangPromptContext(state: AgentLoopState): unknown {
+  const s = readYixiangState(state);
+  return {
+    currentStage: s.currentStage,
+    productFacts: s.productFacts,
+    confirmedFacts: s.confirmedFacts,
+    targetPlatforms: s.targetPlatforms,
+    generatedContents: s.generatedContents,
+    complianceResult: s.complianceResult
+  };
+}
 
 /**
  * generateYixiangAction — Yixiang's action-generation path. A minimal
@@ -43,7 +62,8 @@ export async function generateYixiangAction(
       usage: state.usage,
       availableTools: deps.availableTools,
       regroundRequested: state.regroundRequested,
-      replanRequested: state.replanRequested
+      replanRequested: state.replanRequested,
+      profileContext: buildYixiangPromptContext(state)
     })
   );
 
