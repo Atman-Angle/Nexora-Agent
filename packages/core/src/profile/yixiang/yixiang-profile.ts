@@ -5,13 +5,18 @@ import type {
   ProfileStateInitInput,
   ProfileStateRestoreInput
 } from "../types.js";
+import type { AgentAction } from "../../../../contracts/src/index.js";
 import { ProfileStateInvalidError } from "../profile-state-error.js";
 import {
   parseYixiangProfileState,
   type YixiangProfileState
 } from "./yixiang-profile-state.js";
 import { generateYixiangAction } from "./yixiang-generate-action.js";
-import { adaptYixiangFail, adaptYixiangFinal, handleYixiangAskUser, handleYixiangToolCall } from "./yixiang-handlers.js";
+import { adaptYixiangFail, adaptYixiangFinal, handleYixiangToolCall } from "./yixiang-handlers.js";
+import { handleAskUser } from "../../agent-loop/handlers/ask-user.js";
+import type { AgentLoopState } from "../../agent-loop/state.js";
+import type { HandlerDeps, HandlerOutcome } from "../../agent-loop/outcome.js";
+import type { DispatchContext } from "../types.js";
 import { validateArtifactForRun } from "../../validation-gate.js";
 
 function initYixiangProfileState(input: ProfileStateInitInput): YixiangProfileState {
@@ -78,6 +83,52 @@ const yixiangCompletionGate: CompletionGate = async (ctx) => {
 };
 
 /**
+ * adaptYixiangAskUser — thin adapter that constructs HandleAskUserInput from
+ * (state, deps) and delegates to the shared handleAskUser. This is possible
+ * after F032 removed the dead coding-typed fields from HandleAskUserInput,
+ * making it profile-agnostic (all fields are generic runtime types).
+ */
+async function adaptYixiangAskUser(
+  state: AgentLoopState,
+  deps: HandlerDeps,
+  action: AgentAction,
+  _dispatchCtx: DispatchContext
+): Promise<HandlerOutcome> {
+  return handleAskUser(
+    {
+      input: {
+        now: deps.input.now,
+        idGenerator: deps.input.idGenerator,
+        userInputStore: deps.input.userInputStore,
+        ledgerStore: deps.input.ledgerStore,
+        runStore: deps.input.runStore,
+        pendingActionStore: deps.input.pendingActionStore
+      },
+      run: state.activeRun,
+      ledger: state.ledger,
+      appendEvent: deps.appendEvent,
+      checkpoint: deps.checkpoint,
+      nextSequence: state.nextSequence,
+      latestIterationIndex: state.latestIterationIndex,
+      currentWorkingSet: state.currentWorkingSet,
+      changedFiles: state.changedFiles,
+      recentToolResult: state.recentToolResult,
+      recentValidationResult: state.recentValidationResult,
+      regroundRequested: state.regroundRequested,
+      replanRequested: state.replanRequested,
+      noProgressCount: state.noProgressCount,
+      usage: state.usage,
+      previousSnapshot: state.previousSnapshot,
+      pendingRetryIncrement: state.pendingRetryIncrement,
+      recoveryState: state.recoveryState,
+      profileState: state.profileState,
+      profile: deps.input.profile
+    },
+    action as Extract<AgentAction, { type: "ask_user" }>
+  );
+}
+
+/**
  * yixiangProfile — the first real, non-coding business Profile (D001-R2
  * Phase 5a). Validates F029's profileState boundary end-to-end: a foreign
  * domain state type owned by profile hooks, persisted to checkpoint + resume,
@@ -87,10 +138,12 @@ const yixiangCompletionGate: CompletionGate = async (ctx) => {
  * the full tool-driven business chain is F030b. Yixiang does NOT import
  * strategy/builder/validation-repair/validation-gate, does NOT touch Run
  * status / Ledger / stores internals, and does NOT reuse coding-coupled
- * handlers (handleToolCall/handleFinal/handleAskUser).
+ * handlers (handleToolCall/handleFinal).
  *
  * F031b adds a minimal completionGate (artifact validation). Real Yixiang
  * completion integrity is deferred to a future business Feature.
+ *
+ * F032 reuses the shared handleAskUser (dead coding fields removed).
  */
 export const yixiangProfile: AgentProfile = {
   name: "yixiang",
@@ -98,7 +151,7 @@ export const yixiangProfile: AgentProfile = {
   generateAction: generateYixiangAction,
   actionHandlers: {
     tool_call: handleYixiangToolCall,
-    ask_user: handleYixiangAskUser,
+    ask_user: adaptYixiangAskUser,
     final: adaptYixiangFinal,
     fail: adaptYixiangFail
   },

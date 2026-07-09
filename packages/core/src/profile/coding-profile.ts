@@ -101,7 +101,6 @@ async function adaptAskUser(
   action: AgentAction,
   _dispatchCtx: DispatchContext
 ): Promise<HandlerOutcome> {
-  const cs = readCodingState(state);
   const ctx: HandleAskUserInput = {
     input: {
       now: deps.input.now,
@@ -128,14 +127,8 @@ async function adaptAskUser(
     previousSnapshot: state.previousSnapshot,
     pendingRetryIncrement: state.pendingRetryIncrement,
     recoveryState: state.recoveryState,
-    // F029: coding-domain fields migrated into profileState.
     profileState: state.profileState,
-    profile: deps.input.profile,
-    // Retained typed fields (populated from readCodingState) per F029 AC #12.
-    strategyState: cs.strategy,
-    builderState: cs.builder,
-    finalizationPlanRejectionCount: cs.finalizationPlanRejectionCount,
-    validationRepairActionRejectionCount: cs.validationRepairActionRejectionCount
+    profile: deps.input.profile
   };
   return handleAskUser(ctx, action as Extract<AgentAction, { type: "ask_user" }>);
 }

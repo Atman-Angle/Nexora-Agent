@@ -6,7 +6,6 @@ import type {
   ProgressLedger,
   RecoveryCheckpointState,
   Run,
-  StrategyState,
   ToolCall,
   ToolResult,
   ValidationResult,
@@ -28,7 +27,6 @@ import {
 } from "../tool-description.js";
 import { describeResourceScope, fingerprintAction } from "../fingerprint.js";
 import type { ToolRuntime } from "../../../../tool-runtime/src/index.js";
-import type { BuilderState } from "../../../../contracts/src/index.js";
 import type { AgentProfile } from "../../profile/types.js";
 
 export type HandleApprovalInput = {
@@ -64,10 +62,6 @@ export type HandleApprovalInput = {
   recoveryState?: RecoveryCheckpointState | undefined;
   profileState: unknown;
   profile: AgentProfile;
-  strategyState: StrategyState;
-  builderState: BuilderState;
-  finalizationPlanRejectionCount: number;
-  validationRepairActionRejectionCount: number;
 };
 
 export async function handleApproval(

@@ -1,7 +1,6 @@
 import type {
   AgentAction,
   AgentBudgetUsage,
-  BuilderState,
   Checkpoint,
   CheckpointPhase,
   Event,
@@ -9,7 +8,6 @@ import type {
   ProgressLedger,
   RecoveryCheckpointState,
   Run,
-  StrategyState,
   ToolResult,
   ValidationResult,
   WorkingSet
@@ -71,10 +69,6 @@ export type HandleAskUserInput = {
   recoveryState?: RecoveryCheckpointState | undefined;
   profileState: unknown;
   profile: AgentProfile;
-  strategyState: StrategyState;
-  builderState: BuilderState;
-  finalizationPlanRejectionCount: number;
-  validationRepairActionRejectionCount: number;
 };
 
 export async function handleAskUser(

@@ -172,7 +172,7 @@ export function createInitialLoopState(
         : Math.max(resumeState.nextSequence, input.eventStore.listEventsByRun(input.run.runId).length + 1),
     currentWorkingSet: resumeState?.currentWorkingSet ?? null,
     changedFiles: resumeState?.changedFiles ?? [],
-    recentToolResult: resumeState?.recentToolResult ?? null,
+    recentToolResult: (resumeState?.recentToolResult as ToolResult | null | undefined) ?? null,
     recentValidationResult: resumeState?.recentValidationResult ?? null,
     latestIterationIndex: resumeState?.latestIterationIndex ?? 0,
     regroundRequested: resumeState?.regroundRequested ?? false,

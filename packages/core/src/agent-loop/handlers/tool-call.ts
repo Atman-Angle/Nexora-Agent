@@ -107,7 +107,6 @@ export async function handleToolCall(
       now: deps.input.now()
     });
     if (reusableGrant === null) {
-      const cs = readCodingState(state);
       const outcome = await handleApproval(
         {
           input: deps.input,
@@ -130,12 +129,7 @@ export async function handleToolCall(
           recoveryState: state.recoveryState,
           // F029: coding-domain fields migrated into profileState.
           profileState: state.profileState,
-          profile: deps.input.profile,
-          // Retained typed fields (populated from readCodingState) per F029 AC #12.
-          strategyState: cs.strategy,
-          builderState: cs.builder,
-          finalizationPlanRejectionCount: cs.finalizationPlanRejectionCount,
-          validationRepairActionRejectionCount: cs.validationRepairActionRejectionCount
+          profile: deps.input.profile
         },
         toolCall,
         action.type === "request_approval" ? action.reason : describeApprovalReasonFor(toolCall)
