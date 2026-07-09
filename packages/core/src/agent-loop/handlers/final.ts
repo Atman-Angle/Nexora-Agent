@@ -7,7 +7,6 @@ import {
 } from "../../../../contracts/src/index.js";
 import { applyLedgerPatch } from "../../ledger-progress/index.js";
 import { transitionRun } from "../../state-machine.js";
-import { runCompletionGate } from "../../validation-gate.js";
 import { appendFailedAttempt, createIteration } from "../iteration.js";
 import { detectNoProgress, handleNoProgress } from "../no-progress.js";
 import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
@@ -67,7 +66,7 @@ export async function handleFinal(
   const validationStartSequence = await deps.appendEventWithSequence("validation.started", { status: activeRun.status }, verifyingAt);
 
   let validation = (
-    await runCompletionGate({
+    await deps.input.profile.completionGate({
       run: activeRun,
       task: deps.input.task,
       ledger: state.ledger,

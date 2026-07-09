@@ -20,6 +20,7 @@ import {
 import { validationRepairPolicy } from "./policies/validation-repair-policy.js";
 import { freshValidationFinalizationPolicy } from "./policies/fresh-validation-finalization-policy.js";
 import { builderStrategyPolicy } from "./policies/builder-strategy-policy.js";
+import { runCompletionGate } from "../validation-gate.js";
 
 export { readCodingState, writeCodingState };
 
@@ -228,5 +229,6 @@ export const codingProfile: AgentProfile = {
     validationRepairPolicy,
     freshValidationFinalizationPolicy,
     builderStrategyPolicy
-  ]
+  ],
+  completionGate: (ctx) => runCompletionGate(ctx)
 };

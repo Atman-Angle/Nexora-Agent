@@ -1,4 +1,4 @@
-import type { AgentAction, BuilderState, Event, Run, StrategyState, TaskAnchor } from "../../../contracts/src/index.js";
+import type { AgentAction, Artifact, BuilderState, Event, ProgressLedger, Run, StrategyState, Task, TaskAnchor, ToolResult, ValidationResult } from "../../../contracts/src/index.js";
 import type { HandlerDeps, HandlerOutcome } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
 import type { GenerateActionOutcome } from "../agent-loop/handlers/generate-action.js";
@@ -210,6 +210,44 @@ export type ProfileStateHooks = {
   readonly validateState?: (state: unknown) => void;
 };
 
+/**
+ * CompletionGateContext — everything a profile's completion gate needs to
+ * decide whether a `final` action satisfies the profile's completion criteria.
+ * All fields are generic runtime types from contracts; no profile-specific types.
+ */
+export type CompletionGateContext = {
+  readonly run: Run;
+  readonly task: Task;
+  readonly ledger?: ProgressLedger | null;
+  readonly toolResult: ToolResult | null;
+  readonly latestValidationResult?: ValidationResult | null;
+  readonly finalArtifact: Artifact | null;
+  readonly artifacts: Artifact[];
+  readonly events?: Event[];
+  readonly workspaceRoot?: string;
+  readonly now: string;
+  readonly idGenerator: () => string;
+};
+
+/**
+ * CompletionGateResult — the outcome of a profile's completion gate.
+ * The validation field is consumed by the shared handleFinal to decide
+ * pass (→ succeeded) or fail (→ continue for repair).
+ */
+export type CompletionGateResult = {
+  readonly validation: ValidationResult;
+};
+
+/**
+ * CompletionGate — a profile-owned function that decides whether a `final`
+ * action satisfies the profile's completion criteria. Called by the shared
+ * handleFinal handler. The runtime owns state transitions, events, and
+ * checkpoints; the profile owns what "done" means.
+ */
+export type CompletionGate = (
+  context: CompletionGateContext
+) => Promise<CompletionGateResult>;
+
 export type AgentProfile = {
   /** Human-readable profile name for logging/events. */
   readonly name: string;
@@ -249,6 +287,13 @@ export type AgentProfile = {
    * For profiles that don't need pre-dispatch gating, provide an empty array.
    */
   readonly actionPolicies: readonly ActionPolicy[];
+
+  /**
+   * F031b: profile-owned completion criteria. Called by the shared handleFinal
+   * when a `final` action is proposed. The runtime owns the state transitions,
+   * events, and checkpoints; the profile owns what "done" means for its domain.
+   */
+  readonly completionGate: CompletionGate;
 };
 
 // Re-export for convenience

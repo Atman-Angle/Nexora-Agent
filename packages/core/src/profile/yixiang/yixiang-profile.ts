@@ -1,5 +1,6 @@
 import type {
   AgentProfile,
+  CompletionGate,
   ProfileStateHooks,
   ProfileStateInitInput,
   ProfileStateRestoreInput
@@ -11,6 +12,7 @@ import {
 } from "./yixiang-profile-state.js";
 import { generateYixiangAction } from "./yixiang-generate-action.js";
 import { adaptYixiangFail, adaptYixiangFinal, handleYixiangAskUser, handleYixiangToolCall } from "./yixiang-handlers.js";
+import { validateArtifactForRun } from "../../validation-gate.js";
 
 function initYixiangProfileState(input: ProfileStateInitInput): YixiangProfileState {
   return {
@@ -65,6 +67,17 @@ const yixiangStateHooks: ProfileStateHooks = {
 };
 
 /**
+ * yixiangCompletionGate — minimal Yixiang completion integrity. Validates
+ * the final artifact exists, belongs to the run, and is non-empty plain
+ * text (via the shared validateArtifactForRun). Real Yixiang completion
+ * (fact-confirmation, compliance enforcement) is a future business Feature.
+ */
+const yixiangCompletionGate: CompletionGate = async (ctx) => {
+  const validation = validateArtifactForRun(ctx.run, ctx.finalArtifact);
+  return { validation };
+};
+
+/**
  * yixiangProfile — the first real, non-coding business Profile (D001-R2
  * Phase 5a). Validates F029's profileState boundary end-to-end: a foreign
  * domain state type owned by profile hooks, persisted to checkpoint + resume,
@@ -75,6 +88,9 @@ const yixiangStateHooks: ProfileStateHooks = {
  * strategy/builder/validation-repair/validation-gate, does NOT touch Run
  * status / Ledger / stores internals, and does NOT reuse coding-coupled
  * handlers (handleToolCall/handleFinal/handleAskUser).
+ *
+ * F031b adds a minimal completionGate (artifact validation). Real Yixiang
+ * completion integrity is deferred to a future business Feature.
  */
 export const yixiangProfile: AgentProfile = {
   name: "yixiang",
@@ -86,5 +102,6 @@ export const yixiangProfile: AgentProfile = {
     final: adaptYixiangFinal,
     fail: adaptYixiangFail
   },
-  actionPolicies: []
+  actionPolicies: [],
+  completionGate: yixiangCompletionGate
 };
