@@ -77,6 +77,7 @@ export async function runAgentLoop(input: {
         bypassApprovalForSeedAction?: boolean | undefined;
       }
     | undefined;
+  eventListener?: ((event: Event) => void) | undefined;
 }): Promise<AgentLoopResult> {
   if (input.task.input.agentRequest === undefined) {
     throw new AgentLoopRunFailure("AGENT_REQUEST_MISSING", "Agent loop requires an agent request.", false);
@@ -138,18 +139,26 @@ export async function runAgentLoop(input: {
   const appendEventWithSequence = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
     Promise.resolve().then(() => {
       const sequence = state.nextSequence;
-      input.eventStore.appendEvent(
-        createEvent({
-          eventId: input.idGenerator(),
-          runId: state.activeRun.runId,
-          sequence,
-          type,
-          timestamp,
-          payload
-        })
-      );
+      const event = createEvent({
+        eventId: input.idGenerator(),
+        runId: state.activeRun.runId,
+        sequence,
+        type,
+        timestamp,
+        payload
+      });
+      input.eventStore.appendEvent(event);
       maybeAbortAfterEvent(type);
       state.nextSequence += 1;
+      if (input.eventListener !== undefined) {
+        try {
+          input.eventListener(event);
+        } catch (listenerError) {
+          console.warn(
+            `[runAgentLoop] eventListener threw: ${listenerError instanceof Error ? listenerError.message : String(listenerError)}`
+          );
+        }
+      }
       return sequence;
     });
   const appendEvent = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
