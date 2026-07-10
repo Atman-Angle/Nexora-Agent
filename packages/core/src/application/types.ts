@@ -72,6 +72,15 @@ export type StartAgentInput = {
   readonly executionConstraints?: TaskExecutionConstraints | undefined;
 };
 
+/** Fixed, allow-listed read-only tool operations exposed by AgentService. */
+export type ReadOnlyToolInput =
+  | { readonly kind: "filesystem_list"; readonly relativePath?: string | undefined }
+  | { readonly kind: "project_inspect"; readonly relativePath?: string | undefined }
+  | { readonly kind: "project_commands" }
+  | { readonly kind: "git_status" }
+  | { readonly kind: "git_diff"; readonly path?: string | undefined }
+  | { readonly kind: "git_show"; readonly revision: string; readonly path?: string | undefined };
+
 /**
  * ResumeApprovalInput — input for resuming a run that is waiting for approval.
  */

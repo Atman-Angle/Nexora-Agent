@@ -43,6 +43,8 @@ export async function runToolMode(input: {
   eventStore: EventStore;
   artifactStore: ArtifactStore;
   validationResultStore: ValidationResultStore;
+  /** Optional post-persistence event sink for application-layer subscribers. */
+  eventListener?: ((event: Event) => void) | undefined;
 }): Promise<{
   run: Run;
   artifact: Artifact;
@@ -54,17 +56,25 @@ export async function runToolMode(input: {
 
   const appendEvent = (type: Event["type"], payload: Record<string, unknown>, timestamp: string) =>
     Promise.resolve().then(() => {
-      input.eventStore.appendEvent(
-        createEvent({
-          eventId: input.idGenerator(),
-          runId: activeRun.runId,
-          sequence: nextSequence,
-          type,
-          timestamp,
-          payload
-        })
-      );
+      const event = createEvent({
+        eventId: input.idGenerator(),
+        runId: activeRun.runId,
+        sequence: nextSequence,
+        type,
+        timestamp,
+        payload
+      });
+      input.eventStore.appendEvent(event);
       nextSequence += 1;
+      if (input.eventListener !== undefined) {
+        try {
+          input.eventListener(event);
+        } catch (listenerError) {
+          console.warn(
+            `[runToolMode] eventListener threw: ${listenerError instanceof Error ? listenerError.message : String(listenerError)}`
+          );
+        }
+      }
     });
 
   await appendEvent("run.created", { status: activeRun.status }, activeRun.createdAt);

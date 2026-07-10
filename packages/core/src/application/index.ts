@@ -2,6 +2,7 @@ export { AgentService } from "./agent-service.js";
 export {
   AgentServiceError,
   type AgentServiceConfig,
+  type ReadOnlyToolInput,
   type StartAgentInput,
   type ResumeApprovalInput,
   type ResumeRespondInput,

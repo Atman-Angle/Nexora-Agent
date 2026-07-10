@@ -17,6 +17,7 @@ import {
   type Run,
   type Task,
   type ToolResult,
+  type ToolCall,
   ToolResultSchema,
   computeArtifactHash,
   type ValidationResult
@@ -69,10 +70,12 @@ import {
   type EventSubscription,
   type ResumeApprovalInput,
   type ResumeRespondInput,
+  type ReadOnlyToolInput,
   type ResumeRunResult,
   type RunStatusResult,
   type StartAgentInput
 } from "./types.js";
+import type { ToolModeModelProvider } from "../../../model-gateway/src/index.js";
 
 /**
  * AgentService — application service layer for the Nexora runtime.
@@ -1062,39 +1065,67 @@ export class AgentService {
   }> {
     this.assertOpen();
 
+    return this.runToolTask(task, this.createModelProviderInstance());
+  }
+
+  async runReadOnlyTool(input: ReadOnlyToolInput): Promise<{
+    run: Run;
+    artifact: Artifact;
+    validation: ValidationResult;
+    toolResult: ToolResult;
+  }> {
+    this.assertOpen();
     const now = () => new Date().toISOString();
-    const workspaceRoot = this.workspaceRoot;
-    const artifactRoot = this.resolveArtifactRoot();
-
-    this.taskStore!.insertTask(task);
-
-    const run = createRun({
-      runId: randomUUID(),
-      taskId: task.taskId,
-      createdAt: now(),
-      mode: "tool"
+    const toolCall = this.createReadOnlyToolCall(input);
+    const task = createTask({
+      taskId: randomUUID(),
+      text: `Read-only exploration: ${toolCall.toolName}`,
+      taskType: "read_only",
+      createdAt: now()
     });
+    return this.runToolTask(task, new DeterministicReadOnlyToolProvider(toolCall));
+  }
+
+  // ── Private Helpers ────────────────────────────────────────────────
+
+  private async runToolTask(task: Task, modelProvider: ToolModeModelProvider): Promise<{
+    run: Run;
+    artifact: Artifact;
+    validation: ValidationResult;
+    toolResult: ToolResult;
+  }> {
+    const now = () => new Date().toISOString();
+    const run = createRun({ runId: randomUUID(), taskId: task.taskId, createdAt: now(), mode: "tool" });
+    this.taskStore!.insertTask(task);
     this.runStore!.insertRun(run);
-
-    const modelProvider = this.createModelProviderInstance();
-
     return runToolMode({
       task,
       run,
       now,
       idGenerator: randomUUID,
-      workspaceRoot,
-      artifactRoot,
+      workspaceRoot: this.workspaceRoot,
+      artifactRoot: this.resolveArtifactRoot(),
       modelProvider,
       toolRuntime: this.toolRuntime!,
       runStore: this.runStore!,
       eventStore: this.eventStore!,
       artifactStore: this.artifactStore!,
-      validationResultStore: this.validationResultStore!
+      validationResultStore: this.validationResultStore!,
+      ...(this.hasSubscribers() ? { eventListener: this.createEventListener() } : {})
     });
   }
 
-  // ── Private Helpers ────────────────────────────────────────────────
+  private createReadOnlyToolCall(input: ReadOnlyToolInput): ToolCall {
+    const toolCallId = randomUUID();
+    const timeoutMs = 5_000;
+    if (input.kind === "filesystem_list") return { toolCallId, toolName: "filesystem.list", input: { relativePath: input.relativePath ?? "." }, timeoutMs };
+    if (input.kind === "project_inspect") return { toolCallId, toolName: "project.inspect", input: { relativePath: input.relativePath ?? "." }, timeoutMs };
+    if (input.kind === "project_commands") return { toolCallId, toolName: "project.commands", input: {}, timeoutMs };
+    if (input.kind === "git_status") return { toolCallId, toolName: "git.status", input: {}, timeoutMs };
+    if (input.kind === "git_diff") return { toolCallId, toolName: "git.diff", input: input.path === undefined ? {} : { path: input.path }, timeoutMs };
+    if (input.kind === "git_show") return { toolCallId, toolName: "git.show", input: input.path === undefined ? { revision: input.revision } : { revision: input.revision, path: input.path }, timeoutMs };
+    throw new AgentServiceError("READ_ONLY_TOOL_NOT_ALLOWED", "Read-only tool kind is not allowed.");
+  }
 
   private async preToolRecovery(pendingAction: PendingAction, workspaceRoot: string): Promise<{ action: "blocked" | "replan"; reason: string } | undefined> {
     const toolCall = pendingAction.action.type === "tool_call" ? pendingAction.action.toolCall : undefined;
@@ -1318,6 +1349,24 @@ export class AgentService {
       "Cannot resume run without a pending action resume state. " +
       "Use resumeApproval() or resumeRespond() for runs that are waiting for input."
     );
+  }
+}
+
+class DeterministicReadOnlyToolProvider implements ToolModeModelProvider {
+  constructor(private readonly toolCall: ToolCall) {}
+
+  async plan(): Promise<{ type: "tool_call"; toolCall: ToolCall }> {
+    return { type: "tool_call", toolCall: this.toolCall };
+  }
+
+  async finalize(input: { toolResult: ToolResult }): Promise<{ type: "final"; text: string }> {
+    if (input.toolResult.status !== "success") {
+      throw new Error("Read-only tool provider cannot finalize an error result.");
+    }
+    return {
+      type: "final",
+      text: JSON.stringify({ toolName: input.toolResult.toolName, output: input.toolResult.output })
+    };
   }
 }
 
