@@ -3,6 +3,7 @@ import { z } from "zod";
 import { RecoveryCheckpointStateSchema } from "./recovery.js";
 import { StrategyStateSchema } from "./strategy.js";
 import { BuilderStateSchema } from "./builder.js";
+import { PendingActionResumeStateSchema, type PendingActionResumeState } from "./pending-action.js";
 
 export const CheckpointPhaseSchema = z.enum([
   "plan_formed",
@@ -35,6 +36,9 @@ export const CheckpointSchema = z.object({
   workspaceHash: z.string().min(1).optional(),
   note: z.string().min(1).optional(),
   recovery: RecoveryCheckpointStateSchema.optional(),
+  // F036: crash recovery needs the full generic loop state even after its
+  // pending action was resolved. Optional preserves pre-F036 checkpoints.
+  resumeState: PendingActionResumeStateSchema.optional(),
   // F029: profile-owned opaque state. The runtime holds the slot; the profile
   // owns the content via its state hooks. undefined for pre-F029 rows.
   profileName: z.string().min(1).optional(),
@@ -74,6 +78,7 @@ export function createCheckpoint(input: {
   workspaceHash?: string;
   note?: string;
   recovery?: z.infer<typeof RecoveryCheckpointStateSchema>;
+  resumeState?: PendingActionResumeState;
   profileName?: string;
   profileVersion?: string;
   profileState?: unknown;
@@ -92,6 +97,7 @@ export function createCheckpoint(input: {
     ...(input.workspaceHash === undefined ? {} : { workspaceHash: input.workspaceHash }),
     ...(input.note === undefined ? {} : { note: input.note }),
     ...(input.recovery === undefined ? {} : { recovery: input.recovery }),
+    ...(input.resumeState === undefined ? {} : { resumeState: input.resumeState }),
     ...(input.profileName === undefined ? {} : { profileName: input.profileName }),
     ...(input.profileVersion === undefined ? {} : { profileVersion: input.profileVersion }),
     ...(input.profileState === undefined ? {} : { profileState: input.profileState }),

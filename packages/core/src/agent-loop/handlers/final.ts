@@ -65,6 +65,7 @@ export async function handleFinal(
   await deps.checkpoint("pre_validation");
   const validationStartSequence = await deps.appendEventWithSequence("validation.started", { status: activeRun.status }, verifyingAt);
 
+  const executionRecords = deps.input.toolRuntime.listExecutionRecords(activeRun.runId);
   let validation = (
     await deps.input.profile.completionGate({
       run: activeRun,
@@ -74,6 +75,7 @@ export async function handleFinal(
       latestValidationResult: state.recentValidationResult,
       finalArtifact: artifact,
       artifacts: deps.input.artifactStore.getArtifactsByRun(activeRun.runId),
+      executionRecords,
       events: deps.input.eventStore.listEventsByRun(activeRun.runId),
       workspaceRoot: deps.input.workspaceRoot,
       now: deps.input.now(),
@@ -216,7 +218,8 @@ export async function handleFinal(
       run: activeRun,
       artifact,
       validation,
-      ledger: state.ledger
+      ledger: state.ledger,
+      executionRecords
     }
   };
 }

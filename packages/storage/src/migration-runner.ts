@@ -240,6 +240,19 @@ const schemaMigrations: SchemaMigration[] = [
       ensureColumn(connection, "execution_records", "idempotency_key", "TEXT");
     }
   }
+  ,{ id: "002_session_memory", apply(connection) { connection.exec(`
+CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, profile TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS chat_turns (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, ordinal INTEGER NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(session_id, ordinal), FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE);
+CREATE TABLE IF NOT EXISTS user_facts (id TEXT PRIMARY KEY, key TEXT NOT NULL, value TEXT NOT NULL, source_turn_id TEXT NOT NULL, sensitive INTEGER NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_user_facts_key_status ON user_facts(key, status);
+`); } }
+  ,{ id: "003_compilation_evidence", apply(connection) { connection.exec(`
+CREATE TABLE IF NOT EXISTS compilation_evidence (definition_hash TEXT NOT NULL, compiler_version TEXT NOT NULL, report_json TEXT NOT NULL, content_hash TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(definition_hash, compiler_version));
+`); } }
+  ,{ id: "004_session_selection_handles", apply(connection) { connection.exec(`
+CREATE TABLE IF NOT EXISTS chat_selection_handles (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, source_turn_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(session_id, position), FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS idx_chat_selection_handles_session ON chat_selection_handles(session_id, position);
+`); } }
 ];
 
 function ensureSchemaMigrationsTable(connection: Database.Database): void {

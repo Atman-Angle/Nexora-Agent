@@ -55,7 +55,8 @@ export async function adaptYixiangFinal(
       run: succeededRun,
       artifact,
       validation: ValidationResultSchema.parse({ status: "passed", evidence: [] }),
-      ledger: state.ledger
+      ledger: state.ledger,
+      executionRecords: []
     }
   };
 }

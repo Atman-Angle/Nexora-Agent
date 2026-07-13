@@ -52,6 +52,7 @@ const filesystemReadTool: ToolDefinition<FilesystemReadInput> = {
     { name: "path", type: "string", required: true, description: "Workspace-relative file path." }
   ],
   minimalExample: { path: "src/example.ts" },
+  targetPathExtractor: (input) => input.path,
   async execute(context, toolCall) {
     return executeFilesystemRead({ ...context, toolCall });
   }
@@ -274,7 +275,8 @@ const projectInspectTool: ToolDefinition<ProjectInspectInput> = {
   }
 };
 
-export function registerCodingTools(registry: ToolRegistry): void {
+/** General-purpose repository tools shared by coding and chat profiles. */
+export function registerCommonTools(registry: ToolRegistry): void {
   registry.register(filesystemReadTool);
   registry.register(filesystemSearchTool);
   registry.register(filesystemPatchTool);
@@ -286,4 +288,9 @@ export function registerCodingTools(registry: ToolRegistry): void {
   registry.register(gitShowTool);
   registry.register(projectCommandsTool);
   registry.register(projectInspectTool);
+}
+
+/** @deprecated Use registerCommonTools. Retained for one compatibility release. */
+export function registerCodingTools(registry: ToolRegistry): void {
+  registerCommonTools(registry);
 }

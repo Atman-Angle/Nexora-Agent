@@ -15,6 +15,7 @@ import type {
 import type { AgentProfile } from "../profile/types.js";
 import type { AgentLoopResult } from "../agent-loop/outcome.js";
 import type { ProviderFactoryOptions } from "../../../model-gateway/src/provider-factory.js";
+import type { InProcessAgentRegistry } from "./agent-registry.js";
 
 /**
  * AgentServiceError — thrown when the service is used incorrectly
@@ -50,6 +51,7 @@ export type AgentServiceConfig = {
    * AgentService ships with zero built-in registrations.
    */
   readonly profiles?: readonly AgentProfile[] | undefined;
+  readonly registry?: InProcessAgentRegistry | undefined;
 };
 
 /**
@@ -70,10 +72,13 @@ export type StartAgentInput = {
   readonly acceptanceCriteria?: readonly TaskAcceptanceCriterion[] | undefined;
   /** Execution constraints. */
   readonly executionConstraints?: TaskExecutionConstraints | undefined;
+  /** Ephemeral caller projection; excluded from Task/checkpoint persistence. */
+  readonly runtimeContext?: unknown;
 };
 
 /** Fixed, allow-listed read-only tool operations exposed by AgentService. */
 export type ReadOnlyToolInput =
+  | { readonly kind: "filesystem_search"; readonly query: string; readonly limit?: number | undefined }
   | { readonly kind: "filesystem_list"; readonly relativePath?: string | undefined }
   | { readonly kind: "project_inspect"; readonly relativePath?: string | undefined }
   | { readonly kind: "project_commands" }

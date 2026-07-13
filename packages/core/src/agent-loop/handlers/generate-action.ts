@@ -1,5 +1,6 @@
 import type { AgentAction } from "../../../../contracts/src/index.js";
 import type { ModelActionRejection } from "../../../../model-gateway/src/index.js";
+import { buildAgentActionSchemaText } from "../../../../model-gateway/src/model-tool-definition.js";
 import { AgentActionSchema } from "../../../../contracts/src/index.js";
 import {
   buildPlanningPolicyContext,
@@ -14,10 +15,11 @@ import { buildLoopContextSnapshot } from "../context-snapshot.js";
 import { ensureBudget } from "../budget.js";
 import { describeModelActionError, isActionRepairable } from "../model-action-error.js";
 import { redactForEvidence } from "../redact.js";
-import { validateCompactionIntegrity } from "../../../../context/src/index.js";
+import { buildContextEnvelope, validateCompactionIntegrity } from "../../../../context/src/index.js";
 import type { HandlerDeps } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
 import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
+import { buildAgentActionPrompt } from "../../prompt/agent-action-prompt.js";
 
 export type GenerateActionOutcome =
   | { kind: "action"; action: AgentAction }
@@ -79,13 +81,26 @@ export async function handleGenerateAction(
       retryable: false
     };
   }
+  // C002 shadow path: construct once from the already-built Snapshot. It is
+  // passed to the provider for observation only; legacy prompt rendering is
+  // intentionally unchanged until the envelope has parity evidence.
+  const contextEnvelope = buildContextEnvelope({
+    snapshot: contextSnapshot,
+    now: iterationStartedAt,
+    capabilitySchema: buildAgentActionSchemaText(deps.availableTools)
+  });
   await deps.appendEvent(
     "context.compacted",
     {
       trims: contextSnapshot.trims.map((trim) => ({ field: trim.field, droppedCount: trim.droppedCount })),
       regroundedAt: contextSnapshot.regroundedAt,
       openApprovals: contextSnapshot.openApprovals,
-      openUserInputs: contextSnapshot.openUserInputs
+      openUserInputs: contextSnapshot.openUserInputs,
+      shadowEnvelope: {
+        selectedTokens: contextEnvelope.manifest.selectedTokens,
+        selectedSegmentIds: contextEnvelope.manifest.selectedSegmentIds,
+        drops: contextEnvelope.manifest.drops.map((drop) => ({ id: drop.id, reason: drop.reason }))
+      }
     },
     iterationStartedAt
   );
@@ -216,11 +231,36 @@ export async function handleGenerateAction(
           regroundRequested: state.regroundRequested,
           replanRequested: state.replanRequested,
           contextSnapshot,
+          contextEnvelope,
           strategyContext,
           ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
           planningPolicyContext,
           executionPlanRepairContext: baseBuilder.executionPlanRepair,
-          lastModelError: lastRejection ?? state.pendingActionRejection
+          lastModelError: lastRejection ?? state.pendingActionRejection,
+          prompt: buildAgentActionPrompt({
+            runId: state.activeRun.runId,
+            goal: deps.anchor.goal,
+            constraints: deps.anchor.constraints,
+            successCriteria: deps.anchor.successCriteria,
+            ledger: state.ledger,
+            workingSet: state.currentWorkingSet,
+            recentToolResult: state.recentToolResult,
+            recentValidationResult: state.recentValidationResult,
+            ...(deps.input.task.input.validationRequest === undefined
+              ? {}
+              : { validationRequest: deps.input.task.input.validationRequest }),
+            budget: deps.input.task.input.agentRequest!.budget,
+            usage: state.usage,
+            availableTools: deps.availableTools,
+            regroundRequested: state.regroundRequested,
+            replanRequested: state.replanRequested,
+            contextEnvelope,
+            strategyContext,
+            ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
+            planningPolicyContext,
+            executionPlanRepairContext: baseBuilder.executionPlanRepair,
+            lastModelError: lastRejection ?? state.pendingActionRejection
+          })
         })
       );
       Object.assign(state, { pendingActionRejection: null });

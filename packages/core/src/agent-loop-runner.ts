@@ -35,7 +35,7 @@ import { redactForEvidence } from "./agent-loop/redact.js";
 import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/test-abort.js";
 import { failRun } from "./agent-loop/fail-run.js";
 import { reGroundNow } from "./agent-loop/context-snapshot.js";
-import { createInitialLoopState } from "./agent-loop/state.js";
+import { createInitialLoopState, serializeResumeState } from "./agent-loop/state.js";
 import type { AgentLoopState } from "./agent-loop/state.js";
 import type { AgentProfile } from "./profile/index.js";
 import { ProfileStateInvalidError } from "./profile/profile-state-error.js";
@@ -69,6 +69,7 @@ export async function runAgentLoop(input: {
   userInputStore: UserInputStore;
   checkpointStore: CheckpointStore;
   profile: AgentProfile;
+  runtimeContext?: unknown;
   resume?:
     | {
         ledger: ProgressLedger;
@@ -131,6 +132,13 @@ export async function runAgentLoop(input: {
     }
     throw error;
   }
+  // A crash can occur after an iteration row is committed but before the
+  // following checkpoint snapshots its incremented index. SQLite is the
+  // authority for that durable fact, so never reuse an existing index.
+  const persistedNextIterationIndex = input.agentIterationStore
+    .listByRun(input.run.runId)
+    .reduce((next, iteration) => Math.max(next, iteration.index + 1), 0);
+  state.latestIterationIndex = Math.max(state.latestIterationIndex, persistedNextIterationIndex);
   const recoveryOrchestrator = new RecoveryOrchestrator();
   const recoveryBudget = input.task.input.agentRequest?.recoveryBudget ?? {};
   const availableTools = input.toolRuntime.getAvailableTools();
@@ -205,6 +213,7 @@ export async function runAgentLoop(input: {
       ...(workspaceHash === undefined ? {} : { workspaceHash }),
       ...(options?.note === undefined ? {} : { note: options.note }),
       ...(state.recoveryState === undefined ? {} : { recovery: state.recoveryState }),
+      resumeState: serializeResumeState(state, input.profile),
       profileName: input.profile.name,
       profileVersion: input.profile.state.version,
       profileState: input.profile.state.serializeState(state.profileState),

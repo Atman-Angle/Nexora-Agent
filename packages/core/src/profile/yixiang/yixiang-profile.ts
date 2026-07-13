@@ -13,6 +13,7 @@ import {
 } from "./yixiang-profile-state.js";
 import { generateYixiangAction } from "./yixiang-generate-action.js";
 import { adaptYixiangFail, adaptYixiangFinal, handleYixiangToolCall } from "./yixiang-handlers.js";
+import { registerYixiangTools } from "./yixiang-tools.js";
 import { handleAskUser } from "../../agent-loop/handlers/ask-user.js";
 import type { AgentLoopState } from "../../agent-loop/state.js";
 import type { HandlerDeps, HandlerOutcome } from "../../agent-loop/outcome.js";
@@ -148,6 +149,7 @@ async function adaptYixiangAskUser(
 export const yixiangProfile: AgentProfile = {
   name: "yixiang",
   state: yixiangStateHooks,
+  registerTools: registerYixiangTools,
   generateAction: generateYixiangAction,
   actionHandlers: {
     tool_call: handleYixiangToolCall,

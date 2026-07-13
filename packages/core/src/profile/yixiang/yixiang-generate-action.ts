@@ -4,6 +4,10 @@ import type { HandlerDeps } from "../../agent-loop/outcome.js";
 import type { AgentLoopState } from "../../agent-loop/state.js";
 import type { GenerateActionOutcome } from "../../agent-loop/handlers/generate-action.js";
 import { readYixiangState } from "./yixiang-profile-state.js";
+import { buildAgentActionPrompt } from "../../prompt/agent-action-prompt.js";
+import { buildLoopContextSnapshot } from "../../agent-loop/context-snapshot.js";
+import { buildContextEnvelope } from "../../../../context/src/index.js";
+import { buildAgentActionSchemaText } from "../../../../model-gateway/src/model-tool-definition.js";
 
 /**
  * buildYixiangPromptContext — a prompt-friendly subset of YixiangProfileState
@@ -47,6 +51,16 @@ export async function generateYixiangAction(
   await deps.appendEvent("iteration.started", { index: state.latestIterationIndex }, iterationStartedAt);
   state.usage.loopCount += 1;
   state.usage.modelCalls += 1;
+  const profileContext = buildYixiangPromptContext(state);
+  const contextEnvelope = buildContextEnvelope({
+    snapshot: buildLoopContextSnapshot({
+      runId: state.activeRun.runId, anchor: deps.anchor, ledger: state.ledger,
+      workingSet: state.currentWorkingSet, recentToolResult: state.recentToolResult,
+      recentValidationResult: state.recentValidationResult, approvalStore: deps.input.approvalStore,
+      userInputStore: deps.input.userInputStore, regroundedAt: state.regroundedAt, now: iterationStartedAt
+    }),
+    now: iterationStartedAt, profileContext, capabilitySchema: buildAgentActionSchemaText(deps.availableTools)
+  });
 
   const action = AgentActionSchema.parse(
     await deps.input.modelProvider.nextAction({
@@ -63,7 +77,16 @@ export async function generateYixiangAction(
       availableTools: deps.availableTools,
       regroundRequested: state.regroundRequested,
       replanRequested: state.replanRequested,
-      profileContext: buildYixiangPromptContext(state)
+      contextEnvelope,
+      profileContext,
+      prompt: buildAgentActionPrompt({
+        runId: state.activeRun.runId, goal: deps.anchor.goal, constraints: deps.anchor.constraints,
+        successCriteria: deps.anchor.successCriteria, ledger: state.ledger, workingSet: state.currentWorkingSet,
+        recentToolResult: state.recentToolResult, recentValidationResult: state.recentValidationResult,
+        budget: deps.input.task.input.agentRequest!.budget, usage: state.usage, availableTools: deps.availableTools,
+        regroundRequested: state.regroundRequested, replanRequested: state.replanRequested,
+        profileContext, contextEnvelope
+      })
     })
   );
 

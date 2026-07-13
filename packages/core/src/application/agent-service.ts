@@ -40,6 +40,8 @@ import {
 } from "../../../storage/src/index.js";
 import {
   createCodingToolRegistry,
+  registerCodingTools,
+  ToolRegistry,
   ToolRuntime,
   resolveWorkspaceFilePath
 } from "../../../tool-runtime/src/index.js";
@@ -154,9 +156,10 @@ export class AgentService {
       artifactStore: this.artifactStore
     });
 
-    // Register caller-provided profiles
-    if (this.config.profiles !== undefined) {
-      for (const profile of this.config.profiles) {
+    // Register cold-path deployments, retaining the legacy profile array for compatibility.
+    const profiles = this.config.registry?.list().map((deployment) => deployment.profile) ?? this.config.profiles;
+    if (profiles !== undefined) {
+      for (const profile of profiles) {
         this.profileMap.set(profile.name, profile);
       }
     }
@@ -207,42 +210,17 @@ export class AgentService {
       ...(input.executionConstraints !== undefined ? { executionConstraints: input.executionConstraints } : {}),
       createdAt: now()
     });
-    this.taskStore!.insertTask(task);
+    const run = this.createPersistedRun(task, "tool", now);
 
-    const run = createRun({
-      runId: randomUUID(),
-      taskId: task.taskId,
-      createdAt: now(),
-      mode: "tool"
-    });
-    this.runStore!.insertRun(run);
-
-    const modelProvider = this.createModelProviderInstance();
-
-    const result = await runAgentLoop({
+    return this.executeAgentLoop({
       task,
       run,
+      profile,
       now,
-      idGenerator: randomUUID,
       workspaceRoot,
       artifactRoot,
-      modelProvider,
-      toolRuntime: this.toolRuntime!,
-      runStore: this.runStore!,
-      eventStore: this.eventStore!,
-      artifactStore: this.artifactStore!,
-      validationResultStore: this.validationResultStore!,
-      ledgerStore: this.ledgerStore!,
-      agentIterationStore: this.agentIterationStore!,
-      approvalStore: this.approvalStore!,
-      pendingActionStore: this.pendingActionStore!,
-      userInputStore: this.userInputStore!,
-      checkpointStore: this.checkpointStore!,
-      profile,
-      ...(this.hasSubscribers() ? { eventListener: this.createEventListener() } : {})
+      ...(input.runtimeContext === undefined ? {} : { runtimeContext: input.runtimeContext })
     });
-
-    return result;
   }
 
   async resumeApproval(input: ResumeApprovalInput): Promise<AgentLoopResult | {
@@ -351,40 +329,21 @@ export class AgentService {
 
     // Resume agent loop
     const ledger = this.requireLedger(run.runId);
-    const modelProvider = this.createModelProviderInstance(pendingAction.resumeState.usage.modelCalls);
-
-    const profile = this.resolveProfileForRun(run);
-
-    const result = await runAgentLoop({
+    const profile = this.resolveProfileForResume(pendingAction, run);
+    return this.executeAgentLoop({
       task,
       run,
+      profile,
       now,
-      idGenerator: randomUUID,
       workspaceRoot,
       artifactRoot,
-      modelProvider,
-      toolRuntime: this.toolRuntime!,
-      runStore: this.runStore!,
-      eventStore: this.eventStore!,
-      artifactStore: this.artifactStore!,
-      validationResultStore: this.validationResultStore!,
-      ledgerStore: this.ledgerStore!,
-      agentIterationStore: this.agentIterationStore!,
-      approvalStore: this.approvalStore!,
-      pendingActionStore: this.pendingActionStore!,
-      userInputStore: this.userInputStore!,
-      checkpointStore: this.checkpointStore!,
-      profile,
       resume: {
         ledger,
         resumeState: pendingAction.resumeState,
         seedAction: pendingAction.action,
         bypassApprovalForSeedAction: true
-      },
-      ...(this.hasSubscribers() ? { eventListener: this.createEventListener() } : {})
+      }
     });
-
-    return result;
   }
 
   async resumeRespond(input: ResumeRespondInput): Promise<AgentLoopResult | {
@@ -479,37 +438,19 @@ export class AgentService {
     this.ledgerStore!.upsertLedger(resumedLedger);
 
     // Resume agent loop
-    const modelProvider = this.createModelProviderInstance(pendingAction.resumeState.usage.modelCalls);
-    const profile = this.resolveProfileForRun(run);
-
-    const result = await runAgentLoop({
+    const profile = this.resolveProfileForResume(pendingAction, run);
+    return this.executeAgentLoop({
       task,
       run,
+      profile,
       now,
-      idGenerator: randomUUID,
       workspaceRoot,
       artifactRoot,
-      modelProvider,
-      toolRuntime: this.toolRuntime!,
-      runStore: this.runStore!,
-      eventStore: this.eventStore!,
-      artifactStore: this.artifactStore!,
-      validationResultStore: this.validationResultStore!,
-      ledgerStore: this.ledgerStore!,
-      agentIterationStore: this.agentIterationStore!,
-      approvalStore: this.approvalStore!,
-      pendingActionStore: this.pendingActionStore!,
-      userInputStore: this.userInputStore!,
-      checkpointStore: this.checkpointStore!,
-      profile,
       resume: {
         ledger: resumedLedger,
         resumeState: pendingAction.resumeState
-      },
-      ...(this.hasSubscribers() ? { eventListener: this.createEventListener() } : {})
+      }
     });
-
-    return result;
   }
 
   async resumeRun(runId: string): Promise<ResumeRunResult> {
@@ -819,31 +760,16 @@ export class AgentService {
     const task = this.requireTask(run.taskId);
     const workspaceRoot = this.workspaceRoot;
     const artifactRoot = this.resolveArtifactRoot();
-    const modelProvider = this.createModelProviderInstance();
+    const resumeState = pendingAction?.resumeState ?? checkpoint.resumeState ?? this.createDefaultResumeState();
     const profile = this.resolveProfileForRun(run);
-
-    const result = await runAgentLoop({
+    const result = await this.executeAgentLoop({
       task,
       run,
+      profile,
       now,
-      idGenerator: randomUUID,
       workspaceRoot,
       artifactRoot,
-      modelProvider,
-      toolRuntime: this.toolRuntime!,
-      runStore: this.runStore!,
-      eventStore: this.eventStore!,
-      artifactStore: this.artifactStore!,
-      validationResultStore: this.validationResultStore!,
-      ledgerStore: this.ledgerStore!,
-      agentIterationStore: this.agentIterationStore!,
-      approvalStore: this.approvalStore!,
-      pendingActionStore: this.pendingActionStore!,
-      userInputStore: this.userInputStore!,
-      checkpointStore: this.checkpointStore!,
-      profile,
-      resume: { ledger, resumeState: pendingAction?.resumeState ?? this.createDefaultResumeState() },
-      ...(this.hasSubscribers() ? { eventListener: this.createEventListener() } : {})
+      resume: { ledger, resumeState }
     });
 
     return { kind: "executed", result, checkpointId: checkpoint.checkpointId, recoveryAction: "resume" };
@@ -1033,15 +959,7 @@ export class AgentService {
       taskType: "analysis",
       createdAt: now()
     });
-    this.taskStore!.insertTask(task);
-
-    const run = createRun({
-      runId: randomUUID(),
-      taskId: task.taskId,
-      createdAt: now(),
-      mode: "direct"
-    });
-    this.runStore!.insertRun(run);
+    const run = this.createPersistedRun(task, "direct", now);
 
     const modelProvider = this.createModelProviderInstance();
 
@@ -1081,7 +999,8 @@ export class AgentService {
       taskId: randomUUID(),
       text: `Read-only exploration: ${toolCall.toolName}`,
       taskType: "read_only",
-      createdAt: now()
+      createdAt: now(),
+      ...(input.kind === "filesystem_search" ? { searchQuery: input.query } : {})
     });
     return this.runToolTask(task, new DeterministicReadOnlyToolProvider(toolCall));
   }
@@ -1095,9 +1014,7 @@ export class AgentService {
     toolResult: ToolResult;
   }> {
     const now = () => new Date().toISOString();
-    const run = createRun({ runId: randomUUID(), taskId: task.taskId, createdAt: now(), mode: "tool" });
-    this.taskStore!.insertTask(task);
-    this.runStore!.insertRun(run);
+    const run = this.createPersistedRun(task, "tool", now);
     return runToolMode({
       task,
       run,
@@ -1117,7 +1034,8 @@ export class AgentService {
 
   private createReadOnlyToolCall(input: ReadOnlyToolInput): ToolCall {
     const toolCallId = randomUUID();
-    const timeoutMs = 5_000;
+    const timeoutMs = input.kind === "filesystem_search" ? 60_000 : 5_000;
+    if (input.kind === "filesystem_search") return { toolCallId, toolName: "filesystem.search", input: { query: input.query, limit: input.limit ?? 20 }, timeoutMs };
     if (input.kind === "filesystem_list") return { toolCallId, toolName: "filesystem.list", input: { relativePath: input.relativePath ?? "." }, timeoutMs };
     if (input.kind === "project_inspect") return { toolCallId, toolName: "project.inspect", input: { relativePath: input.relativePath ?? "." }, timeoutMs };
     if (input.kind === "project_commands") return { toolCallId, toolName: "project.commands", input: {}, timeoutMs };
@@ -1160,20 +1078,59 @@ export class AgentService {
     seedAction?: PendingAction["action"]; bypassApprovalForSeedAction?: boolean;
     now: () => string; workspaceRoot: string; artifactRoot: string;
   }): Promise<AgentLoopResult> {
-    return runAgentLoop({
-      task: input.task, run: input.run, now: input.now, idGenerator: randomUUID,
+    const profile = this.resolveProfileForRun(input.run);
+    return this.executeAgentLoop({
+      task: input.task, run: input.run, profile, now: input.now,
       workspaceRoot: input.workspaceRoot, artifactRoot: input.artifactRoot,
-      modelProvider: this.createModelProviderInstance(input.resumeState.usage.modelCalls), toolRuntime: this.toolRuntime!,
-      runStore: this.runStore!, eventStore: this.eventStore!, artifactStore: this.artifactStore!,
-      validationResultStore: this.validationResultStore!, ledgerStore: this.ledgerStore!,
-      agentIterationStore: this.agentIterationStore!, approvalStore: this.approvalStore!,
-      pendingActionStore: this.pendingActionStore!, userInputStore: this.userInputStore!, checkpointStore: this.checkpointStore!,
-      profile: this.resolveProfileForRun(input.run),
       resume: { ledger: input.ledger, resumeState: input.resumeState,
         ...(input.seedAction !== undefined ? { seedAction: input.seedAction } : {}),
-        ...(input.bypassApprovalForSeedAction === true ? { bypassApprovalForSeedAction: true } : {}) },
+        ...(input.bypassApprovalForSeedAction === true ? { bypassApprovalForSeedAction: true } : {}) }
+    });
+  }
+
+  /** Single AgentService boundary for agent-loop lifecycle assembly. */
+  private executeAgentLoop(input: {
+    task: Task;
+    run: Run;
+    profile: AgentProfile;
+    now: () => string;
+    workspaceRoot: string;
+    artifactRoot: string;
+    resume?: Parameters<typeof runAgentLoop>[0]["resume"];
+    runtimeContext?: StartAgentInput["runtimeContext"];
+  }): Promise<AgentLoopResult> {
+    return runAgentLoop({
+      task: input.task,
+      run: input.run,
+      now: input.now,
+      idGenerator: randomUUID,
+      workspaceRoot: input.workspaceRoot,
+      artifactRoot: input.artifactRoot,
+      modelProvider: this.createModelProviderInstance(input.resume?.resumeState.usage.modelCalls),
+      toolRuntime: this.createToolRuntimeForProfile(input.profile),
+      runStore: this.runStore!,
+      eventStore: this.eventStore!,
+      artifactStore: this.artifactStore!,
+      validationResultStore: this.validationResultStore!,
+      ledgerStore: this.ledgerStore!,
+      agentIterationStore: this.agentIterationStore!,
+      approvalStore: this.approvalStore!,
+      pendingActionStore: this.pendingActionStore!,
+      userInputStore: this.userInputStore!,
+      checkpointStore: this.checkpointStore!,
+      profile: input.profile,
+      ...(input.resume === undefined ? {} : { resume: input.resume }),
+      ...(input.runtimeContext === undefined ? {} : { runtimeContext: input.runtimeContext }),
       ...(this.hasSubscribers() ? { eventListener: this.createEventListener() } : {})
     });
+  }
+
+  /** Persists the durable Task/Run pair for a new public execution mode. */
+  private createPersistedRun(task: Task, mode: Run["mode"], now: () => string): Run {
+    const run = createRun({ runId: randomUUID(), taskId: task.taskId, createdAt: now(), mode });
+    this.taskStore!.insertTask(task);
+    this.runStore!.insertRun(run);
+    return run;
   }
 
   private assertOpen(): void {
@@ -1242,10 +1199,55 @@ export class AgentService {
     );
   }
 
+  /**
+   * F035a: resolve the profile for a resume path that holds the pending action
+   * being resumed. `resumeApproval` / `resumeRespond` resolve the pending
+   * action to "resolved" before calling runAgentLoop, which defeats
+   * `resolveProfileForRun`'s `getActiveByRun` step. The pending action's
+   * `resumeState.profileName` is the authoritative record of which profile
+   * started the run, so consult it directly. Falls back to
+   * `resolveProfileForRun` for pre-F029 rows without profileName.
+   */
+  private resolveProfileForResume(pendingAction: PendingAction | null, run: Run): AgentProfile {
+    const profileName = pendingAction?.resumeState?.profileName;
+    if (profileName !== undefined) {
+      const profile = this.profileMap.get(profileName);
+      if (profile !== undefined) {
+        return profile;
+      }
+    }
+    return this.resolveProfileForRun(run);
+  }
+
   createModelProviderInstance(agentActionSliceFrom?: number): ReturnType<typeof createModelProvider> {
     return createModelProvider({
       ...(this.config.modelProviderOptions ?? {}),
       ...(agentActionSliceFrom !== undefined ? { agentActionSliceFrom } : {})
+    });
+  }
+
+  /**
+   * F035a: build a per-run ToolRuntime whose registry is populated by the
+   * profile's `registerTools`. Agent-loop entry points (startAgent, resume*)
+   * use this so each profile owns its own tool set. `runReadOnlyTool` /
+   * `runToolMode` keep using the global coding `toolRuntime` from open().
+   * undefined registerTools → coding fallback (compat); warn for non-coding.
+   */
+  private createToolRuntimeForProfile(profile: AgentProfile): ToolRuntime {
+    const registry = new ToolRegistry();
+    if (profile.registerTools === undefined && profile.name !== "coding") {
+      console.warn(
+        `[AgentService] Profile "${profile.name}" has no registerTools; ` +
+        `falling back to coding tools. Non-coding profiles MUST declare ` +
+        `registerTools to get tool isolation.`
+      );
+    }
+    const register = profile.registerTools ?? registerCodingTools;
+    register(registry);
+    return new ToolRuntime({
+      registry,
+      executionRecordStore: this.executionRecordStore!,
+      artifactStore: this.artifactStore!
     });
   }
 
@@ -1310,7 +1312,10 @@ export class AgentService {
         ledgerVersion,
         phase: input.phase,
         ...(input.pendingAction !== undefined
-          ? { pendingActionId: input.pendingAction.pendingActionId }
+          ? {
+              pendingActionId: input.pendingAction.pendingActionId,
+              resumeState: input.pendingAction.resumeState
+            }
           : {}),
         createdAt: input.now
       })
@@ -1341,8 +1346,8 @@ export class AgentService {
   }
 
   /**
-   * Create a minimal default resume state for runs that don't have a pending action.
-   * This handles edge cases where the run needs to be resumed but has no saved state.
+   * Legacy checkpoints without a pending action or F036 resume snapshot cannot
+   * be resumed safely: reconstructing usage/iteration state would risk replay.
    */
   private createDefaultResumeState(): PendingActionResumeState {
     throw new Error(

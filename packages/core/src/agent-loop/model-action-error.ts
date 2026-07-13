@@ -101,7 +101,27 @@ export function buildToolFailureRejection(input: {
   toolCall: ToolCall;
   code: string;
   message: string;
+  /** The caller has classified this as a schema failure on a read-only tool. */
+  repairableReadInput?: boolean;
+  /** Registry-owned, model-visible example for the tool input contract. */
+  minimalExample?: Record<string, unknown>;
 }): ModelActionRejection | null {
+  if (input.code === "INVALID_TOOL_INPUT") {
+    if (input.repairableReadInput !== true) {
+      return null;
+    }
+    return {
+      category: "tool_failure_recovery",
+      attempt: 1,
+      message: [
+        `Read-only tool ${input.toolCall.toolName} rejected its input: ${input.message}`,
+        "Do not repeat this tool call unchanged. Submit one new tool_call with a fresh toolCallId and only corrected input.",
+        `Minimal legal input example: ${JSON.stringify(input.minimalExample ?? {})}`,
+        "This repair is limited by the existing action-repair budget and must not request approval or perform a write."
+      ].join(" "),
+      issues: [{ path: "toolCall.input", message: input.message }]
+    };
+  }
   if (!/(PATCH_|IDEMPOTENCY_CONFLICT)/i.test(input.code)) {
     return null;
   }

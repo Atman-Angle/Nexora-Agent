@@ -84,9 +84,27 @@ export const ValidationResultSchema = z.object({
   completionGate: CompletionGateResultSchema.optional()
 });
 
+/** Profile-neutral projection of an evaluator result. Derived only; not persisted. */
+export const EvaluatorOutcomeSchema = z.object({
+  status: z.enum(["passed", "failed"]),
+  evidenceRefs: z.array(z.string().min(1)),
+  freshness: ValidationFreshnessSchema.optional(),
+  evaluatorIds: z.array(z.string().min(1))
+});
+
+export function projectEvaluatorOutcome(result: ValidationResult): EvaluatorOutcome {
+  return EvaluatorOutcomeSchema.parse({
+    status: result.status,
+    evidenceRefs: result.evidenceRecords.map((entry) => entry.evidenceId),
+    ...(result.freshness === undefined ? {} : { freshness: result.freshness }),
+    evaluatorIds: result.executedValidatorIds
+  });
+}
+
 export type ValidationResult = z.infer<typeof ValidationResultSchema>;
 export type CompletionAcceptanceCriterionResult = z.infer<typeof CompletionAcceptanceCriterionResultSchema>;
 export type ArtifactCheck = z.infer<typeof ArtifactCheckSchema>;
 export type ValidationFreshness = z.infer<typeof ValidationFreshnessSchema>;
 export type ValidationFailureSummary = z.infer<typeof ValidationFailureSummarySchema>;
 export type CompletionGateResult = z.infer<typeof CompletionGateResultSchema>;
+export type EvaluatorOutcome = z.infer<typeof EvaluatorOutcomeSchema>;

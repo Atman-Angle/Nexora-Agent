@@ -24,6 +24,11 @@ export class ToolRuntime {
     }
   ) {}
 
+  /** Read-only execution evidence projection for completion evaluators. */
+  public listExecutionRecords(runId: string): ExecutionRecord[] {
+    return this.dependencies.executionRecordStore.listByRun(runId);
+  }
+
   public async execute(input: {
     runId: string;
     toolCall: ToolCall;
@@ -230,7 +235,9 @@ export class ToolRuntime {
 function formatZodError(error: unknown): string {
   if (error !== null && typeof error === "object" && "issues" in error && Array.isArray((error as { issues: unknown[] }).issues)) {
     const issues = (error as { issues: Array<{ path: PropertyKey[]; message: string }> }).issues;
-    return issues.map((issue) => `${issue.message}`).join("; ");
+    return issues
+      .map((issue) => `${issue.path.length === 0 ? "input" : issue.path.join(".")}: ${issue.message}`)
+      .join("; ");
   }
   return error instanceof Error ? error.message : "invalid input";
 }

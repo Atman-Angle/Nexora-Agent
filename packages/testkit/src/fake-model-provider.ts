@@ -4,6 +4,7 @@ import type {
   AgentBudget,
   AgentBudgetUsage,
   BuilderPromptContext,
+  ContextEnvelope,
   ContextSnapshot,
   ExecutionPlanRepairContext,
   PlanningPolicyContext,
@@ -26,6 +27,7 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
   public lastPlanningPolicyContext: PlanningPolicyContext | null = null;
   public lastExecutionPlanRepairContext: ExecutionPlanRepairContext | null = null;
   public lastValidationFailureSummary: ValidationResult["failureSummary"] | null = null;
+  public lastContextEnvelope: ContextEnvelope | null = null;
   public readonly modelErrors: Array<ModelActionRejection | null> = [];
   public readonly strategyContexts: Array<StrategyPromptContext | null> = [];
   public readonly builderContexts: Array<BuilderPromptContext | null> = [];
@@ -284,6 +286,8 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;
+    contextEnvelope?: ContextEnvelope;
+    prompt?: string;
     strategyContext?: StrategyPromptContext;
     builderContext?: BuilderPromptContext;
     planningPolicyContext?: PlanningPolicyContext | null;
@@ -300,7 +304,7 @@ export class FakeModelProvider implements ModelProvider, ToolModeModelProvider, 
     this.strategyContexts.push(this.lastStrategyContext);
     this.builderContexts.push(this.lastBuilderContext);
     this.validationFailureSummaries.push(this.lastValidationFailureSummary);
-    void input;
+    this.lastContextEnvelope = input.contextEnvelope ?? null;
     this.callCount += 1;
 
     if ((this.options.delayMs ?? 0) > 0) {

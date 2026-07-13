@@ -15,6 +15,7 @@ export type {
 } from "./types.js";
 export { codingProfile } from "./coding-profile.js";
 export { readCodingState, writeCodingState } from "./coding-profile.js";
+export { chatProfile } from "./chat-profile.js";
 export { ProfileStateInvalidError } from "./profile-state-error.js";
 export { yixiangProfile } from "./yixiang/yixiang-profile.js";
 export { registerYixiangTools, productAnalyzeAssetsTool } from "./yixiang/yixiang-tools.js";

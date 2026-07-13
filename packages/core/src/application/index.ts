@@ -1,4 +1,5 @@
 export { AgentService } from "./agent-service.js";
+export { InProcessAgentRegistry, type AgentDeployment } from "./agent-registry.js";
 export {
   AgentServiceError,
   type AgentServiceConfig,

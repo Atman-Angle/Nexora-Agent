@@ -131,7 +131,8 @@ function parseCommitSummary(rawOutput: string): string {
   const lines = rawOutput.split("\n");
   const subject = lines[1] ?? "";
   const body = lines.slice(2).join("\n").trim();
-  return body.length > 0 ? `${subject}\n${body}` : subject;
+  const summary = body.length > 0 ? `${subject}\n${body}` : subject;
+  return summary.length > 0 ? summary : "(no commit summary)";
 }
 
 function splitShowOutput(rawOutput: string): { content: string; commitSummary: string } {
@@ -139,7 +140,7 @@ function splitShowOutput(rawOutput: string): { content: string; commitSummary: s
   const headerLines = 3;
   const content = lines.slice(headerLines).join("\n");
   const commitSummary = lines[1] ?? "";
-  return { content, commitSummary };
+  return { content, commitSummary: commitSummary.length > 0 ? commitSummary : "(no commit summary)" };
 }
 
 async function persistShowArtifact(input: {

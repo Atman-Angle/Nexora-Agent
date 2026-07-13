@@ -5,6 +5,7 @@ import type {
   Checkpoint,
   CheckpointPhase,
   Event,
+  ExecutionRecord,
   ProgressLedger,
   Run,
   Task,
@@ -34,6 +35,8 @@ export type AgentLoopCompletedResult = {
   artifact: Artifact;
   validation: ValidationResult;
   ledger: ProgressLedger;
+  /** Existing ToolRuntime authority, returned as a read-only result projection. */
+  executionRecords: readonly ExecutionRecord[];
 };
 
 export type AgentLoopWaitingForApprovalResult = {
@@ -87,6 +90,7 @@ export type HandlerDeps = {
     userInputStore: UserInputStore;
     checkpointStore: CheckpointStore;
     profile: AgentProfile;
+    runtimeContext?: unknown;
     resume?: unknown;
   };
   anchor: TaskAnchor;
@@ -129,4 +133,3 @@ export type HandlerOutcome =
   | { kind: "continue" }
   | { kind: "return"; result: AgentLoopResult }
   | { kind: "fail"; code: string; message: string; retryable: boolean };
-

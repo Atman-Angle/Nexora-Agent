@@ -82,7 +82,8 @@ export async function handleToolCall(
   state: AgentLoopState, deps: HandlerDeps,
   action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
   bypassApproval: boolean,
-  strategyBypassedForRecovery: boolean
+  strategyBypassedForRecovery: boolean,
+  useCodingPostToolInterpretation = true
 ): Promise<HandlerOutcome> {
   const toolCall = action.toolCall;
   if (isCriticalAction(toolCall)) {
@@ -273,7 +274,7 @@ export async function handleToolCall(
   if (toolResult.status === "error") {
     return handleToolError(state, deps, action, execState, strategyBypassedForRecovery);
   }
-  return processToolSuccess(state, deps, action, execState, strategyBypassedForRecovery);
+  return processToolSuccess(state, deps, action, execState, strategyBypassedForRecovery, useCodingPostToolInterpretation);
 }
 
 function describeApprovalReasonFor(toolCall: ToolCall): string {
@@ -315,10 +316,16 @@ async function handleToolError(
     );
   }
   await deps.appendEvent("tool.failed", { error: toolResult.error }, deps.input.now());
+  const repairableReadInput =
+    toolResult.error.code === "INVALID_TOOL_INPUT" &&
+    deps.input.toolRuntime.getRiskLevel(toolCall.toolName) === "read";
+  const minimalExample = deps.availableTools.find((tool) => tool.name === toolCall.toolName)?.minimalExample;
   const toolFailureRejection = buildToolFailureRejection({
     toolCall,
     code: toolResult.error.code,
-    message: toolResult.error.message
+    message: toolResult.error.message,
+    repairableReadInput,
+    ...(minimalExample === undefined ? {} : { minimalExample })
   });
   if (toolFailureRejection !== null) {
     pendingActionRejection = toolFailureRejection;
@@ -357,7 +364,31 @@ async function handleToolError(
   deps.input.runStore.updateRun(activeRun);
   Object.assign(state, { activeRun });
 
-  if (toolFailureRejection !== null && toolCall.toolName === "shell.execute") {
+  const safeInputRepair = toolFailureRejection !== null && repairableReadInput;
+  if (toolFailureRejection !== null && (toolCall.toolName === "shell.execute" || safeInputRepair)) {
+    if (safeInputRepair) {
+      if (state.usage.actionRepairCount >= deps.maxActionRepairs) {
+        return {
+          kind: "fail",
+          code: "ACTION_REPAIR_LIMIT_EXCEEDED",
+          message: "Read-only tool input repair exceeded the existing action-repair limit.",
+          retryable: false
+        };
+      }
+      state.usage.actionRepairCount += 1;
+      await deps.appendEvent(
+        "model.action.rejected",
+        {
+          code: toolResult.error.code,
+          message: toolFailureRejection.message,
+          category: toolFailureRejection.category,
+          reason: "safe_read_tool_input_repair",
+          attempt: state.usage.actionRepairCount,
+          remainingCorrectionAttempts: deps.maxActionRepairs - state.usage.actionRepairCount
+        },
+        deps.input.now()
+      );
+    }
     await deps.checkpoint("post_tool", {
       pendingActionId: toolPendingActionId,
       pendingActionFingerprint: actionFingerprint,
@@ -560,7 +591,8 @@ async function processToolSuccess(
   state: AgentLoopState, deps: HandlerDeps,
   action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
   execState: ToolExecState,
-  strategyBypassedForRecovery: boolean
+  strategyBypassedForRecovery: boolean,
+  useCodingPostToolInterpretation: boolean
 ): Promise<HandlerOutcome> {
   const { toolCall, actionFingerprint: _actionFingerprint, execution, strategyPreviousWorkingSet, strategyPreviousChangedFiles, strategyPreviousValidationResult } = execState;
   const toolResult = execution.toolResult as Extract<ToolResult, { status: "success" }>;
@@ -572,16 +604,16 @@ async function processToolSuccess(
   let recentToolResult = state.recentToolResult;
   let recentValidationResult = state.recentValidationResult;
   let regroundedAt = state.regroundedAt;
-  const initialCoding = readCodingState(state);
-  let builderState = initialCoding.builder;
-  let strategyState = initialCoding.strategy;
+  const initialCoding = useCodingPostToolInterpretation ? readCodingState(state) : null;
+  let builderState = initialCoding?.builder;
+  let strategyState = initialCoding?.strategy;
   let recoveryState = state.recoveryState;
   let previousSnapshot = state.previousSnapshot;
   let noProgressCount = state.noProgressCount;
   let regroundRequested = state.regroundRequested;
   let replanRequested = state.replanRequested;
   let latestIterationIndex = state.latestIterationIndex;
-  let validationRepairActionRejectionCount = initialCoding.validationRepairActionRejectionCount;
+  let validationRepairActionRejectionCount = initialCoding?.validationRepairActionRejectionCount ?? 0;
 
   if (execution.artifacts !== undefined) {
     for (const artifact of execution.artifacts) {
@@ -670,24 +702,28 @@ async function processToolSuccess(
     artifactHash = toolResult.output.result.newHash;
     changedFiles = appendChangedFile(changedFiles, toolResult.output.result.path);
     recentValidationResult = null;
-    validationRepairActionRejectionCount = 0;
-    builderState = applyBuilderToolEvidence({
-      builderState,
-      path: toolResult.output.result.path,
-      evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
-      now: deps.input.now()
-    });
+    if (useCodingPostToolInterpretation && builderState !== undefined) {
+      validationRepairActionRejectionCount = 0;
+      builderState = applyBuilderToolEvidence({
+        builderState,
+        path: toolResult.output.result.path,
+        evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
+        now: deps.input.now()
+      });
+    }
   } else if (toolResult.toolName === "filesystem.write") {
     artifactHash = toolResult.output.result.hash;
     changedFiles = appendChangedFile(changedFiles, toolResult.output.result.path);
     recentValidationResult = null;
-    validationRepairActionRejectionCount = 0;
-    builderState = applyBuilderToolEvidence({
-      builderState,
-      path: toolResult.output.result.path,
-      evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
-      now: deps.input.now()
-    });
+    if (useCodingPostToolInterpretation && builderState !== undefined) {
+      validationRepairActionRejectionCount = 0;
+      builderState = applyBuilderToolEvidence({
+        builderState,
+        path: toolResult.output.result.path,
+        evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
+        now: deps.input.now()
+      });
+    }
   }
   if (
     toolResult.toolName === "shell.execute" &&
@@ -876,7 +912,7 @@ async function processToolSuccess(
   );
   latestIterationIndex += 1;
 
-  if (!strategyBypassedForRecovery && recoveryState === undefined) {
+  if (!strategyBypassedForRecovery && recoveryState === undefined && strategyState !== undefined) {
     const strategyAfterAction = afterActionStrategy({
       task: deps.input.task,
       state: strategyState,
@@ -924,8 +960,8 @@ async function processToolSuccess(
         regroundedAt,
         profileState: writeCodingState(state, (s) => ({
           ...s,
-          builder: builderState,
-          strategy: strategyState,
+          builder: builderState!,
+          strategy: strategyState!,
           validationRepairActionRejectionCount
         }))
       });
@@ -975,12 +1011,16 @@ async function processToolSuccess(
     recentToolResult,
     recentValidationResult,
     regroundedAt,
-    profileState: writeCodingState(state, (s) => ({
-      ...s,
-      builder: builderState,
-      strategy: strategyState,
-      validationRepairActionRejectionCount
-    })),
+    ...(useCodingPostToolInterpretation && builderState !== undefined && strategyState !== undefined
+      ? {
+          profileState: writeCodingState(state, (s) => ({
+            ...s,
+            builder: builderState!,
+            strategy: strategyState!,
+            validationRepairActionRejectionCount
+          }))
+        }
+      : {}),
     latestIterationIndex,
     previousSnapshot,
     ledger: noProgress.ledger,

@@ -7,6 +7,7 @@ import type {
   BuilderPromptContext,
   ExecutionPlanRepairContext,
   ContextSnapshot,
+  ContextEnvelope,
   PlanningPolicyContext,
   ProgressLedger,
   StrategyPromptContext,
@@ -79,6 +80,10 @@ export interface AgentLoopModelProvider {
     regroundRequested: boolean;
     replanRequested: boolean;
     contextSnapshot?: ContextSnapshot;
+    /** C002 shadow input. Providers receive it before it becomes the rendered prompt source. */
+    contextEnvelope?: ContextEnvelope;
+    /** Domain-rendered prompt for transport-only providers (C002-4). */
+    prompt?: string;
     strategyContext?: StrategyPromptContext;
     builderContext?: BuilderPromptContext;
     planningPolicyContext?: PlanningPolicyContext | null;

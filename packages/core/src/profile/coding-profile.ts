@@ -9,6 +9,7 @@ import { handleUpdatePlan } from "../agent-loop/handlers/update-plan.js";
 import { handleFinal } from "../agent-loop/handlers/final.js";
 import { normalizeBuilderState } from "../builder/builder-state.js";
 import { normalizeStrategyState } from "../strategy/strategy-runtime.js";
+import { registerCommonTools } from "../../../tool-runtime/src/index.js";
 import type { AgentProfile, DispatchContext, ProfileStateHooks, ProfileStateInitInput, ProfileStateRestoreInput } from "./types.js";
 import { ProfileStateInvalidError } from "./profile-state-error.js";
 import {
@@ -23,6 +24,19 @@ import { builderStrategyPolicy } from "./policies/builder-strategy-policy.js";
 import { runCompletionGate } from "../validation-gate.js";
 
 export { readCodingState, writeCodingState };
+
+// Compatibility exports consumed by existing profiles. F042 chat owns its
+// state, action generation, final semantics and tool-call interpretation;
+// only profile-neutral ask-user/fail adapter mechanics remain shared here.
+export {
+  codingStateHooks,
+  adaptToolCall,
+  adaptAskUser,
+  adaptUpdatePlan,
+  adaptSubmitExecutionPlan,
+  adaptFinal,
+  adaptFail
+};
 
 function initCodingProfileState(_input: ProfileStateInitInput): CodingProfileState {
   return {
@@ -208,6 +222,7 @@ async function adaptFail(
 export const codingProfile: AgentProfile = {
   name: "coding",
   state: codingStateHooks,
+  registerTools: registerCommonTools,
   generateAction: handleGenerateAction,
   actionHandlers: {
     tool_call: adaptToolCall,

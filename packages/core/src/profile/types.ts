@@ -1,4 +1,5 @@
-import type { AgentAction, Artifact, BuilderState, Event, ProgressLedger, Run, StrategyState, Task, TaskAnchor, ToolResult, ValidationResult } from "../../../contracts/src/index.js";
+import type { AgentAction, Artifact, BuilderState, Event, ExecutionRecord, ProgressLedger, Run, StrategyState, Task, TaskAnchor, ToolResult, ValidationResult } from "../../../contracts/src/index.js";
+import type { ToolRegistry } from "../../../tool-runtime/src/index.js";
 import type { HandlerDeps, HandlerOutcome } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
 import type { GenerateActionOutcome } from "../agent-loop/handlers/generate-action.js";
@@ -223,6 +224,8 @@ export type CompletionGateContext = {
   readonly latestValidationResult?: ValidationResult | null;
   readonly finalArtifact: Artifact | null;
   readonly artifacts: Artifact[];
+  /** Existing ToolRuntime authority, exposed as a read-only current-Run projection. */
+  readonly executionRecords: readonly ExecutionRecord[];
   readonly events?: Event[];
   readonly workspaceRoot?: string;
   readonly now: string;
@@ -257,6 +260,16 @@ export type AgentProfile = {
    * holds the slot; these hooks own the content.
    */
   readonly state: ProfileStateHooks;
+
+  /**
+   * F035a: profile-owned tool set. Called on a fresh ToolRegistry when
+   * building the per-run ToolRuntime for an agent-loop run. undefined →
+   * coding-tools fallback (compat for legacy/external profiles). Non-coding
+   * profiles MUST declare this to get tool isolation; a missing declaration
+   * on a non-coding profile triggers a dev-time warning but still falls
+   * back to coding (isolation is opt-in, not enforced).
+   */
+  readonly registerTools?: (registry: ToolRegistry) => void;
 
   /**
    * Generate the next action when no seeded action is available.
