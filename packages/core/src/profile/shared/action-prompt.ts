@@ -1,4 +1,4 @@
-import { computeArtifactHash } from "../../../contracts/src/index.js";
+import { computeArtifactHash } from "../../../../contracts/src/index.js";
 import type {
   AgentBudget,
   AgentBudgetUsage,
@@ -12,10 +12,10 @@ import type {
   ToolResult,
   ValidationResult,
   WorkingSet
-} from "../../../contracts/src/index.js";
-import type { ToolDefinition } from "../../../tool-runtime/src/index.js";
-import { buildAgentActionSchemaText } from "../../../model-gateway/src/model-tool-definition.js";
-import type { ModelActionRejection } from "../../../model-gateway/src/model-provider.js";
+} from "../../../../contracts/src/index.js";
+import type { ToolDefinition } from "../../../../tool-runtime/src/index.js";
+import { buildAgentActionSchemaText } from "../../../../model-gateway/src/model-tool-definition.js";
+import type { ModelActionRejection } from "../../../../model-gateway/src/model-provider.js";
 
 /**
  * Render the domain action protocol before crossing the model transport
@@ -74,10 +74,10 @@ export function buildAgentActionPrompt(input: AgentActionPromptInput): string {
     `Usage: ${JSON.stringify(input.usage)}`,
     `Ledger: ${ledgerSummary}`,
     `Working set: ${workingSetSummary}`,
-    `Strategy: ${renderStrategyContext(input.strategyContext)}`,
-    `PlanningPolicyContext: ${JSON.stringify(input.planningPolicyContext ?? null)}`,
-    `ExecutionPlanRepairContext: ${JSON.stringify(input.executionPlanRepairContext ?? null)}`,
-    `Builder: ${renderBuilderContext(input.builderContext)}`,
+    ...(input.strategyContext === undefined ? [] : [`Strategy: ${renderStrategyContext(input.strategyContext)}`]),
+    ...(input.planningPolicyContext === undefined ? [] : [`PlanningPolicyContext: ${JSON.stringify(input.planningPolicyContext)}`]),
+    ...(input.executionPlanRepairContext === undefined ? [] : [`ExecutionPlanRepairContext: ${JSON.stringify(input.executionPlanRepairContext)}`]),
+    ...(input.builderContext === undefined ? [] : [`Builder: ${renderBuilderContext(input.builderContext)}`]),
     `Recent tool result: ${toolSummary}`,
     `Recent validation status: ${input.recentValidationResult?.status ?? "null"}`,
     `Validation repair context: ${renderValidationFailureSummary(input.recentValidationResult ?? null)}`,
@@ -133,13 +133,32 @@ function renderLastModelError(rejection: ModelActionRejection | null): string[] 
   return [`Previous attempt was rejected (category: ${rejection.category}, attempt ${String(rejection.attempt)}): ${rejection.message}`, ...(issueLines.length === 0 ? [] : ["Issues:", ...issueLines]), "Fix the error above and return a valid JSON object matching the schema."];
 }
 
+const MAX_PROMPT_SEARCH_MATCHES = 10;
+const MAX_PROMPT_SEARCH_SNIPPET_CHARS = 240;
+
 function summarizeToolResultForPrompt(toolResult: ToolResult): string {
   if (toolResult.status === "error") return JSON.stringify({ toolName: toolResult.toolName, status: "error", code: toolResult.error.code });
   if (toolResult.toolName === "filesystem.read") {
     if (toolResult.output.kind === "inline_text") return JSON.stringify({ toolName: toolResult.toolName, status: "success", kind: toolResult.output.kind, path: toolResult.output.path, mimeType: toolResult.output.mimeType, byteLength: toolResult.output.byteLength, currentHash: computeArtifactHash(toolResult.output.content), content: toolResult.output.content });
     return JSON.stringify({ toolName: toolResult.toolName, status: "success", kind: toolResult.output.kind, path: toolResult.output.path, artifactId: toolResult.output.artifactId, mimeType: toolResult.output.mimeType, byteLength: toolResult.output.byteLength, reason: toolResult.output.reason, previewText: toolResult.output.previewText ?? null });
   }
-  if (toolResult.toolName === "filesystem.search") return JSON.stringify({ toolName: toolResult.toolName, status: "success", returnedMatches: toolResult.output.result.returnedMatches });
+  if (toolResult.toolName === "filesystem.search") {
+    const result = toolResult.output.result;
+    const matches = result.matches.slice(0, MAX_PROMPT_SEARCH_MATCHES).map((match) => ({
+      path: match.path,
+      line: match.line,
+      column: match.column,
+      snippet: match.snippet.slice(0, MAX_PROMPT_SEARCH_SNIPPET_CHARS)
+    }));
+    return JSON.stringify({
+      toolName: toolResult.toolName,
+      status: "success",
+      returnedMatches: result.returnedMatches,
+      truncated: result.truncated,
+      matches,
+      omittedMatches: Math.max(0, result.matches.length - matches.length)
+    });
+  }
   if (toolResult.toolName === "filesystem.patch") return JSON.stringify({ toolName: toolResult.toolName, status: "success", path: toolResult.output.result.path, patchStatus: toolResult.output.result.status });
   if (toolResult.toolName === "filesystem.write") return JSON.stringify({ toolName: toolResult.toolName, status: "success", path: toolResult.output.result.path, mode: toolResult.output.result.mode, hash: toolResult.output.result.hash, created: toolResult.output.result.created });
   if (toolResult.toolName === "shell.execute") return JSON.stringify({ toolName: toolResult.toolName, status: "success", exitCode: toolResult.output.result.exitCode });

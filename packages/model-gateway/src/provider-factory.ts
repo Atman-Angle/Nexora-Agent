@@ -1,5 +1,3 @@
-import { AgentActionSchema, type AgentAction } from "../../contracts/src/index.js";
-import { FakeModelProvider } from "../../testkit/src/fake-model-provider.js";
 import type { ToolDefinition } from "../../tool-runtime/src/index.js";
 import type {
   AgentLoopModelProvider,
@@ -12,7 +10,7 @@ import {
   ModelConfigError
 } from "./openai-compatible-provider.js";
 
-export type ModelProviderKind = "fake" | "openai-compatible";
+export type ModelProviderKind = "openai-compatible";
 
 export type ResolvedModelProvider = ModelProvider & ToolModeModelProvider & AgentLoopModelProvider & {
   kind: ModelProviderKind;
@@ -20,28 +18,18 @@ export type ResolvedModelProvider = ModelProvider & ToolModeModelProvider & Agen
 
 export type ProviderFactoryOptions = {
   env?: Record<string, string | undefined> | undefined;
-  fakeModelText?: string | undefined;
-  fakeModelMode?: "success" | "fail" | "empty" | undefined;
-  fakeToolPlanMode?: "success" | "invalid_action" | "fail_action" | undefined;
-  fakeToolFinalMode?: "success" | "empty" | "fail_action" | undefined;
-  fakeToolTimeoutMs?: number | undefined;
-  fakeModelDelayMs?: number | undefined;
-  agentActions?: unknown[] | undefined;
-  agentActionSliceFrom?: number | undefined;
   fetchImpl?: typeof fetch | undefined;
   toolDefinitions?: ToolDefinition<unknown>[] | undefined;
 };
 
 export function resolveProviderKind(env: Record<string, string | undefined>): ModelProviderKind {
   const raw = env.NEXORA_MODEL_PROVIDER?.trim().toLowerCase();
-  if (raw === undefined || raw.length === 0) {
-    return "fake";
-  }
-  if (raw === "fake" || raw === "openai-compatible") {
+  if (raw === "openai-compatible") {
     return raw;
   }
+  const setting = raw === undefined || raw.length === 0 ? "is required" : `="${raw}" is not supported`;
   throw new ModelConfigError(
-    `Unsupported NEXORA_MODEL_PROVIDER "${raw}". Supported values: "fake", "openai-compatible".`
+    `NEXORA_MODEL_PROVIDER ${setting}. Set NEXORA_MODEL_PROVIDER="openai-compatible" and configure NEXORA_MODEL_BASE_URL, NEXORA_MODEL_API_KEY, and NEXORA_MODEL_NAME.`
   );
 }
 
@@ -49,79 +37,11 @@ export function createModelProvider(options: ProviderFactoryOptions = {}): Resol
   const env = options.env ?? process.env;
   const kind = resolveProviderKind(env);
 
-  if (kind === "openai-compatible") {
-    const config = resolveOpenAICompatibleConfig(env);
-    const provider = new OpenAICompatibleProvider({
-      ...config,
-      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
-      ...(options.toolDefinitions === undefined ? {} : { toolDefinitions: options.toolDefinitions })
-    });
-    return Object.assign(provider, { kind });
-  }
-
-  const rawAgentActions = options.agentActions ?? parseAgentActionsEnv(env.NEXORA_FAKE_AGENT_SCRIPT_JSON);
-  const parsedAgentActions = parseAgentActions(rawAgentActions);
-  const slicedAgentActions = applyAgentActionSlice(parsedAgentActions, options.agentActionSliceFrom);
-  const rawAgentResponses = parseAgentRawResponsesEnv(env.NEXORA_FAKE_AGENT_RAW_RESPONSES_JSON);
-  const fakeProvider = new FakeModelProvider({
-    mode: options.fakeModelMode ?? parseFakeModelMode(env.NEXORA_FAKE_MODEL_MODE),
-    text: options.fakeModelText ?? env.NEXORA_FAKE_MODEL_TEXT ?? "ok",
-    ...(options.fakeModelDelayMs === undefined ? {} : { delayMs: options.fakeModelDelayMs }),
-    ...(options.fakeToolPlanMode === undefined ? {} : { toolPlanMode: options.fakeToolPlanMode }),
-    ...(options.fakeToolFinalMode === undefined ? {} : { toolFinalMode: options.fakeToolFinalMode }),
-    ...(options.fakeToolTimeoutMs === undefined ? {} : { toolTimeoutMs: options.fakeToolTimeoutMs }),
-    ...(slicedAgentActions === undefined ? {} : { agentActions: slicedAgentActions }),
-    ...(rawAgentResponses === undefined ? {} : { agentRawResponses: rawAgentResponses })
+  const config = resolveOpenAICompatibleConfig(env);
+  const provider = new OpenAICompatibleProvider({
+    ...config,
+    ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+    ...(options.toolDefinitions === undefined ? {} : { toolDefinitions: options.toolDefinitions })
   });
-  return Object.assign(fakeProvider, { kind });
-}
-
-function parseAgentRawResponsesEnv(rawValue: string | undefined): string[] | undefined {
-  if (rawValue === undefined || rawValue.trim().length === 0) {
-    return undefined;
-  }
-  try {
-    const parsed = JSON.parse(rawValue) as unknown;
-    if (!Array.isArray(parsed)) {
-      return undefined;
-    }
-    return parsed.filter((entry): entry is string => typeof entry === "string");
-  } catch {
-    return undefined;
-  }
-}
-
-function parseAgentActionsEnv(rawValue: string | undefined): unknown[] | undefined {
-  if (rawValue === undefined || rawValue.trim().length === 0) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(rawValue) as unknown[];
-  } catch {
-    return undefined;
-  }
-}
-
-function parseAgentActions(actions: unknown[] | undefined): AgentAction[] | undefined {
-  if (actions === undefined) {
-    return undefined;
-  }
-  return actions.map((entry) => AgentActionSchema.parse(entry));
-}
-
-function applyAgentActionSlice<T>(actions: T[] | undefined, from: number | undefined): T[] | undefined {
-  if (actions === undefined) {
-    return undefined;
-  }
-  if (from === undefined || from <= 0) {
-    return actions;
-  }
-  return actions.slice(from);
-}
-
-function parseFakeModelMode(value: string | undefined): "success" | "fail" | "empty" {
-  if (value === "fail" || value === "empty") {
-    return value;
-  }
-  return "success";
+  return Object.assign(provider, { kind });
 }

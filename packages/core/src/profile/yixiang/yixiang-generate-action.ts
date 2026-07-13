@@ -2,9 +2,9 @@ import { AgentActionSchema } from "../../../../contracts/src/index.js";
 import { ensureBudget } from "../../agent-loop/budget.js";
 import type { HandlerDeps } from "../../agent-loop/outcome.js";
 import type { AgentLoopState } from "../../agent-loop/state.js";
-import type { GenerateActionOutcome } from "../../agent-loop/handlers/generate-action.js";
+import type { GenerateActionOutcome } from "../types.js";
 import { readYixiangState } from "./yixiang-profile-state.js";
-import { buildAgentActionPrompt } from "../../prompt/agent-action-prompt.js";
+import { buildAgentActionPrompt } from "../shared/action-prompt.js";
 import { buildLoopContextSnapshot } from "../../agent-loop/context-snapshot.js";
 import { buildContextEnvelope } from "../../../../context/src/index.js";
 import { buildAgentActionSchemaText } from "../../../../model-gateway/src/model-tool-definition.js";
@@ -32,7 +32,7 @@ export function buildYixiangPromptContext(state: AgentLoopState): unknown {
  * counterpart to the coding profile's handleGenerateAction: budget check,
  * iteration.started, model call (no coding strategy/builder/prompt context —
  * those are F031), model.action.generated. Real Yixiang prompt construction
- * is F031; F030 uses a scripted/fake provider that ignores context fields.
+ * is F031; F030 uses a deterministic test provider that ignores context fields.
  */
 export async function generateYixiangAction(
   state: AgentLoopState,

@@ -8,11 +8,11 @@ import {
   evaluateExecutionPlanCompleteness,
   handlePlanRepair
 } from "../../strategy/index.js";
-import { createIteration } from "../iteration.js";
-import { detectNoProgress, handleNoProgress } from "../no-progress.js";
-import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
-import type { AgentLoopState } from "../state.js";
-import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
+import { createIteration } from "../../agent-loop/iteration.js";
+import { detectNoProgress, handleNoProgress } from "../../agent-loop/no-progress.js";
+import type { HandlerDeps, HandlerOutcome } from "../../agent-loop/outcome.js";
+import type { AgentLoopState } from "../../agent-loop/state.js";
+import { readCodingState, writeCodingState } from "../coding-profile-state.js";
 
 function buildSnapshot(
   actionSignature: string,

@@ -10,8 +10,6 @@ import type {
 import type { NoProgressSnapshot } from "../../recovery/resume-boundary.js";
 import { applyLedgerPatch, completePlanStepFromTool } from "../../ledger-progress/index.js";
 import { appendChangedFile, appendFailedAttempt, createIteration } from "../iteration.js";
-import { applyBuilderToolEvidence } from "../../builder/index.js";
-import { afterActionStrategy } from "../../strategy/index.js";
 import {
   createProgressFingerprint,
   normalizeToolFailure,
@@ -34,7 +32,6 @@ import { serializeResumeState } from "../state.js";
 import { handleApproval } from "./approval.js";
 import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
-import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
 
 type ExecutionResult = {
   toolResult: ToolResult;
@@ -54,6 +51,24 @@ type ToolExecState = {
   strategyPreviousValidationResult: ValidationResult | null;
   latestIterationIndex: number;
 };
+
+/** Profile-owned interpretation of an already successful shared tool effect. */
+export type ToolSuccessInterpreter = (input: {
+  state: AgentLoopState;
+  deps: HandlerDeps;
+  action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>;
+  toolCall: ToolCall;
+  toolResult: Extract<ToolResult, { status: "success" }>;
+  execution: ExecutionResult;
+  previousWorkingSet: AgentLoopState["currentWorkingSet"];
+  currentWorkingSet: AgentLoopState["currentWorkingSet"];
+  previousChangedFiles: string[];
+  currentChangedFiles: string[];
+  previousValidationResult: ValidationResult | null;
+  currentValidationResult: ValidationResult | null;
+  iteration: number;
+  strategyBypassedForRecovery: boolean;
+}) => Promise<HandlerOutcome | undefined>;
 
 function buildSnapshot(
   actionSignature: string,
@@ -83,7 +98,7 @@ export async function handleToolCall(
   action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
   bypassApproval: boolean,
   strategyBypassedForRecovery: boolean,
-  useCodingPostToolInterpretation = true
+  interpretSuccess?: ToolSuccessInterpreter
 ): Promise<HandlerOutcome> {
   const toolCall = action.toolCall;
   if (isCriticalAction(toolCall)) {
@@ -274,7 +289,7 @@ export async function handleToolCall(
   if (toolResult.status === "error") {
     return handleToolError(state, deps, action, execState, strategyBypassedForRecovery);
   }
-  return processToolSuccess(state, deps, action, execState, strategyBypassedForRecovery, useCodingPostToolInterpretation);
+  return processToolSuccess(state, deps, action, execState, strategyBypassedForRecovery, interpretSuccess);
 }
 
 function describeApprovalReasonFor(toolCall: ToolCall): string {
@@ -592,7 +607,7 @@ async function processToolSuccess(
   action: Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
   execState: ToolExecState,
   strategyBypassedForRecovery: boolean,
-  useCodingPostToolInterpretation: boolean
+  interpretSuccess: ToolSuccessInterpreter | undefined
 ): Promise<HandlerOutcome> {
   const { toolCall, actionFingerprint: _actionFingerprint, execution, strategyPreviousWorkingSet, strategyPreviousChangedFiles, strategyPreviousValidationResult } = execState;
   const toolResult = execution.toolResult as Extract<ToolResult, { status: "success" }>;
@@ -604,16 +619,12 @@ async function processToolSuccess(
   let recentToolResult = state.recentToolResult;
   let recentValidationResult = state.recentValidationResult;
   let regroundedAt = state.regroundedAt;
-  const initialCoding = useCodingPostToolInterpretation ? readCodingState(state) : null;
-  let builderState = initialCoding?.builder;
-  let strategyState = initialCoding?.strategy;
   let recoveryState = state.recoveryState;
   let previousSnapshot = state.previousSnapshot;
   let noProgressCount = state.noProgressCount;
   let regroundRequested = state.regroundRequested;
   let replanRequested = state.replanRequested;
   let latestIterationIndex = state.latestIterationIndex;
-  let validationRepairActionRejectionCount = initialCoding?.validationRepairActionRejectionCount ?? 0;
 
   if (execution.artifacts !== undefined) {
     for (const artifact of execution.artifacts) {
@@ -702,28 +713,10 @@ async function processToolSuccess(
     artifactHash = toolResult.output.result.newHash;
     changedFiles = appendChangedFile(changedFiles, toolResult.output.result.path);
     recentValidationResult = null;
-    if (useCodingPostToolInterpretation && builderState !== undefined) {
-      validationRepairActionRejectionCount = 0;
-      builderState = applyBuilderToolEvidence({
-        builderState,
-        path: toolResult.output.result.path,
-        evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
-        now: deps.input.now()
-      });
-    }
   } else if (toolResult.toolName === "filesystem.write") {
     artifactHash = toolResult.output.result.hash;
     changedFiles = appendChangedFile(changedFiles, toolResult.output.result.path);
     recentValidationResult = null;
-    if (useCodingPostToolInterpretation && builderState !== undefined) {
-      validationRepairActionRejectionCount = 0;
-      builderState = applyBuilderToolEvidence({
-        builderState,
-        path: toolResult.output.result.path,
-        evidenceRefs: [`execution:${execution.executionRecord.executionId}`],
-        now: deps.input.now()
-      });
-    }
   }
   if (
     toolResult.toolName === "shell.execute" &&
@@ -912,66 +905,17 @@ async function processToolSuccess(
   );
   latestIterationIndex += 1;
 
-  if (!strategyBypassedForRecovery && recoveryState === undefined && strategyState !== undefined) {
-    const strategyAfterAction = afterActionStrategy({
-      task: deps.input.task,
-      state: strategyState,
-      iteration: latestIterationIndex,
-      action,
-      previousWorkingSet: strategyPreviousWorkingSet,
-      currentWorkingSet,
-      previousChangedFiles: strategyPreviousChangedFiles,
-      currentChangedFiles: changedFiles,
-      previousValidationResult: strategyPreviousValidationResult,
-      currentValidationResult: recentValidationResult,
-      toolCall,
-      toolResult: toolResult
-    });
-    strategyState = strategyAfterAction.state;
-    if (strategyAfterAction.stalled) {
-      await deps.appendEvent(
-        "strategy.exploration.stalled",
-        {
-          reason: strategyAfterAction.progressReasons.length === 0 ? "no_progress" : strategyAfterAction.progressReasons.join(","),
-          iteration: latestIterationIndex,
-          consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
-          iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress
-        },
-        deps.input.now()
-      );
-    }
-    if (strategyAfterAction.terminal) {
-      await deps.appendEvent(
-        "strategy.no_progress.terminal",
-        {
-          reason: "third_stall",
-          iteration: latestIterationIndex,
-          consecutiveReadActions: strategyState.explorationUsage.consecutiveReadActions,
-          iterationsWithoutProgress: strategyState.explorationUsage.iterationsWithoutProgress
-        },
-        deps.input.now()
-      );
-      Object.assign(state, {
-        activeRun,
-        currentWorkingSet,
-        changedFiles,
-        recentToolResult,
-        recentValidationResult,
-        regroundedAt,
-        profileState: writeCodingState(state, (s) => ({
-          ...s,
-          builder: builderState!,
-          strategy: strategyState!,
-          validationRepairActionRejectionCount
-        }))
-      });
-      return {
-        kind: "fail",
-        code: "AGENT_STRATEGY_NO_PROGRESS",
-        message: "Agent strategy detected repeated action without progress.",
-        retryable: false
-      };
-    }
+  const interpretationOutcome = await interpretSuccess?.({
+    state, deps, action, toolCall, toolResult, execution,
+    previousWorkingSet: strategyPreviousWorkingSet, currentWorkingSet,
+    previousChangedFiles: strategyPreviousChangedFiles, currentChangedFiles: changedFiles,
+    previousValidationResult: strategyPreviousValidationResult,
+    currentValidationResult: recentValidationResult,
+    iteration: latestIterationIndex, strategyBypassedForRecovery
+  });
+  if (interpretationOutcome !== undefined) {
+    Object.assign(state, { activeRun, currentWorkingSet, changedFiles, recentToolResult, recentValidationResult, regroundedAt, latestIterationIndex, ledger });
+    return interpretationOutcome;
   }
 
   const noProgressSignals = detectNoProgress({
@@ -1011,16 +955,6 @@ async function processToolSuccess(
     recentToolResult,
     recentValidationResult,
     regroundedAt,
-    ...(useCodingPostToolInterpretation && builderState !== undefined && strategyState !== undefined
-      ? {
-          profileState: writeCodingState(state, (s) => ({
-            ...s,
-            builder: builderState!,
-            strategy: strategyState!,
-            validationRepairActionRejectionCount
-          }))
-        }
-      : {}),
     latestIterationIndex,
     previousSnapshot,
     ledger: noProgress.ledger,

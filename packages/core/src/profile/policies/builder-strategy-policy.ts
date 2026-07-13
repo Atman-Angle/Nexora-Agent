@@ -7,7 +7,7 @@ import {
   validateActionWithStrategy
 } from "../../strategy/index.js";
 import { buildStrategyRejectionContext } from "../../agent-loop/strategy-rejection.js";
-import { handleSubmitExecutionPlan } from "../../agent-loop/handlers/submit-execution-plan.js";
+import { handleSubmitExecutionPlan } from "../coding/submit-execution-plan.js";
 import { readCodingState, writeCodingState } from "../coding-profile-state.js";
 import type { ActionPolicy, ActionPolicyInput, ActionPolicyOutcome, EventDraft } from "../types.js";
 

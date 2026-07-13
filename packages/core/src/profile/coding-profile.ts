@@ -2,10 +2,10 @@ import type { AgentAction } from "../../../contracts/src/index.js";
 import { createInitialStrategyState } from "../../../contracts/src/index.js";
 import type { HandlerDeps, HandlerOutcome } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
-import { handleGenerateAction } from "../agent-loop/handlers/generate-action.js";
+import { handleGenerateAction } from "./coding/generate-action.js";
 import { handleToolCall } from "../agent-loop/handlers/tool-call.js";
-import { handleAskUser, type HandleAskUserInput } from "../agent-loop/handlers/ask-user.js";
-import { handleUpdatePlan } from "../agent-loop/handlers/update-plan.js";
+import { adaptAskUser } from "../agent-loop/handlers/ask-user.js";
+import { handleUpdatePlan } from "./coding/update-plan.js";
 import { handleFinal } from "../agent-loop/handlers/final.js";
 import { normalizeBuilderState } from "../builder/builder-state.js";
 import { normalizeStrategyState } from "../strategy/strategy-runtime.js";
@@ -22,6 +22,8 @@ import { validationRepairPolicy } from "./policies/validation-repair-policy.js";
 import { freshValidationFinalizationPolicy } from "./policies/fresh-validation-finalization-policy.js";
 import { builderStrategyPolicy } from "./policies/builder-strategy-policy.js";
 import { runCompletionGate } from "../validation-gate.js";
+import { adaptFail } from "./common-action-handlers.js";
+import { interpretCodingToolSuccess } from "./coding/tool-success-interpreter.js";
 
 export { readCodingState, writeCodingState };
 
@@ -31,11 +33,9 @@ export { readCodingState, writeCodingState };
 export {
   codingStateHooks,
   adaptToolCall,
-  adaptAskUser,
   adaptUpdatePlan,
   adaptSubmitExecutionPlan,
-  adaptFinal,
-  adaptFail
+  adaptFinal
 };
 
 function initCodingProfileState(_input: ProfileStateInitInput): CodingProfileState {
@@ -101,7 +101,8 @@ async function adaptToolCall(
     deps,
     action as Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
     dispatchCtx.bypassApproval,
-    dispatchCtx.strategyBypassedForRecovery
+    dispatchCtx.strategyBypassedForRecovery,
+    interpretCodingToolSuccess
   );
 }
 
@@ -109,44 +110,6 @@ async function adaptToolCall(
  * adaptAskUser — constructs HandleAskUserInput from (state, deps),
  * narrows action type, delegates to handleAskUser.
  */
-async function adaptAskUser(
-  state: AgentLoopState,
-  deps: HandlerDeps,
-  action: AgentAction,
-  _dispatchCtx: DispatchContext
-): Promise<HandlerOutcome> {
-  const ctx: HandleAskUserInput = {
-    input: {
-      now: deps.input.now,
-      idGenerator: deps.input.idGenerator,
-      userInputStore: deps.input.userInputStore,
-      ledgerStore: deps.input.ledgerStore,
-      runStore: deps.input.runStore,
-      pendingActionStore: deps.input.pendingActionStore
-    },
-    run: state.activeRun,
-    ledger: state.ledger,
-    appendEvent: deps.appendEvent,
-    checkpoint: deps.checkpoint,
-    nextSequence: state.nextSequence,
-    latestIterationIndex: state.latestIterationIndex,
-    currentWorkingSet: state.currentWorkingSet,
-    changedFiles: state.changedFiles,
-    recentToolResult: state.recentToolResult,
-    recentValidationResult: state.recentValidationResult,
-    regroundRequested: state.regroundRequested,
-    replanRequested: state.replanRequested,
-    noProgressCount: state.noProgressCount,
-    usage: state.usage,
-    previousSnapshot: state.previousSnapshot,
-    pendingRetryIncrement: state.pendingRetryIncrement,
-    recoveryState: state.recoveryState,
-    profileState: state.profileState,
-    profile: deps.input.profile
-  };
-  return handleAskUser(ctx, action as Extract<AgentAction, { type: "ask_user" }>);
-}
-
 /**
  * adaptSubmitExecutionPlan — narrows action type, delegates to
  * handleSubmitExecutionPlan. This adapter handles Path B (recovery-bypass
@@ -200,21 +163,6 @@ async function adaptFinal(
  * adaptFail — implements the inline failRun logic from the runner.
  * Returns a fail HandlerOutcome that the runner will pass to failRun.
  */
-async function adaptFail(
-  _state: AgentLoopState,
-  _deps: HandlerDeps,
-  action: AgentAction,
-  _dispatchCtx: DispatchContext
-): Promise<HandlerOutcome> {
-  const failAction = action as Extract<AgentAction, { type: "fail" }>;
-  return {
-    kind: "fail",
-    code: failAction.code,
-    message: failAction.message,
-    retryable: failAction.retryable
-  };
-}
-
 /**
  * codingProfile — the default AgentProfile for the coding agent.
  * Wraps all existing handlers with adapters that conform to ActionHandler.

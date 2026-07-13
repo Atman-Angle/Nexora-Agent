@@ -2,7 +2,6 @@ import type { AgentAction, Artifact, BuilderState, Event, ExecutionRecord, Progr
 import type { ToolRegistry } from "../../../tool-runtime/src/index.js";
 import type { HandlerDeps, HandlerOutcome } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
-import type { GenerateActionOutcome } from "../agent-loop/handlers/generate-action.js";
 import type { NoProgressSnapshot } from "../recovery/resume-boundary.js";
 
 /**
@@ -251,6 +250,11 @@ export type CompletionGate = (
   context: CompletionGateContext
 ) => Promise<CompletionGateResult>;
 
+/** Profile-owned action generation outcome; independent of any domain profile. */
+export type GenerateActionOutcome =
+  | { kind: "action"; action: AgentAction }
+  | { kind: "fail"; code: string; message: string; retryable: boolean };
+
 export type AgentProfile = {
   /** Human-readable profile name for logging/events. */
   readonly name: string;
@@ -308,6 +312,3 @@ export type AgentProfile = {
    */
   readonly completionGate: CompletionGate;
 };
-
-// Re-export for convenience
-export type { GenerateActionOutcome } from "../agent-loop/handlers/generate-action.js";

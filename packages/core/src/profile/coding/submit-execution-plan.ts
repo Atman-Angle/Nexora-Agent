@@ -13,10 +13,10 @@ import {
   validateSubmittedExecutionPlan
 } from "../../builder/index.js";
 import { clearPlanRepair } from "../../strategy/index.js";
-import { createIteration } from "../iteration.js";
-import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
-import type { AgentLoopState } from "../state.js";
-import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
+import { createIteration } from "../../agent-loop/iteration.js";
+import type { HandlerDeps, HandlerOutcome } from "../../agent-loop/outcome.js";
+import type { AgentLoopState } from "../../agent-loop/state.js";
+import { readCodingState, writeCodingState } from "../coding-profile-state.js";
 
 /**
  * handleSubmitExecutionPlan — processes a Builder structured plan submission:

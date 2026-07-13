@@ -23,16 +23,45 @@ import { applyLedgerPatch } from "../../ledger-progress/index.js";
 import { createPendingAction } from "../../recovery/resume-boundary.js";
 import { serializeResumeState } from "../state.js";
 import { transitionRun } from "../../state-machine.js";
+import type { HandlerDeps } from "../outcome.js";
+import type { AgentLoopState } from "../state.js";
+import type { DispatchContext } from "../../profile/types.js";
+
+/** Profile-neutral dispatch adapter shared by profiles that support ask_user. */
+export async function adaptAskUser(
+  state: AgentLoopState,
+  deps: HandlerDeps,
+  action: AgentAction,
+  _dispatchCtx: DispatchContext
+): Promise<HandlerOutcome> {
+  return handleAskUser(
+    {
+      input: {
+        now: deps.input.now, idGenerator: deps.input.idGenerator,
+        userInputStore: deps.input.userInputStore, ledgerStore: deps.input.ledgerStore,
+        runStore: deps.input.runStore, pendingActionStore: deps.input.pendingActionStore
+      },
+      run: state.activeRun, ledger: state.ledger, appendEvent: deps.appendEvent,
+      checkpoint: deps.checkpoint, nextSequence: state.nextSequence,
+      latestIterationIndex: state.latestIterationIndex, currentWorkingSet: state.currentWorkingSet,
+      changedFiles: state.changedFiles, recentToolResult: state.recentToolResult,
+      recentValidationResult: state.recentValidationResult, regroundRequested: state.regroundRequested,
+      replanRequested: state.replanRequested, noProgressCount: state.noProgressCount,
+      usage: state.usage, previousSnapshot: state.previousSnapshot,
+      pendingRetryIncrement: state.pendingRetryIncrement, recoveryState: state.recoveryState,
+      profileState: state.profileState, profile: deps.input.profile
+    },
+    action as Extract<AgentAction, { type: "ask_user" }>
+  );
+}
 
 /**
  * Input bundle for handleAskUser. During F025-C convergence this collapses
  * into a single AgentLoopState reference; until then the dispatch loop
  * assembles it from its locals at the call site.
  *
- * F029: coding-domain fields are carried in `profileState` (opaque) + `profile`
- * (for serializeResumeState). The retained typed strategy/builder/counter
- * fields are populated from readCodingState by the adapter (F029 AC #12) and
- * are not read by this handler body.
+ * Profile state is carried opaquely with the selected profile for resume
+ * serialization. This generic handler never interprets domain state.
  */
 export type HandleAskUserInput = {
   input: {

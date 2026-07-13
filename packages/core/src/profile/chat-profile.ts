@@ -15,9 +15,9 @@ import {
   evaluateChatSourceEvidence
 } from "./chat-evidence.js";
 import {
-  adaptAskUser,
-  adaptFail
-} from "./coding-profile.js";
+  adaptAskUser
+} from "../agent-loop/handlers/ask-user.js";
+import { adaptFail } from "./common-action-handlers.js";
 
 /**
  * chatCompletionGate — minimal completion integrity for a chat turn: the final
@@ -63,8 +63,7 @@ async function adaptChatToolCall(
     deps,
     action as Extract<AgentAction, { type: "tool_call" | "request_approval" }>,
     dispatchCtx.bypassApproval,
-    dispatchCtx.strategyBypassedForRecovery,
-    false
+    dispatchCtx.strategyBypassedForRecovery
   );
 }
 

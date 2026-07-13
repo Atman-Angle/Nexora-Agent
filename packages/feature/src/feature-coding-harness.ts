@@ -35,7 +35,7 @@ import {
   ValidationResultStore
 } from "../../storage/src/index.js";
 import { createCodingToolRegistry, ToolRuntime, executeGitStatus, executeProjectInspect } from "../../tool-runtime/src/index.js";
-import { createModelProvider } from "../../model-gateway/src/index.js";
+import { FakeModelProvider } from "../../testkit/src/fake-model-provider.js";
 import { AgentLoopRunFailure, codingProfile, runAgentLoop } from "../../core/src/index.js";
 import type { FeatureFixtureEnvironment } from "./feature-fixture-runner.js";
 
@@ -75,6 +75,7 @@ export type FeatureHarnessRunOutput = {
   status: FullStackFeatureFixtureResult["status"];
 };
 
+/** Test-only fixture helper; production application execution enters through AgentService. */
 export async function runFeatureCodingHarness(input: FeatureHarnessRunInput): Promise<FeatureHarnessRunOutput> {
   const manifest = input.manifest;
   const env = input.environment;
@@ -144,7 +145,7 @@ export async function runFeatureCodingHarness(input: FeatureHarnessRunInput): Pr
 
     let loopResult: Awaited<ReturnType<typeof runAgentLoop>>;
     let autoApproveAttempts = 0;
-    const modelProvider = createModelProvider({ fakeModelText: "ok", fakeModelMode: "success", agentActions: input.agentScript });
+    const modelProvider = new FakeModelProvider({ mode: "success", text: "ok", agentActions: input.agentScript });
     const toolRuntime = new ToolRuntime({ registry: createCodingToolRegistry(), executionRecordStore, artifactStore });
 
     appendEvent("feature.stage.started", { stage: "execute" }, input.now());
@@ -466,7 +467,7 @@ function finalizeFeatureHarness(input: {
 type AutoApproveInput = {
   loopResult: Extract<Awaited<ReturnType<typeof runAgentLoop>>, { kind: "waiting_for_approval" }>;
   task: Task;
-  modelProvider: ReturnType<typeof createModelProvider>;
+  modelProvider: FakeModelProvider;
   toolRuntime: ToolRuntime;
   runStore: RunStore;
   eventStore: EventStore;

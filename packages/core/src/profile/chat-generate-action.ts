@@ -1,10 +1,10 @@
 import { AgentActionSchema } from "../../../contracts/src/index.js";
 import type { SelectionHandle } from "../../../contracts/src/index.js";
 import { ensureBudget } from "../agent-loop/budget.js";
-import type { GenerateActionOutcome } from "../agent-loop/handlers/generate-action.js";
+import type { GenerateActionOutcome } from "./types.js";
 import type { HandlerDeps } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
-import { buildAgentActionPrompt } from "./../prompt/agent-action-prompt.js";
+import { buildAgentActionPrompt } from "./shared/action-prompt.js";
 import { buildLoopContextSnapshot } from "../agent-loop/context-snapshot.js";
 import { buildContextEnvelope } from "../../../context/src/index.js";
 import { buildAgentActionSchemaText } from "../../../model-gateway/src/model-tool-definition.js";
@@ -30,11 +30,13 @@ export async function generateChatAction(
   const startedAt = deps.input.now();
   await deps.appendEvent("iteration.started", { index: state.latestIterationIndex }, startedAt);
   state.usage.loopCount += 1;
-  const selectionAction = resolveChatSelectionAction({
-    requestText: selectionRequestText(deps.input.runtimeContext, deps.input.task.input.text),
-    selectionHandles: selectionHandles(deps.input.runtimeContext),
-    toolCallId: deps.input.idGenerator()
-  });
+  const selectionAction = state.recentToolResult === null
+    ? resolveChatSelectionAction({
+        requestText: selectionRequestText(deps.input.runtimeContext, deps.input.task.input.text),
+        selectionHandles: selectionHandles(deps.input.runtimeContext),
+        toolCallId: deps.input.idGenerator()
+      })
+    : null;
   const profileContext = {
     mode: "chat",
     instructions: [

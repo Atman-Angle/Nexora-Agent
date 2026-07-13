@@ -1106,7 +1106,7 @@ export class AgentService {
       idGenerator: randomUUID,
       workspaceRoot: input.workspaceRoot,
       artifactRoot: input.artifactRoot,
-      modelProvider: this.createModelProviderInstance(input.resume?.resumeState.usage.modelCalls),
+      modelProvider: this.createModelProviderInstance(),
       toolRuntime: this.createToolRuntimeForProfile(input.profile),
       runStore: this.runStore!,
       eventStore: this.eventStore!,
@@ -1219,11 +1219,8 @@ export class AgentService {
     return this.resolveProfileForRun(run);
   }
 
-  createModelProviderInstance(agentActionSliceFrom?: number): ReturnType<typeof createModelProvider> {
-    return createModelProvider({
-      ...(this.config.modelProviderOptions ?? {}),
-      ...(agentActionSliceFrom !== undefined ? { agentActionSliceFrom } : {})
-    });
+  createModelProviderInstance(): ReturnType<typeof createModelProvider> {
+    return createModelProvider(this.config.modelProviderOptions);
   }
 
   /**

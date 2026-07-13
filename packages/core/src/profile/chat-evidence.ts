@@ -2,6 +2,7 @@ import type { ExecutionRecord, ValidationResult } from "../../../contracts/src/i
 
 /** Explicit file-like tokens are Chat semantics, not a generic Harness workflow. */
 export function extractChatSourcePaths(taskText: string): string[] {
+  taskText = latestChatUserRequest(taskText);
   const matches = taskText.match(/(?:[A-Za-z0-9_@.-]+[\\/])*[A-Za-z0-9_@-]+\.[A-Za-z0-9_-]+/g) ?? [];
   return [...new Set(matches.map(normalizePath))];
 }
@@ -37,6 +38,7 @@ export function evaluateChatSourceEvidence(input: {
 
 /** Bounded explicit ordered read declarations; plain source lists stay unordered. */
 export function extractOrderedChatReadPaths(taskText: string): string[] {
+  taskText = latestChatUserRequest(taskText);
   const english = /\b(?:first|then|finally)\b\s+(?:read\s+)?((?:[A-Za-z0-9_@.-]+[\\/])*[A-Za-z0-9_@-]+\.[A-Za-z0-9_-]+)/gi;
   const chinese = /(?:首先|然后|最后)\s*(?:读取|读)\s*((?:[A-Za-z0-9_@.-]+[\\/])*[A-Za-z0-9_@-]+\.[A-Za-z0-9_-]+)/g;
   return [...orderedMatches(taskText, english), ...orderedMatches(taskText, chinese)];
@@ -110,6 +112,7 @@ export function evaluateChatLargeDocumentCoverage(input: {
 
 /** Mutation intent is Chat language semantics; effect and approval authority stay below the Profile. */
 export function isChatMutationRequest(taskText: string): boolean {
+  taskText = latestChatUserRequest(taskText);
   return /\b(?:change|modify|edit|update|rewrite|fix|add|remove|create|delete|rename|replace)\b|修改|更改|编辑|更新|重写|修复|新增|添加|删除|重命名|替换/i.test(taskText);
 }
 
@@ -146,6 +149,17 @@ function orderedMatches(taskText: string, expression: RegExp): string[] {
     if (path !== undefined) paths.push(normalizePath(path));
   }
   return paths;
+}
+
+/** CLI stores the full conversation in the task goal; completion semantics apply only to its final user turn. */
+function latestChatUserRequest(taskText: string): string {
+  const marker = "\nUser: ";
+  const start = taskText.lastIndexOf(marker);
+  if (start < 0) return taskText;
+  const requestStart = start + marker.length;
+  const assistantMarker = "\nAssistant:";
+  const end = taskText.indexOf(assistantMarker, requestStart);
+  return end < 0 ? taskText.slice(requestStart) : taskText.slice(requestStart, end);
 }
 
 function normalizePath(path: string): string {

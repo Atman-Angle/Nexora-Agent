@@ -36,7 +36,7 @@ import {
   ValidationResultStore
 } from "../../storage/src/index.js";
 import { createCodingToolRegistry, ToolRuntime, executeGitStatus, executeProjectInspect } from "../../tool-runtime/src/index.js";
-import { createModelProvider } from "../../model-gateway/src/index.js";
+import { FakeModelProvider } from "../../testkit/src/fake-model-provider.js";
 import { AgentLoopRunFailure, codingProfile, runAgentLoop } from "../../core/src/index.js";
 import { FixtureError } from "../../contracts/src/index.js";
 import type { FixtureEnvironment } from "./fixture-runner.js";
@@ -72,6 +72,7 @@ export type HarnessRunOutput = {
 
 const MAX_REPRODUCTION_RETRIES = 2;
 
+/** Test-only fixture helper; production application execution enters through AgentService. */
 export async function runCodingHarness(input: HarnessRunInput): Promise<HarnessRunOutput> {
   const manifest = input.manifest;
   const env = input.environment;
@@ -171,11 +172,7 @@ export async function runCodingHarness(input: HarnessRunInput): Promise<HarnessR
     seedLedger.evidenceRefs = [...new Set(evidenceRefs)];
     ledgerStore.upsertLedger(seedLedger);
 
-    const modelProvider = createModelProvider({
-      fakeModelText: "ok",
-      fakeModelMode: "success",
-      agentActions: input.agentScript
-    });
+    const modelProvider = new FakeModelProvider({ mode: "success", text: "ok", agentActions: input.agentScript });
     const toolRuntime = new ToolRuntime({ registry: createCodingToolRegistry(), executionRecordStore, artifactStore });
 
     let loopResult: Awaited<ReturnType<typeof runAgentLoop>>;
@@ -555,7 +552,7 @@ export function parseAgentScript(input: unknown[]): AgentAction[] {
 type AutoApproveInput = {
   loopResult: Extract<Awaited<ReturnType<typeof runAgentLoop>>, { kind: "waiting_for_approval" }>;
   task: Task;
-  modelProvider: ReturnType<typeof createModelProvider>;
+  modelProvider: FakeModelProvider;
   toolRuntime: ToolRuntime;
   runStore: RunStore;
   eventStore: EventStore;

@@ -11,19 +11,16 @@ import {
   beforeModelStrategy,
   buildStrategyPromptContext
 } from "../../strategy/index.js";
-import { buildLoopContextSnapshot } from "../context-snapshot.js";
-import { ensureBudget } from "../budget.js";
-import { describeModelActionError, isActionRepairable } from "../model-action-error.js";
-import { redactForEvidence } from "../redact.js";
+import { buildLoopContextSnapshot } from "../../agent-loop/context-snapshot.js";
+import { ensureBudget } from "../../agent-loop/budget.js";
+import { describeModelActionError, isActionRepairable } from "../../agent-loop/model-action-error.js";
+import { redactForEvidence } from "../../agent-loop/redact.js";
 import { buildContextEnvelope, validateCompactionIntegrity } from "../../../../context/src/index.js";
-import type { HandlerDeps } from "../outcome.js";
-import type { AgentLoopState } from "../state.js";
-import { readCodingState, writeCodingState } from "../../profile/coding-profile-state.js";
-import { buildAgentActionPrompt } from "../../prompt/agent-action-prompt.js";
-
-export type GenerateActionOutcome =
-  | { kind: "action"; action: AgentAction }
-  | { kind: "fail"; code: string; message: string; retryable: boolean };
+import type { HandlerDeps } from "../../agent-loop/outcome.js";
+import type { AgentLoopState } from "../../agent-loop/state.js";
+import { readCodingState, writeCodingState } from "../coding-profile-state.js";
+import { buildAgentActionPrompt } from "../shared/action-prompt.js";
+import type { GenerateActionOutcome } from "../types.js";
 
 /**
  * handleGenerateAction — the non-seeded action generation path: budget check,

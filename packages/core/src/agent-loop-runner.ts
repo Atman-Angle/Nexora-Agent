@@ -202,6 +202,7 @@ export async function runAgentLoop(input: {
       const hashes = facts.fileHashes.map((entry) => `${entry.path}:${entry.hash ?? "missing"}`).join("|");
       workspaceHash = computeArtifactHash(hashes);
     }
+    const resumeState = serializeResumeState(state, input.profile);
     const checkpointRecord = createCheckpoint({
       checkpointId: input.idGenerator(),
       runId: state.activeRun.runId,
@@ -213,10 +214,10 @@ export async function runAgentLoop(input: {
       ...(workspaceHash === undefined ? {} : { workspaceHash }),
       ...(options?.note === undefined ? {} : { note: options.note }),
       ...(state.recoveryState === undefined ? {} : { recovery: state.recoveryState }),
-      resumeState: serializeResumeState(state, input.profile),
-      profileName: input.profile.name,
-      profileVersion: input.profile.state.version,
-      profileState: input.profile.state.serializeState(state.profileState),
+      resumeState,
+      ...(resumeState.profileName === undefined ? {} : { profileName: resumeState.profileName }),
+      ...(resumeState.profileVersion === undefined ? {} : { profileVersion: resumeState.profileVersion }),
+      ...(resumeState.profileState === undefined ? {} : { profileState: resumeState.profileState }),
       createdAt
     });
     input.checkpointStore.insertCheckpoint(checkpointRecord);

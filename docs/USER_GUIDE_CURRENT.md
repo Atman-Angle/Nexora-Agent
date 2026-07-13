@@ -76,40 +76,18 @@ pnpm nexora --version
 
 | 变量 | 必填 | 默认 | 说明 |
 |---|---|---|---|
-| `NEXORA_MODEL_PROVIDER` | 否 | `fake` | `"fake"` 或 `"openai-compatible"` |
-| `NEXORA_MODEL_BASE_URL` | openai-compatible 时必填 | 无 | OpenAI 兼容 API 的 base URL |
-| `NEXORA_MODEL_API_KEY` | openai-compatible 时必填 | 无 | API Key，不上报日志/事件 |
-| `NEXORA_MODEL_NAME` | openai-compatible 时必填 | 无 | 模型名称，如 `gpt-4o-mini` |
+| `NEXORA_MODEL_PROVIDER` | 是（模型命令） | 无 | 必须为 `"openai-compatible"` |
+| `NEXORA_MODEL_BASE_URL` | 是（模型命令） | 无 | OpenAI 兼容 API 的 base URL |
+| `NEXORA_MODEL_API_KEY` | 是（模型命令） | 无 | API Key，不上报日志/事件 |
+| `NEXORA_MODEL_NAME` | 是（模型命令） | 无 | 模型名称，如 `gpt-4o-mini` |
 | `NEXORA_MODEL_TIMEOUT_MS` | 否 | `60000` | 请求超时（毫秒） |
 | `NEXORA_DB_PATH` | 大部分命令必填 | 无 | SQLite 数据库文件路径 |
 | `NEXORA_WORKSPACE_ROOT` | 文件/Shell 命令必填 | 无 | 工作区根目录 |
 | `NEXORA_ARTIFACT_ROOT` | 否 | `<DB目录>/artifacts` | Artifact 存储目录 |
 
-Fake Provider 调优变量（仅测试用）：
-
-| 变量 | 默认值 | 说明 |
-|---|---|---|
-| `NEXORA_FAKE_MODEL_TEXT` | `ok` | Fake 模式返回的文本 |
-| `NEXORA_FAKE_MODEL_MODE` | `success` | `success`/`fail`/`empty` |
-| `NEXORA_FAKE_AGENT_SCRIPT_JSON` | 无 | JSON 数组，预定义 Agent 行为序列 |
+> R010 破坏性迁移：CLI 不再支持 `fake` 或任何 `NEXORA_FAKE_*` 配置。未配置真实 Provider 时，模型命令返回 `MODEL_CONFIG_ERROR` 并列出所需变量。
 
 ### 4.2 最小配置示例
-
-**Fake 模式（无需模型，开箱即用）**：
-
-```powershell
-# 创建 .env 文件（或直接在 Shell 中 export）
-$env:NEXORA_DB_PATH = "C:\nexora-data\nexora.db"
-$env:NEXORA_WORKSPACE_ROOT = "C:\nexora-data\workspace"
-$env:NEXORA_ARTIFACT_ROOT = "C:\nexora-data\artifacts"
-
-# 创建所需目录
-mkdir C:\nexora-data\workspace -Force
-mkdir C:\nexora-data\artifacts -Force
-
-# 测试
-pnpm nexora --help
-```
 
 **OpenAI-Compatible 模式**：
 
@@ -154,16 +132,9 @@ pnpm nexora ask "<文本>"
 - **需要 Approval**：否
 
 ```powershell
-# Fake 模式
+# 已按 4.2 配置真实 Provider
 pnpm nexora ask "解释什么是 monorepo"
-
-# 输出
-{"runId":"xxx-xxx","status":"succeeded","text":"ok"}
-
-# 自定义 Fake 文本
-$env:NEXORA_FAKE_MODEL_TEXT = "Monorepo 是一个包含多个项目的单一仓库"
-pnpm nexora ask "解释什么是 monorepo"
-# 输出: "Monorepo 是一个包含多个项目的单一仓库"
+# 输出由配置的模型决定
 ```
 
 ### 5.2 `read` — 读取工作区文件
@@ -265,7 +236,7 @@ pnpm nexora verify "<命令>" ["<参数>" ...]
 - **会调模型**：否（Tool Mode）
 - **会写数据库**：是
 - **会修改 Workspace**：否（只读执行）
-- **需要 Approval**：否（Fake 模式），OpenAI-Compatible 模式下 `shell.execute` 需要审批
+- **需要 Approval**：否（只读工具）；`shell.execute` 需要审批
 
 ```powershell
 pnpm nexora verify "node" "-e" "console.log('test passed')"
@@ -297,10 +268,7 @@ pnpm nexora agent "<目标>" "<验证命令>" ["<参数>" ...]
 - **需要 Approval**：是（写操作和 Shell 执行需要审批）
 
 ```powershell
-# Fake 模式下的 Agent（使用预定义脚本）
-$script = '[{"type":"tool_call","toolCall":{"toolCallId":"s1","toolName":"filesystem.search","input":{"query":"hello","limit":5},"timeoutMs":5000}},{"type":"tool_call","toolCall":{"toolCallId":"v1","toolName":"shell.execute","input":{"command":"node","args":["-e","process.exit(0)"],"cwd":".","environment":{},"purpose":"verification","idempotencyKey":"v1"},"timeoutMs":5000}},{"type":"final","text":"完成"}]'
-$env:NEXORA_FAKE_AGENT_SCRIPT_JSON = $script
-
+# 需先按 4.2 配置真实 Provider
 pnpm nexora agent "搜索并分析代码" "node" "-e" "process.exit(0)"
 ```
 
@@ -408,7 +376,11 @@ pnpm install
 mkdir D:\nexora-test\workspace -Force
 mkdir D:\nexora-test\artifacts -Force
 
-# 步骤 4：配置环境（Fake 模式，无需真实模型）
+# 步骤 4：配置真实 OpenAI-Compatible Provider
+$env:NEXORA_MODEL_PROVIDER = "openai-compatible"
+$env:NEXORA_MODEL_BASE_URL = "https://api.openai.com/v1"
+$env:NEXORA_MODEL_API_KEY = "sk-..."
+$env:NEXORA_MODEL_NAME = "gpt-4o-mini"
 $env:NEXORA_DB_PATH = "D:\nexora-test\nexora.db"
 $env:NEXORA_WORKSPACE_ROOT = "D:\nexora-test\workspace"
 $env:NEXORA_ARTIFACT_ROOT = "D:\nexora-test\artifacts"
@@ -423,14 +395,14 @@ pnpm nexora read "hello.txt"
 
 # 步骤 7：直接问答
 pnpm nexora ask "今天天气怎么样"
-# 输出: {"runId":"...","status":"succeeded","text":"ok"}  （Fake 模式返回固定文本）
+# 输出: {"runId":"...","status":"succeeded","text":"<模型回答>"}
 
 # 步骤 8：查看数据库
 # 数据库路径: D:\nexora-test\nexora.db
 # 可以用 SQLite 工具查看 runs、events、artifacts 等表
 ```
 
-**切换到真实模型**：
+**更换 OpenAI-Compatible 模型端点**：
 
 ```powershell
 $env:NEXORA_MODEL_PROVIDER = "openai-compatible"
@@ -474,7 +446,7 @@ pnpm nexora read "package.json"
 # 搜索代码
 pnpm nexora search "useState"
 
-# 执行测试（Fake 模式验证命令）
+# 执行测试（无需模型）
 pnpm nexora verify "npx" "vitest" "run"
 ```
 
@@ -802,8 +774,8 @@ Agent 执行可能进入 `failed` 状态，失败原因包括：
 
 1. **没有任何交互式 UI**：所有操作通过 CLI 命令+环境变量+JSON 输出，无聊天界面、无进度条。
 2. **CLI 不自动读取 `.env`**：环境变量必须手动设置。
-3. **Fake 模式是默认值**：不配置 Provider 时，所有回答返回 `"ok"`（或 `NEXORA_FAKE_MODEL_TEXT` 指定的文本）。
-4. **Agent 在 Fake 模式下需要预定义脚本**：`NEXORA_FAKE_AGENT_SCRIPT_JSON` 定义了 Agent 的每一步行为（读什么文件、改什么代码、运行什么验证）。
+3. **模型命令必须配置真实 Provider**：未设置 `NEXORA_MODEL_PROVIDER=openai-compatible` 及其三项连接变量时，CLI 返回可操作的 `MODEL_CONFIG_ERROR`。
+4. **确定性 Provider 脚本仅用于内部测试**：不是 CLI 用户配置能力。
 5. **审批是非交互式的**：需要用户在单独的终端窗口中手动执行 `approve`/`deny` 命令。
 6. **Shell 执行受限**：不能执行 cmd/powershell/bash；不能执行 `rm -rf` 等破坏性命令；子进程只能访问有限的系统 PATH；不继承 `NEXORA_*` 变量。
 7. **F010 仓库分析工具无 CLI**：`git.status`、`project.inspect` 等已实现在 Agent 内部可用，但用户无法直接通过 CLI 调用。
@@ -845,4 +817,3 @@ Agent 执行可能进入 `failed` 状态，失败原因包括：
 > **文档路径**：`docs/USER_GUIDE_CURRENT.md`
 > **最后更新**：2026-06-27
 > **基于代码版本**：F012 done（commit `e9788c1` 及未提交 F010/F012 工作）
-
