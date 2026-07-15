@@ -1,4 +1,5 @@
 import { computeArtifactHash } from "../../../../contracts/src/index.js";
+import { estimateTokens } from "../../../../context/src/index.js";
 import type {
   AgentBudget,
   AgentBudgetUsage,
@@ -89,6 +90,24 @@ export function buildAgentActionPrompt(input: AgentActionPromptInput): string {
     ...(repairLines.length === 0 ? [] : ["", ...repairLines]),
     "Return a single JSON object, no prose, no markdown fence."
   ].join("\n");
+}
+
+/** Numeric-only prompt evidence suitable for durable event payloads. */
+export function measureAgentActionPrompt(input: AgentActionPromptInput, prompt: string) {
+  const admittedTools = input.contextEnvelope?.manifest.selectedSegmentIds.includes("capabilities") !== false
+    ? input.availableTools
+    : [];
+  const capabilitySchema = input.contextEnvelope?.segments.find((segment) => segment.id === "capabilities")?.content
+    ?? buildAgentActionSchemaText(admittedTools);
+  return {
+    toolCount: admittedTools.length,
+    toolSchemaChars: capabilitySchema.length,
+    toolSchemaEstimatedTokens: estimateTokens(capabilitySchema),
+    promptChars: prompt.length,
+    promptEstimatedTokens: estimateTokens(prompt),
+    selectedSegments: input.contextEnvelope?.manifest.selectedSegmentIds ?? [],
+    droppedSegments: input.contextEnvelope?.manifest.drops.map((drop) => ({ id: drop.id, reason: drop.reason })) ?? []
+  };
 }
 
 function renderValidationFailureSummary(validation: ValidationResult | null): string {

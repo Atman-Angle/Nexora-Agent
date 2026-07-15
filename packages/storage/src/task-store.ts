@@ -61,7 +61,7 @@ export class TaskStore {
           task_type: string | null;
           acceptance_criteria_json: string | null;
           execution_constraints_json: string | null;
-          source: "cli";
+          source: "application" | "cli";
           created_at: string;
         }
       | undefined;

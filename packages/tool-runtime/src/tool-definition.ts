@@ -16,6 +16,21 @@ export type ToolExecutionContext = {
 export type ToolExecutionResult = {
   toolResult: ToolResult;
   artifacts?: Artifact[];
+  /** Ephemeral numeric execution measurements; never part of a ToolResult. */
+  telemetry?: ToolExecutionTelemetry;
+};
+
+export type ToolExecutionTelemetry = {
+  localDurationMs?: number;
+  toolRuntimeDurationMs?: number;
+  scannedFiles?: number;
+  readBytes?: number;
+  documentSegments?: number;
+  workerDurationMs?: number;
+  workerOutputBytes?: number;
+  astDurationMs?: number;
+  astMatches?: number;
+  astOutputBytes?: number;
 };
 
 export type ParsedToolCall<I> = {

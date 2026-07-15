@@ -29,9 +29,8 @@ export type BuildContextEnvelopeInput = {
 };
 
 /**
- * A deterministic shadow Context Engine. It projects existing authorities
- * into bounded model-input segments; it neither reads new sources nor writes
- * state. The legacy provider renderer deliberately does not consume it yet.
+ * A deterministic Context Engine. It projects existing authorities into
+ * bounded model-input segments; it neither reads new sources nor writes state.
  */
 export function buildContextEnvelope(input: BuildContextEnvelopeInput): ContextEnvelope {
   const budget = ContextEnvelopeBudgetSchema.parse(input.budget ?? DEFAULT_CONTEXT_ENVELOPE_BUDGET);
@@ -101,7 +100,7 @@ export function buildContextEnvelope(input: BuildContextEnvelopeInput): ContextE
     candidates.push(segment({
       id: "capabilities",
       pool: "capabilities",
-      required: false,
+      required: true,
       priority: 3,
       sourceVersion: snapshot.createdAt,
       content: input.capabilitySchema

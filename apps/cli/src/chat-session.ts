@@ -21,18 +21,15 @@ export function openChatSessionStore(databasePath: string): { store: SessionMemo
 }
 
 export function buildChatPrompt(history: readonly ChatMessage[], userText: string, facts: readonly { key: string; value: string; status: string }[] = [], handles: readonly SelectionHandle[] = []): string {
-  if (history.length === 0 && facts.length === 0 && handles.length === 0) {
-    return userText;
-  }
-
   const transcript = history
     .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.text}`)
     .join("\n");
   return [
     "Continue the following Nexora chat session. Use the available workspace tools (filesystem.read, filesystem.search, filesystem.list, project.inspect, git.*) to ground your answer in the real repository; do not fabricate file contents you did not read. To modify a file, use filesystem.patch — it will request approval, it will not auto-execute.",
+    "Treat the latest User line as a request: read a named workspace-relative file before answering about it, search when asked to locate content, and ask a concise clarification only when no path, search terms, or active result handle can ground the request.",
     ...(facts.length === 0 ? [] : ["Verified user facts (active facts are reliable; pending conflicts must not be resolved until user confirmation):", ...facts.map((fact) => `${fact.status}: ${fact.key} = ${fact.value}`)]),
     ...(handles.length === 0 ? [] : ["Active search-result handles (session scoped; use only these exact paths for ordinal references):", ...handles.map((handle) => `result ${handle.position}: ${handle.path}`)]),
-    transcript,
+    ...(transcript.length === 0 ? [] : [transcript]),
     `User: ${userText}`,
     "Assistant:"
   ].join("\n");

@@ -177,7 +177,8 @@ export async function runToolMode(input: {
       "search.completed",
       {
         returnedMatches: toolExecution.toolResult.output.result.returnedMatches,
-        truncated: toolExecution.toolResult.output.result.truncated
+        truncated: toolExecution.toolResult.output.result.truncated,
+        telemetry: toolExecution.telemetry
       },
       input.now()
     );
@@ -202,9 +203,7 @@ export async function runToolMode(input: {
     );
     await appendEvent(
       "tool.completed",
-      {
-        kind: toolExecution.toolResult.output.kind
-      },
+      { kind: toolExecution.toolResult.output.kind, telemetry: toolExecution.telemetry },
       input.now()
     );
   } else if (toolExecution.toolResult.toolName === "shell.execute" && toolExecution.toolResult.status === "success") {
@@ -219,17 +218,13 @@ export async function runToolMode(input: {
     );
     await appendEvent(
       "tool.completed",
-      {
-        kind: toolExecution.toolResult.output.kind
-      },
+      { kind: toolExecution.toolResult.output.kind, telemetry: toolExecution.telemetry },
       input.now()
     );
   } else {
     await appendEvent(
       "tool.completed",
-      {
-        kind: toolExecution.toolResult.output.kind
-      },
+      { kind: toolExecution.toolResult.output.kind, telemetry: toolExecution.telemetry },
       input.now()
     );
   }

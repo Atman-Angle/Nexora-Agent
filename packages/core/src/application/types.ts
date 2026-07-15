@@ -9,6 +9,7 @@ import type {
   TaskAcceptanceCriterion,
   TaskAgentRequest,
   TaskExecutionConstraints,
+  TaskSource,
   TaskType,
   TaskValidationRequest
 } from "../../../contracts/src/index.js";
@@ -52,6 +53,8 @@ export type AgentServiceConfig = {
    */
   readonly profiles?: readonly AgentProfile[] | undefined;
   readonly registry?: InProcessAgentRegistry | undefined;
+  /** Durable source for Tasks created by this service. Defaults to application. */
+  readonly taskSource?: TaskSource | undefined;
 };
 
 /**

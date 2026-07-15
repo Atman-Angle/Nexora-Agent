@@ -7,10 +7,12 @@ export default [
   {
     ignores: [
       "dist/**",
+      "packages/runtime/dist/**",
       "node_modules/**",
       "tmp/**",
       "tests/fixtures/**",
       ".nexora/**",
+      ".nexora-docling/**",
       ".local-tool-settings/**",
       ".tmp-e001/**",
       ".tmp-e0013/**",

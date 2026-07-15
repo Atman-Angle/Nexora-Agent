@@ -4,7 +4,7 @@ import { ensureBudget } from "../agent-loop/budget.js";
 import type { GenerateActionOutcome } from "./types.js";
 import type { HandlerDeps } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
-import { buildAgentActionPrompt } from "./shared/action-prompt.js";
+import { buildAgentActionPrompt, measureAgentActionPrompt } from "./shared/action-prompt.js";
 import { buildLoopContextSnapshot } from "../agent-loop/context-snapshot.js";
 import { buildContextEnvelope } from "../../../context/src/index.js";
 import { buildAgentActionSchemaText } from "../../../model-gateway/src/model-tool-definition.js";
@@ -47,6 +47,7 @@ export async function generateChatAction(
       "Do not emit update_plan or submit_execution_plan in chat."
     ]
   };
+  const envelopeStartedAt = performance.now();
   const contextEnvelope = buildContextEnvelope({
     snapshot: buildLoopContextSnapshot({
       runId: state.activeRun.runId, anchor: deps.anchor, ledger: state.ledger,
@@ -57,12 +58,14 @@ export async function generateChatAction(
     now: startedAt, profileContext, capabilitySchema: buildAgentActionSchemaText(deps.availableTools),
     additionalSegments: chatRuntimeSegments(deps.input.runtimeContext, startedAt)
   });
+  const contextEnvelopeBuildDurationMs = performance.now() - envelopeStartedAt;
 
-  const action = selectionAction ?? AgentActionSchema.parse(
-    await nextChatModelAction({
+  const modelResult = selectionAction === null
+    ? await nextChatModelAction({
       state, deps, contextEnvelope, profileContext
     })
-  );
+    : null;
+  const action = selectionAction ?? AgentActionSchema.parse(modelResult!.action);
 
   await deps.appendEvent(
     "model.action.generated",
@@ -70,7 +73,15 @@ export async function generateChatAction(
       type: action.type,
       ...(action.type === "tool_call" || action.type === "request_approval"
         ? { toolCallId: action.toolCall.toolCallId, toolName: action.toolCall.toolName }
-        : {})
+        : {}),
+      ...(modelResult === null ? {} : {
+        measurement: {
+          ...modelResult.measurement,
+          contextEnvelopeBuildDurationMs,
+          modelCalls: state.usage.modelCalls,
+          providerRetryCount: state.usage.providerRetryCount
+        }
+      })
     },
     deps.input.now()
   );
@@ -82,15 +93,34 @@ async function nextChatModelAction(input: {
   deps: HandlerDeps;
   contextEnvelope: ReturnType<typeof buildContextEnvelope>;
   profileContext: { mode: string; instructions: string[] };
-}): Promise<unknown> {
+}): Promise<{ action: unknown; measurement: ReturnType<typeof measureAgentActionPrompt> & { promptBuildDurationMs: number; providerDurationMs: number } }> {
   input.state.usage.modelCalls += 1;
-  return input.deps.input.modelProvider.nextAction({
-    runId: input.state.activeRun.runId, goal: input.deps.anchor.goal, constraints: input.deps.anchor.constraints, successCriteria: input.deps.anchor.successCriteria,
-    ledger: input.state.ledger, workingSet: input.state.currentWorkingSet, recentToolResult: input.state.recentToolResult, recentValidationResult: input.state.recentValidationResult,
-    budget: input.deps.input.task.input.agentRequest!.budget, usage: input.state.usage, availableTools: input.deps.availableTools,
-    regroundRequested: input.state.regroundRequested, replanRequested: input.state.replanRequested, contextEnvelope: input.contextEnvelope, profileContext: input.profileContext,
-    prompt: buildAgentActionPrompt({ runId: input.state.activeRun.runId, goal: input.deps.anchor.goal, constraints: input.deps.anchor.constraints, successCriteria: input.deps.anchor.successCriteria, ledger: input.state.ledger, workingSet: input.state.currentWorkingSet, recentToolResult: input.state.recentToolResult, recentValidationResult: input.state.recentValidationResult, budget: input.deps.input.task.input.agentRequest!.budget, usage: input.state.usage, availableTools: input.deps.availableTools, regroundRequested: input.state.regroundRequested, replanRequested: input.state.replanRequested, profileContext: input.profileContext, contextEnvelope: input.contextEnvelope })
+  const promptInput = {
+    runId: input.state.activeRun.runId,
+    goal: input.deps.anchor.goal,
+    constraints: input.deps.anchor.constraints,
+    successCriteria: input.deps.anchor.successCriteria,
+    ledger: input.state.ledger,
+    workingSet: input.state.currentWorkingSet,
+    recentToolResult: input.state.recentToolResult,
+    recentValidationResult: input.state.recentValidationResult,
+    budget: input.deps.input.task.input.agentRequest!.budget,
+    usage: input.state.usage,
+    availableTools: input.deps.availableTools,
+    regroundRequested: input.state.regroundRequested,
+    replanRequested: input.state.replanRequested,
+    profileContext: input.profileContext,
+    contextEnvelope: input.contextEnvelope
+  };
+  const promptStartedAt = performance.now();
+  const prompt = buildAgentActionPrompt(promptInput);
+  const promptBuildDurationMs = performance.now() - promptStartedAt;
+  const providerStartedAt = performance.now();
+  const action = await input.deps.input.modelProvider.nextAction({
+    ...promptInput,
+    prompt
   });
+  return { action, measurement: { ...measureAgentActionPrompt(promptInput, prompt), promptBuildDurationMs, providerDurationMs: performance.now() - providerStartedAt } };
 }
 
 function selectionHandles(value: unknown): SelectionHandle[] { return typeof value === "object" && value !== null && Array.isArray((value as { selectionHandles?: unknown }).selectionHandles) ? (value as { selectionHandles: SelectionHandle[] }).selectionHandles : []; }

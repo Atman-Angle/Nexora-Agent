@@ -63,7 +63,7 @@ const filesystemSearchTool: ToolDefinition<FilesystemSearchInput> = {
   inputSchema: FilesystemSearchInputSchema,
   riskLevel: "read",
   requiresApproval: false,
-  description: "Search the workspace for files matching a query.",
+  description: "Search the workspace for files matching text; ast-grep patterns such as function $NAME($$$ARGS) { $$$BODY } search supported source structurally.",
   inputFields: [
     { name: "query", type: "string", required: true, description: "Search query, non-empty." },
     { name: "limit", type: "number", required: true, minimum: 1, maximum: 100, description: "Integer 1..100." }
@@ -143,6 +143,19 @@ const filesystemWriteTool: ToolDefinition<FilesystemWriteInput> = {
     return executeFilesystemWrite({ ...context, toolCall });
   }
 };
+
+export type FileToolName = "read" | "search" | "list" | "write" | "patch";
+
+/** Registers only the explicitly requested file tools. */
+export function registerFileTools(registry: ToolRegistry, tools: readonly FileToolName[]): void {
+  for (const tool of new Set(tools)) {
+    if (tool === "read") registry.register(filesystemReadTool);
+    if (tool === "search") registry.register(filesystemSearchTool);
+    if (tool === "list") registry.register(filesystemListTool);
+    if (tool === "write") registry.register(filesystemWriteTool);
+    if (tool === "patch") registry.register(filesystemPatchTool);
+  }
+}
 
 const shellExecuteTool: ToolDefinition<ShellExecuteInput> = {
   name: "shell.execute",

@@ -12,7 +12,7 @@ import type { ExecutionRecordStore } from "../../storage/src/execution-record-st
 import { ToolRuntimeError } from "./errors.js";
 import { assertFilesystemPermission } from "./permissions.js";
 import type { RiskLevel } from "./permissions.js";
-import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult } from "./tool-definition.js";
+import type { ToolDefinition, ToolExecutionContext, ToolExecutionResult, ToolExecutionTelemetry } from "./tool-definition.js";
 import type { ToolRegistry } from "./tool-registry.js";
 
 export class ToolRuntime {
@@ -41,7 +41,9 @@ export class ToolRuntime {
     toolResult: ToolResult;
     executionRecord: ExecutionRecord;
     artifacts?: Artifact[];
+    telemetry: ToolExecutionTelemetry;
   }> {
+    const performanceStartedAt = performance.now();
     const parsedToolCall = ToolCallEnvelopeSchema.parse(input.toolCall);
     const startedAt = input.now();
     const executionId = input.idGenerator();
@@ -80,7 +82,7 @@ export class ToolRuntime {
 
       const replayed = this.replayIdempotentExecution(parsedToolCall, def, parsedInput);
       if (replayed !== null) {
-        return replayed;
+        return { ...replayed, telemetry: { toolRuntimeDurationMs: performance.now() - performanceStartedAt } };
       }
 
       const context: ToolExecutionContext = {
@@ -126,7 +128,8 @@ export class ToolRuntime {
       return {
         toolResult: parsedToolResult,
         executionRecord: record,
-        ...(execution.artifacts === undefined ? {} : { artifacts: execution.artifacts })
+        ...(execution.artifacts === undefined ? {} : { artifacts: execution.artifacts }),
+        telemetry: { ...execution.telemetry, toolRuntimeDurationMs: performance.now() - performanceStartedAt }
       };
     } catch (error) {
       const normalizedError = normalizeToolError(error, timedOut);
@@ -156,7 +159,8 @@ export class ToolRuntime {
 
       return {
         toolResult: parsedToolResult,
-        executionRecord: record
+        executionRecord: record,
+        telemetry: { toolRuntimeDurationMs: performance.now() - performanceStartedAt }
       };
     } finally {
       clearTimeout(timeoutHandle);

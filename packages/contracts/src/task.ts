@@ -175,7 +175,7 @@ export const TaskSchema = z.object({
     executionConstraints: TaskExecutionConstraintsSchema.optional(),
     acceptanceCriteria: z.array(TaskAcceptanceCriterionSchema).default([])
   }),
-  source: z.literal("cli"),
+  source: z.enum(["application", "cli"]),
   createdAt: z.string().datetime()
 });
 
@@ -185,6 +185,7 @@ export type TaskAcceptanceCriterion = z.infer<typeof TaskAcceptanceCriterionSche
 export type TaskPatchRequest = z.infer<typeof TaskPatchRequestSchema>;
 export type TaskValidationRequest = z.infer<typeof TaskValidationRequestSchema>;
 export type TaskAgentRequest = z.infer<typeof TaskAgentRequestSchema>;
+export type TaskSource = Task["source"];
 
 export function createTask(input: {
   taskId: string;
@@ -198,6 +199,7 @@ export function createTask(input: {
   agentRequest?: TaskAgentRequest;
   executionConstraints?: TaskExecutionConstraints;
   acceptanceCriteria?: TaskAcceptanceCriterion[];
+  source?: TaskSource;
 }): Task {
   const inferredTaskType =
     input.taskType ??
@@ -216,7 +218,7 @@ export function createTask(input: {
       ...(input.executionConstraints === undefined ? {} : { executionConstraints: input.executionConstraints }),
       acceptanceCriteria: input.acceptanceCriteria ?? []
     },
-    source: "cli",
+    source: input.source ?? "cli",
     createdAt: input.createdAt
   });
 }

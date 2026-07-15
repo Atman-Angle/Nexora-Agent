@@ -32,11 +32,13 @@ import { serializeResumeState } from "../state.js";
 import { handleApproval } from "./approval.js";
 import type { HandlerDeps, HandlerOutcome } from "../outcome.js";
 import type { AgentLoopState } from "../state.js";
+import type { ToolExecutionTelemetry } from "../../../../tool-runtime/src/tool-definition.js";
 
 type ExecutionResult = {
   toolResult: ToolResult;
   executionRecord: { executionId: string };
   artifacts?: Artifact[] | undefined;
+  telemetry: ToolExecutionTelemetry;
 };
 
 type ToolExecState = {
@@ -646,7 +648,8 @@ async function processToolSuccess(
       "search.completed",
       {
         returnedMatches: toolResult.output.result.returnedMatches,
-        truncated: toolResult.output.result.truncated
+        truncated: toolResult.output.result.truncated,
+        telemetry: execution.telemetry
       },
       deps.input.now()
     );
@@ -700,7 +703,7 @@ async function processToolSuccess(
       deps.input.now()
     );
   }
-  await deps.appendEvent("tool.completed", { toolName: toolResult.toolName }, deps.input.now());
+  await deps.appendEvent("tool.completed", { toolName: toolResult.toolName, telemetry: execution.telemetry }, deps.input.now());
 
   const resumedAt = deps.input.now();
   activeRun = transitionRun(activeRun, "running", resumedAt);

@@ -208,6 +208,7 @@ export class AgentService {
       ...(input.agentRequest !== undefined ? { agentRequest: input.agentRequest } : {}),
       acceptanceCriteria: [...(input.acceptanceCriteria ?? [])],
       ...(input.executionConstraints !== undefined ? { executionConstraints: input.executionConstraints } : {}),
+      source: this.taskSource(),
       createdAt: now()
     });
     const run = this.createPersistedRun(task, "tool", now);
@@ -957,6 +958,7 @@ export class AgentService {
       taskId: randomUUID(),
       text,
       taskType: "analysis",
+      source: this.taskSource(),
       createdAt: now()
     });
     const run = this.createPersistedRun(task, "direct", now);
@@ -999,6 +1001,7 @@ export class AgentService {
       taskId: randomUUID(),
       text: `Read-only exploration: ${toolCall.toolName}`,
       taskType: "read_only",
+      source: this.taskSource(),
       createdAt: now(),
       ...(input.kind === "filesystem_search" ? { searchQuery: input.query } : {})
     });
@@ -1141,6 +1144,10 @@ export class AgentService {
 
   private resolveArtifactRoot(): string {
     return this.config.artifactRoot ?? join(dirname(this.config.databasePath), "artifacts");
+  }
+
+  private taskSource(): Task["source"] {
+    return this.config.taskSource ?? "application";
   }
 
   private resolveProfile(profileOrName: AgentProfile | string): AgentProfile {

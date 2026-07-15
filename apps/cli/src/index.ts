@@ -240,14 +240,14 @@ const builtInRegistry = new InProcessAgentRegistry([
 
 function createService(requiredWorkspaceRoot?: string): AgentService {
   const databasePath = requireDatabasePath(); const workspaceRoot = requiredWorkspaceRoot ?? process.cwd();
-  return new AgentService({ databasePath, workspaceRoot, artifactRoot: process.env.NEXORA_ARTIFACT_ROOT?.trim() || join(dirname(databasePath), "artifacts"), registry: builtInRegistry, modelProviderOptions: providerOptions() });
+  return new AgentService({ databasePath, workspaceRoot, artifactRoot: process.env.NEXORA_ARTIFACT_ROOT?.trim() || join(dirname(databasePath), "artifacts"), registry: builtInRegistry, taskSource: "cli", modelProviderOptions: providerOptions() });
 }
 function makeToolTask(command: Extract<Command, { type: "read" | "search" | "patch" | "verify" }>) {
   const now = new Date().toISOString(); const base = { taskId: randomUUID(), createdAt: now };
-  if (command.type === "read") return createTask({ ...base, text: `Read file ${command.path}`, taskType: "read_only", filePath: command.path });
-  if (command.type === "search") return createTask({ ...base, text: command.query, taskType: "read_only", searchQuery: command.query });
-  if (command.type === "patch") return createTask({ ...base, text: `Patch file ${command.path}`, taskType: "workspace_mutation", patchRequest: { path: command.path, expectedHash: command.expectedHash, patch: { type: "replace_text", find: command.find, replace: command.replace }, encoding: "utf8", idempotencyKey: command.idempotencyKey ?? randomUUID() } });
-  return createTask({ ...base, text: `Verify command ${command.command}`, taskType: parseTaskTypeEnv(process.env.NEXORA_VERIFY_TASK_TYPE, "analysis"), validationRequest: validationRequest(command.command, command.args, "VERIFY", true), acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_VERIFY_ACCEPTANCE_CRITERIA_JSON) });
+  if (command.type === "read") return createTask({ ...base, source: "cli", text: `Read file ${command.path}`, taskType: "read_only", filePath: command.path });
+  if (command.type === "search") return createTask({ ...base, source: "cli", text: command.query, taskType: "read_only", searchQuery: command.query });
+  if (command.type === "patch") return createTask({ ...base, source: "cli", text: `Patch file ${command.path}`, taskType: "workspace_mutation", patchRequest: { path: command.path, expectedHash: command.expectedHash, patch: { type: "replace_text", find: command.find, replace: command.replace }, encoding: "utf8", idempotencyKey: command.idempotencyKey ?? randomUUID() } });
+  return createTask({ ...base, source: "cli", text: `Verify command ${command.command}`, taskType: parseTaskTypeEnv(process.env.NEXORA_VERIFY_TASK_TYPE, "analysis"), validationRequest: validationRequest(command.command, command.args, "VERIFY", true), acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_VERIFY_ACCEPTANCE_CRITERIA_JSON) });
 }
 function readOnlyToolInput(command: ReadOnlyCommand) {
   if (command.type === "list") return { kind: "filesystem_list" as const, ...(command.path === undefined ? {} : { relativePath: command.path }) };

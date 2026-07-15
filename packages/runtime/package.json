@@ -1,0 +1,26 @@
+{
+  "name": "@nexora/runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/packages/runtime/src/index.js",
+  "types": "./dist/packages/runtime/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/packages/runtime/src/index.d.ts",
+      "import": "./dist/packages/runtime/src/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json && node ../../scripts/copy-docling-worker.mjs",
+    "prepack": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json && node ../../scripts/copy-docling-worker.mjs"
+  },
+  "dependencies": {
+    "@ast-grep/napi": "0.44.1",
+    "@vscode/ripgrep": "1.18.0",
+    "better-sqlite3": "^12.2.0",
+    "zod": "^3.25.76"
+  }
+}

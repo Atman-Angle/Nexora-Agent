@@ -19,7 +19,7 @@ import { buildContextEnvelope, validateCompactionIntegrity } from "../../../../c
 import type { HandlerDeps } from "../../agent-loop/outcome.js";
 import type { AgentLoopState } from "../../agent-loop/state.js";
 import { readCodingState, writeCodingState } from "../coding-profile-state.js";
-import { buildAgentActionPrompt } from "../shared/action-prompt.js";
+import { buildAgentActionPrompt, measureAgentActionPrompt } from "../shared/action-prompt.js";
 import type { GenerateActionOutcome } from "../types.js";
 
 /**
@@ -78,14 +78,15 @@ export async function handleGenerateAction(
       retryable: false
     };
   }
-  // C002 shadow path: construct once from the already-built Snapshot. It is
-  // passed to the provider for observation only; legacy prompt rendering is
-  // intentionally unchanged until the envelope has parity evidence.
+  // Construct once from the already-built Snapshot; the shared prompt renderer
+  // consumes this same admission decision.
+  const envelopeStartedAt = performance.now();
   const contextEnvelope = buildContextEnvelope({
     snapshot: contextSnapshot,
     now: iterationStartedAt,
     capabilitySchema: buildAgentActionSchemaText(deps.availableTools)
   });
+  const contextEnvelopeBuildDurationMs = performance.now() - envelopeStartedAt;
   await deps.appendEvent(
     "context.compacted",
     {
@@ -195,6 +196,7 @@ export async function handleGenerateAction(
     currentStepId: baseBuilder.currentStepId
   });
   let action: AgentAction | undefined;
+  let measurement: (ReturnType<typeof measureAgentActionPrompt> & { promptBuildDurationMs: number; providerDurationMs: number }) | undefined;
   for (let attempt = 0; attempt <= deps.maxActionRepairs; attempt += 1) {
     if (attempt > 0) {
       state.usage.actionRepairCount += 1;
@@ -209,57 +211,40 @@ export async function handleGenerateAction(
       });
     }
     try {
+      const promptInput = {
+        runId: state.activeRun.runId,
+        goal: deps.anchor.goal,
+        constraints: deps.anchor.constraints,
+        successCriteria: deps.anchor.successCriteria,
+        ledger: state.ledger,
+        workingSet: state.currentWorkingSet,
+        recentToolResult: state.recentToolResult,
+        recentValidationResult: state.recentValidationResult,
+        ...(deps.input.task.input.validationRequest === undefined ? {} : { validationRequest: deps.input.task.input.validationRequest }),
+        budget: deps.input.task.input.agentRequest!.budget,
+        usage: state.usage,
+        availableTools: deps.availableTools,
+        regroundRequested: state.regroundRequested,
+        replanRequested: state.replanRequested,
+        contextEnvelope,
+        strategyContext,
+        ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
+        planningPolicyContext,
+        executionPlanRepairContext: baseBuilder.executionPlanRepair,
+        lastModelError: lastRejection ?? state.pendingActionRejection
+      };
+      const promptStartedAt = performance.now();
+      const prompt = buildAgentActionPrompt(promptInput);
+      const promptBuildDurationMs = performance.now() - promptStartedAt;
+      const providerStartedAt = performance.now();
       action = AgentActionSchema.parse(
         await deps.input.modelProvider.nextAction({
-          runId: state.activeRun.runId,
-          goal: deps.anchor.goal,
-          constraints: deps.anchor.constraints,
-          successCriteria: deps.anchor.successCriteria,
-          ledger: state.ledger,
-          workingSet: state.currentWorkingSet,
-          recentToolResult: state.recentToolResult,
-          recentValidationResult: state.recentValidationResult,
-          ...(deps.input.task.input.validationRequest === undefined
-            ? {}
-            : { validationRequest: deps.input.task.input.validationRequest }),
-          budget: deps.input.task.input.agentRequest!.budget,
-          usage: state.usage,
-          availableTools: deps.availableTools,
-          regroundRequested: state.regroundRequested,
-          replanRequested: state.replanRequested,
+          ...promptInput,
           contextSnapshot,
-          contextEnvelope,
-          strategyContext,
-          ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
-          planningPolicyContext,
-          executionPlanRepairContext: baseBuilder.executionPlanRepair,
-          lastModelError: lastRejection ?? state.pendingActionRejection,
-          prompt: buildAgentActionPrompt({
-            runId: state.activeRun.runId,
-            goal: deps.anchor.goal,
-            constraints: deps.anchor.constraints,
-            successCriteria: deps.anchor.successCriteria,
-            ledger: state.ledger,
-            workingSet: state.currentWorkingSet,
-            recentToolResult: state.recentToolResult,
-            recentValidationResult: state.recentValidationResult,
-            ...(deps.input.task.input.validationRequest === undefined
-              ? {}
-              : { validationRequest: deps.input.task.input.validationRequest }),
-            budget: deps.input.task.input.agentRequest!.budget,
-            usage: state.usage,
-            availableTools: deps.availableTools,
-            regroundRequested: state.regroundRequested,
-            replanRequested: state.replanRequested,
-            contextEnvelope,
-            strategyContext,
-            ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
-            planningPolicyContext,
-            executionPlanRepairContext: baseBuilder.executionPlanRepair,
-            lastModelError: lastRejection ?? state.pendingActionRejection
-          })
+          prompt
         })
       );
+      measurement = { ...measureAgentActionPrompt(promptInput, prompt), promptBuildDurationMs, providerDurationMs: performance.now() - providerStartedAt };
       Object.assign(state, { pendingActionRejection: null });
       break;
     } catch (error) {
@@ -308,7 +293,13 @@ export async function handleGenerateAction(
       type: action.type,
       ...(action.type === "tool_call" || action.type === "request_approval"
         ? { toolCallId: action.toolCall.toolCallId, toolName: action.toolCall.toolName }
-        : {})
+        : {}),
+      measurement: {
+        ...measurement!,
+        contextEnvelopeBuildDurationMs,
+        modelCalls: state.usage.modelCalls,
+        providerRetryCount: state.usage.providerRetryCount
+      }
     },
     deps.input.now()
   );
