@@ -20,6 +20,7 @@ import {
   InProcessAgentRegistry,
   codingProfile,
   chatProfile,
+  generalProfile,
   DirectRunFailure,
   ToolModeRunFailure,
   yixiangProfile
@@ -233,6 +234,7 @@ async function renderResume(service: AgentService, runId: string): Promise<unkno
 }
 
 const builtInRegistry = new InProcessAgentRegistry([
+  { name: "general", version: "1", profile: generalProfile },
   { name: "coding", version: "1", profile: codingProfile },
   { name: "yixiang", version: "1", profile: yixiangProfile },
   { name: "chat", version: "1", profile: chatProfile }
@@ -258,7 +260,7 @@ function readOnlyToolInput(command: ReadOnlyCommand) {
   if (command.type === "git_show") return { kind: "git_show" as const, revision: command.revision, ...(command.path === undefined ? {} : { path: command.path }) };
   throw new Error("Unsupported read-only command.");
 }
-function agentInput(command: Extract<Command, { type: "agent" }>) { const recoveryBudget = parseRecoveryBudgetEnv(); const executionConstraints = parseExecutionConstraintsEnv(process.env.NEXORA_AGENT_EXECUTION_CONSTRAINTS_JSON); return { profile: process.env.NEXORA_AGENT_PROFILE?.trim() || "coding", text: command.goal, taskType: parseTaskTypeEnv(process.env.NEXORA_AGENT_TASK_TYPE, "feature"), validationRequest: validationRequest(command.command, command.args, "AGENT", false), agentRequest: { budget: { maxLoopCount: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_LOOP_COUNT) ?? 50, maxModelCalls: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_MODEL_CALLS) ?? 80, maxToolCalls: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_TOOL_CALLS) ?? 50, maxRetries: parseNonNegativeInteger(process.env.NEXORA_AGENT_MAX_RETRIES) ?? 20, maxDurationMs: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_DURATION_MS) ?? 300000 }, ...(recoveryBudget === undefined ? {} : { recoveryBudget }) }, acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_AGENT_ACCEPTANCE_CRITERIA_JSON), ...(executionConstraints === undefined ? {} : { executionConstraints }) }; }
+function agentInput(command: Extract<Command, { type: "agent" }>) { const recoveryBudget = parseRecoveryBudgetEnv(); const executionConstraints = parseExecutionConstraintsEnv(process.env.NEXORA_AGENT_EXECUTION_CONSTRAINTS_JSON); const profile = process.env.NEXORA_AGENT_PROFILE?.trim() || "general"; const taskType = parseTaskTypeEnv(process.env.NEXORA_AGENT_TASK_TYPE, "feature"); return { profile, text: command.goal, taskType, ...(profile === "general" && taskType === "read_only" ? {} : { validationRequest: validationRequest(command.command, command.args, "AGENT", false) }), agentRequest: { budget: { maxLoopCount: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_LOOP_COUNT) ?? 50, maxModelCalls: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_MODEL_CALLS) ?? 80, maxToolCalls: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_TOOL_CALLS) ?? 50, maxRetries: parseNonNegativeInteger(process.env.NEXORA_AGENT_MAX_RETRIES) ?? 20, maxDurationMs: parsePositiveInteger(process.env.NEXORA_AGENT_MAX_DURATION_MS) ?? 300000 }, ...(recoveryBudget === undefined ? {} : { recoveryBudget }) }, acceptanceCriteria: parseAcceptanceCriteriaEnv(process.env.NEXORA_AGENT_ACCEPTANCE_CRITERIA_JSON), ...(executionConstraints === undefined ? {} : { executionConstraints }) }; }
 function validationRequest(command: string, args: string[], prefix: "VERIFY" | "AGENT", allowEmptyPlan: boolean) { const p = `NEXORA_${prefix}`; const planMode = allowEmptyPlan && process.env.NEXORA_VERIFY_PLAN_MODE === "empty" ? "empty" : "default"; return { command, args, cwd: process.env[`${p}_CWD`]?.trim() || ".", environment: {}, timeoutMs: parseOptionalDelay(process.env[`${p}_TIMEOUT_MS`]) ?? 5000, purpose: process.env[`${p}_PURPOSE`]?.trim() || "verification", idempotencyKey: process.env[`${p}_IDEMPOTENCY_KEY`]?.trim() || randomUUID(), validationPlan: { planId: randomUUID(), validators: planMode === "empty" ? [] : [{ validatorId: "command-exit-code", type: "command_exit_code" as const, required: true, expectedExitCode: parseOptionalExpectedExitCode(process.env[`${p}_EXPECTED_EXIT_CODE`]) ?? 0 }] } }; }
 function renderLoop(result: any): any { if (result?.runId) return result; if (result.kind === "completed") return { runId: result.run.runId, status: result.run.status, text: result.artifact.content }; if (result.kind === "waiting_for_approval") return { runId: result.run.runId, status: result.run.status, approvalId: result.approval.approvalId, text: result.approval.actionSummary }; return { runId: result.run.runId, status: result.run.status, requestId: result.request.requestId, text: result.request.question }; }
 function directResult(result: any) { return { runId: result.run.runId, status: "succeeded", text: result.artifact.content }; }

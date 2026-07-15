@@ -1,5 +1,5 @@
 import { AgentActionSchema } from "../../../contracts/src/index.js";
-import type { SelectionHandle } from "../../../contracts/src/index.js";
+import type { AgentAction, SelectionHandle } from "../../../contracts/src/index.js";
 import { ensureBudget } from "../agent-loop/budget.js";
 import type { GenerateActionOutcome } from "./types.js";
 import type { HandlerDeps } from "../agent-loop/outcome.js";
@@ -18,6 +18,40 @@ export async function generateChatAction(
   state: AgentLoopState,
   deps: HandlerDeps
 ): Promise<GenerateActionOutcome> {
+  const startedAt = deps.input.now();
+  return generateNaturalLanguageAction(state, deps, {
+    startedAt,
+    selectionAction: state.recentToolResult === null
+      ? resolveChatSelectionAction({
+          requestText: selectionRequestText(deps.input.runtimeContext, deps.input.task.input.text),
+          selectionHandles: selectionHandles(deps.input.runtimeContext),
+          toolCallId: deps.input.idGenerator()
+        })
+      : null,
+    profileContext: {
+      mode: "chat",
+      instructions: [
+        "Answer directly with final when the available information is sufficient.",
+        "Use filesystem.search to find matching files; do not list the repository root to explore broadly.",
+        "After a read tool result, answer from that result instead of repeating the same tool call.",
+        "For final, cite source paths in the text if useful, but omit evidenceRefs because chat has no ledger-evidence reference contract.",
+        "Do not emit update_plan or submit_execution_plan in chat."
+      ]
+    },
+    additionalSegments: chatRuntimeSegments(deps.input.runtimeContext, startedAt)
+  });
+}
+
+export async function generateNaturalLanguageAction(
+  state: AgentLoopState,
+  deps: HandlerDeps,
+  options: {
+    readonly startedAt: string;
+    readonly selectionAction: AgentAction | null;
+    readonly profileContext: { mode: string; instructions: string[] };
+    readonly additionalSegments: ReturnType<typeof chatRuntimeSegments>;
+  }
+): Promise<GenerateActionOutcome> {
   await ensureBudget({
     appendEvent: deps.appendEvent,
     now: deps.input.now(),
@@ -27,26 +61,9 @@ export async function generateChatAction(
     reserveVerification: false
   });
 
-  const startedAt = deps.input.now();
+  const startedAt = options.startedAt;
   await deps.appendEvent("iteration.started", { index: state.latestIterationIndex }, startedAt);
   state.usage.loopCount += 1;
-  const selectionAction = state.recentToolResult === null
-    ? resolveChatSelectionAction({
-        requestText: selectionRequestText(deps.input.runtimeContext, deps.input.task.input.text),
-        selectionHandles: selectionHandles(deps.input.runtimeContext),
-        toolCallId: deps.input.idGenerator()
-      })
-    : null;
-  const profileContext = {
-    mode: "chat",
-    instructions: [
-      "Answer directly with final when the available information is sufficient.",
-      "Use filesystem.search to find matching files; do not list the repository root to explore broadly.",
-      "After a read tool result, answer from that result instead of repeating the same tool call.",
-      "For final, cite source paths in the text if useful, but omit evidenceRefs because chat has no ledger-evidence reference contract.",
-      "Do not emit update_plan or submit_execution_plan in chat."
-    ]
-  };
   const envelopeStartedAt = performance.now();
   const contextEnvelope = buildContextEnvelope({
     snapshot: buildLoopContextSnapshot({
@@ -55,17 +72,17 @@ export async function generateChatAction(
       recentValidationResult: state.recentValidationResult, approvalStore: deps.input.approvalStore,
       userInputStore: deps.input.userInputStore, regroundedAt: state.regroundedAt, now: startedAt
     }),
-    now: startedAt, profileContext, capabilitySchema: buildAgentActionSchemaText(deps.availableTools),
-    additionalSegments: chatRuntimeSegments(deps.input.runtimeContext, startedAt)
+    now: startedAt, profileContext: options.profileContext, capabilitySchema: buildAgentActionSchemaText(deps.availableTools),
+    additionalSegments: options.additionalSegments
   });
   const contextEnvelopeBuildDurationMs = performance.now() - envelopeStartedAt;
 
-  const modelResult = selectionAction === null
+  const modelResult = options.selectionAction === null
     ? await nextChatModelAction({
-      state, deps, contextEnvelope, profileContext
+      state, deps, contextEnvelope, profileContext: options.profileContext
     })
     : null;
-  const action = selectionAction ?? AgentActionSchema.parse(modelResult!.action);
+  const action = options.selectionAction ?? AgentActionSchema.parse(modelResult!.action);
 
   await deps.appendEvent(
     "model.action.generated",
