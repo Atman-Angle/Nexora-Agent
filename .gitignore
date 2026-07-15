@@ -27,5 +27,11 @@ tmp/
 reports/e0013-real-convergence-*/
 reports/e0014-real-validation-repair-*/
 
+# Agent evaluation keeps durable JSON evidence; copied workspaces and local runtime data are reproducible.
+agent-evaluation/runs/**/workspace/
+agent-evaluation/runs/**/artifacts/
+agent-evaluation/runs/**/*.pid
+agent-evaluation/runs/**/diff.patch
+
 # Local tool settings
 .local-tool-settings/
