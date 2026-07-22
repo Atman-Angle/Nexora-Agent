@@ -36,11 +36,23 @@ export function validateExplicitRequirements(inputs: readonly string[], contract
     if (![...requiredTools].some((name) => satisfiesTool(requirement, name))) issues.push(`PLAN_REQUIREMENT_MISSING:${requirement.toolName}`);
   }
   const constraintText = contract.constraints.join("\n");
-  if (noWrite && !NO_WRITE.test(constraintText)) issues.push("TASK_CONTRACT_CONSTRAINT_MISSING:NO_WRITE");
-  if (noExecute && !NO_EXECUTE.test(constraintText)) issues.push("TASK_CONTRACT_CONSTRAINT_MISSING:NO_EXECUTE");
+  if (noWrite && !preservesConstraint(contract.constraints, constraintText, NO_WRITE, "write")) issues.push("TASK_CONTRACT_CONSTRAINT_MISSING:NO_WRITE");
+  if (noExecute && !preservesConstraint(contract.constraints, constraintText, NO_EXECUTE, "execute")) issues.push("TASK_CONTRACT_CONSTRAINT_MISSING:NO_EXECUTE");
   if (noWrite && [...requiredTools].some((name) => /\.(?:write|patch)$/u.test(name))) issues.push("PLAN_CONSTRAINT_VIOLATION:NO_WRITE");
   if (noExecute && [...requiredTools].some((name) => /\.execute$/u.test(name))) issues.push("PLAN_CONSTRAINT_VIOLATION:NO_EXECUTE");
   return issues;
+}
+
+function preservesConstraint(constraints: readonly string[], text: string, naturalLanguage: RegExp, risk: string): boolean {
+  return naturalLanguage.test(text) || constraints.some((constraint) => normalizeConstraint(constraint) === canonicalConstraint(risk));
+}
+
+function canonicalConstraint(risk: string): string {
+  return `NO_${normalizeConstraint(risk)}`;
+}
+
+function normalizeConstraint(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
 }
 
 function satisfiesTool(required: ToolRequirement, actual: string): boolean {
