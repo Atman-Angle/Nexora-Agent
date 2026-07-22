@@ -47,7 +47,7 @@ pnpm nexora resume <run-id> --cwd D:\project --approve <request-id>
 pnpm nexora resume <run-id> --cwd D:\project --deny <request-id>
 ```
 
-批准只对应 Pending Request 中持久化的精确 Tool Action。错误或过期的 Request ID 不会执行 Tool。
+批准只对应 Pending Request 中持久化的精确 Tool Action。该 input 已在 Approval 前通过真实 Tool Schema 并展开默认值；批准前应核对 path、command、args、cwd 和 timeout 等字段。错误或过期的 Request ID 不会执行 Tool，resume 会重新校验 persisted Action 后才创建 Invocation。
 
 ### 回复模型请求的补充输入
 
@@ -165,6 +165,6 @@ currentPlan required Checks
 - 没有 Desktop、HTTP 服务、Python/Rust SDK、MCP、Workflow DSL 或领域 Agent。
 - CLI 不提供单独的 `ask/read/patch/verify/agent/approve` 命令；这些属于已删除的旧实现。
 - 新 1.1 Runtime 不迁移或恢复旧数据库。
-- E051 已通过确定性闭环；新的真实 Provider canary 只属于后续 E052。
+- E053 已通过确定性闭环和唯一真实 Provider canary；E048/E049/E052 的历史失败 Run 只供审计，不恢复或重跑。
 
 调试和恢复时先运行 `inspect`，不要直接修改 SQLite。

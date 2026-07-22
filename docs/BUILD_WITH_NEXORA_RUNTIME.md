@@ -153,6 +153,7 @@ const inputSchema = z.object({ key: z.string().min(1) }).strict();
 
 const lookup: RuntimeTool = {
   name: "example.lookup",
+  description: "Read one value by key without modifying external state.",
   risk: "read",
   idempotent: true,
   inputSchema,
@@ -171,7 +172,9 @@ const lookup: RuntimeTool = {
 规则：
 
 - `inputExample` 必须是 JSON，并在 Runtime 构造时通过同一个 `inputSchema`；
+- `description` 可选；提供时必须非空且最多 240 字符，Provider 在生成 Plan 前可用它选择 capability；
 - `risk` 为 `write` 或 `execute` 时，Runtime 自动要求批准；
+- Runtime 在 Approval 前使用 `inputSchema` 校验并展开默认值；Pending Action、批准后的 Invocation 和 Tool execute 使用同一 canonical JSON，resume 会重校验；
 - Tool 只返回 success/failure，不得修改 Run；
 - non-idempotent Tool 的结果未知时 Runtime 会 blocked，不能自动重试；
 - Tool 必须自行实现与其风险匹配的幂等和恢复语义。
