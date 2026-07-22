@@ -19,6 +19,6 @@ Node 程序可从 `@nexora/runtime` 导入 `createRuntime`、`createBuiltInTools
 
 Run 中 Structured Plan 是唯一计划权威，State Machine 是唯一状态权威，Tool Invocation 是副作用恢复权威；只有 `status === "succeeded"` 表示成功。
 
-模型负责理解自然语言并根据Tool description选择最小必要工具序列；Runtime不实现关键词式自然语言解析，只确定性保证结构、权限、执行、Evidence、恢复和状态。最终semantic validation只用全部原始/追加输入、候选summary和已引用Tool事实，不读取模型生成的Plan/Contract或不透明digest。
+模型负责理解自然语言并根据五层 Tool Capability Contract 选择最小必要行动；Runtime不实现关键词式自然语言解析，只确定性保证结构、权限、执行、Evidence、恢复和状态。Tool只返回经过自身 Facts Schema 校验的事实，不生成最终答案。最终semantic validation只用全部原始/追加输入、候选summary和已引用Tool事实，不读取模型生成的Plan/Contract或不透明digest。
 
-E050–E060 已完成确定性验证：Provider 可按有界 Tool description 生成 Plan，只看到 active Tool 的完整 input example，读取权威 Invocation observation，并在 protected Approval 前看到默认值已展开的 canonical input。`filesystem.search` 在原 RuntimeTool 内直接使用 bundled Ripgrep，不恢复旧 Registry/状态架构。E053 mutation、E055 search/read、E058 自然语言字面搜索、E059结果显示与E060最小语义上下文canary均完成 cited Evidence → semantic validation → `succeeded`。E048/E049/E052 的历史 `verification_blocked` 结论不变。详见 [当前目标](docs/audit/current-goals.md)、[架构](docs/audit/current-architecture.md) 和 [E060 验证报告](docs/audit/e060-validation-report.md)。旧实现可从 `local-workspace` 和 Git snapshot `2e2d4ae` 恢复。
+E050–E061 已完成确定性验证。E061 用 Identity→Capability→Decision→Execution→Evidence 替换可选 description、顶层 risk/idempotent 和泛化 output；模型只看到选择信息与 active Tool 示例，Runtime 才读取 Schema、幂等和 Effect。真实 Run `04f5c0ce-02b3-43fc-a4e1-9804b17dd3bd` 以 list→read、0 retry/rejection 完成。E048/E049/E052 的历史 `verification_blocked` 结论不变。详见 [当前目标](docs/audit/current-goals.md)、[架构](docs/audit/current-architecture.md) 和 [E061 验证报告](docs/audit/e061-validation-report.md)。旧实现可从 `local-workspace` 和 Git snapshot `2e2d4ae` 恢复。

@@ -135,6 +135,8 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 
 所有路径必须是 workspace-relative，越界和符号链接逃逸会失败。`shell.execute` 不接受 `cmd`、PowerShell、Bash 等交互式 Shell 入口。
 
+每个 Tool 使用统一的 Identity→Capability→Decision→Execution→Evidence Contract。模型依据 Purpose、Non-goals、When to use、When not to use 和可产生的 Facts 选择是否调用；只有当前 active Tool 的输入示例会暴露给模型。Tool 返回 Facts 而不是最终回答，Runtime 在保存 Invocation/Evidence 前用该 Tool 的 Facts Schema 校验。
+
 ## 6. 持久化和成功证据
 
 默认数据目录是 `<workspace>/.nexora`：
