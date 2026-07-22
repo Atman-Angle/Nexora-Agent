@@ -86,17 +86,26 @@ describe("E049 authoritative Run Store", () => {
       { type: "run.created", occurredAt: now, payload: {} }
     );
     const lease = store.acquireLease({ runId: "run-tool", ownerId: "store-test", now, ttlMs: 10_000 });
-    store.beginToolInvocation({
-      id: "inv-1",
-      runId: "run-tool",
-      planVersion: 1,
-      stepId: "inspect",
-      toolName: "filesystem.read",
-      inputDigest: "sha256:input",
-      idempotencyKey: "run-tool:1:inspect:1",
-      idempotent: true,
+    const current = store.getRun("run-tool")!;
+    store.beginToolInvocationAndCommitRun({
+      intent: {
+        id: "inv-1",
+        runId: "run-tool",
+        planVersion: 1,
+        stepId: "inspect",
+        checkIds: ["read-source"],
+        toolName: "filesystem.read",
+        inputJson: { path: "src/index.ts" },
+        inputDigest: "sha256:input",
+        idempotencyKey: "run-tool:1:inspect:1",
+        idempotent: true,
+        fencingToken: lease.fencingToken,
+        startedAt: now
+      },
+      previous: current,
+      next: { ...current, budgetsUsed: { ...current.budgetsUsed, toolCalls: 1 } },
       fencingToken: lease.fencingToken,
-      startedAt: now
+      event: { type: "tool.started", occurredAt: now, payload: { invocationId: "inv-1" } }
     });
     expect(store.getToolInvocation("inv-1")).toEqual(expect.objectContaining({ status: "started", toolName: "filesystem.read" }));
     expect(store.getRun("run-tool")?.status).toBe("running");

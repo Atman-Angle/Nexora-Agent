@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS tool_invocations (
   run_id TEXT NOT NULL,
   plan_version INTEGER NOT NULL,
   step_id TEXT NOT NULL,
+  check_ids_json TEXT NOT NULL,
   tool_name TEXT NOT NULL,
+  input_json TEXT NOT NULL,
   input_digest TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   idempotent INTEGER NOT NULL,
@@ -72,7 +74,9 @@ type ToolRow = {
   run_id: string;
   plan_version: number;
   step_id: string;
+  check_ids_json: string;
   tool_name: string;
+  input_json: string;
   input_digest: string;
   idempotency_key: string;
   idempotent: number;
@@ -123,31 +127,7 @@ export class RunStore {
     readonly fencingToken?: number;
     readonly event: RunEventInput;
   }): RunSnapshot {
-    const previous = RunSnapshotSchema.parse(input.previous);
-    const nextInput = RunSnapshotSchema.parse(input.next);
-    const event = RunEventInputSchema.parse(input.event);
-    if (previous.runId !== nextInput.runId) throw new Error("Cannot commit a Run under another Run ID.");
-    if (previous.status !== nextInput.status) assertRunStatusTransition(previous.status, nextInput.status);
-
-    const transaction = this.#database.transaction(() => {
-      const row = this.#database.prepare("SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token FROM runs WHERE run_id = ?").get(previous.runId) as RunRow | undefined;
-      if (row === undefined) throw new Error(`Run not found: ${previous.runId}`);
-      this.#assertFencing(row, input.fencingToken, event.occurredAt);
-      if (row.revision !== previous.revision) {
-        throw new Error(`Run revision conflict: expected ${previous.revision}, found ${row.revision}`);
-      }
-      const persisted = RunSnapshotSchema.parse(JSON.parse(row.snapshot_json));
-      if (persisted.revision !== previous.revision) throw new Error("Persisted Run revision is inconsistent.");
-
-      const committed = RunSnapshotSchema.parse({ ...nextInput, revision: previous.revision + 1 });
-      const update = this.#database.prepare(`
-        UPDATE runs SET revision = ?, status = ?, snapshot_json = ?, updated_at = ?
-        WHERE run_id = ? AND revision = ?
-      `).run(committed.revision, committed.status, JSON.stringify(committed), committed.updatedAt, committed.runId, previous.revision);
-      if (update.changes !== 1) throw new Error(`Run revision conflict while committing ${committed.runId}.`);
-      this.#insertEvent(committed.runId, this.#nextSequence(committed.runId), event);
-      return committed;
-    });
+    const transaction = this.#database.transaction(() => this.#commitRunInTransaction(input));
     return transaction();
   }
 
@@ -179,40 +159,55 @@ export class RunStore {
     });
   }
 
-  beginToolInvocation(intentInput: ToolInvocationIntent): ToolInvocation {
+  beginToolInvocationAndCommitRun(input: {
+    readonly intent: ToolInvocationIntent;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly invocation: ToolInvocation } {
     const invocation = ToolInvocationSchema.parse({
-      ...intentInput,
+      ...input.intent,
       status: "started",
       completedAt: null,
       resultJson: null,
       errorJson: null
     });
-    const run = this.#database.prepare("SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token FROM runs WHERE run_id = ?").get(invocation.runId) as RunRow | undefined;
-    if (run === undefined) throw new Error(`Run not found: ${invocation.runId}`);
-    this.#assertFencing(run, invocation.fencingToken, invocation.startedAt);
-    this.#database.prepare(`
-      INSERT INTO tool_invocations (
-        invocation_id, run_id, plan_version, step_id, tool_name, input_digest,
-        idempotency_key, idempotent, fencing_token, status, started_at,
-        completed_at, result_json, error_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      invocation.id,
-      invocation.runId,
-      invocation.planVersion,
-      invocation.stepId,
-      invocation.toolName,
-      invocation.inputDigest,
-      invocation.idempotencyKey,
-      invocation.idempotent ? 1 : 0,
-      invocation.fencingToken,
-      invocation.status,
-      invocation.startedAt,
-      null,
-      null,
-      null
-    );
-    return invocation;
+    if (invocation.fencingToken !== input.fencingToken) throw new Error("Tool intent Fencing Token mismatch.");
+    const transaction = this.#database.transaction(() => {
+      this.#database.prepare(`
+        INSERT INTO tool_invocations (
+          invocation_id, run_id, plan_version, step_id, check_ids_json,
+          tool_name, input_json, input_digest, idempotency_key, idempotent,
+          fencing_token, status, started_at, completed_at, result_json, error_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        invocation.id,
+        invocation.runId,
+        invocation.planVersion,
+        invocation.stepId,
+        JSON.stringify(invocation.checkIds),
+        invocation.toolName,
+        JSON.stringify(invocation.inputJson),
+        invocation.inputDigest,
+        invocation.idempotencyKey,
+        invocation.idempotent ? 1 : 0,
+        invocation.fencingToken,
+        invocation.status,
+        invocation.startedAt,
+        null,
+        null,
+        null
+      );
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, invocation };
+    });
+    return transaction();
   }
 
   getToolInvocation(invocationId: string): ToolInvocation | null {
@@ -225,34 +220,123 @@ export class RunStore {
     return rows.map((row) => this.#parseToolRow(row));
   }
 
-  completeToolInvocation(input: {
+  completeToolInvocationAndCommitRun(input: {
     readonly invocationId: string;
-    readonly status: "succeeded" | "failed" | "unknown";
+    readonly status: "succeeded" | "failed";
     readonly completedAt: string;
     readonly fencingToken: number;
     readonly resultJson?: unknown;
     readonly errorJson?: unknown;
-  }): ToolInvocation {
-    const invocation = this.getToolInvocation(input.invocationId);
-    if (invocation === null) throw new Error(`Tool invocation not found: ${input.invocationId}`);
-    const run = this.#database.prepare("SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token FROM runs WHERE run_id = ?").get(invocation.runId) as RunRow | undefined;
-    if (run === undefined) throw new Error(`Run not found: ${invocation.runId}`);
-    this.#assertFencing(run, input.fencingToken, input.completedAt);
-    const update = this.#database.prepare(`
-      UPDATE tool_invocations
-      SET status = ?, completed_at = ?, result_json = ?, error_json = ?
-      WHERE invocation_id = ? AND status = 'started'
-    `).run(
-      input.status,
-      input.completedAt,
-      input.resultJson === undefined ? null : JSON.stringify(input.resultJson),
-      input.errorJson === undefined ? null : JSON.stringify(input.errorJson),
-      input.invocationId
-    );
-    if (update.changes !== 1) throw new Error(`Tool invocation is not active: ${input.invocationId}`);
-    const completed = this.getToolInvocation(input.invocationId);
-    if (completed === null) throw new Error(`Tool invocation disappeared: ${input.invocationId}`);
-    return completed;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly invocation: ToolInvocation } {
+    const transaction = this.#database.transaction(() => {
+      const invocation = this.#requireToolInvocation(input.invocationId);
+      const runRow = this.#requireRunRow(invocation.runId);
+      this.#assertFencing(runRow, input.fencingToken, input.completedAt);
+      const update = this.#database.prepare(`
+        UPDATE tool_invocations
+        SET status = ?, completed_at = ?, result_json = ?, error_json = ?
+        WHERE invocation_id = ? AND status = 'started'
+      `).run(
+        input.status,
+        input.completedAt,
+        input.resultJson === undefined ? null : JSON.stringify(input.resultJson),
+        input.errorJson === undefined ? null : JSON.stringify(input.errorJson),
+        input.invocationId
+      );
+      if (update.changes !== 1) throw new Error(`Tool invocation is not active: ${input.invocationId}`);
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, invocation: this.#requireToolInvocation(input.invocationId) };
+    });
+    return transaction();
+  }
+
+  claimToolInvocationAndCommitRun(input: {
+    readonly invocationId: string;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly invocation: ToolInvocation } {
+    const transaction = this.#database.transaction(() => {
+      const invocation = this.#requireToolInvocation(input.invocationId);
+      if (!invocation.idempotent || invocation.status !== "started") {
+        throw new Error(`Tool invocation cannot be retried: ${input.invocationId}`);
+      }
+      this.#database.prepare(`
+        UPDATE tool_invocations SET fencing_token = ? WHERE invocation_id = ? AND status = 'started'
+      `).run(input.fencingToken, input.invocationId);
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, invocation: this.#requireToolInvocation(input.invocationId) };
+    });
+    return transaction();
+  }
+
+  markToolInvocationUnknownAndCommitRun(input: {
+    readonly invocationId: string;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly invocation: ToolInvocation } {
+    const transaction = this.#database.transaction(() => {
+      const invocation = this.#requireToolInvocation(input.invocationId);
+      if (invocation.idempotent || invocation.status !== "started") {
+        throw new Error(`Tool invocation cannot become unknown: ${input.invocationId}`);
+      }
+      this.#database.prepare(`
+        UPDATE tool_invocations SET status = 'unknown', fencing_token = ?
+        WHERE invocation_id = ? AND status = 'started'
+      `).run(input.fencingToken, input.invocationId);
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, invocation: this.#requireToolInvocation(input.invocationId) };
+    });
+    return transaction();
+  }
+
+  resolveUnknownToolInvocationAndCommitRun(input: {
+    readonly invocationId: string;
+    readonly status: "succeeded" | "failed";
+    readonly resolution: unknown;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly invocation: ToolInvocation } {
+    const transaction = this.#database.transaction(() => {
+      const invocation = this.#requireToolInvocation(input.invocationId);
+      if (invocation.status !== "unknown") throw new Error(`Tool invocation is not unknown: ${input.invocationId}`);
+      this.#database.prepare(`
+        UPDATE tool_invocations
+        SET status = ?, completed_at = ?, result_json = ?, fencing_token = ?
+        WHERE invocation_id = ? AND status = 'unknown'
+      `).run(input.status, input.event.occurredAt, JSON.stringify(input.resolution), input.fencingToken, input.invocationId);
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, invocation: this.#requireToolInvocation(input.invocationId) };
+    });
+    return transaction();
   }
 
   close(): void {
@@ -335,7 +419,9 @@ export class RunStore {
       runId: row.run_id,
       planVersion: row.plan_version,
       stepId: row.step_id,
+      checkIds: JSON.parse(row.check_ids_json),
       toolName: row.tool_name,
+      inputJson: JSON.parse(row.input_json),
       inputDigest: row.input_digest,
       idempotencyKey: row.idempotency_key,
       idempotent: row.idempotent === 1,
@@ -360,6 +446,50 @@ export class RunStore {
     ) {
       throw new Error("Invalid or expired Fencing Token.");
     }
+  }
+
+  #commitRunInTransaction(input: {
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken?: number;
+    readonly event: RunEventInput;
+  }): RunSnapshot {
+    const previous = RunSnapshotSchema.parse(input.previous);
+    const nextInput = RunSnapshotSchema.parse(input.next);
+    const event = RunEventInputSchema.parse(input.event);
+    if (previous.runId !== nextInput.runId) throw new Error("Cannot commit a Run under another Run ID.");
+    if (previous.status !== nextInput.status) assertRunStatusTransition(previous.status, nextInput.status);
+    const row = this.#requireRunRow(previous.runId);
+    this.#assertFencing(row, input.fencingToken, event.occurredAt);
+    if (row.revision !== previous.revision) {
+      throw new Error(`Run revision conflict: expected ${previous.revision}, found ${row.revision}`);
+    }
+    const persisted = RunSnapshotSchema.parse(JSON.parse(row.snapshot_json));
+    if (persisted.revision !== previous.revision) throw new Error("Persisted Run revision is inconsistent.");
+
+    const committed = RunSnapshotSchema.parse({ ...nextInput, revision: previous.revision + 1 });
+    const update = this.#database.prepare(`
+      UPDATE runs SET revision = ?, status = ?, snapshot_json = ?, updated_at = ?
+      WHERE run_id = ? AND revision = ?
+    `).run(committed.revision, committed.status, JSON.stringify(committed), committed.updatedAt, committed.runId, previous.revision);
+    if (update.changes !== 1) throw new Error(`Run revision conflict while committing ${committed.runId}.`);
+    this.#insertEvent(committed.runId, this.#nextSequence(committed.runId), event);
+    return committed;
+  }
+
+  #requireRunRow(runId: string): RunRow {
+    const row = this.#database.prepare(`
+      SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token
+      FROM runs WHERE run_id = ?
+    `).get(runId) as RunRow | undefined;
+    if (row === undefined) throw new Error(`Run not found: ${runId}`);
+    return row;
+  }
+
+  #requireToolInvocation(invocationId: string): ToolInvocation {
+    const invocation = this.getToolInvocation(invocationId);
+    if (invocation === null) throw new Error(`Tool invocation not found: ${invocationId}`);
+    return invocation;
   }
 }
 

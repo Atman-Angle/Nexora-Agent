@@ -67,7 +67,16 @@ export type CreateRuntimeOptions = {
 
 export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets };
 export type ApprovalDecision = { readonly requestId: string; readonly approved: boolean; readonly reason?: string };
-export type ResumeInput = { readonly runId: string; readonly input?: string; readonly approvalDecision?: ApprovalDecision };
+export type RecoveryDecision =
+  | { readonly invocationId: string; readonly outcome: "confirmed_succeeded"; readonly subjectRef: string }
+  | { readonly invocationId: string; readonly outcome: "confirmed_failed"; readonly reason?: string }
+  | { readonly invocationId: string; readonly outcome: "abandon_run"; readonly reason?: string };
+export type ResumeInput = {
+  readonly runId: string;
+  readonly input?: string;
+  readonly approvalDecision?: ApprovalDecision;
+  readonly recoveryDecision?: RecoveryDecision;
+};
 export type RuntimeObserver = (event: RunEvent) => void;
 
 export type RunResult = {
@@ -147,6 +156,9 @@ export class RuntimeEngine {
     if (run.status === "failed" || run.status === "succeeded") return toRunResult(run);
     this.#acquireLease(run.runId);
     try {
+      run = await this.#recoverToolInvocation(run, input.recoveryDecision, observer);
+      if (run.status === "failed") return toRunResult(run);
+      if (run.status === "blocked") return toRunResult(run);
       if (run.status === "waiting") {
         if (run.pendingRequest?.kind === "input") {
           if (input.input === undefined) return toRunResult(run);
@@ -203,6 +215,142 @@ export class RuntimeEngine {
     };
   }
 
+  async #recoverToolInvocation(
+    runInput: RunSnapshot,
+    decision: RecoveryDecision | undefined,
+    observer?: RuntimeObserver
+  ): Promise<RunSnapshot> {
+    const unresolved = this.#store.listToolInvocations(runInput.runId)
+      .filter((item) => item.status === "started" || item.status === "unknown");
+    if (unresolved.length === 0) {
+      if (decision !== undefined) throw new Error("Recovery Decision has no matching unknown Tool invocation.");
+      return runInput;
+    }
+    if (unresolved.length !== 1) throw new Error("Recovery requires exactly one unresolved Tool invocation.");
+    const invocation = unresolved[0]!;
+
+    if (invocation.status === "unknown") {
+      if (decision === undefined) return runInput;
+      if (decision.invocationId !== invocation.id) {
+        throw new Error("Recovery Decision does not match the unknown Tool invocation.");
+      }
+      return this.#applyRecoveryDecision(runInput, invocation, decision, observer);
+    }
+    if (decision !== undefined) {
+      throw new Error("Recovery Decision is only valid after a Tool invocation is marked unknown.");
+    }
+
+    if (!invocation.idempotent) {
+      const now = this.#now();
+      const blockedInput = RunSnapshotSchema.parse({
+        ...runInput,
+        lastError: {
+          code: "TOOL_RESULT_UNKNOWN",
+          message: `The result of non-idempotent Tool invocation ${invocation.id} is unknown.`,
+          retryable: false,
+          detailsArtifact: null
+        }
+      });
+      const blocked = runInput.status === "blocked"
+        ? RunSnapshotSchema.parse({ ...blockedInput, stopReason: "TOOL_RESULT_UNKNOWN", updatedAt: now })
+        : transitionRunStatus(blockedInput, "blocked", { now, stopReason: "TOOL_RESULT_UNKNOWN" });
+      const committed = this.#store.markToolInvocationUnknownAndCommitRun({
+        invocationId: invocation.id,
+        previous: runInput,
+        next: blocked,
+        fencingToken: this.#requireFencingToken(runInput.runId),
+        event: { type: "tool.result_unknown", occurredAt: now, payload: { invocationId: invocation.id } }
+      });
+      this.#notify(runInput.runId, observer);
+      return committed.run;
+    }
+
+    const tool = this.#tools.get(invocation.toolName);
+    if (tool === undefined || !tool.idempotent) {
+      throw new Error(`Recovery Tool is unavailable or no longer idempotent: ${invocation.toolName}`);
+    }
+    const parsedInput = tool.inputSchema.parse(invocation.inputJson);
+    const now = this.#now();
+    const running = runInput.status === "blocked"
+      ? transitionRunStatus(runInput, "running", { now })
+      : RunSnapshotSchema.parse({ ...runInput, updatedAt: now });
+    const claimed = this.#store.claimToolInvocationAndCommitRun({
+      invocationId: invocation.id,
+      previous: runInput,
+      next: running,
+      fencingToken: this.#requireFencingToken(runInput.runId),
+      event: { type: "tool.retried", occurredAt: now, payload: { invocationId: invocation.id } }
+    });
+    this.#notify(runInput.runId, observer);
+    return this.#executeToolInvocation(claimed.run, claimed.invocation, tool, parsedInput, observer);
+  }
+
+  #applyRecoveryDecision(
+    runInput: RunSnapshot,
+    invocation: ToolInvocation,
+    decision: RecoveryDecision,
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    const now = this.#now();
+    if (decision.outcome === "confirmed_succeeded") {
+      if (!decision.subjectRef.trim()) throw new Error("Recovery confirmation requires a subject reference.");
+      if (runInput.currentPlan === null) throw new Error("Recovery confirmation requires the persisted Plan.");
+      const evidence: Evidence[] = invocation.checkIds.map((checkId) => ({
+        id: this.#createId(),
+        kind: "user_confirmation",
+        source: "user",
+        producedAt: now,
+        planVersion: invocation.planVersion,
+        stepId: invocation.stepId,
+        checkId,
+        subjectRef: decision.subjectRef,
+        invocationId: invocation.id,
+        artifactRef: null,
+        digest: digestJson({ invocationId: invocation.id, outcome: decision.outcome, subjectRef: decision.subjectRef })
+      }));
+      const allEvidence = [...runInput.evidence, ...evidence];
+      const running = transitionRunStatus({
+        ...runInput,
+        evidence: allEvidence,
+        stepProgress: completeSatisfiedSteps(runInput.currentPlan, runInput.stepProgress, allEvidence),
+        lastError: null
+      }, "running", { now });
+      const committed = this.#store.resolveUnknownToolInvocationAndCommitRun({
+        invocationId: invocation.id,
+        status: "succeeded",
+        resolution: { outcome: decision.outcome, subjectRef: decision.subjectRef },
+        previous: runInput,
+        next: running,
+        fencingToken: this.#requireFencingToken(runInput.runId),
+        event: { type: "recovery.confirmed_succeeded", occurredAt: now, payload: { invocationId: invocation.id, evidenceIds: evidence.map((item) => item.id) } }
+      });
+      this.#notify(runInput.runId, observer);
+      return committed.run;
+    }
+
+    const reason = decision.reason?.trim() || (decision.outcome === "confirmed_failed"
+      ? "The user confirmed that the Tool invocation failed."
+      : "The user abandoned the Run because the Tool result is unknown.");
+    const base = RunSnapshotSchema.parse({
+      ...runInput,
+      lastError: { code: decision.outcome === "confirmed_failed" ? "TOOL_CONFIRMED_FAILED" : "RUN_ABANDONED", message: reason, retryable: false, detailsArtifact: null }
+    });
+    const next = decision.outcome === "abandon_run"
+      ? transitionRunStatus(base, "failed", { now, stopReason: "RUN_ABANDONED" })
+      : transitionRunStatus(base, "running", { now });
+    const committed = this.#store.resolveUnknownToolInvocationAndCommitRun({
+      invocationId: invocation.id,
+      status: "failed",
+      resolution: { outcome: decision.outcome, reason },
+      previous: runInput,
+      next,
+      fencingToken: this.#requireFencingToken(runInput.runId),
+      event: { type: decision.outcome === "abandon_run" ? "recovery.abandoned" : "recovery.confirmed_failed", occurredAt: now, payload: { invocationId: invocation.id, reason } }
+    });
+    this.#notify(runInput.runId, observer);
+    return committed.run;
+  }
+
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
@@ -230,7 +378,7 @@ export class RuntimeEngine {
 
       let rawAction: unknown;
       try {
-        rawAction = await this.#provider.decide(this.#decisionContext(run));
+        rawAction = await this.#withLeaseHeartbeat(run.runId, () => this.#provider.decide(this.#decisionContext(run)));
       } catch (error) {
         run = this.#blockForProvider(run, error, observer);
         break;
@@ -358,74 +506,93 @@ export class RuntimeEngine {
     const parsedInput = tool.inputSchema.parse(action.input);
     const invocationId = this.#createId();
     const startedAt = this.#now();
-    this.#store.beginToolInvocation({
-      id: invocationId,
-      runId: runInput.runId,
-      planVersion: plan.version,
-      stepId: step.id,
-      toolName: tool.name,
-      inputDigest: digestJson(parsedInput),
-      idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${runInput.budgetsUsed.toolCalls + 1}`,
-      idempotent: tool.idempotent,
-      fencingToken: this.#requireFencingToken(runInput.runId),
-      startedAt
-    });
-    let run = this.#commit(runInput, {
+    const started = this.#store.beginToolInvocationAndCommitRun({
+      intent: {
+        id: invocationId,
+        runId: runInput.runId,
+        planVersion: plan.version,
+        stepId: step.id,
+        checkIds: action.checkIds,
+        toolName: tool.name,
+        inputJson: parsedInput,
+        inputDigest: digestJson(parsedInput),
+        idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${tool.name}:${digestJson(parsedInput)}`,
+        idempotent: tool.idempotent,
+        fencingToken: this.#requireFencingToken(runInput.runId),
+        startedAt
+      },
+      previous: runInput,
+      next: {
       ...runInput,
       budgetsUsed: { ...runInput.budgetsUsed, toolCalls: runInput.budgetsUsed.toolCalls + 1 },
       updatedAt: startedAt
-    }, "tool.started", { invocationId, toolName: tool.name, stepId: step.id }, observer);
+      },
+      fencingToken: this.#requireFencingToken(runInput.runId),
+      event: { type: "tool.started", occurredAt: startedAt, payload: { invocationId, toolName: tool.name, stepId: step.id } }
+    });
+    this.#notify(runInput.runId, observer);
+    return this.#executeToolInvocation(started.run, started.invocation, tool, parsedInput, observer);
+  }
 
+  async #executeToolInvocation(
+    run: RunSnapshot,
+    invocation: ToolInvocation,
+    tool: RuntimeTool,
+    parsedInput: unknown,
+    observer?: RuntimeObserver
+  ): Promise<RunSnapshot> {
     let result: RuntimeToolResult;
     try {
-      result = ToolResultSchema.parse(await tool.execute(parsedInput, { workspace: this.#workspace, runId: run.runId, invocationId }));
+      result = ToolResultSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => tool.execute(parsedInput, {
+        workspace: this.#workspace,
+        runId: run.runId,
+        invocationId: invocation.id
+      })));
     } catch (error) {
       result = {
         status: "failure",
-        subjectRef: step.id,
+        subjectRef: invocation.stepId,
         error: { code: "TOOL_EXECUTION_ERROR", message: errorMessage(error), retryable: false }
       };
     }
     const completedAt = this.#now();
     if (result.status === "failure") {
-      this.#store.completeToolInvocation({
-        invocationId,
-        status: "failed",
-        completedAt,
-        fencingToken: this.#requireFencingToken(run.runId),
-        errorJson: result.error
-      });
       const next = RunSnapshotSchema.parse({
         ...run,
         lastError: { ...result.error, detailsArtifact: null },
         updatedAt: completedAt
       });
-      return this.#commit(run, next, "tool.failed", { invocationId, error: result.error }, observer);
+      const completed = this.#store.completeToolInvocationAndCommitRun({
+        invocationId: invocation.id,
+        status: "failed",
+        completedAt,
+        fencingToken: this.#requireFencingToken(run.runId),
+        errorJson: result.error,
+        previous: run,
+        next,
+        event: { type: "tool.failed", occurredAt: completedAt, payload: { invocationId: invocation.id, error: result.error } }
+      });
+      this.#notify(run.runId, observer);
+      return completed.run;
     }
 
-    this.#store.completeToolInvocation({
-      invocationId,
-      status: "succeeded",
-      completedAt,
-      fencingToken: this.#requireFencingToken(run.runId),
-      resultJson: result.output
-    });
     const outputDigest = digestJson(result.output);
-    const newEvidence: Evidence[] = action.checkIds.map((checkId) => ({
+    const newEvidence: Evidence[] = invocation.checkIds.map((checkId) => ({
       id: this.#createId(),
       kind: "tool_result",
       source: "tool",
       producedAt: completedAt,
-      planVersion: plan.version,
-      stepId: step.id,
+      planVersion: invocation.planVersion,
+      stepId: invocation.stepId,
       checkId,
       subjectRef: result.subjectRef,
-      invocationId,
+      invocationId: invocation.id,
       artifactRef: null,
       digest: outputDigest
     }));
     const evidence = [...run.evidence, ...newEvidence];
-    const stepProgress = completeSatisfiedSteps(plan, run.stepProgress, evidence);
+    if (run.currentPlan === null) throw new Error("Recovered Tool invocation has no current Plan.");
+    const stepProgress = completeSatisfiedSteps(run.currentPlan, run.stepProgress, evidence);
     const next = RunSnapshotSchema.parse({
       ...run,
       evidence,
@@ -433,7 +600,18 @@ export class RuntimeEngine {
       lastError: null,
       updatedAt: completedAt
     });
-    return this.#commit(run, next, "tool.succeeded", { invocationId, evidenceIds: newEvidence.map((item) => item.id) }, observer);
+    const completed = this.#store.completeToolInvocationAndCommitRun({
+      invocationId: invocation.id,
+      status: "succeeded",
+      completedAt,
+      fencingToken: this.#requireFencingToken(run.runId),
+      resultJson: result.output,
+      previous: run,
+      next,
+      event: { type: "tool.succeeded", occurredAt: completedAt, payload: { invocationId: invocation.id, evidenceIds: newEvidence.map((item) => item.id) } }
+    });
+    this.#notify(run.runId, observer);
+    return completed.run;
   }
 
   async #proposeFinish(runInput: RunSnapshot, action: Extract<RuntimeAction, { type: "propose_finish" }>, observer?: RuntimeObserver): Promise<RunSnapshot> {
@@ -456,14 +634,14 @@ export class RuntimeEngine {
     }, "validation.requested", { evidenceIds: deterministic.evidenceIds }, observer);
     let verdict: z.infer<typeof SemanticValidationVerdictSchema>;
     try {
-      verdict = SemanticValidationVerdictSchema.parse(await this.#provider.validate({
+      verdict = SemanticValidationVerdictSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => this.#provider.validate({
         originalInput: run.inputHistory[0]!.text,
         currentInput: run.inputHistory.map((entry) => entry.text),
         taskContract: run.taskContract!,
         plan: run.currentPlan!,
         proposedSummary: action.summary,
         evidence: run.evidence
-      }));
+      })));
     } catch (error) {
       return this.#blockForProvider(run, error, observer);
     }
@@ -606,6 +784,32 @@ export class RuntimeEngine {
     const token = this.#leases.get(runId);
     if (token === undefined) throw new Error(`RUN_LEASE_MISSING: ${runId}`);
     return token;
+  }
+
+  async #withLeaseHeartbeat<T>(runId: string, operation: () => Promise<T>): Promise<T> {
+    const fencingToken = this.#requireFencingToken(runId);
+    let leaseError: unknown = null;
+    const interval = setInterval(() => {
+      if (leaseError !== null) return;
+      try {
+        this.#store.renewLease({
+          runId,
+          ownerId: this.#ownerId,
+          fencingToken,
+          now: this.#now(),
+          ttlMs: this.#leaseTtlMs
+        });
+      } catch (error) {
+        leaseError = error;
+      }
+    }, Math.max(10, Math.floor(this.#leaseTtlMs / 3)));
+    try {
+      const result = await operation();
+      if (leaseError !== null) throw leaseError;
+      return result;
+    } finally {
+      clearInterval(interval);
+    }
   }
 }
 
