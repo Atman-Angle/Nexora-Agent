@@ -1,6 +1,7 @@
+import { existsSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { stdin, stderr, stdout } from "node:process";
-import { resolve } from "node:path";
+import { loadEnvFile, stdin, stderr, stdout } from "node:process";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -18,6 +19,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   let runtime: ReturnType<typeof createRuntime> | undefined;
   try {
     const parsed = parseArguments(argv);
+    if (parsed.command !== "inspect") loadCliEnvironment();
     const workspace = resolve(parsed.cwd ?? process.cwd());
     const provider = parsed.command === "inspect" ? inspectionProvider : openAICompatibleProviderFromEnv();
     runtime = createRuntime({
@@ -52,6 +54,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   } finally {
     runtime?.close();
   }
+}
+
+function loadCliEnvironment(directory = process.cwd()): void {
+  const path = join(directory, ".env");
+  if (existsSync(path)) loadEnvFile(path);
 }
 
 type ParsedArguments =
