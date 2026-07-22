@@ -91,6 +91,7 @@ export type RunResult = {
   readonly runId: string;
   readonly status: RunStatus;
   readonly stopReason: string | null;
+  readonly summary: string | null;
   readonly resultArtifact: string | null;
   readonly evidence: readonly Evidence[];
   readonly lastError: RunSnapshot["lastError"];
@@ -1027,6 +1028,7 @@ function toRunResult(run: RunSnapshot): RunResult {
     runId: run.runId,
     status: run.status,
     stopReason: run.stopReason,
+    summary: run.result?.summary ?? null,
     resultArtifact: run.result?.resultArtifact ?? null,
     evidence: run.evidence,
     lastError: run.lastError
