@@ -20,6 +20,7 @@
     "prepack": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json"
   },
   "dependencies": {
+    "@vscode/ripgrep": "1.18.0",
     "better-sqlite3": "12.11.1",
     "zod": "3.25.76"
   }

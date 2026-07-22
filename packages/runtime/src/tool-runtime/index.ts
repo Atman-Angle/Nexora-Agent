@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 
+import { rgPath } from "@vscode/ripgrep";
 import { z } from "zod";
 
 import { ArtifactStore } from "../artifacts.js";
@@ -12,6 +13,8 @@ import { ToolFailure, workspacePath, writableWorkspacePath } from "./workspace.j
 const PathInput = z.object({ path: z.string().trim().min(1) }).strict();
 const MAX_INLINE_BYTES = 16 * 1024;
 const MAX_CAPTURE_BYTES = 64 * 1024;
+const MAX_SEARCH_OUTPUT_BYTES = 512 * 1024;
+const MAX_SEARCH_MATCHES = 100;
 const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"]);
 
 export function createBuiltInTools(options: { readonly artifactDir?: string } = {}): readonly RuntimeTool[] {
@@ -36,19 +39,8 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     define("filesystem.search", "Search UTF-8 text files in the workspace for a case-insensitive literal query and return matching paths and lines.", "read", true, z.object({ query: z.string().trim().min(1), path: z.string().default(".") }).strict(), { query: "TODO", path: "." }, async (input, context) => {
       const requestedPath = input.path ?? ".";
       const directory = await workspacePath(context.workspace, requestedPath, "directory");
-      const matches: Array<{ path: string; line: number; text: string }> = [];
-      for (const path of await listFiles(directory)) {
-        if (matches.length >= 100) break;
-        const bytes = await readFile(path);
-        if (bytes.byteLength > 256 * 1024 || bytes.includes(0)) continue;
-        for (const [index, line] of bytes.toString("utf8").split(/\r?\n/).entries()) {
-          if (line.toLowerCase().includes(input.query.toLowerCase())) {
-            matches.push({ path: relativeFromRequested(requestedPath, directory, path), line: index + 1, text: line.slice(0, 500) });
-            if (matches.length >= 100) break;
-          }
-        }
-      }
-      return success(`search:${input.query}`, { matches, truncated: matches.length >= 100 });
+      const result = await searchWithRipgrep(directory, requestedPath, input.query);
+      return success(`search:${input.query}`, result);
     }),
     define("filesystem.write", "Write one file atomically inside the workspace and return its digest; this requires Approval.", "write", true, z.object({ path: z.string().trim().min(1), content: z.string() }).strict(), { path: "output.txt", content: "example" }, async (input, context) => {
       const path = await writableWorkspacePath(context.workspace, input.path);
@@ -89,6 +81,69 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     }),
     ...gitTools()
   ];
+}
+
+async function searchWithRipgrep(directory: string, requestedPath: string, query: string): Promise<{ matches: Array<{ path: string; line: number; text: string }>; truncated: boolean }> {
+  const ignoredGlobs = [...IGNORED].sort().flatMap((name) => ["--glob", `!${name}/**`]);
+  const result = await runRipgrep([
+    "--json", "--hidden", "--no-ignore", "--fixed-strings", "--ignore-case", "--max-filesize", "256K",
+    ...ignoredGlobs, "-e", query, "--", "."
+  ], directory);
+  const matches: Array<{ path: string; line: number; text: string }> = [];
+  for (const line of result.stdout.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    let event: { type?: string; data?: { path?: { text?: string }; lines?: { text?: string }; line_number?: number } };
+    try { event = JSON.parse(line) as typeof event; } catch { continue; }
+    if (event.type !== "match") continue;
+    const path = event.data?.path?.text;
+    const text = event.data?.lines?.text?.replace(/\r?\n$/, "");
+    const lineNumber = event.data?.line_number;
+    if (path === undefined || text === undefined || lineNumber === undefined) continue;
+    matches.push({
+      path: relativeFromRequested(requestedPath, directory, join(directory, path)),
+      line: lineNumber,
+      text: text.slice(0, 500)
+    });
+  }
+  matches.sort((left, right) => left.path.localeCompare(right.path, "en") || left.line - right.line || left.text.localeCompare(right.text, "en"));
+  return { matches: matches.slice(0, MAX_SEARCH_MATCHES), truncated: result.outputLimited || matches.length > MAX_SEARCH_MATCHES };
+}
+
+function runRipgrep(args: string[], cwd: string): Promise<{ stdout: string; outputLimited: boolean }> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(rgPath, args, { cwd, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const chunks: Buffer[] = [];
+    let outputBytes = 0;
+    let outputLimited = false;
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+    const finish = (error?: ToolFailure): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error === undefined) resolvePromise({ stdout: Buffer.concat(chunks).toString("utf8"), outputLimited });
+      else rejectPromise(error);
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (outputLimited) return;
+      outputBytes += chunk.byteLength;
+      if (outputBytes > MAX_SEARCH_OUTPUT_BYTES) {
+        outputLimited = true;
+        child.kill();
+      } else {
+        chunks.push(chunk);
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => { stderr = `${stderr}${chunk.toString("utf8")}`.slice(0, 500); });
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, 30_000);
+    child.once("error", () => finish(new ToolFailure("SEARCH_ENGINE_ERROR", "Bundled Ripgrep could not be started.", true)));
+    child.once("close", (code) => {
+      if (timedOut) finish(new ToolFailure("TOOL_TIMEOUT", "Filesystem search timed out.", true));
+      else if (!outputLimited && code !== 0 && code !== 1) finish(new ToolFailure("SEARCH_ENGINE_ERROR", `Bundled Ripgrep failed.${stderr.trim() ? ` ${stderr.trim()}` : ""}`, true));
+      else finish();
+    });
+  });
 }
 
 function gitTools(): RuntimeTool[] {
