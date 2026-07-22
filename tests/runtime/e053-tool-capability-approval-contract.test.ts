@@ -228,7 +228,7 @@ function plan(
       goal: "Complete the Tool-backed task",
       workspace,
       constraints: [],
-      acceptanceCriteria: ["Every required Tool succeeds"]
+      acceptanceCriteria: steps.map((step) => `${step.toolName} succeeds`)
     },
     orderedSteps: steps.map((step) => ({
       id: step.id,

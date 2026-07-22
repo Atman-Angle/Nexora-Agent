@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { Evidence, RunSnapshot, TaskContract } from "./contracts.js";
+import { validateExplicitRequirements } from "./requirements.js";
 
 export type CompletionValidation = {
   readonly passed: boolean;
@@ -24,6 +25,9 @@ export function validateCompletion(
   if (plan === null) issues.push("STRUCTURED_PLAN_MISSING");
   if (contract !== null && plan !== null && plan.goalDigest !== digestTaskContract(contract)) {
     issues.push("PLAN_GOAL_DIGEST_MISMATCH");
+  }
+  if (contract !== null && plan !== null) {
+    issues.push(...validateExplicitRequirements(run.inputHistory.map((entry) => entry.text), contract, plan));
   }
 
   const knownEvidence = new Map(run.evidence.map((evidence) => [evidence.id, evidence]));
