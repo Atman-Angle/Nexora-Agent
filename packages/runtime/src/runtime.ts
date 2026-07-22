@@ -31,7 +31,6 @@ import {
 import { openRunStore, type RunStore } from "./run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
 import { digestTaskContract, validateCompletion } from "./validation.js";
-import { validateExplicitRequirements } from "./requirements.js";
 
 const MAX_TOOL_OBSERVATIONS = 8;
 const MAX_TOOL_OBSERVATION_BYTES = 32 * 1024;
@@ -459,8 +458,6 @@ export class RuntimeEngine {
       goalDigest: digestTaskContract(contract),
       orderedSteps: action.orderedSteps
     });
-    const requirementIssues = validateExplicitRequirements(run.inputHistory.map((entry) => entry.text), contract, plan);
-    if (requirementIssues.length > 0) throw new ActionRejectedError(requirementIssues.join(", "));
     const completed = new Map(run.stepProgress.filter((item) => item.status === "completed").map((item) => [item.stepId, item]));
     const completedStepIds = new Set(completed.keys());
     const evidence = current === null ? [] : run.evidence.filter((item) => completedStepIds.has(item.stepId));

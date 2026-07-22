@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createBuiltInTools, createRuntime } from "../../packages/runtime/src/index.js";
 import type { SemanticValidationContext } from "../../packages/runtime/src/model-client.js";
-import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { finishFromEvidence, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -46,7 +46,7 @@ describe("E058 model-owned Tool selection", () => {
       taskContract: { version: 1, inputVersion: 1, goal: "Search and read the marker", workspace: root, constraints: [], acceptanceCriteria: ["Report the file"] },
       orderedSteps: [{ id: "search", objective: "Search", acceptanceChecks: [{ id: "search", required: true, kind: "tool_result", toolName: "filesystem.search", expectedStatus: "success" }] }]
     }, { type: "call_tool", stepId: "search", checkIds: ["search"], toolName: "filesystem.search", input: { query: "marker", path: "." } },
-    (context) => ({ type: "propose_finish", summary: "Found target.txt", evidenceIds: context.run.evidence.map((item) => item.id) }),
+    finishFromEvidence("Found target.txt"),
     { type: "request_input", question: "Plan needs a read step", reason: "semantic validation failed" }]);
     const runtime = createRuntime({ workspace: root, provider, tools: createBuiltInTools() });
     const result = await runtime.start({ input: "Search for marker, then read the matching file and report its name." });
