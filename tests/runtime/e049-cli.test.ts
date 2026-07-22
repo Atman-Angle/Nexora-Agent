@@ -53,8 +53,9 @@ describe("E049 natural-language CLI", () => {
     server.close();
 
     expect(run.code).toBe(0);
-    const result = JSON.parse(run.stdout.trim()) as { runId: string; status: string };
+    const result = JSON.parse(run.stdout.trim()) as { runId: string; status: string; summary: string | null };
     expect(result.status).toBe("succeeded");
+    expect(result.summary).toBe("Read target.txt with verified evidence.");
     expect(calls).toBe(4);
 
     const inspect = await spawnCli(["inspect", result.runId, "--cwd", workspace, "--json"], {});
