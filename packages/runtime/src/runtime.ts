@@ -680,7 +680,7 @@ export class RuntimeEngine {
 
   #rejectAction(run: RunSnapshot, error: z.ZodError | ActionRejectedError, observer?: RuntimeObserver): RunSnapshot {
     const retries = run.budgetsUsed.retries + 1;
-    const message = error instanceof z.ZodError ? error.issues.map((issue) => issue.message).join("; ") : error.message;
+    const message = error instanceof z.ZodError ? formatZodError(error) : error.message;
     if (retries > run.budgets.maxRetries) {
       return this.#fail({
         ...run,
@@ -789,6 +789,13 @@ export class RuntimeEngine {
 
   async #withLeaseHeartbeat<T>(runId: string, operation: () => Promise<T>): Promise<T> {
     const fencingToken = this.#requireFencingToken(runId);
+    this.#store.renewLease({
+      runId,
+      ownerId: this.#ownerId,
+      fencingToken,
+      now: this.#now(),
+      ttlMs: this.#leaseTtlMs
+    });
     let leaseError: unknown = null;
     const interval = setInterval(() => {
       if (leaseError !== null) return;
@@ -869,6 +876,10 @@ function requireWorkspace(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatZodError(error: z.ZodError): string {
+  return JSON.stringify(error.issues).slice(0, 4_000);
 }
 
 function toRunResult(run: RunSnapshot): RunResult {

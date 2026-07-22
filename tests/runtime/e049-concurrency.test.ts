@@ -37,6 +37,26 @@ class PausedProvider implements RuntimeProvider {
 }
 
 describe("E049 lease and fencing", () => {
+  it("renews a lease across many Provider calls that are individually shorter than the heartbeat interval", async () => {
+    const workspace = tempRoot();
+    let calls = 0;
+    const provider: RuntimeProvider = {
+      async decide() {
+        calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return calls < 6
+          ? { type: "unknown_action" }
+          : { type: "request_input", question: "Continue?", reason: "lease test" };
+      },
+      async validate() { return { passed: false, issues: [], evidenceIds: [] }; }
+    };
+    const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [], leaseTtlMs: 60 });
+    const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 10, maxModelCalls: 10, maxToolCalls: 1, maxRetries: 10, maxDurationMs: 10_000 } });
+    expect(result.status).toBe("waiting");
+    expect(calls).toBe(6);
+    runtime.close();
+  });
+
   it("returns RUN_BUSY when another Runtime owns the active Run", async () => {
     const workspace = tempRoot();
     const dataDir = join(workspace, ".nexora");
