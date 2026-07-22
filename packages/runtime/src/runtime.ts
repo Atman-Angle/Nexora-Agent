@@ -640,7 +640,8 @@ export class RuntimeEngine {
         taskContract: run.taskContract!,
         plan: run.currentPlan!,
         proposedSummary: action.summary,
-        evidence: run.evidence
+        evidence: run.evidence,
+        toolInvocations: this.#store.listToolInvocations(run.runId)
       })));
     } catch (error) {
       return this.#blockForProvider(run, error, observer);

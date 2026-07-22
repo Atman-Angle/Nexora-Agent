@@ -61,6 +61,9 @@ describe("E049 one persisted Runtime loop", () => {
     expect(view.snapshot.inputHistory.map((entry) => entry.text)).toEqual(["Inspect a file.", "Use src/index.ts"]);
     expect(view.events.filter((event) => event.type === "run.created")).toHaveLength(1);
     expect(view.events.map((event) => event.type)).toContain("run.resumed");
+    expect(provider.validationContexts[0]?.toolInvocations).toEqual([
+      expect.objectContaining({ status: "succeeded", resultJson: expect.objectContaining({ content: expect.any(String) }) })
+    ]);
     runtime.close();
   });
 });

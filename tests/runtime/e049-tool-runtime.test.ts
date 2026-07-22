@@ -77,6 +77,12 @@ describe("E049 built-in Tool Runtime", () => {
       cwd: ".",
       timeoutMs: 30
     })).resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "TOOL_TIMEOUT" }) }));
+    await expect(execute(tool(tools, "shell.execute"), root, {
+      command: process.execPath,
+      args: ["-e", "process.exit(7)"],
+      cwd: ".",
+      timeoutMs: 10_000
+    })).resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "COMMAND_FAILED" }) }));
     await expect(execute(tool(tools, "git.status"), root, {}))
       .resolves.toEqual(expect.objectContaining({ status: "success", output: expect.objectContaining({ stdout: expect.stringContaining("tracked.txt") }) }));
     expect(tool(tools, "git.status").risk).toBe("read");

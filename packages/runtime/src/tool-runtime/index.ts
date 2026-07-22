@@ -80,6 +80,10 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       const cwd = await workspacePath(context.workspace, input.cwd ?? ".", "directory");
       const result = await runProcess(input.command, input.args ?? [], cwd, input.timeoutMs ?? 60_000);
       if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Tool execution timed out.", true);
+      if (result.exitCode !== 0) {
+        const detail = (result.stderr || result.stdout).trim().slice(0, 500);
+        throw new ToolFailure("COMMAND_FAILED", `Command exited with code ${result.exitCode}.${detail ? ` ${detail}` : ""}`);
+      }
       return success(`command:${input.command}`, result);
     }),
     ...gitTools()

@@ -8,6 +8,7 @@ import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 
 export class ScriptedRuntimeProvider implements RuntimeProvider {
   readonly contexts: ModelDecisionContext[] = [];
+  readonly validationContexts: Array<Parameters<RuntimeProvider["validate"]>[0]> = [];
   readonly #actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>;
 
   constructor(actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>) {
@@ -22,6 +23,7 @@ export class ScriptedRuntimeProvider implements RuntimeProvider {
   }
 
   async validate(context: Parameters<RuntimeProvider["validate"]>[0]): Promise<unknown> {
+    this.validationContexts.push(structuredClone(context));
     return { passed: context.evidence.length > 0, issues: [], evidenceIds: context.evidence.map((item) => item.id) };
   }
 }

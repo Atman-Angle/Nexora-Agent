@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { Evidence, RunSnapshot } from "./contracts.js";
+import type { Evidence, RunSnapshot, ToolInvocation } from "./contracts.js";
 
 export type ModelDecisionContext = {
   readonly run: RunSnapshot;
@@ -19,6 +19,7 @@ export type SemanticValidationContext = {
   readonly plan: NonNullable<RunSnapshot["currentPlan"]>;
   readonly proposedSummary: string;
   readonly evidence: readonly Evidence[];
+  readonly toolInvocations: readonly ToolInvocation[];
 };
 
 export const SemanticValidationVerdictSchema = z.object({
