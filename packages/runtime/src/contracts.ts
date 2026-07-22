@@ -94,26 +94,29 @@ export const PlanStepSchema = z.object({
   }
 });
 
-export const StructuredPlanSchema = z.object({
-  version: z.number().int().positive(),
-  basedOnVersion: z.number().int().positive().nullable(),
-  goalDigest: NonEmptyString,
-  orderedSteps: z.array(PlanStepSchema).min(1)
-}).strict().superRefine((plan, context) => {
+const OrderedStepsSchema = z.array(PlanStepSchema).min(1).superRefine((steps, context) => {
   const ids = new Set<string>();
-  for (const step of plan.orderedSteps) {
+  for (const step of steps) {
     if (ids.has(step.id)) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate plan step id: ${step.id}` });
     }
     ids.add(step.id);
   }
 });
+
+export const StructuredPlanSchema = z.object({
+  version: z.number().int().positive(),
+  basedOnVersion: z.number().int().positive().nullable(),
+  goalDigest: NonEmptyString,
+  orderedSteps: OrderedStepsSchema
+}).strict();
 export type StructuredPlan = z.infer<typeof StructuredPlanSchema>;
 
 const SetPlanActionSchema = z.object({
   type: z.literal("set_plan"),
+  basedOnVersion: z.number().int().positive().nullable(),
   taskContract: TaskContractSchema.optional(),
-  plan: StructuredPlanSchema
+  orderedSteps: OrderedStepsSchema
 }).strict();
 
 const CallToolActionSchema = z.object({

@@ -74,7 +74,20 @@ describe("E049 authoritative runtime contracts", () => {
 
   it("exposes only the four model actions and rejects legacy progress actions", () => {
     const contract = taskContract();
-    expect(RuntimeActionSchema.parse({ type: "set_plan", taskContract: contract, plan: plan() }).type).toBe("set_plan");
+    expect(RuntimeActionSchema.parse({
+      type: "set_plan",
+      basedOnVersion: null,
+      taskContract: contract,
+      orderedSteps: plan().orderedSteps
+    }).type).toBe("set_plan");
+    expect(() => RuntimeActionSchema.parse({
+      type: "set_plan",
+      basedOnVersion: null,
+      taskContract: contract,
+      version: 1,
+      goalDigest: "model-must-not-own-this",
+      orderedSteps: plan().orderedSteps
+    })).toThrow();
     expect(RuntimeActionSchema.parse({
       type: "call_tool",
       stepId: "inspect",
