@@ -32,6 +32,7 @@ function recoveryTool(idempotent: boolean, counter: { calls: number }): RuntimeT
     risk: "execute",
     idempotent,
     inputSchema: z.object({ value: z.string() }).strict(),
+    inputExample: { value: "example" },
     async execute() {
       counter.calls += 1;
       return { status: "success", subjectRef: "external:item-1", output: { applied: true } };

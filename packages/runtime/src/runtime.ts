@@ -12,6 +12,7 @@ import {
   TaskContractSchema,
   JsonValueSchema,
   createInitialRunSnapshot,
+  runtimeActionContract,
   type Evidence,
   type RunEvent,
   type RunSnapshot,
@@ -20,6 +21,7 @@ import {
   type RuntimeBudgets,
   type ToolInvocation
 } from "./contracts.js";
+import { ArtifactStore } from "./artifacts.js";
 import {
   SemanticValidationVerdictSchema,
   type ModelDecisionContext,
@@ -52,6 +54,7 @@ export type RuntimeTool = {
   readonly risk: "read" | "write" | "execute";
   readonly idempotent: boolean;
   readonly inputSchema: z.ZodType<unknown>;
+  readonly inputExample: unknown;
   execute(input: unknown, context: { readonly workspace: string; readonly runId: string; readonly invocationId: string }): Promise<RuntimeToolResult>;
 };
 
@@ -110,6 +113,7 @@ export class RuntimeEngine {
   readonly #createId: () => string;
   readonly #ownerId: string;
   readonly #leaseTtlMs: number;
+  readonly #artifactDir: string;
   readonly #leases = new Map<string, number>();
   #closed = false;
 
@@ -123,9 +127,15 @@ export class RuntimeEngine {
     this.#tools = new Map();
     for (const tool of options.tools) {
       if (this.#tools.has(tool.name)) throw new Error(`Duplicate Runtime Tool: ${tool.name}`);
+      try {
+        tool.inputSchema.parse(JsonValueSchema.parse(tool.inputExample));
+      } catch (error) {
+        throw new Error(`Invalid inputExample for Runtime Tool ${tool.name}: ${errorMessage(error)}`);
+      }
       this.#tools.set(tool.name, tool);
     }
     const dataDir = resolve(options.dataDir ?? join(this.#workspace, ".nexora"));
+    this.#artifactDir = join(dataDir, "artifacts");
     this.#store = openRunStore({ databasePath: join(dataDir, "runtime-v1.1.db") });
   }
 
@@ -390,7 +400,7 @@ export class RuntimeEngine {
         run = await this.#handleAction(run, action, observer);
       } catch (error) {
         if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
-        run = this.#rejectAction(run, error, observer);
+        run = this.#rejectAction(run, error, rawAction, observer);
       }
     }
     return toRunResult(run);
@@ -678,23 +688,25 @@ export class RuntimeEngine {
     return this.#commit(run, next, "validation.failed", { issues: [...issues] }, observer);
   }
 
-  #rejectAction(run: RunSnapshot, error: z.ZodError | ActionRejectedError, observer?: RuntimeObserver): RunSnapshot {
+  #rejectAction(run: RunSnapshot, error: z.ZodError | ActionRejectedError, rawAction: unknown, observer?: RuntimeObserver): RunSnapshot {
     const retries = run.budgetsUsed.retries + 1;
-    const message = error instanceof z.ZodError ? formatZodError(error) : error.message;
+    const diagnostic = actionRejectionDiagnostic(error, rawAction);
+    const message = JSON.stringify(diagnostic);
+    const detailsArtifact = new ArtifactStore(this.#artifactDir).putText(serializeRejectedAction(rawAction), "application/json").digest;
     if (retries > run.budgets.maxRetries) {
       return this.#fail({
         ...run,
         budgetsUsed: { ...run.budgetsUsed, retries },
-        lastError: { code: "INVALID_MODEL_ACTION", message, retryable: false, detailsArtifact: null }
+        lastError: { code: "INVALID_MODEL_ACTION", message, retryable: false, detailsArtifact }
       }, "ACTION_REPAIR_EXHAUSTED", "INVALID_MODEL_ACTION", observer);
     }
     const next = RunSnapshotSchema.parse({
       ...run,
       budgetsUsed: { ...run.budgetsUsed, retries },
-      lastError: { code: "INVALID_MODEL_ACTION", message, retryable: true, detailsArtifact: null },
+      lastError: { code: "INVALID_MODEL_ACTION", message, retryable: true, detailsArtifact },
       updatedAt: this.#now()
     });
-    return this.#commit(run, next, "action.rejected", { message }, observer);
+    return this.#commit(run, next, "action.rejected", { message, diagnostic, detailsArtifact }, observer);
   }
 
   #fail(run: RunSnapshot, stopReason: string, errorCode: string, observer?: RuntimeObserver): RunSnapshot {
@@ -724,10 +736,30 @@ export class RuntimeEngine {
   }
 
   #decisionContext(run: RunSnapshot): ModelDecisionContext {
+    const actions = allowedActions(run);
+    const includeTaskContract = run.currentPlan === null || run.taskContract === null
+      || run.taskContract.inputVersion < run.inputHistory.length;
+    const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+    const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
+    const callableTools = new Set(activeStep?.acceptanceChecks
+      .filter((check) => check.kind === "tool_result")
+      .map((check) => check.toolName) ?? []);
     return {
+      workspace: this.#workspace,
       run,
-      allowedActions: allowedActions(run),
-      tools: [...this.#tools.values()].map((tool) => ({ name: tool.name, risk: tool.risk, idempotent: tool.idempotent }))
+      allowedActions: actions,
+      actionContract: runtimeActionContract(actions, {
+        workspace: this.#workspace,
+        inputVersion: run.inputHistory.length,
+        basedOnVersion: run.currentPlan?.version ?? null,
+        includeTaskContract
+      }),
+      tools: [...this.#tools.values()].map((tool) => ({
+        name: tool.name,
+        risk: tool.risk,
+        idempotent: tool.idempotent,
+        ...(actions.includes("call_tool") && callableTools.has(tool.name) ? { inputExample: tool.inputExample } : {})
+      }))
     };
   }
 
@@ -878,8 +910,40 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function formatZodError(error: z.ZodError): string {
-  return JSON.stringify(error.issues).slice(0, 4_000);
+function actionRejectionDiagnostic(error: z.ZodError | ActionRejectedError, rawAction: unknown): {
+  readonly kind: "schema" | "state";
+  readonly actionType: string | null;
+  readonly issues: readonly { readonly path: string; readonly code: string; readonly message: string }[];
+} {
+  const actionType = typeof rawAction === "object" && rawAction !== null && "type" in rawAction
+    && typeof (rawAction as { readonly type?: unknown }).type === "string"
+    ? (rawAction as { readonly type: string }).type.slice(0, 100)
+    : null;
+  if (error instanceof z.ZodError) {
+    return {
+      kind: "schema",
+      actionType,
+      issues: error.issues.slice(0, 4).map((issue) => ({
+        path: issue.path.length === 0 ? "$" : issue.path.join(".").slice(0, 200),
+        code: issue.code,
+        message: issue.message.slice(0, 500)
+      }))
+    };
+  }
+  return {
+    kind: "state",
+    actionType,
+    issues: [{ path: "$", code: "action_rejected", message: error.message.slice(0, 500) }]
+  };
+}
+
+function serializeRejectedAction(rawAction: unknown): string {
+  try {
+    const serialized = JSON.stringify(rawAction);
+    return serialized ?? JSON.stringify({ unsupportedValueType: typeof rawAction });
+  } catch (error) {
+    return JSON.stringify({ serializationError: errorMessage(error), receivedType: typeof rawAction });
+  }
 }
 
 function toRunResult(run: RunSnapshot): RunResult {

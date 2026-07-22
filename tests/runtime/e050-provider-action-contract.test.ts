@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createOpenAICompatibleProvider, createRuntime } from "../../packages/runtime/src/index.js";
+import { RuntimeActionSchema } from "../../packages/runtime/src/contracts.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
+import { ScriptedRuntimeProvider, setPlan } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -31,7 +33,7 @@ type DecisionPayload = {
   readonly mode: string;
   readonly context: {
     readonly workspace?: string;
-    readonly actionContract?: readonly { readonly type: string; readonly example: unknown }[];
+    readonly actionContract?: readonly { readonly type: string }[];
     readonly run: { readonly lastError: { readonly message: string } | null };
     readonly tools: readonly { readonly name: string; readonly inputExample?: unknown }[];
   };
@@ -97,7 +99,7 @@ describe("E050 Provider Action Contract convergence", () => {
       workspace,
       dataDir: join(workspace, ".nexora"),
       provider,
-      tools: [exampleTool({ path: "target.txt" })]
+      tools: [exampleTool({ path: "target.txt" }), exampleTool({ path: "other.txt" }, "example.other")]
     });
 
     const result = await runtime.start({ input: "Inspect the target." });
@@ -110,10 +112,16 @@ describe("E050 Provider Action Contract convergence", () => {
       .filter((payload) => payload.mode === "decide");
     expect(decisionRequests[0]?.context.workspace).toBe(workspace);
     expect(decisionRequests[0]?.context.actionContract?.map((item) => item.type)).toEqual(["set_plan", "request_input"]);
-    expect(decisionRequests[0]?.context.tools).toContainEqual(expect.objectContaining({
+    for (const example of decisionRequests[0]?.context.actionContract ?? []) {
+      expect(RuntimeActionSchema.parse(example).type).toBe(example.type);
+    }
+    expect(decisionRequests[0]?.context.tools).toContainEqual(expect.objectContaining({ name: "example.read" }));
+    expect(decisionRequests[0]?.context.tools[0]).not.toHaveProperty("inputExample");
+    expect(decisionRequests[2]?.context.tools).toContainEqual(expect.objectContaining({
       name: "example.read",
       inputExample: { path: "target.txt" }
     }));
+    expect(decisionRequests[2]?.context.tools.find((tool) => tool.name === "example.other")).not.toHaveProperty("inputExample");
     const secondDiagnostic = JSON.parse(decisionRequests[1]!.context.run.lastError!.message) as {
       kind: string;
       actionType: string | null;
@@ -127,6 +135,10 @@ describe("E050 Provider Action Contract convergence", () => {
       path: "orderedSteps",
       code: "invalid_type"
     }));
+    const revisionExample = decisionRequests[2]?.context.actionContract
+      ?.find((item) => item.type === "set_plan") as Record<string, unknown> | undefined;
+    expect(revisionExample).toEqual(expect.objectContaining({ basedOnVersion: 1 }));
+    expect(revisionExample).not.toHaveProperty("taskContract");
     expect(requests[0]?.messages[0]?.content).not.toContain("filesystem.patch {path,expectedDigest");
 
     const rejected = view.events.find((event) => event.type === "action.rejected");
@@ -138,6 +150,39 @@ describe("E050 Provider Action Contract convergence", () => {
     expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toEqual(invalidAction);
     expect(view.events.map((event) => event.type)).toEqual(expect.arrayContaining(["action.rejected", "plan.set"]));
     expect(view.toolInvocations).toEqual([]);
+  });
+
+  it("projects the current Plan version and updated Task Contract after new user input", async () => {
+    const workspace = tempRoot("nexora-e050-revision-");
+    const provider = new ScriptedRuntimeProvider([
+      setPlan(workspace),
+      { type: "request_input", question: "Add a constraint?", reason: "test" },
+      { type: "request_input", question: "Continue?", reason: "deterministic stop" }
+    ]);
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider,
+      tools: [exampleTool({ path: "target.txt" })]
+    });
+
+    const first = await runtime.start({ input: "Inspect the target." });
+    expect(first.status).toBe("waiting");
+    const resumed = await runtime.resume({ runId: first.runId, input: "Also preserve formatting." });
+    runtime.close();
+
+    expect(resumed.status).toBe("waiting");
+    const revisionExample = provider.contexts[2]?.actionContract
+      .find((item) => item.type === "set_plan");
+    expect(revisionExample).toEqual(expect.objectContaining({
+      type: "set_plan",
+      basedOnVersion: 1,
+      taskContract: expect.objectContaining({
+        workspace,
+        inputVersion: 2,
+        version: 2
+      })
+    }));
   });
 
   it("rejects a Tool input example that does not satisfy the Tool input Schema", () => {
@@ -193,9 +238,9 @@ describe("E050 Provider Action Contract convergence", () => {
   });
 });
 
-function exampleTool(inputExample: unknown): RuntimeTool {
+function exampleTool(inputExample: unknown, name = "example.read"): RuntimeTool {
   const tool = {
-    name: "example.read",
+    name,
     risk: "read" as const,
     idempotent: true,
     inputSchema: z.object({ path: z.string().min(1) }).strict(),

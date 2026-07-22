@@ -125,11 +125,7 @@ const CallToolActionSchema = z.object({
   checkIds: z.array(NonEmptyString).min(1),
   toolName: NonEmptyString,
   input: JsonValueSchema
-}).strict().superRefine((action, context) => {
-  if (new Set(action.checkIds).size !== action.checkIds.length) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "Tool action contains duplicate Check IDs." });
-  }
-});
+}).strict();
 
 const RequestInputActionSchema = z.object({
   type: z.literal("request_input"),
@@ -143,13 +139,86 @@ const ProposeFinishActionSchema = z.object({
   evidenceIds: z.array(NonEmptyString)
 }).strict();
 
-export const RuntimeActionSchema = z.union([
+export const RuntimeActionSchema = z.discriminatedUnion("type", [
   SetPlanActionSchema,
   CallToolActionSchema,
   RequestInputActionSchema,
   ProposeFinishActionSchema
-]);
+]).superRefine((action, context) => {
+  if (action.type === "call_tool" && new Set(action.checkIds).size !== action.checkIds.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Tool action contains duplicate Check IDs." });
+  }
+});
 export type RuntimeAction = z.infer<typeof RuntimeActionSchema>;
+export type RuntimeActionType = RuntimeAction["type"];
+
+const RuntimeActionExamples: Record<RuntimeActionType, RuntimeAction> = {
+  set_plan: RuntimeActionSchema.parse({
+    type: "set_plan",
+    basedOnVersion: null,
+    taskContract: {
+      version: 1,
+      inputVersion: 1,
+      goal: "<goal>",
+      workspace: "<runtime-workspace>",
+      constraints: [],
+      acceptanceCriteria: ["<verifiable-criterion>"]
+    },
+    orderedSteps: [{
+      id: "<step-id>",
+      objective: "<step-objective>",
+      acceptanceChecks: [{
+        id: "<check-id>",
+        kind: "tool_result",
+        required: true,
+        toolName: "<registered-tool-name>",
+        expectedStatus: "success"
+      }]
+    }]
+  }),
+  call_tool: RuntimeActionSchema.parse({
+    type: "call_tool",
+    stepId: "<active-step-id>",
+    checkIds: ["<matching-check-id>"],
+    toolName: "<matching-registered-tool-name>",
+    input: {}
+  }),
+  request_input: RuntimeActionSchema.parse({
+    type: "request_input",
+    question: "<question>",
+    reason: "<blocking-reason>"
+  }),
+  propose_finish: RuntimeActionSchema.parse({
+    type: "propose_finish",
+    summary: "<verified-summary>",
+    evidenceIds: ["<persisted-evidence-id>"]
+  })
+};
+
+export function runtimeActionContract(
+  allowedActions: readonly RuntimeActionType[],
+  context: {
+    readonly workspace: string;
+    readonly inputVersion: number;
+    readonly basedOnVersion: number | null;
+    readonly includeTaskContract: boolean;
+  }
+): readonly RuntimeAction[] {
+  return allowedActions.map((type) => {
+    const example = structuredClone(RuntimeActionExamples[type]);
+    if (example.type === "set_plan" && example.taskContract !== undefined) {
+      example.basedOnVersion = context.basedOnVersion;
+      if (context.includeTaskContract) {
+        example.taskContract.workspace = context.workspace;
+        example.taskContract.inputVersion = context.inputVersion;
+        example.taskContract.version = context.inputVersion;
+      } else {
+        delete example.taskContract;
+      }
+    }
+    return example;
+  });
+}
 
 export const EvidenceSchema = z.object({
   id: NonEmptyString,

@@ -1,14 +1,17 @@
 import { z } from "zod";
 
-import type { Evidence, RunSnapshot, ToolInvocation } from "./contracts.js";
+import type { Evidence, RunSnapshot, RuntimeAction, ToolInvocation } from "./contracts.js";
 
 export type ModelDecisionContext = {
+  readonly workspace: string;
   readonly run: RunSnapshot;
   readonly allowedActions: readonly ("set_plan" | "call_tool" | "request_input" | "propose_finish")[];
+  readonly actionContract: readonly RuntimeAction[];
   readonly tools: readonly {
     readonly name: string;
     readonly risk: "read" | "write" | "execute";
     readonly idempotent: boolean;
+    readonly inputExample?: unknown;
   }[];
 };
 

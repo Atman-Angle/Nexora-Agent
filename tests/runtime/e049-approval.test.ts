@@ -38,6 +38,7 @@ function writeTool(counter: { calls: number }): RuntimeTool {
     risk: "write",
     idempotent: true,
     inputSchema: z.object({ path: z.string(), content: z.string() }).strict(),
+    inputExample: { path: "output.txt", content: "example" },
     async execute(input) {
       counter.calls += 1;
       return { status: "success", subjectRef: (input as { path: string }).path, output: { written: true } };

@@ -68,6 +68,7 @@ export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
     risk: "read",
     idempotent: true,
     inputSchema: z.object({ path: z.string().min(1) }).strict(),
+    inputExample: { path: "src/index.ts" },
     async execute(input) {
       if (counter !== undefined) counter.calls += 1;
       const value = input as { path: string };

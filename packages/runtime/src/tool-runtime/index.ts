@@ -16,7 +16,7 @@ const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"])
 
 export function createBuiltInTools(options: { readonly artifactDir?: string } = {}): readonly RuntimeTool[] {
   return [
-    define("filesystem.read", "read", true, PathInput, async (input, context) => {
+    define("filesystem.read", "read", true, PathInput, { path: "README.md" }, async (input, context) => {
       const path = await workspacePath(context.workspace, input.path, "file");
       const bytes = await readFile(path);
       const subjectRef = input.path;
@@ -26,13 +26,13 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(bytes.toString("utf8"));
       return success(subjectRef, { path: input.path, preview: bytes.toString("utf8", 0, 500), artifactRef: artifact.digest, byteLength: artifact.byteLength });
     }),
-    define("filesystem.list", "read", true, z.object({ path: z.string().default(".") }).strict(), async (input, context) => {
+    define("filesystem.list", "read", true, z.object({ path: z.string().default(".") }).strict(), {}, async (input, context) => {
       const requestedPath = input.path ?? ".";
       const directory = await workspacePath(context.workspace, requestedPath, "directory");
       const entries = (await listFiles(directory)).map((path) => relativeFromRequested(requestedPath, directory, path));
       return success(requestedPath, { entries: entries.slice(0, 2000), truncated: entries.length > 2000 });
     }),
-    define("filesystem.search", "read", true, z.object({ query: z.string().trim().min(1), path: z.string().default(".") }).strict(), async (input, context) => {
+    define("filesystem.search", "read", true, z.object({ query: z.string().trim().min(1), path: z.string().default(".") }).strict(), { query: "TODO" }, async (input, context) => {
       const requestedPath = input.path ?? ".";
       const directory = await workspacePath(context.workspace, requestedPath, "directory");
       const matches: Array<{ path: string; line: number; text: string }> = [];
@@ -49,14 +49,14 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       }
       return success(`search:${input.query}`, { matches, truncated: matches.length >= 100 });
     }),
-    define("filesystem.write", "write", true, z.object({ path: z.string().trim().min(1), content: z.string() }).strict(), async (input, context) => {
+    define("filesystem.write", "write", true, z.object({ path: z.string().trim().min(1), content: z.string() }).strict(), { path: "output.txt", content: "example" }, async (input, context) => {
       const path = await writableWorkspacePath(context.workspace, input.path);
       await atomicWrite(path, input.content);
       return success(input.path, { path: input.path, digest: digest(input.content), byteLength: Buffer.byteLength(input.content) });
     }),
     define("filesystem.patch", "write", true, z.object({
       path: z.string().trim().min(1), expectedDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), find: z.string().min(1), replace: z.string()
-    }).strict(), async (input, context) => {
+    }).strict(), { path: "source.txt", expectedDigest: `sha256:${"0".repeat(64)}`, find: "old", replace: "new" }, async (input, context) => {
       const path = await workspacePath(context.workspace, input.path, "file");
       const current = await readFile(path, "utf8");
       if (digest(current) !== input.expectedDigest) {
@@ -73,7 +73,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     }),
     define("shell.execute", "execute", false, z.object({
       command: z.string().trim().min(1), args: z.array(z.string()).default([]), cwd: z.string().default("."), timeoutMs: z.number().int().positive().max(300_000).default(60_000)
-    }).strict(), async (input, context) => {
+    }).strict(), { command: "node" }, async (input, context) => {
       if (["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "sh", "bash"].includes(basename(input.command).toLowerCase())) {
         throw new ToolFailure("COMMAND_REJECTED", "Interactive shell entrypoints are not allowed.");
       }
@@ -91,12 +91,12 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
 }
 
 function gitTools(): RuntimeTool[] {
-  const definitions: Array<{ name: string; schema: z.ZodTypeAny; args: (input: any) => string[] }> = [
-    { name: "git.status", schema: z.object({}).strict(), args: () => ["status", "--short"] },
-    { name: "git.diff", schema: z.object({ path: z.string().trim().min(1).optional() }).strict(), args: (input) => ["diff", "--", ...(input.path ? [input.path] : [])] },
-    { name: "git.show", schema: z.object({ revision: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/), path: z.string().trim().min(1).optional() }).strict(), args: (input) => ["show", "--format=medium", input.revision, ...(input.path ? ["--", input.path] : [])] }
+  const definitions: Array<{ name: string; schema: z.ZodTypeAny; inputExample: unknown; args: (input: any) => string[] }> = [
+    { name: "git.status", schema: z.object({}).strict(), inputExample: {}, args: () => ["status", "--short"] },
+    { name: "git.diff", schema: z.object({ path: z.string().trim().min(1).optional() }).strict(), inputExample: {}, args: (input) => ["diff", "--", ...(input.path ? [input.path] : [])] },
+    { name: "git.show", schema: z.object({ revision: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/), path: z.string().trim().min(1).optional() }).strict(), inputExample: { revision: "HEAD" }, args: (input) => ["show", "--format=medium", input.revision, ...(input.path ? ["--", input.path] : [])] }
   ];
-  return definitions.map((definition) => define(definition.name, "read", true, definition.schema, async (input, context) => {
+  return definitions.map((definition) => define(definition.name, "read", true, definition.schema, definition.inputExample, async (input, context) => {
     const result = await runProcess("git", definition.args(input), context.workspace, 30_000);
     if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Git command timed out.", true);
     if (result.exitCode !== 0) throw new ToolFailure("GIT_COMMAND_FAILED", result.stderr || "Git command failed.");
@@ -104,9 +104,9 @@ function gitTools(): RuntimeTool[] {
   }));
 }
 
-function define<T>(name: string, risk: RuntimeTool["risk"], idempotent: boolean, schema: z.ZodType<T>, execute: (input: T, context: Parameters<RuntimeTool["execute"]>[1]) => Promise<RuntimeToolResult>): RuntimeTool {
+function define<T>(name: string, risk: RuntimeTool["risk"], idempotent: boolean, schema: z.ZodType<T>, inputExample: unknown, execute: (input: T, context: Parameters<RuntimeTool["execute"]>[1]) => Promise<RuntimeToolResult>): RuntimeTool {
   return {
-    name, risk, idempotent, inputSchema: schema,
+    name, risk, idempotent, inputSchema: schema, inputExample,
     async execute(input, context) {
       try { return await execute(schema.parse(input), context); }
       catch (error) {
