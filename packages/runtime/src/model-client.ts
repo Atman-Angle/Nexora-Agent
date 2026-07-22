@@ -23,6 +23,7 @@ export type ModelDecisionContext = {
   readonly toolObservations: readonly ToolObservation[];
   readonly tools: readonly {
     readonly name: string;
+    readonly description?: string;
     readonly risk: "read" | "write" | "execute";
     readonly idempotent: boolean;
     readonly inputExample?: unknown;

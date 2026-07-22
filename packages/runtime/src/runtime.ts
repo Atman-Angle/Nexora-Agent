@@ -55,6 +55,7 @@ export type RuntimeToolResult = z.infer<typeof ToolResultSchema>;
 
 export type RuntimeTool = {
   readonly name: string;
+  readonly description?: string;
   readonly risk: "read" | "write" | "execute";
   readonly idempotent: boolean;
   readonly inputSchema: z.ZodType<unknown>;
@@ -131,6 +132,9 @@ export class RuntimeEngine {
     this.#tools = new Map();
     for (const tool of options.tools) {
       if (this.#tools.has(tool.name)) throw new Error(`Duplicate Runtime Tool: ${tool.name}`);
+      if (tool.description !== undefined && (tool.description.trim().length === 0 || tool.description.length > 240)) {
+        throw new Error(`Runtime Tool description must be non-empty and at most 240 characters: ${tool.name}`);
+      }
       try {
         tool.inputSchema.parse(JsonValueSchema.parse(tool.inputExample));
       } catch (error) {
@@ -498,6 +502,8 @@ export class RuntimeEngine {
     }
     const tool = this.#tools.get(action.toolName);
     if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${action.toolName}`);
+    const parsedInput = JsonValueSchema.parse(tool.inputSchema.parse(action.input));
+    const canonicalAction = { ...action, input: parsedInput };
     if (tool.risk !== "read" && !approved) {
       const now = this.#now();
       const waiting = transitionRunStatus(runInput, "waiting", {
@@ -508,7 +514,7 @@ export class RuntimeEngine {
           kind: "approval",
           prompt: `Allow ${tool.name} for Step ${step.id}?`,
           createdAt: now,
-          action
+          action: canonicalAction
         }
       });
       return this.#commit(runInput, waiting, "approval.requested", {
@@ -517,7 +523,6 @@ export class RuntimeEngine {
         stepId: step.id
       }, observer);
     }
-    const parsedInput = tool.inputSchema.parse(action.input);
     const invocationId = this.#createId();
     const startedAt = this.#now();
     const started = this.#store.beginToolInvocationAndCommitRun({
@@ -765,6 +770,7 @@ export class RuntimeEngine {
       toolObservations: projectToolObservations(this.#store.listToolInvocations(run.runId)),
       tools: [...this.#tools.values()].map((tool) => ({
         name: tool.name,
+        ...(tool.description === undefined ? {} : { description: tool.description }),
         risk: tool.risk,
         idempotent: tool.idempotent,
         ...(actions.includes("call_tool") && callableTools.has(tool.name) ? { inputExample: tool.inputExample } : {})
