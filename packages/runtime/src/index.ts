@@ -32,3 +32,9 @@ export type {
 } from "./contracts.js";
 
 export { createBuiltInTools } from "./tool-runtime/index.js";
+export {
+  ModelConfigError,
+  createOpenAICompatibleProvider,
+  openAICompatibleProviderFromEnv,
+  type OpenAICompatibleProviderOptions
+} from "./openai-compatible-provider.js";

@@ -2,7 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "noEmit": false,
-    "rootDir": ".",
+    "rootDir": "packages/runtime/src",
     "outDir": "packages/runtime/dist",
     "declaration": true,
     "declarationMap": false,

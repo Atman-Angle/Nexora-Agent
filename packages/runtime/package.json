@@ -1,26 +1,26 @@
 {
   "name": "@nexora/runtime",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "type": "module",
-  "main": "./dist/packages/runtime/src/index.js",
-  "types": "./dist/packages/runtime/src/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/packages/runtime/src/index.d.ts",
-      "import": "./dist/packages/runtime/src/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist/*.js",
+    "dist/*.d.ts",
+    "dist/tool-runtime"
   ],
   "scripts": {
-    "build": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json && node ../../scripts/copy-docling-worker.mjs",
-    "prepack": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json && node ../../scripts/copy-docling-worker.mjs"
+    "build": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json",
+    "prepack": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json"
   },
   "dependencies": {
-    "@ast-grep/napi": "0.44.1",
-    "@vscode/ripgrep": "1.18.0",
-    "better-sqlite3": "^12.2.0",
-    "zod": "^3.25.76"
+    "better-sqlite3": "12.11.1",
+    "zod": "3.25.76"
   }
 }
