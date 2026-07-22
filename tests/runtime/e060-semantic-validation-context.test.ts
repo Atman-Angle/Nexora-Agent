@@ -33,7 +33,7 @@ describe("E060 semantic validation boundary", () => {
         toolName: "filesystem.read",
         subjectRef: "README.md",
         input: { path: "README.md" },
-        output: { content: "export const value = 1;" }
+        facts: { content: "export const value = 1;" }
       }]
     });
     expect(JSON.stringify(provider.semanticContext)).not.toMatch(/digest|taskContract|planVersion|stepId|checkId|invocationId|idempotency|fencing/i);
@@ -60,8 +60,8 @@ describe("E060 semantic validation boundary", () => {
 
     await runtime.start({ input: "Inspect a target." });
 
-    expect(systemPrompt).toContain("smallest Tool sequence");
-    expect(systemPrompt).toContain("genuinely unknown");
+    expect(systemPrompt).toContain("single Capability");
+    expect(systemPrompt).toContain("Use discovery only");
     expect(systemPrompt).toContain("unnecessary");
     expect(systemPrompt).not.toMatch(/README|filesystem\.read|filesystem\.search/);
     runtime.close();

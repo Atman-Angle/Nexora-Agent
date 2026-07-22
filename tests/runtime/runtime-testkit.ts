@@ -64,18 +64,20 @@ export function setPlan(workspace: string, basedOnVersion: number | null = null)
 
 export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
   return {
-    name: "filesystem.read",
-    risk: "read",
-    idempotent: true,
-    inputSchema: z.object({ path: z.string().min(1) }).strict(),
-    inputExample: { path: "src/index.ts" },
+    contract: {
+      identity: { name: "filesystem.read" },
+      capability: { purpose: "Retrieve facts from a known file.", nonGoals: ["Discover unknown files."] },
+      decision: { useWhen: ["The file path is known and its content is needed."], avoidWhen: ["The path is unknown or the content is already available."] },
+      execution: { effect: { kind: "read", description: "Reads a file without changing it." }, idempotent: true, inputSchema: z.object({ path: z.string().min(1) }).strict(), inputExample: { path: "src/index.ts" } },
+      evidence: { produces: ["File content."], factsSchema: z.object({ content: z.string() }).strict() }
+    },
     async execute(input) {
       if (counter !== undefined) counter.calls += 1;
       const value = input as { path: string };
       return {
         status: "success",
         subjectRef: value.path,
-        output: { content: "export const value = 1;" }
+        facts: { content: "export const value = 1;" }
       };
     }
   };

@@ -19,13 +19,13 @@ function workspace(): string {
 }
 
 function tool(tools: readonly RuntimeTool[], name: string): RuntimeTool {
-  const found = tools.find((item) => item.name === name);
+  const found = tools.find((item) => item.contract.identity.name === name);
   if (found === undefined) throw new Error(`Missing Tool: ${name}`);
   return found;
 }
 
 async function execute(target: RuntimeTool, root: string, input: unknown) {
-  return target.execute(target.inputSchema.parse(input), { workspace: root, runId: "run-tools", invocationId: "inv-tools" });
+  return target.execute(target.contract.execution.inputSchema.parse(input), { workspace: root, runId: "run-tools", invocationId: "inv-tools" });
 }
 
 describe("E049 built-in Tool Runtime", () => {
@@ -38,19 +38,19 @@ describe("E049 built-in Tool Runtime", () => {
     await expect(execute(tool(tools, "filesystem.read"), root, { path: "../outside.txt" }))
       .resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "PATH_ESCAPE" }) }));
     await expect(execute(tool(tools, "filesystem.read"), root, { path: "src/value.ts" }))
-      .resolves.toEqual(expect.objectContaining({ status: "success", output: expect.objectContaining({ content: expect.stringContaining("needle") }) }));
+      .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ content: expect.stringContaining("needle") }) }));
     await expect(execute(tool(tools, "filesystem.list"), root, { path: "src" }))
-      .resolves.toEqual(expect.objectContaining({ status: "success", output: expect.objectContaining({ entries: ["src/value.ts"] }) }));
+      .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ entries: ["src/value.ts"] }) }));
     await expect(execute(tool(tools, "filesystem.search"), root, { query: "needle" }))
-      .resolves.toEqual(expect.objectContaining({ status: "success", output: expect.objectContaining({ matches: [expect.objectContaining({ path: "src/value.ts", line: 1 })] }) }));
+      .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ matches: [expect.objectContaining({ path: "src/value.ts", line: 1 })] }) }));
   });
 
   it("writes and patches deterministically and keeps both operations idempotent", async () => {
     const root = workspace();
     const tools = createBuiltInTools();
     const write = tool(tools, "filesystem.write");
-    expect(write.risk).toBe("write");
-    expect(write.idempotent).toBe(true);
+    expect(write.contract.execution.effect.kind).toBe("write");
+    expect(write.contract.execution.idempotent).toBe(true);
     await expect(execute(write, root, { path: "note.txt", content: "before" }))
       .resolves.toEqual(expect.objectContaining({ status: "success" }));
     await expect(execute(write, root, { path: "note.txt", content: "before" }))
@@ -84,7 +84,7 @@ describe("E049 built-in Tool Runtime", () => {
       timeoutMs: 10_000
     })).resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "COMMAND_FAILED" }) }));
     await expect(execute(tool(tools, "git.status"), root, {}))
-      .resolves.toEqual(expect.objectContaining({ status: "success", output: expect.objectContaining({ stdout: expect.stringContaining("tracked.txt") }) }));
-    expect(tool(tools, "git.status").risk).toBe("read");
+      .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ stdout: expect.stringContaining("tracked.txt") }) }));
+    expect(tool(tools, "git.status").contract.execution.effect.kind).toBe("read");
   });
 });

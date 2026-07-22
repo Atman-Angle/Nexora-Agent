@@ -11,7 +11,7 @@ export type ToolObservation = {
   readonly toolName: string;
   readonly status: "succeeded" | "failed";
   readonly completedAt: string;
-  readonly result: ToolInvocation["resultJson"];
+  readonly facts: ToolInvocation["resultJson"];
   readonly error: ToolInvocation["errorJson"];
   readonly truncated: boolean;
   readonly digest: string;
@@ -24,11 +24,23 @@ export type ModelDecisionContext = {
   readonly actionContract: readonly RuntimeAction[];
   readonly toolObservations: readonly ToolObservation[];
   readonly tools: readonly {
-    readonly name: string;
-    readonly description?: string;
-    readonly risk: "read" | "write" | "execute";
-    readonly idempotent: boolean;
-    readonly inputExample?: unknown;
+    readonly identity: { readonly name: string };
+    readonly capability: {
+      readonly purpose: string;
+      readonly nonGoals: readonly string[];
+    };
+    readonly decision: {
+      readonly useWhen: readonly string[];
+      readonly avoidWhen: readonly string[];
+    };
+    readonly execution: {
+      readonly effect: {
+        readonly kind: "read" | "write" | "execute";
+        readonly description: string;
+      };
+      readonly inputExample?: unknown;
+    };
+    readonly evidence: { readonly produces: readonly string[] };
   }[];
 };
 
@@ -39,7 +51,7 @@ export type SemanticValidationContext = {
     readonly toolName: string;
     readonly subjectRef: string;
     readonly input: JsonValue;
-    readonly output: JsonValue;
+    readonly facts: JsonValue;
   }[];
 };
 

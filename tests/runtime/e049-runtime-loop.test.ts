@@ -62,7 +62,7 @@ describe("E049 one persisted Runtime loop", () => {
     expect(view.events.filter((event) => event.type === "run.created")).toHaveLength(1);
     expect(view.events.map((event) => event.type)).toContain("run.resumed");
     expect(provider.validationContexts[0]?.facts).toEqual([
-      expect.objectContaining({ toolName: "filesystem.read", output: expect.objectContaining({ content: expect.any(String) }) })
+      expect.objectContaining({ toolName: "filesystem.read", facts: expect.objectContaining({ content: expect.any(String) }) })
     ]);
     runtime.close();
   });

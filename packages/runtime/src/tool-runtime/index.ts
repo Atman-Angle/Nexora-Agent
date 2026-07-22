@@ -7,7 +7,7 @@ import { rgPath } from "@vscode/ripgrep";
 import { z } from "zod";
 
 import { ArtifactStore } from "../artifacts.js";
-import type { RuntimeTool, RuntimeToolResult } from "../runtime.js";
+import type { RuntimeTool } from "../runtime.js";
 import { ToolFailure, workspacePath, writableWorkspacePath } from "./workspace.js";
 
 const PathInput = z.object({ path: z.string().trim().min(1) }).strict();
@@ -16,68 +16,125 @@ const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_SEARCH_OUTPUT_BYTES = 512 * 1024;
 const MAX_SEARCH_MATCHES = 100;
 const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"]);
+const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const ReadFactsSchema = z.union([
+  z.object({ path: z.string(), content: z.string(), digest: DigestSchema, byteLength: z.number().int().nonnegative() }).strict(),
+  z.object({ path: z.string(), preview: z.string(), digest: DigestSchema, artifactRef: z.string(), byteLength: z.number().int().nonnegative() }).strict()
+]);
+const ListFactsSchema = z.object({ entries: z.array(z.string()), truncated: z.boolean() }).strict();
+const SearchFactsSchema = z.object({
+  matches: z.array(z.object({ path: z.string(), line: z.number().int().positive(), text: z.string() }).strict()),
+  truncated: z.boolean()
+}).strict();
+const WriteFactsSchema = z.object({ path: z.string(), digest: DigestSchema, byteLength: z.number().int().nonnegative() }).strict();
+const PatchFactsSchema = z.object({ path: z.string(), digest: DigestSchema, replayed: z.boolean() }).strict();
+const ProcessFactsSchema = z.object({
+  exitCode: z.number().int(), stdout: z.string(), stderr: z.string(), truncated: z.boolean(), timedOut: z.boolean()
+}).strict();
 
 export function createBuiltInTools(options: { readonly artifactDir?: string } = {}): readonly RuntimeTool[] {
   return [
-    define("filesystem.read", "Read one UTF-8 file in the workspace and return content or preview, a digest, and an Artifact reference for large content.", "read", true, PathInput, { path: "README.md" }, async (input, context) => {
-      const path = await workspacePath(context.workspace, input.path, "file");
-      const bytes = await readFile(path);
-      const content = bytes.toString("utf8");
-      const subjectRef = input.path;
-      if (bytes.byteLength <= MAX_INLINE_BYTES) {
-        return success(subjectRef, { path: input.path, content, digest: digest(content), byteLength: bytes.byteLength });
+    defineTool({
+      contract: {
+        identity: { name: "filesystem.read" },
+        capability: { purpose: "Retrieve UTF-8 content from one known workspace file.", nonGoals: ["Discover an unknown path.", "Modify file content."] },
+        decision: { useWhen: ["The exact target path is known and its content is required."], avoidWhen: ["The target path is unresolved.", "Existing facts already contain the required content."] },
+        execution: { effect: { kind: "read", description: "Reads one workspace file without modifying external state." }, idempotent: true, inputSchema: PathInput, inputExample: { path: "README.md" } },
+        evidence: { produces: ["The target path, content or bounded preview, content digest, and byte length."], factsSchema: ReadFactsSchema }
+      },
+      async execute(input, context) {
+        const path = await workspacePath(context.workspace, input.path, "file");
+        const bytes = await readFile(path);
+        const content = bytes.toString("utf8");
+        if (bytes.byteLength <= MAX_INLINE_BYTES) return { subjectRef: input.path, facts: { path: input.path, content, digest: digest(content), byteLength: bytes.byteLength } };
+        const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(content);
+        return { subjectRef: input.path, facts: { path: input.path, preview: content.slice(0, 500), digest: digest(content), artifactRef: artifact.digest, byteLength: artifact.byteLength } };
       }
-      const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(content);
-      return success(subjectRef, { path: input.path, preview: content.slice(0, 500), digest: digest(content), artifactRef: artifact.digest, byteLength: artifact.byteLength });
     }),
-    define("filesystem.list", "List files recursively inside a workspace directory for discovery without reading file contents.", "read", true, z.object({ path: z.string().default(".") }).strict(), { path: "." }, async (input, context) => {
-      const requestedPath = input.path ?? ".";
-      const directory = await workspacePath(context.workspace, requestedPath, "directory");
-      const entries = (await listFiles(directory)).map((path) => relativeFromRequested(requestedPath, directory, path));
-      return success(requestedPath, { entries: entries.slice(0, 2000), truncated: entries.length > 2000 });
-    }),
-    define("filesystem.search", "Search UTF-8 text files in the workspace for a case-insensitive literal query and return matching paths and lines.", "read", true, z.object({ query: z.string().trim().min(1), path: z.string().default(".") }).strict(), { query: "TODO", path: "." }, async (input, context) => {
-      const requestedPath = input.path ?? ".";
-      const directory = await workspacePath(context.workspace, requestedPath, "directory");
-      const result = await searchWithRipgrep(directory, requestedPath, input.query);
-      return success(`search:${input.query}`, result);
-    }),
-    define("filesystem.write", "Write one file atomically inside the workspace and return its digest; this requires Approval.", "write", true, z.object({ path: z.string().trim().min(1), content: z.string() }).strict(), { path: "output.txt", content: "example" }, async (input, context) => {
-      const path = await writableWorkspacePath(context.workspace, input.path);
-      await atomicWrite(path, input.content);
-      return success(input.path, { path: input.path, digest: digest(input.content), byteLength: Buffer.byteLength(input.content) });
-    }),
-    define("filesystem.patch", "Patch one file atomically by replacing one exact occurrence after checking its expected digest; this requires Approval.", "write", true, z.object({
-      path: z.string().trim().min(1), expectedDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), find: z.string().min(1), replace: z.string()
-    }).strict(), { path: "source.txt", expectedDigest: `sha256:${"0".repeat(64)}`, find: "old", replace: "new" }, async (input, context) => {
-      const path = await workspacePath(context.workspace, input.path, "file");
-      const current = await readFile(path, "utf8");
-      if (digest(current) !== input.expectedDigest) {
-        if (!current.includes(input.find) && current.includes(input.replace)) return success(input.path, { path: input.path, digest: digest(current), replayed: true });
-        throw new ToolFailure("CONTENT_CONFLICT", "File content no longer matches expectedDigest.");
+    defineTool({
+      contract: {
+        identity: { name: "filesystem.list" },
+        capability: { purpose: "Discover workspace file names and paths under one known directory.", nonGoals: ["Read file contents.", "Search for text inside files."] },
+        decision: { useWhen: ["A required path is unknown but its containing directory is known."], avoidWhen: ["The exact target path is already known.", "The uncertainty concerns file content rather than path."] },
+        execution: { effect: { kind: "read", description: "Enumerates workspace paths without modifying external state." }, idempotent: true, inputSchema: z.object({ path: z.string().default(".") }).strict(), inputExample: { path: "." } },
+        evidence: { produces: ["A bounded recursive list of file paths and whether it was truncated."], factsSchema: ListFactsSchema }
+      },
+      async execute(input, context) {
+        const requestedPath = input.path ?? ".";
+        const directory = await workspacePath(context.workspace, requestedPath, "directory");
+        const entries = (await listFiles(directory)).map((path) => relativeFromRequested(requestedPath, directory, path));
+        return { subjectRef: requestedPath, facts: { entries: entries.slice(0, 2000), truncated: entries.length > 2000 } };
       }
-      const first = current.indexOf(input.find);
-      if (first < 0 || current.indexOf(input.find, first + input.find.length) >= 0) {
-        throw new ToolFailure("PATCH_CONFLICT", "Patch find text must occur exactly once.");
-      }
-      const next = `${current.slice(0, first)}${input.replace}${current.slice(first + input.find.length)}`;
-      await atomicWrite(path, next);
-      return success(input.path, { path: input.path, digest: digest(next), replayed: false });
     }),
-    define("shell.execute", "Start an executable directly in the workspace with arguments supplied separately in args; shell command strings are not accepted and Approval is required.", "execute", false, z.object({
-      command: z.string().trim().min(1), args: z.array(z.string()).default([]), cwd: z.string().default("."), timeoutMs: z.number().int().positive().max(300_000).default(60_000)
-    }).strict(), { command: "node", args: ["--test", "test/example.test.js"], cwd: ".", timeoutMs: 60_000 }, async (input, context) => {
-      if (["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "sh", "bash"].includes(basename(input.command).toLowerCase())) {
-        throw new ToolFailure("COMMAND_REJECTED", "Interactive shell entrypoints are not allowed.");
+    defineTool({
+      contract: {
+        identity: { name: "filesystem.search" },
+        capability: { purpose: "Find a case-insensitive literal value inside UTF-8 file contents.", nonGoals: ["Discover a file by name.", "Interpret the query as a regular expression."] },
+        decision: { useWhen: ["The required literal content is known but its file location is unresolved."], avoidWhen: ["The target path is already known.", "The uncertainty concerns a file name or path rather than content."] },
+        execution: { effect: { kind: "read", description: "Reads bounded workspace text content without modifying external state." }, idempotent: true, inputSchema: z.object({ query: z.string().trim().min(1), path: z.string().default(".") }).strict(), inputExample: { query: "TODO", path: "." } },
+        evidence: { produces: ["Matching file paths, line numbers, bounded line text, and truncation status."], factsSchema: SearchFactsSchema }
+      },
+      async execute(input, context) {
+        const requestedPath = input.path ?? ".";
+        const directory = await workspacePath(context.workspace, requestedPath, "directory");
+        return { subjectRef: `search:${input.query}`, facts: await searchWithRipgrep(directory, requestedPath, input.query) };
       }
-      const cwd = await workspacePath(context.workspace, input.cwd ?? ".", "directory");
-      const result = await runProcess(input.command, input.args ?? [], cwd, input.timeoutMs ?? 60_000);
-      if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Tool execution timed out.", true);
-      if (result.exitCode !== 0) {
-        const detail = (result.stderr || result.stdout).trim().slice(0, 500);
-        throw new ToolFailure("COMMAND_FAILED", `Command exited with code ${result.exitCode}.${detail ? ` ${detail}` : ""}`);
+    }),
+    defineTool({
+      contract: {
+        identity: { name: "filesystem.write" },
+        capability: { purpose: "Replace or create one known workspace file with complete content.", nonGoals: ["Apply a minimal change to existing content.", "Discover a target path."] },
+        decision: { useWhen: ["The exact target path and complete desired content are known."], avoidWhen: ["Only a localized existing-content change is required.", "The desired content is unresolved."] },
+        execution: { effect: { kind: "write", description: "Atomically creates or replaces one workspace file." }, idempotent: true, inputSchema: z.object({ path: z.string().trim().min(1), content: z.string() }).strict(), inputExample: { path: "output.txt", content: "example" } },
+        evidence: { produces: ["The written path, resulting content digest, and byte length."], factsSchema: WriteFactsSchema }
+      },
+      async execute(input, context) {
+        const path = await writableWorkspacePath(context.workspace, input.path);
+        await atomicWrite(path, input.content);
+        return { subjectRef: input.path, facts: { path: input.path, digest: digest(input.content), byteLength: Buffer.byteLength(input.content) } };
       }
-      return success(`command:${input.command}`, result);
+    }),
+    defineTool({
+      contract: {
+        identity: { name: "filesystem.patch" },
+        capability: { purpose: "Replace one exact occurrence in a known workspace file guarded by its content digest.", nonGoals: ["Rewrite an entire file.", "Apply ambiguous or multi-location edits."] },
+        decision: { useWhen: ["The path, prior digest, unique old text, and replacement text are known."], avoidWhen: ["The current content or digest is unknown.", "The replacement target is not unique."] },
+        execution: { effect: { kind: "write", description: "Atomically changes one exact occurrence in one workspace file." }, idempotent: true, inputSchema: z.object({ path: z.string().trim().min(1), expectedDigest: DigestSchema, find: z.string().min(1), replace: z.string() }).strict(), inputExample: { path: "source.txt", expectedDigest: `sha256:${"0".repeat(64)}`, find: "old", replace: "new" } },
+        evidence: { produces: ["The changed path, resulting digest, and whether an idempotent replay was detected."], factsSchema: PatchFactsSchema }
+      },
+      async execute(input, context) {
+        const path = await workspacePath(context.workspace, input.path, "file");
+        const current = await readFile(path, "utf8");
+        if (digest(current) !== input.expectedDigest) {
+          if (!current.includes(input.find) && current.includes(input.replace)) return { subjectRef: input.path, facts: { path: input.path, digest: digest(current), replayed: true } };
+          throw new ToolFailure("CONTENT_CONFLICT", "File content no longer matches expectedDigest.");
+        }
+        const first = current.indexOf(input.find);
+        if (first < 0 || current.indexOf(input.find, first + input.find.length) >= 0) throw new ToolFailure("PATCH_CONFLICT", "Patch find text must occur exactly once.");
+        const next = `${current.slice(0, first)}${input.replace}${current.slice(first + input.find.length)}`;
+        await atomicWrite(path, next);
+        return { subjectRef: input.path, facts: { path: input.path, digest: digest(next), replayed: false } };
+      }
+    }),
+    defineTool({
+      contract: {
+        identity: { name: "shell.execute" },
+        capability: { purpose: "Run one known non-interactive executable with explicit arguments in the workspace.", nonGoals: ["Execute shell command strings.", "Discover which command should be run."] },
+        decision: { useWhen: ["The exact executable, arguments, working directory, and expected purpose are known."], avoidWhen: ["A dedicated capability can produce the required facts.", "The command or its necessity is unresolved."] },
+        execution: { effect: { kind: "execute", description: "Starts a process that may read, modify, or otherwise affect the workspace or external systems." }, idempotent: false, inputSchema: z.object({ command: z.string().trim().min(1), args: z.array(z.string()).default([]), cwd: z.string().default("."), timeoutMs: z.number().int().positive().max(300_000).default(60_000) }).strict(), inputExample: { command: "node", args: ["--test", "test/example.test.js"], cwd: ".", timeoutMs: 60_000 } },
+        evidence: { produces: ["The process exit code, bounded stdout/stderr, timeout status, and truncation status."], factsSchema: ProcessFactsSchema }
+      },
+      async execute(input, context) {
+        if (["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "sh", "bash"].includes(basename(input.command).toLowerCase())) throw new ToolFailure("COMMAND_REJECTED", "Interactive shell entrypoints are not allowed.");
+        const cwd = await workspacePath(context.workspace, input.cwd ?? ".", "directory");
+        const result = await runProcess(input.command, input.args ?? [], cwd, input.timeoutMs ?? 60_000);
+        if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Tool execution timed out.", true);
+        if (result.exitCode !== 0) {
+          const detail = (result.stderr || result.stdout).trim().slice(0, 500);
+          throw new ToolFailure("COMMAND_FAILED", `Command exited with code ${result.exitCode}.${detail ? ` ${detail}` : ""}`);
+        }
+        return { subjectRef: `command:${input.command}`, facts: result };
+      }
     }),
     ...gitTools()
   ];
@@ -147,27 +204,91 @@ function runRipgrep(args: string[], cwd: string): Promise<{ stdout: string; outp
 }
 
 function gitTools(): RuntimeTool[] {
-  const definitions: Array<{ name: string; description: string; schema: z.ZodTypeAny; inputExample: unknown; args: (input: any) => string[] }> = [
-    { name: "git.status", description: "Read the workspace Git status in short form without modifying the repository.", schema: z.object({}).strict(), inputExample: {}, args: () => ["status", "--short"] },
-    { name: "git.diff", description: "Read unstaged Git differences for the workspace or one optional path without modifying the repository.", schema: z.object({ path: z.string().trim().min(1).optional() }).strict(), inputExample: {}, args: (input) => ["diff", "--", ...(input.path ? [input.path] : [])] },
-    { name: "git.show", description: "Read one Git revision, optionally limited to one path, without modifying the repository.", schema: z.object({ revision: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/), path: z.string().trim().min(1).optional() }).strict(), inputExample: { revision: "HEAD" }, args: (input) => ["show", "--format=medium", input.revision, ...(input.path ? ["--", input.path] : [])] }
+  return [
+    gitTool({
+      name: "git.status",
+      purpose: "Observe the current workspace change status.",
+      nonGoals: ["Read file contents or diffs.", "Modify repository state."],
+      useWhen: ["The current set of changed, untracked, or staged paths is required."],
+      avoidWhen: ["Existing facts already establish the required workspace status."],
+      produces: ["The bounded short-form repository status and process facts."],
+      schema: z.object({}).strict(), inputExample: {}, args: () => ["status", "--short"]
+    }),
+    gitTool({
+      name: "git.diff",
+      purpose: "Observe unstaged repository differences for the workspace or one known path.",
+      nonGoals: ["Read committed history.", "Modify repository state."],
+      useWhen: ["The current unstaged changes are required as facts."],
+      avoidWhen: ["The required fact is repository status or committed content rather than an unstaged diff."],
+      produces: ["The bounded unstaged diff and process facts."],
+      schema: z.object({ path: z.string().trim().min(1).optional() }).strict(), inputExample: {}, args: (input) => ["diff", "--", ...(input.path ? [input.path] : [])]
+    }),
+    gitTool({
+      name: "git.show",
+      purpose: "Observe content from one known repository revision, optionally limited to one path.",
+      nonGoals: ["Read unstaged changes.", "Modify repository state."],
+      useWhen: ["The exact revision is known and its committed content is required."],
+      avoidWhen: ["The revision is unresolved or the required fact concerns the working tree."],
+      produces: ["The bounded committed revision content and process facts."],
+      schema: z.object({ revision: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/), path: z.string().trim().min(1).optional() }).strict(), inputExample: { revision: "HEAD" }, args: (input) => ["show", "--format=medium", input.revision, ...(input.path ? ["--", input.path] : [])]
+    })
   ];
-  return definitions.map((definition) => define(definition.name, definition.description, "read", true, definition.schema, definition.inputExample, async (input, context) => {
-    const result = await runProcess("git", definition.args(input), context.workspace, 30_000);
-    if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Git command timed out.", true);
-    if (result.exitCode !== 0) throw new ToolFailure("GIT_COMMAND_FAILED", result.stderr || "Git command failed.");
-    return success(`git:${definition.name}`, result);
-  }));
 }
 
-function define<T>(name: string, description: string, risk: RuntimeTool["risk"], idempotent: boolean, schema: z.ZodType<T>, inputExample: unknown, execute: (input: T, context: Parameters<RuntimeTool["execute"]>[1]) => Promise<RuntimeToolResult>): RuntimeTool {
-  return {
-    name, description, risk, idempotent, inputSchema: schema, inputExample,
+function gitTool<T>(definition: {
+  name: string;
+  purpose: string;
+  nonGoals: readonly string[];
+  useWhen: readonly string[];
+  avoidWhen: readonly string[];
+  produces: readonly string[];
+  schema: z.ZodType<T>;
+  inputExample: unknown;
+  args(input: T): string[];
+}): RuntimeTool {
+  return defineTool({
+    contract: {
+      identity: { name: definition.name },
+      capability: { purpose: definition.purpose, nonGoals: definition.nonGoals },
+      decision: { useWhen: definition.useWhen, avoidWhen: definition.avoidWhen },
+      execution: { effect: { kind: "read", description: "Reads repository state without modifying external state." }, idempotent: true, inputSchema: definition.schema, inputExample: definition.inputExample },
+      evidence: { produces: definition.produces, factsSchema: ProcessFactsSchema }
+    },
     async execute(input, context) {
-      try { return await execute(schema.parse(input), context); }
+      const result = await runProcess("git", definition.args(input), context.workspace, 30_000);
+      if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Git command timed out.", true);
+      if (result.exitCode !== 0) throw new ToolFailure("GIT_COMMAND_FAILED", result.stderr || "Git command failed.");
+      return { subjectRef: `git:${definition.name}`, facts: result };
+    }
+  });
+}
+
+function defineTool<Input, Facts>(definition: {
+  contract: {
+    identity: { name: string };
+    capability: { purpose: string; nonGoals: readonly string[] };
+    decision: { useWhen: readonly string[]; avoidWhen: readonly string[] };
+    execution: {
+      effect: { kind: "read" | "write" | "execute"; description: string };
+      idempotent: boolean;
+      inputSchema: z.ZodType<Input>;
+      inputExample: unknown;
+    };
+    evidence: { produces: readonly string[]; factsSchema: z.ZodType<Facts> };
+  };
+  execute(input: Input, context: Parameters<RuntimeTool["execute"]>[1]): Promise<{ subjectRef: string; facts: Facts }>;
+}): RuntimeTool {
+  const schema = definition.contract.execution.inputSchema;
+  return {
+    contract: definition.contract as RuntimeTool["contract"],
+    async execute(input, context) {
+      try {
+        const result = await definition.execute(schema.parse(input), context);
+        return { status: "success", subjectRef: result.subjectRef, facts: result.facts as never };
+      }
       catch (error) {
         const failure = error instanceof ToolFailure ? error : new ToolFailure("TOOL_EXECUTION_ERROR", error instanceof Error ? error.message : String(error), true);
-        return { status: "failure", subjectRef: name, error: { code: failure.code, message: failure.message, retryable: failure.retryable } };
+        return { status: "failure", subjectRef: definition.contract.identity.name, error: { code: failure.code, message: failure.message, retryable: failure.retryable } };
       }
     }
   };
@@ -212,7 +333,6 @@ function runProcess(command: string, args: string[], cwd: string, timeoutMs: num
 }
 
 function digest(content: string): string { return `sha256:${createHash("sha256").update(content).digest("hex")}`; }
-function success(subjectRef: string, output: unknown): RuntimeToolResult { return { status: "success", subjectRef, output: output as never }; }
 function relativeFromRequested(requested: string, root: string, path: string): string {
   const prefix = requested === "." ? "" : requested.replaceAll("\\", "/").replace(/\/$/, "");
   const child = relative(root, path).replaceAll("\\", "/");

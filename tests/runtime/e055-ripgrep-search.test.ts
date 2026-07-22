@@ -18,14 +18,14 @@ function workspace(): string {
 }
 
 function searchTool(): RuntimeTool {
-  const tool = createBuiltInTools().find((candidate) => candidate.name === "filesystem.search");
+  const tool = createBuiltInTools().find((candidate) => candidate.contract.identity.name === "filesystem.search");
   if (tool === undefined) throw new Error("Missing filesystem.search");
   return tool;
 }
 
 async function search(root: string, input: unknown) {
   const tool = searchTool();
-  return tool.execute(tool.inputSchema.parse(input), { workspace: root, runId: "run-e055", invocationId: "inv-e055" });
+  return tool.execute(tool.contract.execution.inputSchema.parse(input), { workspace: root, runId: "run-e055", invocationId: "inv-e055" });
 }
 
 describe("E055 bundled Ripgrep search", () => {
@@ -48,7 +48,7 @@ describe("E055 bundled Ripgrep search", () => {
     await expect(search(root, { query: "[literal].*", path: "src" })).resolves.toEqual({
       status: "success",
       subjectRef: "search:[literal].*",
-      output: {
+      facts: {
         matches: [
           { path: "src/a.txt", line: 1, text: "Needle [literal].*" },
           { path: "src/nested/b.txt", line: 1, text: "needle [literal].*" }
@@ -68,15 +68,15 @@ describe("E055 bundled Ripgrep search", () => {
     expect(first).toEqual(second);
     expect(first).toEqual(expect.objectContaining({
       status: "success",
-      output: expect.objectContaining({ matches: expect.any(Array), truncated: false })
+      facts: expect.objectContaining({ matches: expect.any(Array), truncated: false })
     }));
     if (first.status !== "success") throw new Error("Search unexpectedly failed");
-    expect((first.output as { matches: unknown[] }).matches).toHaveLength(100);
+    expect((first.facts as { matches: unknown[] }).matches).toHaveLength(100);
 
     writeFileSync(join(root, "overflow.txt"), "needle-overflow\n", "utf8");
     await expect(search(root, { query: "needle" })).resolves.toEqual(expect.objectContaining({
       status: "success",
-      output: expect.objectContaining({ matches: expect.any(Array), truncated: true })
+      facts: expect.objectContaining({ matches: expect.any(Array), truncated: true })
     }));
   });
 

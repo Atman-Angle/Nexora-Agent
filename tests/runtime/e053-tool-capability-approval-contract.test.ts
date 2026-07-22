@@ -36,21 +36,21 @@ describe("E053 Tool capability and Approval input convergence", () => {
       await runtime.start({ input: "Capture Tool capability metadata." });
       const initial = tools(provider.contexts[0]!);
       const active = tools(provider.contexts[1]!);
-      const shell = active.find((tool) => tool.name === "shell.execute");
+      const shell = active.find((tool) => tool.identity.name === "shell.execute");
 
       expect(initial).toHaveLength(9);
-      expect(initial.every((tool) => typeof tool.description === "string" && tool.description.length > 0 && tool.description.length <= 240)).toBe(true);
-      expect(initial.every((tool) => tool.inputExample === undefined)).toBe(true);
+      expect(initial.every((tool) => tool.capability.purpose.length > 0 && tool.decision.useWhen.length > 0 && tool.evidence.produces.length > 0)).toBe(true);
+      expect(initial.every((tool) => tool.execution.inputExample === undefined)).toBe(true);
       expect(shell).toEqual(expect.objectContaining({
-        description: expect.stringContaining("executable"),
-        inputExample: {
+        capability: expect.objectContaining({ purpose: expect.any(String) }),
+        execution: expect.objectContaining({ inputExample: {
           command: "node",
           args: ["--test", "test/example.test.js"],
           cwd: ".",
           timeoutMs: 60_000
-        }
+        } })
       }));
-      expect(active.filter((tool) => tool.inputExample !== undefined)).toHaveLength(1);
+      expect(active.filter((tool) => tool.execution.inputExample !== undefined)).toHaveLength(1);
     } finally {
       runtime.close();
     }
@@ -65,14 +65,10 @@ describe("E053 Tool capability and Approval input convergence", () => {
       { type: "request_input", question: "Provide a valid path.", reason: "Tool input was rejected" }
     ]);
     const tool: RuntimeTool = {
-      name: "example.write",
-      risk: "write",
-      idempotent: true,
-      inputSchema: z.object({ path: z.string().min(1) }).strict(),
-      inputExample: { path: "output.txt" },
+      contract: testContract("example.write", "write", z.object({ path: z.string().min(1) }).strict(), { path: "output.txt" }, z.object({ written: z.boolean() }).strict()),
       async execute() {
         effects += 1;
-        return { status: "success", subjectRef: "output.txt", output: { written: true } };
+        return { status: "success", subjectRef: "output.txt", facts: { written: true } };
       }
     };
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [tool] });
@@ -106,13 +102,9 @@ describe("E053 Tool capability and Approval input convergence", () => {
       finishFromEvidence("Executed the approved canonical input.")
     ]);
     const tool: RuntimeTool = {
-      name: "example.execute",
-      risk: "execute",
-      idempotent: false,
-      inputSchema: Input,
-      inputExample: { command: "node", args: [], cwd: ".", timeoutMs: 60_000 },
+      contract: testContract("example.execute", "execute", Input, { command: "node", args: [], cwd: ".", timeoutMs: 60_000 }, z.object({ input: Input }).strict(), false),
       async execute(input) {
-        return { status: "success", subjectRef: "command:node", output: { input: Input.parse(input) } };
+        return { status: "success", subjectRef: "command:node", facts: { input: Input.parse(input) } };
       }
     };
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [tool] });
@@ -193,11 +185,11 @@ describe("E053 Tool capability and Approval input convergence", () => {
 });
 
 type ContextTool = {
-  readonly name: string;
-  readonly risk: "read" | "write" | "execute";
-  readonly idempotent: boolean;
-  readonly description?: string;
-  readonly inputExample?: unknown;
+  readonly identity: { readonly name: string };
+  readonly capability: { readonly purpose: string; readonly nonGoals: readonly string[] };
+  readonly decision: { readonly useWhen: readonly string[]; readonly avoidWhen: readonly string[] };
+  readonly execution: { readonly effect: { readonly kind: "read" | "write" | "execute"; readonly description: string }; readonly inputExample?: unknown };
+  readonly evidence: { readonly produces: readonly string[] };
 };
 
 type HttpContext = Omit<ModelDecisionContext, "tools"> & {
@@ -206,6 +198,15 @@ type HttpContext = Omit<ModelDecisionContext, "tools"> & {
 
 function tools(context: ModelDecisionContext): readonly ContextTool[] {
   return context.tools as readonly ContextTool[];
+}
+
+function testContract(name: string, kind: "read" | "write" | "execute", inputSchema: z.ZodType<unknown>, inputExample: unknown, factsSchema: z.ZodType<unknown>, idempotent = true): RuntimeTool["contract"] {
+  return {
+    identity: { name }, capability: { purpose: "Produce the requested facts.", nonGoals: ["Choose whether the facts are required."] },
+    decision: { useWhen: ["The facts are required."], avoidWhen: ["The facts already exist."] },
+    execution: { effect: { kind, description: "Performs the declared effect." }, idempotent, inputSchema, inputExample },
+    evidence: { produces: ["Execution facts."], factsSchema }
+  };
 }
 
 function fixture(content = "fixture\n"): string {
@@ -301,10 +302,10 @@ function capabilityDecision(
   index: number
 ): { readonly action: unknown; readonly selected: boolean } {
   if (index === 0) {
-    const list = context.tools.find((tool) => tool.description?.includes("List files"));
-    const read = context.tools.find((tool) => tool.description?.includes("Read one UTF-8 file"));
-    const patch = context.tools.find((tool) => tool.description?.includes("Patch one file"));
-    const execute = context.tools.find((tool) => tool.description?.includes("executable directly"));
+    const list = context.tools.find((tool) => tool.capability.purpose.includes("file names and paths"));
+    const read = context.tools.find((tool) => tool.capability.purpose.includes("content from one known"));
+    const patch = context.tools.find((tool) => tool.capability.purpose.includes("exact occurrence"));
+    const execute = context.tools.find((tool) => tool.capability.purpose.includes("executable"));
     if (list === undefined || read === undefined || patch === undefined || execute === undefined) {
       return {
         action: { type: "request_input", question: "Tool capabilities are unavailable.", reason: "Missing Tool descriptions" },
@@ -313,10 +314,10 @@ function capabilityDecision(
     }
     return {
       action: plan(workspace, [
-        { id: "discover", objective: "Discover files", toolName: list.name, checkId: "listed" },
-        { id: "read", objective: "Read discovered file", toolName: read.name, checkId: "read" },
-        { id: "patch", objective: "Patch file", toolName: patch.name, checkId: "patched" },
-        { id: "validate", objective: "Validate result", toolName: execute.name, checkId: "validated" }
+        { id: "discover", objective: "Discover files", toolName: list.identity.name, checkId: "listed" },
+        { id: "read", objective: "Read discovered file", toolName: read.identity.name, checkId: "read" },
+        { id: "patch", objective: "Patch file", toolName: patch.identity.name, checkId: "patched" },
+        { id: "validate", objective: "Validate result", toolName: execute.identity.name, checkId: "validated" }
       ]),
       selected: true
     };
@@ -337,8 +338,8 @@ function capabilityDecision(
   const activeStep = context.run.currentPlan?.orderedSteps.find((step) => step.id === activeId);
   const check = activeStep?.acceptanceChecks[0];
   const toolName = check?.kind === "tool_result" ? check.toolName : undefined;
-  const tool = context.tools.find((item) => item.name === toolName);
-  const inputExample = tool?.inputExample as Record<string, unknown> | undefined;
+  const tool = context.tools.find((item) => item.identity.name === toolName);
+  const inputExample = tool?.execution.inputExample as Record<string, unknown> | undefined;
   const checkId = check?.id;
   if (activeId === undefined || toolName === undefined || checkId === undefined || inputExample === undefined) {
     return { action: { type: "request_input", question: "Active Tool input is unavailable.", reason: "Missing inputExample" }, selected: false };
@@ -348,13 +349,13 @@ function capabilityDecision(
     return { action: { type: "call_tool", stepId: activeId, checkIds: [checkId], toolName, input: inputExample }, selected: false };
   }
   if (activeId === "read") {
-    const listed = context.toolObservations.find((item) => item.toolName === "filesystem.list")?.result as { entries?: unknown } | undefined;
+    const listed = context.toolObservations.find((item) => item.toolName === "filesystem.list")?.facts as { entries?: unknown } | undefined;
     const path = Array.isArray(listed?.entries) ? listed.entries.find((item): item is string => typeof item === "string" && item.endsWith(".txt")) : undefined;
     if (path === undefined) return { action: { type: "request_input", question: "No text file was discovered.", reason: "Missing list observation" }, selected: false };
     return { action: { type: "call_tool", stepId: activeId, checkIds: [checkId], toolName, input: { ...inputExample, path } }, selected: false };
   }
   if (activeId === "patch") {
-    const read = context.toolObservations.find((item) => item.toolName === "filesystem.read")?.result as { path?: unknown; content?: unknown; digest?: unknown } | undefined;
+    const read = context.toolObservations.find((item) => item.toolName === "filesystem.read")?.facts as { path?: unknown; content?: unknown; digest?: unknown } | undefined;
     if (typeof read?.path !== "string" || read.content !== "before\n" || typeof read.digest !== "string") {
       return { action: { type: "request_input", question: "Read observation is incomplete.", reason: "Missing patch facts" }, selected: false };
     }

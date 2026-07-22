@@ -40,7 +40,7 @@ const ToolResultSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("success"),
     subjectRef: z.string().trim().min(1),
-    output: JsonValueSchema
+    facts: JsonValueSchema
   }).strict(),
   z.object({
     status: z.literal("failure"),
@@ -55,12 +55,30 @@ const ToolResultSchema = z.discriminatedUnion("status", [
 export type RuntimeToolResult = z.infer<typeof ToolResultSchema>;
 
 export type RuntimeTool = {
-  readonly name: string;
-  readonly description?: string;
-  readonly risk: "read" | "write" | "execute";
-  readonly idempotent: boolean;
-  readonly inputSchema: z.ZodType<unknown>;
-  readonly inputExample: unknown;
+  readonly contract: {
+    readonly identity: { readonly name: string };
+    readonly capability: {
+      readonly purpose: string;
+      readonly nonGoals: readonly string[];
+    };
+    readonly decision: {
+      readonly useWhen: readonly string[];
+      readonly avoidWhen: readonly string[];
+    };
+    readonly execution: {
+      readonly effect: {
+        readonly kind: "read" | "write" | "execute";
+        readonly description: string;
+      };
+      readonly idempotent: boolean;
+      readonly inputSchema: z.ZodType<unknown>;
+      readonly inputExample: unknown;
+    };
+    readonly evidence: {
+      readonly produces: readonly string[];
+      readonly factsSchema: z.ZodType<unknown>;
+    };
+  };
   execute(input: unknown, context: { readonly workspace: string; readonly runId: string; readonly invocationId: string }): Promise<RuntimeToolResult>;
 };
 
@@ -133,16 +151,15 @@ export class RuntimeEngine {
     this.#leaseTtlMs = options.leaseTtlMs ?? 60_000;
     this.#tools = new Map();
     for (const tool of options.tools) {
-      if (this.#tools.has(tool.name)) throw new Error(`Duplicate Runtime Tool: ${tool.name}`);
-      if (tool.description !== undefined && (tool.description.trim().length === 0 || tool.description.length > 240)) {
-        throw new Error(`Runtime Tool description must be non-empty and at most 240 characters: ${tool.name}`);
-      }
+      const name = tool.contract.identity.name;
+      validateToolContract(tool.contract);
+      if (this.#tools.has(name)) throw new Error(`Duplicate Runtime Tool: ${name}`);
       try {
-        tool.inputSchema.parse(JsonValueSchema.parse(tool.inputExample));
+        tool.contract.execution.inputSchema.parse(JsonValueSchema.parse(tool.contract.execution.inputExample));
       } catch (error) {
-        throw new Error(`Invalid inputExample for Runtime Tool ${tool.name}: ${errorMessage(error)}`);
+        throw new Error(`Invalid inputExample for Runtime Tool ${name}: ${errorMessage(error)}`);
       }
-      this.#tools.set(tool.name, tool);
+      this.#tools.set(name, tool);
     }
     const dataDir = resolve(options.dataDir ?? join(this.#workspace, ".nexora"));
     this.#artifactDir = join(dataDir, "artifacts");
@@ -286,10 +303,10 @@ export class RuntimeEngine {
     }
 
     const tool = this.#tools.get(invocation.toolName);
-    if (tool === undefined || !tool.idempotent) {
+    if (tool === undefined || !tool.contract.execution.idempotent) {
       throw new Error(`Recovery Tool is unavailable or no longer idempotent: ${invocation.toolName}`);
     }
-    const parsedInput = tool.inputSchema.parse(invocation.inputJson);
+    const parsedInput = tool.contract.execution.inputSchema.parse(invocation.inputJson);
     const now = this.#now();
     const running = runInput.status === "blocked"
       ? transitionRunStatus(runInput, "running", { now })
@@ -504,9 +521,9 @@ export class RuntimeEngine {
     }
     const tool = this.#tools.get(action.toolName);
     if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${action.toolName}`);
-    const parsedInput = JsonValueSchema.parse(tool.inputSchema.parse(action.input));
+    const parsedInput = JsonValueSchema.parse(tool.contract.execution.inputSchema.parse(action.input));
     const canonicalAction = { ...action, input: parsedInput };
-    if (tool.risk !== "read" && !approved) {
+    if (tool.contract.execution.effect.kind !== "read" && !approved) {
       const now = this.#now();
       const waiting = transitionRunStatus(runInput, "waiting", {
         now,
@@ -514,14 +531,14 @@ export class RuntimeEngine {
         pendingRequest: {
           id: this.#createId(),
           kind: "approval",
-          prompt: `Allow ${tool.name} for Step ${step.id}?`,
+          prompt: `Allow ${tool.contract.identity.name} for Step ${step.id}?`,
           createdAt: now,
           action: canonicalAction
         }
       });
       return this.#commit(runInput, waiting, "approval.requested", {
         requestId: waiting.pendingRequest?.id ?? null,
-        toolName: tool.name,
+        toolName: tool.contract.identity.name,
         stepId: step.id
       }, observer);
     }
@@ -534,11 +551,11 @@ export class RuntimeEngine {
         planVersion: plan.version,
         stepId: step.id,
         checkIds: action.checkIds,
-        toolName: tool.name,
+        toolName: tool.contract.identity.name,
         inputJson: parsedInput,
         inputDigest: digestJson(parsedInput),
-        idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${tool.name}:${digestJson(parsedInput)}`,
-        idempotent: tool.idempotent,
+        idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${digestJson(parsedInput)}`,
+        idempotent: tool.contract.execution.idempotent,
         fencingToken: this.#requireFencingToken(runInput.runId),
         startedAt
       },
@@ -549,7 +566,7 @@ export class RuntimeEngine {
       updatedAt: startedAt
       },
       fencingToken: this.#requireFencingToken(runInput.runId),
-      event: { type: "tool.started", occurredAt: startedAt, payload: { invocationId, toolName: tool.name, stepId: step.id } }
+      event: { type: "tool.started", occurredAt: startedAt, payload: { invocationId, toolName: tool.contract.identity.name, stepId: step.id } }
     });
     this.#notify(runInput.runId, observer);
     return this.#executeToolInvocation(started.run, started.invocation, tool, parsedInput, observer);
@@ -564,11 +581,14 @@ export class RuntimeEngine {
   ): Promise<RunSnapshot> {
     let result: RuntimeToolResult;
     try {
-      result = ToolResultSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => tool.execute(parsedInput, {
+      const returned = ToolResultSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => tool.execute(parsedInput, {
         workspace: this.#workspace,
         runId: run.runId,
         invocationId: invocation.id
       })));
+      result = returned.status === "success"
+        ? { ...returned, facts: JsonValueSchema.parse(tool.contract.evidence.factsSchema.parse(returned.facts)) }
+        : returned;
     } catch (error) {
       result = {
         status: "failure",
@@ -597,7 +617,7 @@ export class RuntimeEngine {
       return completed.run;
     }
 
-    const outputDigest = digestJson(result.output);
+    const outputDigest = digestJson(result.facts);
     const newEvidence: Evidence[] = invocation.checkIds.map((checkId) => ({
       id: this.#createId(),
       kind: "tool_result",
@@ -626,7 +646,7 @@ export class RuntimeEngine {
       status: "succeeded",
       completedAt,
       fencingToken: this.#requireFencingToken(run.runId),
-      resultJson: result.output,
+      resultJson: result.facts,
       previous: run,
       next,
       event: { type: "tool.succeeded", occurredAt: completedAt, payload: { invocationId: invocation.id, evidenceIds: newEvidence.map((item) => item.id) } }
@@ -668,7 +688,7 @@ export class RuntimeEngine {
           toolName: invocation.toolName,
           subjectRef: evidence.subjectRef,
           input: JsonValueSchema.parse(invocation.inputJson) as JsonValue,
-          output: JsonValueSchema.parse(invocation.resultJson) as JsonValue
+          facts: JsonValueSchema.parse(invocation.resultJson) as JsonValue
         };
       });
       verdict = SemanticValidationVerdictSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => this.#provider.validate({
@@ -777,11 +797,16 @@ export class RuntimeEngine {
       }),
       toolObservations: projectToolObservations(this.#store.listToolInvocations(run.runId)),
       tools: [...this.#tools.values()].map((tool) => ({
-        name: tool.name,
-        ...(tool.description === undefined ? {} : { description: tool.description }),
-        risk: tool.risk,
-        idempotent: tool.idempotent,
-        ...(actions.includes("call_tool") && callableTools.has(tool.name) ? { inputExample: tool.inputExample } : {})
+        identity: tool.contract.identity,
+        capability: tool.contract.capability,
+        decision: tool.contract.decision,
+        execution: {
+          effect: tool.contract.execution.effect,
+          ...(actions.includes("call_tool") && callableTools.has(tool.contract.identity.name)
+            ? { inputExample: tool.contract.execution.inputExample }
+            : {})
+        },
+        evidence: { produces: tool.contract.evidence.produces }
       }))
     };
   }
@@ -937,7 +962,7 @@ function projectToolObservations(invocations: readonly ToolInvocation[]): ToolOb
         toolName: item.toolName,
         status: item.status,
         completedAt: item.completedAt,
-        result,
+        facts: result,
         error,
         truncated: false,
         digest: digestJson(item.status === "succeeded" ? result : error)
@@ -951,7 +976,7 @@ function projectToolObservations(invocations: readonly ToolInvocation[]): ToolOb
 
 function boundObservation(observation: ToolObservation, maxBytes: number): ToolObservation {
   if (jsonBytes(observation) <= maxBytes) return observation;
-  const value = observation.status === "succeeded" ? observation.result : observation.error;
+  const value = observation.status === "succeeded" ? observation.facts : observation.error;
   const serialized = JSON.stringify(value);
   let lower = 0;
   let upper = serialized.length;
@@ -972,7 +997,7 @@ function boundObservation(observation: ToolObservation, maxBytes: number): ToolO
 function observationPreview(observation: ToolObservation, preview: string): ToolObservation {
   return {
     ...observation,
-    result: observation.status === "succeeded" ? { preview } : null,
+    facts: observation.status === "succeeded" ? { preview } : null,
     error: observation.status === "failed" ? { preview } : null,
     truncated: true
   };
@@ -980,6 +1005,26 @@ function observationPreview(observation: ToolObservation, preview: string): Tool
 
 function jsonBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+function validateToolContract(contract: RuntimeTool["contract"]): void {
+  const name = contract.identity.name;
+  requireToolText(name, "identity.name", name);
+  requireToolText(contract.capability.purpose, "capability.purpose", name);
+  requireToolTexts(contract.capability.nonGoals, "capability.nonGoals", name);
+  requireToolTexts(contract.decision.useWhen, "decision.useWhen", name);
+  requireToolTexts(contract.decision.avoidWhen, "decision.avoidWhen", name);
+  requireToolText(contract.execution.effect.description, "execution.effect.description", name);
+  requireToolTexts(contract.evidence.produces, "evidence.produces", name);
+}
+
+function requireToolTexts(values: readonly string[], field: string, name: string): void {
+  if (values.length === 0 || values.length > 4) throw new Error(`Runtime Tool ${name} ${field} must contain 1-4 items.`);
+  for (const value of values) requireToolText(value, field, name);
+}
+
+function requireToolText(value: string, field: string, name: string): void {
+  if (!value.trim() || value.length > 240) throw new Error(`Runtime Tool ${name} ${field} must be non-empty and at most 240 characters.`);
 }
 
 function requireWorkspace(value: string): string {

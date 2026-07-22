@@ -35,7 +35,7 @@ type DecisionPayload = {
     readonly workspace?: string;
     readonly actionContract?: readonly { readonly type: string }[];
     readonly run: { readonly lastError: { readonly message: string } | null };
-    readonly tools: readonly { readonly name: string; readonly inputExample?: unknown }[];
+    readonly tools: readonly { readonly identity: { readonly name: string }; readonly execution: { readonly inputExample?: unknown } }[];
   };
 };
 
@@ -115,13 +115,13 @@ describe("E050 Provider Action Contract convergence", () => {
     for (const example of decisionRequests[0]?.context.actionContract ?? []) {
       expect(RuntimeActionSchema.parse(example).type).toBe(example.type);
     }
-    expect(decisionRequests[0]?.context.tools).toContainEqual(expect.objectContaining({ name: "example.read" }));
-    expect(decisionRequests[0]?.context.tools[0]).not.toHaveProperty("inputExample");
+    expect(decisionRequests[0]?.context.tools).toContainEqual(expect.objectContaining({ identity: { name: "example.read" } }));
+    expect(decisionRequests[0]?.context.tools[0]?.execution).not.toHaveProperty("inputExample");
     expect(decisionRequests[2]?.context.tools).toContainEqual(expect.objectContaining({
-      name: "example.read",
-      inputExample: { path: "target.txt" }
+      identity: { name: "example.read" },
+      execution: expect.objectContaining({ inputExample: { path: "target.txt" } })
     }));
-    expect(decisionRequests[2]?.context.tools.find((tool) => tool.name === "example.other")).not.toHaveProperty("inputExample");
+    expect(decisionRequests[2]?.context.tools.find((tool) => tool.identity.name === "example.other")?.execution).not.toHaveProperty("inputExample");
     const secondDiagnostic = JSON.parse(decisionRequests[1]!.context.run.lastError!.message) as {
       kind: string;
       actionType: string | null;
@@ -240,14 +240,15 @@ describe("E050 Provider Action Contract convergence", () => {
 
 function exampleTool(inputExample: unknown, name = "example.read"): RuntimeTool {
   const tool = {
-    name,
-    risk: "read" as const,
-    idempotent: true,
-    inputSchema: z.object({ path: z.string().min(1) }).strict(),
-    inputExample,
+    contract: {
+      identity: { name }, capability: { purpose: "Read a known example.", nonGoals: ["Discover an unknown target."] },
+      decision: { useWhen: ["The example is required."], avoidWhen: ["The example is already known."] },
+      execution: { effect: { kind: "read" as const, description: "Reads without mutation." }, idempotent: true, inputSchema: z.object({ path: z.string().min(1) }).strict(), inputExample },
+      evidence: { produces: ["Example content."], factsSchema: z.object({ content: z.string() }).strict() }
+    },
     async execute(input: unknown) {
       const parsed = z.object({ path: z.string().min(1) }).strict().parse(input);
-      return { status: "success" as const, subjectRef: parsed.path, output: { content: "example" } };
+      return { status: "success" as const, subjectRef: parsed.path, facts: { content: "example" } };
     }
   };
   return tool as RuntimeTool;

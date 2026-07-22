@@ -38,14 +38,15 @@ function writeContract(workspace: string) {
 
 function writeTool(counter: { calls: number }): RuntimeTool {
   return {
-    name: "filesystem.write",
-    risk: "write",
-    idempotent: true,
-    inputSchema: z.object({ path: z.string(), content: z.string() }).strict(),
-    inputExample: { path: "output.txt", content: "example" },
+    contract: {
+      identity: { name: "filesystem.write" }, capability: { purpose: "Write known content.", nonGoals: ["Choose whether a write is required."] },
+      decision: { useWhen: ["A write is required."], avoidWhen: ["No mutation is required."] },
+      execution: { effect: { kind: "write", description: "Writes a file." }, idempotent: true, inputSchema: z.object({ path: z.string(), content: z.string() }).strict(), inputExample: { path: "output.txt", content: "example" } },
+      evidence: { produces: ["Write result."], factsSchema: z.object({ written: z.boolean() }).strict() }
+    },
     async execute(input) {
       counter.calls += 1;
-      return { status: "success", subjectRef: (input as { path: string }).path, output: { written: true } };
+      return { status: "success", subjectRef: (input as { path: string }).path, facts: { written: true } };
     }
   };
 }

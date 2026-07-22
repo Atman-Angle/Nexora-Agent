@@ -28,14 +28,15 @@ function tempRoot(): string {
 
 function recoveryTool(idempotent: boolean, counter: { calls: number }): RuntimeTool {
   return {
-    name: "external.apply",
-    risk: "execute",
-    idempotent,
-    inputSchema: z.object({ value: z.string() }).strict(),
-    inputExample: { value: "example" },
+    contract: {
+      identity: { name: "external.apply" }, capability: { purpose: "Apply a known external change.", nonGoals: ["Choose whether the change is required."] },
+      decision: { useWhen: ["The external change is required."], avoidWhen: ["The change is not required."] },
+      execution: { effect: { kind: "execute", description: "Changes external state." }, idempotent, inputSchema: z.object({ value: z.string() }).strict(), inputExample: { value: "example" } },
+      evidence: { produces: ["Application result."], factsSchema: z.object({ applied: z.boolean() }).strict() }
+    },
     async execute() {
       counter.calls += 1;
-      return { status: "success", subjectRef: "external:item-1", output: { applied: true } };
+      return { status: "success", subjectRef: "external:item-1", facts: { applied: true } };
     }
   };
 }

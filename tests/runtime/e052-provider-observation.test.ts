@@ -16,6 +16,15 @@ import {
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
+
+function testContract(name: string, inputSchema: z.ZodType<unknown>, inputExample: unknown, factsSchema: z.ZodType<unknown>): RuntimeTool["contract"] {
+  return {
+    identity: { name }, capability: { purpose: "Produce test facts.", nonGoals: ["Choose whether the facts are required."] },
+    decision: { useWhen: ["The facts are required."], avoidWhen: ["The facts already exist."] },
+    execution: { effect: { kind: "read", description: "Observes without mutation." }, idempotent: true, inputSchema, inputExample },
+    evidence: { produces: ["Observed facts."], factsSchema }
+  };
+}
 const servers: Server[] = [];
 
 afterEach(async () => {
@@ -67,7 +76,7 @@ describe("E052 Provider observation closure", () => {
         invocationId: view.toolInvocations[0]!.id,
         status: "succeeded",
         truncated: false,
-        result: expect.objectContaining({ content: "before\n", digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) })
+        facts: expect.objectContaining({ content: "before\n", digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) })
       }));
       expect(stub.validationCalls).toBe(1);
     } finally {
@@ -77,7 +86,7 @@ describe("E052 Provider observation closure", () => {
 
   it("returns a patch-compatible digest from filesystem.read", async () => {
     const workspace = fixture("known content\n");
-    const read = createBuiltInTools().find((tool) => tool.name === "filesystem.read")!;
+    const read = createBuiltInTools().find((tool) => tool.contract.identity.name === "filesystem.read")!;
 
     const result = await read.execute({ path: "note.txt" }, {
       workspace,
@@ -88,7 +97,7 @@ describe("E052 Provider observation closure", () => {
     expect(result).toEqual({
       status: "success",
       subjectRef: "note.txt",
-      output: {
+      facts: {
         path: "note.txt",
         content: "known content\n",
         digest: "sha256:a5e29604a88ef9dace3ea3de21aa0cfb09946846146070b9a9fe17f2f9701212",
@@ -105,11 +114,7 @@ describe("E052 Provider observation closure", () => {
       () => ({ type: "request_input", question: "The Tool failed. What should change?", reason: "Tool failure observed" })
     ]);
     const tool: RuntimeTool = {
-      name: "test.fail",
-      risk: "read",
-      idempotent: true,
-      inputSchema: z.object({}).strict(),
-      inputExample: {},
+      contract: testContract("test.fail", z.object({}).strict(), {}, z.object({}).strict()),
       async execute() {
         return { status: "failure", subjectRef: "failure", error: { code: "EXPECTED_FAILURE", message: "known failure", retryable: true } };
       }
@@ -127,7 +132,7 @@ describe("E052 Provider observation closure", () => {
         invocationId: view.toolInvocations[0]!.id,
         toolName: "test.fail",
         status: "failed",
-        result: null,
+        facts: null,
         error: { code: "EXPECTED_FAILURE", message: "known failure", retryable: true }
       }));
     } finally {
@@ -161,14 +166,10 @@ describe("E052 Provider observation closure", () => {
       () => ({ type: "request_input", question: "Stop after projection.", reason: "Projection captured" })
     ]);
     const largeTool: RuntimeTool = {
-      name: "test.large",
-      risk: "read",
-      idempotent: true,
-      inputSchema: z.object({ sequence: z.number().int(), secret: z.string() }).strict(),
-      inputExample: { sequence: 1, secret: "example" },
+      contract: testContract("test.large", z.object({ sequence: z.number().int(), secret: z.string() }).strict(), { sequence: 1, secret: "example" }, z.object({ sequence: z.number().int(), payload: z.string() }).strict()),
       async execute(input) {
         const sequence = (input as { sequence: number }).sequence;
-        return { status: "success", subjectRef: `large:${sequence}`, output: { sequence, payload: "x".repeat(100_000) } };
+        return { status: "success", subjectRef: `large:${sequence}`, facts: { sequence, payload: "x".repeat(100_000) } };
       }
     };
     let timestamp = Date.parse("2026-07-22T00:00:00.000Z");
@@ -211,7 +212,7 @@ type ToolObservation = {
   readonly toolName: string;
   readonly status: "succeeded" | "failed";
   readonly completedAt: string;
-  readonly result: unknown | null;
+  readonly facts: unknown | null;
   readonly error: unknown | null;
   readonly truncated: boolean;
   readonly digest: string;
@@ -313,7 +314,7 @@ function observationDecision(workspace: string, context: ObservationContext, ind
   }
   if (index === 2) {
     const read = observations(context).find((item) => item.toolName === "filesystem.read" && item.status === "succeeded");
-    const output = read?.result as { content?: unknown; digest?: unknown } | undefined;
+    const output = read?.facts as { content?: unknown; digest?: unknown } | undefined;
     if (output?.content !== "before\n" || typeof output.digest !== "string") {
       return { type: "request_input", question: "The real read result is unavailable.", reason: "Missing Tool observation" };
     }

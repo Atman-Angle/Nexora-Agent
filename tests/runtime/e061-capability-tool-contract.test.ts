@@ -31,7 +31,7 @@ describe("E061 capability-driven Tool Contract", () => {
       evidence: { produces: ["The observed value for the target."] }
     });
     expect(active).toEqual({ ...initial, execution: { ...initial!.execution, inputExample: { target: "known" } } });
-    expect(JSON.stringify(initial)).not.toMatch(/description"|idempotent|inputSchema|factsSchema/);
+    expect(JSON.stringify(initial)).not.toMatch(/idempotent|inputSchema|factsSchema/);
     runtime.close();
   });
 
