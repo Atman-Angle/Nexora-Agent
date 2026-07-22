@@ -19,6 +19,10 @@ export const BuilderPlanStepSchema = z.object({
   rationale: z.string().min(1),
   expectedEffects: z.array(z.string().min(1)).default([]),
   preferredToolCategory: PreferredToolCategorySchema.optional(),
+  /** Exact Tool names permitted to execute this step; empty preserves category-only plans. */
+  requiredTools: z.array(z.string().min(1)).optional(),
+  /** Task acceptance criterion IDs that this step is responsible for satisfying. */
+  acceptanceCriteria: z.array(z.string().min(1)).optional(),
   required: z.boolean().default(true),
   status: PlanStepStatusSchema.default("planned"),
   evidenceRefs: z.array(z.string().min(1)).default([]),

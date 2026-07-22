@@ -19,11 +19,12 @@ import {
   PlanningPolicyContextSchema
 } from "../../../contracts/src/index.js";
 import { isUnsafeWorkspacePath } from "./mutation-intent-validator.js";
+import { requiresMutationTaskType } from "../validation-gate.js";
 
 export const EXECUTION_PLAN_REPAIR_BUDGET = 2;
 
 function normalizePath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/^\.\//, "");
+  return path.replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/^\.\//, "");
 }
 
 function uniqueNormalized(paths: readonly string[]): string[] {
@@ -149,6 +150,7 @@ export function validateSubmittedExecutionPlan(input: {
   steps: BuilderPlanStep[];
   policy: PlanningPolicyContext;
   satisfiedRequiredTargets?: string[];
+  task?: Task;
 }): PlanValidationResult {
   const plan = ExecutionPlanSchema.parse({
     ...input.plan,
@@ -246,7 +248,11 @@ export function validateSubmittedExecutionPlan(input: {
           stepId: step.stepId
         }));
       }
-      if (step.operation === "create" && existingSet.has(normalized)) {
+      // Without an explicit file policy, `knownExistingFiles` is only a
+      // bounded working-set snapshot, not an authoritative directory index.
+      // Treat absence from that snapshot as unknown rather than rejecting a
+      // legitimate workspace-relative target during plan bootstrap.
+      if (explicitFilePolicy && step.operation === "create" && existingSet.has(normalized)) {
         issues.push(issue({
           code: "CREATE_TARGET_EXISTS",
           message: `Create target ${normalized} already exists.`,
@@ -255,7 +261,7 @@ export function validateSubmittedExecutionPlan(input: {
           stepId: step.stepId
         }));
       }
-      if (step.operation === "modify" && !existingSet.has(normalized)) {
+      if (explicitFilePolicy && step.operation === "modify" && !existingSet.has(normalized)) {
         issues.push(issue({
           code: "MODIFY_TARGET_MISSING",
           message: `Modify target ${normalized} does not exist.`,
@@ -311,6 +317,45 @@ export function validateSubmittedExecutionPlan(input: {
       repairHint: "Make plan.targetFiles equal the union of all step targetFiles.",
       path: target
     }));
+  }
+
+  if (input.task !== undefined && requiresMutationTaskType(input.task.input.taskType)) {
+    const requiredSteps = steps.filter((step) => step.required);
+    if (requiredSteps.length === 0) {
+      issues.push(issue({
+        code: "PLAN_STEPS_EMPTY",
+        message: "Mutation tasks require at least one required structured plan step.",
+        repairHint: "Submit required inspect, mutation, and validation steps instead of optional-only steps."
+      }));
+    }
+    const mutationTools = new Set(["filesystem.patch", "filesystem.write"]);
+    if (!requiredSteps.some((step) => (step.requiredTools ?? []).some((tool) => mutationTools.has(tool)))) {
+      issues.push(issue({
+        code: "REQUIRED_TARGET_MISSING",
+        message: "Mutation tasks require a required step bound to filesystem.patch or filesystem.write.",
+        repairHint: "Bind the mutation step to the exact filesystem.patch or filesystem.write Tool."
+      }));
+    }
+    const acceptanceIds = input.task.input.acceptanceCriteria.map((criterion) => criterion.id);
+    const mappedAcceptance = new Set(requiredSteps.flatMap((step) => step.acceptanceCriteria ?? []));
+    for (const criterionId of acceptanceIds) {
+      if (!mappedAcceptance.has(criterionId)) {
+        issues.push(issue({
+          code: "REQUIRED_TARGET_MISSING",
+          message: `Acceptance criterion ${criterionId} is not bound to a required plan step.`,
+          repairHint: `Map acceptance criterion ${criterionId} to a required structured plan step.`,
+          path: criterionId
+        }));
+      }
+    }
+    if (input.task.input.validationRequest !== undefined &&
+      !requiredSteps.some((step) => (step.requiredTools ?? []).includes("shell.execute"))) {
+      issues.push(issue({
+        code: "VALIDATION_COMMANDS_MISSING",
+        message: "Validation tasks require a required plan step bound to shell.execute.",
+        repairHint: "Add a required validation step with shell.execute in requiredTools."
+      }));
+    }
   }
 
   if (issues.length > 0) {

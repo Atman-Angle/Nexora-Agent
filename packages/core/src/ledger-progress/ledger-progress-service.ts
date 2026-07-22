@@ -1,10 +1,11 @@
-import type { ProgressLedger, ToolResult } from "../../../contracts/src/index.js";
+import type { PlanStepDefinition, ProgressLedger, ToolResult } from "../../../contracts/src/index.js";
 
 export function applyLedgerPatch(input: {
   ledger: ProgressLedger;
   patch: {
     currentStep?: string | null | undefined;
     appendPlannedSteps?: string[] | undefined;
+    appendPlanSteps?: PlanStepDefinition[] | undefined;
     appendCompletedSteps?: string[] | undefined;
     appendDecisions?: string[] | undefined;
     appendEvidenceRefs?: string[] | undefined;
@@ -34,12 +35,22 @@ function reconcilePlanSteps(
   patch: {
     currentStep?: string | null | undefined;
     appendPlannedSteps?: string[] | undefined;
+    appendPlanSteps?: PlanStepDefinition[] | undefined;
     appendCompletedSteps?: string[] | undefined;
   },
   now: string
 ): ProgressLedger {
-  const planSteps = ledger.planSteps.map((step) => ({ ...step, evidenceRefs: [...step.evidenceRefs] }));
-  const ensureStep = (description: string, status: "planned" | "in_progress" | "completed") => {
+  const planSteps = ledger.planSteps.map((step) => ({
+    ...step,
+    evidenceRefs: [...step.evidenceRefs],
+    requiredTools: [...(step.requiredTools ?? [])],
+    acceptanceCriteria: [...(step.acceptanceCriteria ?? [])]
+  }));
+  const ensureStep = (
+    description: string,
+    status: "planned" | "in_progress" | "completed",
+    definition?: Pick<PlanStepDefinition, "required" | "requiredTools" | "acceptanceCriteria">
+  ) => {
     const existing = planSteps.find((step) => step.description === description);
     const inferredEvidenceRefs =
       status === "completed"
@@ -48,6 +59,11 @@ function reconcilePlanSteps(
           : [...ledger.evidenceRefs]
         : inferPlanStepEvidenceRefs(description, ledger.evidenceRefs);
     if (existing !== undefined) {
+      if (definition !== undefined) {
+        existing.required = definition.required;
+        existing.requiredTools = [...new Set(definition.requiredTools ?? [])];
+        existing.acceptanceCriteria = [...new Set(definition.acceptanceCriteria ?? [])];
+      }
       if (existing.status !== "completed") {
         existing.status = status;
         existing.updatedAt = now;
@@ -61,9 +77,11 @@ function reconcilePlanSteps(
     const created = {
       stepId: `plan-step-${planSteps.length + 1}`,
       description,
-      required: true,
+      required: definition?.required ?? true,
       status,
       evidenceRefs: status === "completed" ? inferredEvidenceRefs : [],
+      requiredTools: [...new Set(definition?.requiredTools ?? [])],
+      acceptanceCriteria: [...new Set(definition?.acceptanceCriteria ?? [])],
       createdAt: now,
       updatedAt: now
     };
@@ -73,6 +91,9 @@ function reconcilePlanSteps(
 
   for (const description of patch.appendPlannedSteps ?? []) {
     ensureStep(description, "planned");
+  }
+  for (const definition of patch.appendPlanSteps ?? []) {
+    ensureStep(definition.description, "planned", definition);
   }
   if (patch.currentStep !== undefined && patch.currentStep !== null) {
     ensureStep(patch.currentStep, "in_progress");
@@ -103,15 +124,27 @@ export function completePlanStepFromTool(input: {
   toolResult: Extract<ToolResult, { status: "success" }>;
   executionEvidenceRefs: string[];
   validationEvidenceRefs: string[];
+  /** Successful Tool names already persisted for this Run, including the current execution. */
+  successfulToolNames: readonly string[];
   now: string;
 }): ProgressLedger {
   if (input.ledger.planSteps.length === 0) {
     return input.ledger;
   }
 
-  const matchingSteps = input.ledger.planSteps.filter(
-    (step) => step.status !== "completed" && stepMatchesTool(step.description, input.toolResult.toolName)
-  );
+  const matchingSteps = input.ledger.currentStep === null
+    ? []
+    : input.ledger.planSteps.filter(
+      (step) =>
+        step.description === input.ledger.currentStep &&
+        step.status !== "completed" &&
+        matchesBoundTool(step, input.toolResult.toolName, input.successfulToolNames) &&
+        hasAcceptanceEvidence(step, [
+          ...input.ledger.evidenceRefs,
+          ...input.executionEvidenceRefs,
+          ...input.validationEvidenceRefs
+        ])
+    );
 
   if (matchingSteps.length === 0) {
     return input.ledger;
@@ -153,6 +186,29 @@ export function completePlanStepFromTool(input: {
   };
 }
 
+function matchesBoundTool(
+  step: Pick<ProgressLedger["planSteps"][number], "description" | "requiredTools">,
+  toolName: ToolResult["toolName"],
+  successfulToolNames: readonly string[]
+): boolean {
+  const requiredTools = step.requiredTools ?? [];
+  return requiredTools.length === 0
+    ? stepMatchesTool(step.description, toolName)
+    : successfulToolNames.some((successfulToolName) => requiredTools.includes(successfulToolName));
+}
+
+function hasAcceptanceEvidence(
+  step: Pick<ProgressLedger["planSteps"][number], "acceptanceCriteria">,
+  evidenceRefs: readonly string[]
+): boolean {
+  const acceptanceCriteria = step.acceptanceCriteria ?? [];
+  if (acceptanceCriteria.length === 0) return true;
+  const evidence = new Set(evidenceRefs);
+  return acceptanceCriteria.every((criterionId) =>
+    evidence.has(`acceptance:${criterionId}`) || evidence.has(criterionId)
+  );
+}
+
 function stepMatchesTool(descriptionText: string, toolName: ToolResult["toolName"]): boolean {
   const description = descriptionText.toLowerCase();
   if (toolName === "filesystem.search") {
@@ -162,7 +218,7 @@ function stepMatchesTool(descriptionText: string, toolName: ToolResult["toolName
     return description.includes("read") || description.includes("inspect");
   }
   if (toolName === "filesystem.patch") {
-    return description.includes("patch") || description.includes("fix") || description.includes("modify");
+    return description.includes("patch") || description.includes("fix") || description.includes("modify") || description.includes("add");
   }
   if (toolName === "filesystem.write") {
     return description.includes("write") || description.includes("create") || description.includes("add file");

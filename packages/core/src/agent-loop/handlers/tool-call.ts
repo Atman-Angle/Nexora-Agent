@@ -15,7 +15,7 @@ import {
   normalizeToolFailure,
   normalizeValidationFailure
 } from "../../recovery/index.js";
-import { runCommandValidation } from "../../validation-repair/index.js";
+import { requiresValidationRepairAction, runCommandValidation } from "../../validation-repair/index.js";
 import { transitionRun } from "../../state-machine.js";
 import { ensureBudget } from "../budget.js";
 import { detectNoProgress, handleNoProgress } from "../no-progress.js";
@@ -797,9 +797,18 @@ async function processToolSuccess(
         idGenerator: deps.input.idGenerator
       });
       recoveryState = recoveryOutcome.state;
-      Object.assign(state, { recoveryState });
-      await deps.checkpoint("recovery_state", {
-        note: "validation_recovery"
+      // Persist the validation failure facts before the recovery checkpoint is
+      // created.  The checkpoint captures the current AgentLoopState; waiting
+      // until the normal post-tool assignment below would make a cross-process
+      // resume lose the failed ValidationResult and re-enter verify instead of
+      // following the recovery plan's mutation step.
+      Object.assign(state, {
+        recoveryState,
+        currentWorkingSet,
+        changedFiles,
+        recentToolResult,
+        recentValidationResult,
+        ledger
       });
       await deps.appendEvent(
         "failure.detected",
@@ -866,6 +875,10 @@ async function processToolSuccess(
       }
       replanRequested = recoveryOutcome.decision.disposition === "replan";
       regroundRequested = recoveryOutcome.decision.disposition === "re_ground";
+      Object.assign(state, { replanRequested, regroundRequested });
+      await deps.checkpoint("recovery_state", {
+        note: "validation_recovery"
+      });
     }
     await deps.persistLedger(ledger);
   }
@@ -876,8 +889,19 @@ async function processToolSuccess(
     executionEvidenceRefs: [`execution:${execution.executionRecord.executionId}`],
     validationEvidenceRefs:
       toolResult.toolName === "shell.execute" && recentValidationResult !== null
-        ? recentValidationResult.evidenceRecords.map((record) => record.evidenceId)
+        ? [
+            ...recentValidationResult.evidenceRecords.map((record) => record.evidenceId),
+            ...(recentValidationResult.status === "passed"
+              ? recentValidationResult.acceptanceResults
+                .filter((criterion) => criterion.status === "passed")
+                .flatMap((criterion) => criterion.evidenceRefs)
+              : [])
+          ]
         : [],
+    successfulToolNames: deps.input.toolRuntime
+      .listExecutionRecords(activeRun.runId)
+      .filter((record) => record.status === "success")
+      .map((record) => record.toolName),
     now: deps.input.now()
   });
   await deps.persistLedger(ledger);
@@ -931,7 +955,14 @@ async function processToolSuccess(
         ? "VALIDATION_FAILED"
         : null,
       artifactHash
-    )
+    ),
+    validationRepairEvidenceChanged: deps.input.profile.name === "general" &&
+      addedValidationRepairReadEvidence({
+        toolCall,
+        validation: recentValidationResult,
+        events: deps.input.eventStore.listEventsByRun(activeRun.runId),
+        records: deps.input.toolRuntime.listExecutionRecords(activeRun.runId)
+      })
   });
   previousSnapshot = buildSnapshot(
     deps.actionSignature,
@@ -966,4 +997,64 @@ async function processToolSuccess(
     replanRequested
   });
   return { kind: "continue" };
+}
+
+function addedValidationRepairReadEvidence(input: {
+  toolCall: ToolCall;
+  validation: ValidationResult | null;
+  events: ReturnType<HandlerDeps["input"]["eventStore"]["listEventsByRun"]>;
+  records: ReturnType<HandlerDeps["input"]["toolRuntime"]["listExecutionRecords"]>;
+}): boolean {
+  if (input.toolCall.toolName !== "filesystem.read" || !requiresValidationRepairAction(input.validation)) return false;
+  const path = (input.toolCall.input as { path?: unknown }).path;
+  if (typeof path !== "string" || path.length === 0) return false;
+  const repairPath = repairPathComparisonKey(path);
+  const repairPaths = new Set(input.validation.failureSummary?.changedFiles.map((changedPath) => repairPathComparisonKey(changedPath)) ?? []);
+  if (!repairPaths.has(repairPath)) return false;
+
+  const latestValidationSequence = input.events
+    .filter((event) => event.type === "validation.completed")
+    .reduce((latest, event) => Math.max(latest, event.sequence), 0);
+  const postValidationReadIds = new Set(input.events
+    .filter((event) =>
+      event.sequence > latestValidationSequence &&
+      event.type === "model.action.generated" &&
+      typeof event.payload.toolCallId === "string"
+    )
+    .map((event) => event.payload.toolCallId as string));
+  if (!postValidationReadIds.has(input.toolCall.toolCallId)) return false;
+
+  const currentRecord = input.records.find((record) =>
+    record.toolCallId === input.toolCall.toolCallId &&
+    record.status === "success" &&
+    record.toolName === "filesystem.read" &&
+    record.targetPath !== undefined &&
+    repairPathComparisonKey(record.targetPath) === repairPath
+  );
+  if (currentRecord === undefined) return false;
+  return !input.records.some((record) =>
+    record.toolCallId !== input.toolCall.toolCallId &&
+    record.status === "success" &&
+    record.toolName === "filesystem.read" &&
+    record.targetPath !== undefined &&
+    postValidationReadIds.has(record.toolCallId) &&
+    repairPathComparisonKey(record.targetPath) === repairPath
+  );
+}
+
+export function repairPathComparisonKey(
+  path: string,
+  caseSensitive = process.platform !== "win32"
+): string {
+  const segments: string[] = [];
+  for (const segment of path.replace(/\\/gu, "/").split("/")) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === ".." && segments.length > 0 && segments.at(-1) !== "..") {
+      segments.pop();
+    } else {
+      segments.push(segment);
+    }
+  }
+  const canonical = segments.join("/");
+  return caseSensitive ? canonical : canonical.toLowerCase();
 }

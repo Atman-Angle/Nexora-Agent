@@ -67,6 +67,8 @@ export type StartAgentInput = {
   readonly text: string;
   /** Task type (default: "feature"). */
   readonly taskType?: TaskType | undefined;
+  /** User-visible semantic success criteria projected into the Agent anchor. */
+  readonly successCriteria?: readonly string[] | undefined;
   /** Full validation request (verification command). */
   readonly validationRequest?: TaskValidationRequest | undefined;
   /** Agent request with budget and recovery budget. */

@@ -20,6 +20,8 @@ import type { HandlerDeps } from "../../agent-loop/outcome.js";
 import type { AgentLoopState } from "../../agent-loop/state.js";
 import { readCodingState, writeCodingState } from "../coding-profile-state.js";
 import { buildAgentActionPrompt, measureAgentActionPrompt } from "../shared/action-prompt.js";
+import { buildDecisionContext } from "../shared/decision-context.js";
+import { deriveDecisionDirective } from "../../strategy/decision-directive.js";
 import type { GenerateActionOutcome } from "../types.js";
 
 /**
@@ -78,30 +80,51 @@ export async function handleGenerateAction(
       retryable: false
     };
   }
-  // Construct once from the already-built Snapshot; the shared prompt renderer
-  // consumes this same admission decision.
-  const envelopeStartedAt = performance.now();
-  const contextEnvelope = buildContextEnvelope({
-    snapshot: contextSnapshot,
-    now: iterationStartedAt,
-    capabilitySchema: buildAgentActionSchemaText(deps.availableTools)
-  });
-  const contextEnvelopeBuildDurationMs = performance.now() - envelopeStartedAt;
-  await deps.appendEvent(
-    "context.compacted",
-    {
-      trims: contextSnapshot.trims.map((trim) => ({ field: trim.field, droppedCount: trim.droppedCount })),
-      regroundedAt: contextSnapshot.regroundedAt,
-      openApprovals: contextSnapshot.openApprovals,
-      openUserInputs: contextSnapshot.openUserInputs,
-      shadowEnvelope: {
-        selectedTokens: contextEnvelope.manifest.selectedTokens,
-        selectedSegmentIds: contextEnvelope.manifest.selectedSegmentIds,
-        drops: contextEnvelope.manifest.drops.map((drop) => ({ id: drop.id, reason: drop.reason }))
-      }
+  const executionRecords = deps.input.toolRuntime.listExecutionRecords(state.activeRun.runId);
+  const pendingApproval = deps.input.approvalStore.listByRun(state.activeRun.runId).find((entry) => entry.request.status === "pending");
+  const pendingAction = deps.input.pendingActionStore.getActiveByRun(state.activeRun.runId);
+  const checkpoint = deps.input.checkpointStore.latestForRun(state.activeRun.runId);
+  let decisionContext = buildDecisionContext({
+    runId: state.activeRun.runId,
+    ledger: state.ledger,
+    taskAcceptanceCriteria: deps.input.task.input.acceptanceCriteria,
+    taskType: deps.input.task.input.taskType,
+    executionRecords,
+    workingSet: contextSnapshot.workingSet,
+    recentToolResult: state.recentToolResult,
+    recentValidationResult: state.recentValidationResult,
+    changedFiles: state.changedFiles,
+    budget: deps.input.task.input.agentRequest!.budget,
+    usage: state.usage,
+    hasValidationRequest: deps.input.task.input.validationRequest !== undefined,
+    pendingApproval: pendingApproval === undefined ? null : {
+      approvalId: pendingApproval.request.approvalId,
+      actionId: pendingApproval.request.actionId,
+      toolName: pendingAction !== null && pendingAction !== undefined && (pendingAction.action.type === "tool_call" || pendingAction.action.type === "request_approval")
+        ? pendingAction.action.toolCall.toolName
+        : pendingApproval.request.toolCallId,
+      status: pendingApproval.request.status
     },
-    iterationStartedAt
-  );
+    pendingAction,
+    checkpoint,
+    resumeContinuity: {
+      runId: state.activeRun.runId,
+      currentStep: state.ledger.currentStep,
+      nextSequence: state.nextSequence,
+      latestIterationIndex: state.latestIterationIndex
+    },
+    noProgressCount: state.noProgressCount,
+    regroundRequested: state.regroundRequested,
+    replanRequested: state.replanRequested,
+    pendingActionRejection: state.pendingActionRejection
+  });
+  const rawDecisionSource = JSON.stringify({ ledger: state.ledger, workingSet: contextSnapshot.workingSet, recentToolResult: state.recentToolResult, executionRecords });
+  const decisionContextMetrics = { beforeChars: rawDecisionSource.length, beforeEstimatedTokens: Math.ceil(rawDecisionSource.length / 4) };
+  // The envelope is built only after Strategy and Builder have prepared their
+  // turn.  This guarantees the Context segment and the serialized directive
+  // below come from the same authority snapshot.
+  let contextEnvelope: ReturnType<typeof buildContextEnvelope>;
+  let contextEnvelopeBuildDurationMs = 0;
 
   let lastRejection: ModelActionRejection | null = null;
   const strategyState = readCodingState(state).strategy;
@@ -195,6 +218,92 @@ export async function handleGenerateAction(
     recentValidationResult: state.recentValidationResult,
     currentStepId: baseBuilder.currentStepId
   });
+  const decisionDirective = deriveDecisionDirective({
+    runId: state.activeRun.runId,
+    ledger: state.ledger,
+    executionRecords,
+    workingSet: contextSnapshot.workingSet,
+    recentToolResult: state.recentToolResult,
+    recentValidationResult: state.recentValidationResult,
+    changedFiles: state.changedFiles,
+    taskAcceptanceCriteria: deps.input.task.input.acceptanceCriteria,
+    taskType: deps.input.task.input.taskType,
+    budget: deps.input.task.input.agentRequest!.budget,
+    usage: state.usage,
+    strategy: {
+      phase: strategyBeforeModel.state.phase,
+      decision: strategyBeforeModel.decision,
+      strategyDecision: strategyBeforeModel.decision,
+      noProgressCount: strategyBeforeModel.state.noProgressCount,
+      explorationUsage: strategyBeforeModel.state.explorationUsage
+    },
+    builder: baseBuilder,
+    pendingAction: pendingAction === null || pendingAction === undefined ? null : {
+      actionId: pendingAction.actionId,
+      toolName: pendingAction.action.type === "tool_call" || pendingAction.action.type === "request_approval" ? pendingAction.action.toolCall.toolName : ""
+    },
+    pendingActionRejection: state.pendingActionRejection,
+    regroundRequested: state.regroundRequested,
+    replanRequested: state.replanRequested,
+    hasValidationRequest: deps.input.task.input.validationRequest !== undefined,
+    profile: "coding"
+  });
+  decisionContext = buildDecisionContext({
+    runId: state.activeRun.runId,
+    ledger: state.ledger,
+    taskAcceptanceCriteria: deps.input.task.input.acceptanceCriteria,
+    executionRecords,
+    workingSet: contextSnapshot.workingSet,
+    recentToolResult: state.recentToolResult,
+    recentValidationResult: state.recentValidationResult,
+    changedFiles: state.changedFiles,
+    budget: deps.input.task.input.agentRequest!.budget,
+    usage: state.usage,
+    hasValidationRequest: deps.input.task.input.validationRequest !== undefined,
+    pendingAction,
+    checkpoint,
+    resumeContinuity: {
+      runId: state.activeRun.runId,
+      currentStep: state.ledger.currentStep,
+      nextSequence: state.nextSequence,
+      latestIterationIndex: state.latestIterationIndex
+    },
+    noProgressCount: state.noProgressCount,
+    regroundRequested: state.regroundRequested,
+    replanRequested: state.replanRequested,
+    pendingActionRejection: state.pendingActionRejection,
+    directive: decisionDirective,
+    directiveInput: { strategy: {
+      phase: strategyBeforeModel.state.phase,
+      decision: strategyBeforeModel.decision,
+      noProgressCount: strategyBeforeModel.state.noProgressCount,
+      explorationUsage: strategyBeforeModel.state.explorationUsage
+    }, builder: baseBuilder, profile: "coding" }
+  });
+  const finalDecisionContextContent = JSON.stringify(decisionContext);
+  const envelopeStartedAt = performance.now();
+  contextEnvelope = buildContextEnvelope({
+    snapshot: contextSnapshot,
+    now: iterationStartedAt,
+    capabilitySchema: buildAgentActionSchemaText(deps.availableTools),
+    additionalSegments: [{ id: "decision", pool: "execution" as const, required: true, priority: 2, sourceVersion: iterationStartedAt, content: finalDecisionContextContent, artifactRefs: [] }]
+  });
+  contextEnvelopeBuildDurationMs = performance.now() - envelopeStartedAt;
+  await deps.appendEvent(
+    "context.compacted",
+    {
+      trims: contextSnapshot.trims.map((trim) => ({ field: trim.field, droppedCount: trim.droppedCount })),
+      regroundedAt: contextSnapshot.regroundedAt,
+      openApprovals: contextSnapshot.openApprovals,
+      openUserInputs: contextSnapshot.openUserInputs,
+      shadowEnvelope: {
+        selectedTokens: contextEnvelope.manifest.selectedTokens,
+        selectedSegmentIds: contextEnvelope.manifest.selectedSegmentIds,
+        drops: contextEnvelope.manifest.drops.map((drop) => ({ id: drop.id, reason: drop.reason }))
+      }
+    },
+    iterationStartedAt
+  );
   let action: AgentAction | undefined;
   let measurement: (ReturnType<typeof measureAgentActionPrompt> & { promptBuildDurationMs: number; providerDurationMs: number }) | undefined;
   for (let attempt = 0; attempt <= deps.maxActionRepairs; attempt += 1) {
@@ -217,9 +326,11 @@ export async function handleGenerateAction(
         constraints: deps.anchor.constraints,
         successCriteria: deps.anchor.successCriteria,
         ledger: state.ledger,
-        workingSet: state.currentWorkingSet,
+        workingSet: contextSnapshot.workingSet,
         recentToolResult: state.recentToolResult,
         recentValidationResult: state.recentValidationResult,
+        ...(deps.input.task.input.executionConstraints === undefined ? {} : { taskExecutionConstraints: deps.input.task.input.executionConstraints }),
+        taskAcceptanceCriteria: deps.input.task.input.acceptanceCriteria,
         ...(deps.input.task.input.validationRequest === undefined ? {} : { validationRequest: deps.input.task.input.validationRequest }),
         budget: deps.input.task.input.agentRequest!.budget,
         usage: state.usage,
@@ -231,7 +342,10 @@ export async function handleGenerateAction(
         ...(builderPromptContext === null ? {} : { builderContext: builderPromptContext.context }),
         planningPolicyContext,
         executionPlanRepairContext: baseBuilder.executionPlanRepair,
-        lastModelError: lastRejection ?? state.pendingActionRejection
+        lastModelError: lastRejection ?? state.pendingActionRejection,
+        decisionContext,
+        decisionDirective,
+        decisionContextMetrics
       };
       const promptStartedAt = performance.now();
       const prompt = buildAgentActionPrompt(promptInput);
@@ -303,5 +417,5 @@ export async function handleGenerateAction(
     },
     deps.input.now()
   );
-  return { kind: "action", action };
+  return { kind: "action", action, decisionDirective };
 }

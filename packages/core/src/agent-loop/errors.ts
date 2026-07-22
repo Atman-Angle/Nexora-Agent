@@ -8,10 +8,12 @@
 export class AgentLoopRunFailure extends Error {
   public readonly code: string;
   public readonly retryable: boolean;
+  public readonly details: Record<string, unknown>;
 
-  public constructor(code: string, message: string, retryable: boolean) {
+  public constructor(code: string, message: string, retryable: boolean, details: Record<string, unknown> = {}) {
     super(message);
     this.code = code;
     this.retryable = retryable;
+    this.details = details;
   }
 }

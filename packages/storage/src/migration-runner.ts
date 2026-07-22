@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   validation_request_json TEXT,
   agent_request_json TEXT,
   task_type TEXT,
+  success_criteria_json TEXT,
   acceptance_criteria_json TEXT,
   execution_constraints_json TEXT,
   source TEXT NOT NULL,
@@ -250,6 +251,7 @@ CREATE INDEX IF NOT EXISTS idx_user_facts_key_status ON user_facts(key, status);
 CREATE TABLE IF NOT EXISTS chat_selection_handles (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, source_turn_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(session_id, position), FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE);
 CREATE INDEX IF NOT EXISTS idx_chat_selection_handles_session ON chat_selection_handles(session_id, position);
 `); } }
+  ,{ id: "005_task_success_criteria", apply(connection) { ensureColumn(connection, "tasks", "success_criteria_json", "TEXT"); } }
 ];
 
 function ensureSchemaMigrationsTable(connection: Database.Database): void {

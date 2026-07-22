@@ -63,6 +63,9 @@ import {
 import {
   runToolMode
 } from "../tool-mode-runner.js";
+import {
+  completePlanStepFromTool
+} from "../ledger-progress/index.js";
 import type { AgentLoopResult } from "../agent-loop/outcome.js";
 import type { AgentProfile } from "../profile/types.js";
 import {
@@ -204,6 +207,7 @@ export class AgentService {
       taskId: randomUUID(),
       text: input.text,
       taskType: input.taskType ?? "feature",
+      successCriteria: [...(input.successCriteria ?? [])],
       ...(input.validationRequest !== undefined ? { validationRequest: input.validationRequest } : {}),
       ...(input.agentRequest !== undefined ? { agentRequest: input.agentRequest } : {}),
       acceptanceCriteria: [...(input.acceptanceCriteria ?? [])],
@@ -695,8 +699,18 @@ export class AgentService {
             `Run ${runId} has no successful execution record for post-tool recovery.`, now);
         }
         const recoveredToolResult = ToolResultSchema.parse(JSON.parse(executionRecord.outputJson) as unknown);
-        const reconciledLedger = reconcileLedgerAfterRecoveredTool({ ledger, toolName: recoveredToolResult.toolName,
-          artifactRefs: collectArtifactRefs(recoveredToolResult), now: now() });
+        const reconciledLedger = recoveredToolResult.status === "success"
+          ? reconcileLedgerAfterRecoveredTool({
+            ledger,
+            toolResult: recoveredToolResult,
+            executionEvidenceRefs: [`execution:${executionRecord.executionId}`],
+            successfulToolNames: this.executionRecordStore!.listByRun(runId)
+              .filter((record) => record.status === "success")
+              .map((record) => record.toolName),
+            artifactRefs: collectArtifactRefs(recoveredToolResult),
+            now: now()
+          })
+          : ledger;
         if (reconciledLedger.version !== ledger.version) this.ledgerStore!.upsertLedger(reconciledLedger);
         const reconciledResumeState: PendingActionResumeState = {
           ...pendingAction.resumeState,
@@ -1392,33 +1406,30 @@ function collectArtifactRefs(toolResult: ToolResult): string[] {
   return [];
 }
 
-function reconcileLedgerAfterRecoveredTool(input: { ledger: ProgressLedger; toolName: ToolResult["toolName"]; artifactRefs: string[]; now: string }): ProgressLedger {
-  const matchingSteps = input.ledger.planSteps.filter((step) => step.status !== "completed" && stepMatchesRecoveredTool(step.description, input.toolName));
-  if (matchingSteps.length === 0 && input.artifactRefs.length === 0) return input.ledger;
-  const matchingStepIds = new Set(matchingSteps.map((step) => step.stepId));
-  const planSteps = input.ledger.planSteps.map((step) => matchingStepIds.has(step.stepId)
-    ? { ...step, status: "completed" as const, evidenceRefs: [...new Set([...step.evidenceRefs, ...input.artifactRefs])], updatedAt: input.now }
-    : step);
-  const completedSteps = [...new Set([...input.ledger.completedSteps, ...matchingSteps.map((step) => step.description)])];
-  const currentStep = input.ledger.currentStep !== null && matchingSteps.some((step) => step.description === input.ledger.currentStep)
-    ? planSteps.find((step) => step.status !== "completed")?.description ?? null : input.ledger.currentStep;
-  return { ...input.ledger, currentStep, completedSteps, planSteps,
-    artifactRefs: [...new Set([...input.ledger.artifactRefs, ...input.artifactRefs])], version: input.ledger.version + 1, updatedAt: input.now };
-}
-
-function stepMatchesRecoveredTool(descriptionText: string, toolName: ToolResult["toolName"]): boolean {
-  const description = descriptionText.toLowerCase();
-  if (toolName === "filesystem.search") return description.includes("search") || description.includes("find") || description.includes("locate");
-  if (toolName === "filesystem.read") return description.includes("read") || description.includes("inspect");
-  if (toolName === "filesystem.patch") return description.includes("patch") || description.includes("fix") || description.includes("modify");
-  if (toolName === "filesystem.write") return description.includes("write") || description.includes("create") || description.includes("add file");
-  if (toolName === "shell.execute") return ["verify", "verification", "validation", "build", "test", "run ", "acceptance", "reproduction"].some((term) => description.includes(term));
-  if (toolName === "project.inspect") return description.includes("inspect") || description.includes("repository") || description.includes("understand");
-  if (toolName === "project.commands") return description.includes("command");
-  if (toolName === "git.status") return description.includes("git status") || description.includes("status");
-  if (toolName === "git.diff") return description.includes("diff");
-  if (toolName === "git.show") return description.includes("show");
-  return false;
+function reconcileLedgerAfterRecoveredTool(input: {
+  ledger: ProgressLedger;
+  toolResult: Extract<ToolResult, { status: "success" }>;
+  executionEvidenceRefs: string[];
+  successfulToolNames: readonly string[];
+  artifactRefs: string[];
+  now: string;
+}): ProgressLedger {
+  const completedLedger = completePlanStepFromTool({
+    ledger: input.ledger,
+    toolResult: input.toolResult,
+    executionEvidenceRefs: input.executionEvidenceRefs,
+    validationEvidenceRefs: [],
+    successfulToolNames: input.successfulToolNames,
+    now: input.now
+  });
+  const artifactRefs = [...new Set([...completedLedger.artifactRefs, ...input.artifactRefs])];
+  if (artifactRefs.length === completedLedger.artifactRefs.length) return completedLedger;
+  return {
+    ...completedLedger,
+    artifactRefs,
+    version: completedLedger.version + (completedLedger === input.ledger ? 1 : 0),
+    updatedAt: input.now
+  };
 }
 
 async function readWorkspaceFileHash(workspaceRoot: string, relativePath: string): Promise<string | null> {

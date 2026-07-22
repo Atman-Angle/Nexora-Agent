@@ -4,3 +4,4 @@ export * from "./strategy-evaluator.js";
 export * from "./action-policy.js";
 export * from "./prompt-context.js";
 export * from "./strategy-runtime.js";
+export * from "./decision-directive.js";

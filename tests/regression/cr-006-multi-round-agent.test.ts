@@ -11,24 +11,14 @@ describe("CR-006 Multi-round Agent", () => {
       fixturePath,
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
+          structuredPlanAction(),
           {
             type: "tool_call",
             toolCall: {
               toolCallId: "cr-search-1",
-              toolName: "filesystem.search",
-              input: {
-                query: "add",
-                limit: 10
-              },
+              toolName: "filesystem.read",
+              input: { path: "src/math.js" },
               timeoutMs: 1000
-            }
-          },
-          {
-            type: "update_plan",
-            reason: "Plan the targeted fix before mutation.",
-            patch: {
-              currentStep: "Patch src/math.js",
-              appendPlannedSteps: ["Patch src/math.js", "Run node verify.js"]
             }
           },
           {
@@ -90,6 +80,43 @@ describe("CR-006 Multi-round Agent", () => {
     expect(session.readDatabaseState().agentIterations.length).toBeGreaterThanOrEqual(3);
   });
 });
+
+function structuredPlanAction() {
+  const now = new Date().toISOString();
+  const node = process.execPath.replace(/\\/g, "/").split("/").pop() ?? process.execPath;
+  return {
+    type: "submit_execution_plan" as const,
+    rationale: "Search the target, patch it, and validate the result.",
+    plan: {
+      targetFiles: ["src/math.js"],
+      intendedChanges: ["Fix add() implementation."],
+      validationCommands: [`${node} verify.js`]
+    },
+    steps: [
+      planStep(now, "cr006-inspect", "Inspect src/math.js", ["filesystem.read"]),
+      planStep(now, "cr006-mutate", "Patch src/math.js", ["filesystem.patch"]),
+      planStep(now, "cr006-validate", "Validate src/math.js", ["shell.execute"])
+    ]
+  };
+}
+
+function planStep(now: string, stepId: string, description: string, requiredTools: string[]) {
+  return {
+    stepId,
+    description,
+    operation: "modify" as const,
+    targetFiles: ["src/math.js"],
+    rationale: "CR-006 structured execution step.",
+    expectedEffects: ["The requested repair is applied."],
+    requiredTools,
+    required: true,
+    status: "planned" as const,
+    evidenceRefs: [],
+    dependsOn: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}
 
 function parseJson(text: string): Record<string, unknown> {
   return JSON.parse(text) as Record<string, unknown>;

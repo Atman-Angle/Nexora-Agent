@@ -31,6 +31,7 @@ import type { ToolRuntime } from "../../tool-runtime/src/index.js";
 import { transitionRun } from "./state-machine.js";
 import { RecoveryOrchestrator } from "./recovery/index.js";
 import { AgentLoopRunFailure } from "./agent-loop/errors.js";
+import { fingerprintToolCall } from "./agent-loop/fingerprint.js";
 import { redactForEvidence } from "./agent-loop/redact.js";
 import { maybeAbortAfterCheckpoint, maybeAbortAfterEvent } from "./agent-loop/test-abort.js";
 import { failRun } from "./agent-loop/fail-run.js";
@@ -40,6 +41,7 @@ import type { AgentLoopState } from "./agent-loop/state.js";
 import type { AgentProfile } from "./profile/index.js";
 import { ProfileStateInvalidError } from "./profile/profile-state-error.js";
 import type { HandlerDeps } from "./agent-loop/outcome.js";
+import type { DecisionDirective } from "./strategy/decision-directive.js";
 
 export { AgentLoopRunFailure } from "./agent-loop/errors.js";
 export { redactForEvidence } from "./agent-loop/redact.js";
@@ -84,6 +86,7 @@ export async function runAgentLoop(input: {
     throw new AgentLoopRunFailure("AGENT_REQUEST_MISSING", "Agent loop requires an agent request.", false);
   }
 
+  const explicitSuccessCriteria = input.task.input.successCriteria ?? [];
   const anchor = {
     goal: input.task.input.text,
     constraints: [
@@ -93,7 +96,9 @@ export async function runAgentLoop(input: {
       "Final cannot bypass the completion gate."
     ],
     successCriteria:
-      input.task.input.validationRequest === undefined
+      explicitSuccessCriteria.length > 0
+        ? explicitSuccessCriteria
+        : input.task.input.validationRequest === undefined
         ? ["Produce a valid final artifact."]
         : [
             "Apply a fix that satisfies the verification command.",
@@ -266,6 +271,7 @@ export async function runAgentLoop(input: {
   for (;;) {
     try {
     let action: AgentAction | undefined;
+    let decisionDirective: DecisionDirective | undefined;
     const currentSeededAction = state.seededAction;
     const usedSeededAction = currentSeededAction !== null;
     const bypassApproval = usedSeededAction && state.bypassApprovalForSeedAction;
@@ -287,9 +293,13 @@ export async function runAgentLoop(input: {
         });
       }
       action = outcome.action;
+      decisionDirective = outcome.decisionDirective;
     }
 
-    const actionSignature = JSON.stringify(action);
+    const actionSignature =
+      action.type === "tool_call" || action.type === "request_approval"
+        ? fingerprintToolCall(action.toolCall)
+        : JSON.stringify(action);
     deps.actionSignature = actionSignature;
 
     // --- Recovery bypass computation (Block C, stays in runner) ---
@@ -311,7 +321,8 @@ export async function runAgentLoop(input: {
         state,
         deps,
         strategyBypassedForRecovery,
-        usedSeededAction
+        usedSeededAction,
+        ...(decisionDirective === undefined ? {} : { decisionDirective })
       });
 
       if (policyOutcome.kind === "accept") {
@@ -400,13 +411,14 @@ export async function runAgentLoop(input: {
           retryable: policyOutcome.failSignal.retryable
         });
       }
+      // Persist the policy's recovery snapshot before checkpointing so a
+      // resumed Run observes the same correction boundary.
+      if (policyOutcome.previousSnapshot !== undefined) {
+        state.previousSnapshot = policyOutcome.previousSnapshot;
+      }
       // Checkpoint
       if (policyOutcome.checkpoint === true) {
         await checkpoint("post_response", policyOutcome.checkpointNote !== undefined ? { note: policyOutcome.checkpointNote } : undefined);
-      }
-      // Set previousSnapshot
-      if (policyOutcome.previousSnapshot !== undefined) {
-        state.previousSnapshot = policyOutcome.previousSnapshot;
       }
       // Skip remaining policies, continue loop
       policyRejected = true;
@@ -442,6 +454,26 @@ export async function runAgentLoop(input: {
     continue;
     } catch (error) {
       if (error instanceof AgentLoopRunFailure) {
+        if (error.code === "BUDGET_EXCEEDED" || error.code === "NO_PROGRESS") {
+          const persistedRun = input.runStore.getRun(state.activeRun.runId);
+          if (
+            persistedRun !== null &&
+            persistedRun.status !== "created" &&
+            persistedRun.status !== "cancelled" &&
+            persistedRun.status !== "succeeded" &&
+            persistedRun.status !== "failed"
+          ) {
+            return failRun({
+              input,
+              run: persistedRun,
+              appendEvent,
+              code: error.code,
+              message: error.message,
+              retryable: error.retryable,
+              details: error.details
+            });
+          }
+        }
         throw error;
       }
       if (error instanceof ProfileStateInvalidError) {

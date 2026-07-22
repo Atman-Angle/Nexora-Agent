@@ -26,7 +26,8 @@ export type ModelActionRejectionCategory =
   | "validation_repair"
   | "completion_guidance"
   | "strategy_policy"
-  | "tool_failure_recovery";
+  | "tool_failure_recovery"
+  | "execution_plan";
 
 export type ModelActionRejection = {
   category: ModelActionRejectionCategory;

@@ -14,6 +14,39 @@ function defsFor(names: string[]) {
   return CODING_REGISTRY.list().filter((d) => want.has(d.name));
 }
 
+function writePlanAction() {
+  const now = new Date().toISOString();
+  return {
+    type: "submit_execution_plan" as const,
+    rationale: "Plan the safe write and verification.",
+    plan: {
+      targetFiles: ["src/Hero.tsx"],
+      intendedChanges: ["Create the Hero file."],
+      validationCommands: [validationCommandForCurrentNode()]
+    },
+    steps: [{
+      stepId: "create-hero",
+      description: "Create src/Hero.tsx",
+      operation: "create" as const,
+      targetFiles: ["src/Hero.tsx"],
+      rationale: "Create the requested file atomically.",
+      expectedEffects: ["The verification command passes."],
+      requiredTools: ["filesystem.write", "shell.execute"],
+      acceptanceCriteria: [],
+      required: true,
+      status: "planned" as const,
+      evidenceRefs: [],
+      dependsOn: [],
+      createdAt: now,
+      updatedAt: now
+    }]
+  };
+}
+
+function validationCommandForCurrentNode(): string {
+  return `${process.execPath.replace(/\\/g, "/").split("/").pop() ?? process.execPath} verify.js`;
+}
+
 describe("CR-014 Safe Filesystem Write", () => {
   it("contract and model schema both expose filesystem.write with create/overwrite semantics", () => {
     expect(() =>
@@ -70,14 +103,7 @@ describe("CR-014 Safe Filesystem Write", () => {
       ],
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
-          {
-            type: "update_plan",
-            reason: "Plan the safe write regression.",
-            patch: {
-              currentStep: "Create src/Hero.tsx",
-              appendPlannedSteps: ["Create src/Hero.tsx", "Run node verify.js"]
-            }
-          },
+          writePlanAction(),
           {
             type: "tool_call",
             toolCall: {
@@ -118,7 +144,7 @@ describe("CR-014 Safe Filesystem Write", () => {
     });
 
     const first = session.run(["agent", "Create Hero file", process.execPath, "verify.js"]);
-    expect(first.exitCode).toBe(0);
+    expect(first.exitCode, first.stderr).toBe(0);
     const firstPayload = JSON.parse(first.stdout) as { approvalId: string; status: string };
     expect(firstPayload.status).toBe("waiting_for_approval");
 

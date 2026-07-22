@@ -16,14 +16,7 @@ describe("CR-007 Approval", () => {
       ],
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
-          {
-            type: "update_plan",
-            reason: "Plan the approval regression mutation.",
-            patch: {
-              currentStep: "Patch note.txt",
-              appendPlannedSteps: ["Patch note.txt", "Run node verify.js"]
-            }
-          },
+          structuredPlanAction(),
           {
             type: "tool_call",
             toolCall: {
@@ -78,6 +71,42 @@ describe("CR-007 Approval", () => {
     expect(result.stdout).toContain("Approval regression passed.");
   });
 });
+
+function structuredPlanAction() {
+  const now = new Date().toISOString();
+  const node = process.execPath.replace(/\\/g, "/").split("/").pop() ?? process.execPath;
+  return {
+    type: "submit_execution_plan" as const,
+    rationale: "Patch note.txt and validate the approval flow.",
+    plan: {
+      targetFiles: ["note.txt"],
+      intendedChanges: ["Replace before with after."],
+      validationCommands: [`${node} verify.js`]
+    },
+    steps: [
+      planStep(now, "cr007-mutate", "Patch note.txt", ["filesystem.patch"]),
+      planStep(now, "cr007-validate", "Validate note.txt", ["shell.execute"])
+    ]
+  };
+}
+
+function planStep(now: string, stepId: string, description: string, requiredTools: string[]) {
+  return {
+    stepId,
+    description,
+    operation: "modify" as const,
+    targetFiles: ["note.txt"],
+    rationale: "CR-007 structured execution step.",
+    expectedEffects: ["The approval mutation is applied."],
+    requiredTools,
+    required: true,
+    status: "planned" as const,
+    evidenceRefs: [],
+    dependsOn: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}
 
 function parseJson(text: string): Record<string, unknown> {
   return JSON.parse(text) as Record<string, unknown>;

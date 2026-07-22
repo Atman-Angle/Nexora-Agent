@@ -1,4 +1,3 @@
-import { computeArtifactHash } from "../../../../contracts/src/index.js";
 import { estimateTokens } from "../../../../context/src/index.js";
 import type {
   AgentBudget,
@@ -10,6 +9,8 @@ import type {
   ProgressLedger,
   StrategyPromptContext,
   TaskValidationRequest,
+  TaskAcceptanceCriterion,
+  TaskExecutionConstraints,
   ToolResult,
   ValidationResult,
   WorkingSet
@@ -17,6 +18,11 @@ import type {
 import type { ToolDefinition } from "../../../../tool-runtime/src/index.js";
 import { buildAgentActionSchemaText } from "../../../../model-gateway/src/model-tool-definition.js";
 import type { ModelActionRejection } from "../../../../model-gateway/src/model-provider.js";
+import { buildDecisionContext, MAX_DECISION_CONTEXT_CHARS, type DecisionContext } from "./decision-context.js";
+import { serializeDecisionDirective, type DecisionDirective } from "../../strategy/decision-directive.js";
+
+/** Deterministic upper bound for the complete domain prompt (protocol included). */
+export const MAX_AGENT_ACTION_PROMPT_CHARS = 48_000;
 
 /**
  * Render the domain action protocol before crossing the model transport
@@ -32,6 +38,8 @@ export type AgentActionPromptInput = {
   recentToolResult: ToolResult | null;
   recentValidationResult: ValidationResult | null;
   validationRequest?: TaskValidationRequest;
+  taskExecutionConstraints?: TaskExecutionConstraints;
+  taskAcceptanceCriteria?: TaskAcceptanceCriterion[];
   budget: AgentBudget;
   usage: AgentBudgetUsage;
   availableTools: ToolDefinition<unknown>[];
@@ -45,6 +53,11 @@ export type AgentActionPromptInput = {
   planningPolicyContext?: PlanningPolicyContext | null;
   executionPlanRepairContext?: ExecutionPlanRepairContext | null;
   profileContext?: unknown;
+  /** Pure, bounded projection of the existing run authorities. */
+  decisionContext?: DecisionContext;
+  decisionDirective?: DecisionDirective;
+  /** Numeric-only source measurement; raw history is never persisted. */
+  decisionContextMetrics?: { beforeChars: number; beforeEstimatedTokens: number };
 };
 
 export function buildAgentActionPrompt(input: AgentActionPromptInput): string {
@@ -53,32 +66,55 @@ export function buildAgentActionPrompt(input: AgentActionPromptInput): string {
     : [];
   const capabilitySchema = input.contextEnvelope?.segments.find((segment) => segment.id === "capabilities")?.content
     ?? buildAgentActionSchemaText(admittedTools);
-  const ledgerSummary = JSON.stringify({
-    currentStep: input.ledger.currentStep,
-    completedSteps: input.ledger.completedSteps,
-    failedAttempts: input.ledger.failedAttempts,
-    evidenceRefs: input.ledger.evidenceRefs,
-    openQuestions: input.ledger.openQuestions
+  const decisionContext = input.decisionContext ?? buildDecisionContext({
+    runId: input.runId,
+    ledger: input.ledger,
+    taskAcceptanceCriteria: input.taskAcceptanceCriteria ?? [],
+    executionRecords: [],
+    workingSet: input.workingSet,
+    recentToolResult: input.recentToolResult,
+    recentValidationResult: input.recentValidationResult,
+    budget: input.budget,
+    usage: input.usage,
+    hasValidationRequest: input.validationRequest !== undefined,
+    noProgressCount: 0,
+    regroundRequested: input.regroundRequested,
+    replanRequested: input.replanRequested,
+    pendingActionRejection: input.lastModelError ?? null,
+    profileContext: input.profileContext
   });
-  const workingSetSummary = input.workingSet === null ? "null" : JSON.stringify(input.workingSet.items.map((item) => ({ path: item.path, score: item.score })));
-  const toolSummary = input.recentToolResult === null ? "null" : summarizeToolResultForPrompt(input.recentToolResult);
+  const decisionContextSummary = JSON.stringify(decisionContext);
+  const ledgerSummary = JSON.stringify({ currentStep: decisionContext.currentStep, acceptance: decisionContext.acceptance, recovery: decisionContext.recovery });
+  const workingSetSummary = input.decisionContext === undefined
+    ? (input.workingSet === null ? "null" : JSON.stringify(input.workingSet.items))
+    : JSON.stringify({ candidate: decisionContext.candidate, coveredPaths: decisionContext.coveredPaths });
+  const toolSummary = decisionContext.recentTool === null ? "null" : JSON.stringify(decisionContext.recentTool);
+  const knownFinalEvidenceIds = [...new Set([
+    ...input.ledger.evidenceRefs,
+    ...(input.recentValidationResult?.evidenceRecords.map((record) => record.evidenceId) ?? [])
+  ])];
   const repairLines = renderLastModelError(input.lastModelError ?? null);
-  return [
+  const directiveLine = input.decisionDirective === undefined
+    ? ""
+    : `Decision directive: ${serializeDecisionDirective(input.decisionDirective)}`;
+  const promptLines = [
     capabilitySchema,
     "",
     `Goal: ${input.goal}`,
     `Constraints: ${input.constraints.join("; ")}`,
     `Success criteria: ${input.successCriteria.join("; ")}`,
+    `Task execution constraints: ${JSON.stringify(input.taskExecutionConstraints ?? null)}`,
+    `Task acceptance criteria: ${JSON.stringify(input.taskAcceptanceCriteria ?? [])}`,
     `Validation request: ${input.validationRequest === undefined ? "null" : JSON.stringify({ command: input.validationRequest.command, args: input.validationRequest.args, cwd: input.validationRequest.cwd, purpose: input.validationRequest.purpose })}`,
     `Available tools: ${admittedTools.map((d) => d.name).join(", ")}`,
     `Budget: ${JSON.stringify(input.budget)}`,
     `Usage: ${JSON.stringify(input.usage)}`,
     `Ledger: ${ledgerSummary}`,
+    `Known final evidence IDs: ${JSON.stringify(knownFinalEvidenceIds)}`,
+    "Final evidence reference rule: Cite source paths in final.text. evidenceRefs may contain only exact strings from Known final evidence IDs; omit evidenceRefs when this list is empty.",
     `Working set: ${workingSetSummary}`,
-    ...(input.strategyContext === undefined ? [] : [`Strategy: ${renderStrategyContext(input.strategyContext)}`]),
     ...(input.planningPolicyContext === undefined ? [] : [`PlanningPolicyContext: ${JSON.stringify(input.planningPolicyContext)}`]),
     ...(input.executionPlanRepairContext === undefined ? [] : [`ExecutionPlanRepairContext: ${JSON.stringify(input.executionPlanRepairContext)}`]),
-    ...(input.builderContext === undefined ? [] : [`Builder: ${renderBuilderContext(input.builderContext)}`]),
     `Recent tool result: ${toolSummary}`,
     `Recent validation status: ${input.recentValidationResult?.status ?? "null"}`,
     `Validation repair context: ${renderValidationFailureSummary(input.recentValidationResult ?? null)}`,
@@ -86,10 +122,16 @@ export function buildAgentActionPrompt(input: AgentActionPromptInput): string {
     renderValidationSuccessInstruction(input.recentValidationResult ?? null),
     `Reground requested: ${String(input.regroundRequested)}`,
     `Replan requested: ${String(input.replanRequested)}`,
-    ...(input.profileContext === undefined ? [] : [`Profile context: ${JSON.stringify(input.profileContext)}`]),
+    ...(input.profileContext === undefined ? [] : [
+      `Profile context: ${renderProfileContext(input.profileContext, input.decisionContext !== undefined)}`
+    ]),
+    ...(directiveLine.length === 0 ? [] : [directiveLine]),
+    `Decision context (bounded <= ${String(MAX_DECISION_CONTEXT_CHARS)} chars): ${decisionContextSummary}`,
+    "Directive action rule: emit only the action named by Decision directive.allowedAction; do not derive or replace a candidate from Builder, Strategy, or profile instructions.",
     ...(repairLines.length === 0 ? [] : ["", ...repairLines]),
     "Return a single JSON object, no prose, no markdown fence."
-  ].join("\n");
+  ];
+  return boundPrompt(promptLines, capabilitySchema, decisionContextSummary, directiveLine);
 }
 
 /** Numeric-only prompt evidence suitable for durable event payloads. */
@@ -105,6 +147,10 @@ export function measureAgentActionPrompt(input: AgentActionPromptInput, prompt: 
     toolSchemaEstimatedTokens: estimateTokens(capabilitySchema),
     promptChars: prompt.length,
     promptEstimatedTokens: estimateTokens(prompt),
+    decisionContextChars: input.decisionContext === undefined ? 0 : JSON.stringify(input.decisionContext).length,
+    decisionContextEstimatedTokens: input.decisionContext === undefined ? 0 : estimateTokens(JSON.stringify(input.decisionContext)),
+    decisionContextBeforeChars: input.decisionContextMetrics?.beforeChars ?? 0,
+    decisionContextBeforeEstimatedTokens: input.decisionContextMetrics?.beforeEstimatedTokens ?? 0,
     selectedSegments: input.contextEnvelope?.manifest.selectedSegmentIds ?? [],
     droppedSegments: input.contextEnvelope?.manifest.drops.map((drop) => ({ id: drop.id, reason: drop.reason })) ?? []
   };
@@ -112,6 +158,21 @@ export function measureAgentActionPrompt(input: AgentActionPromptInput, prompt: 
 
 function renderValidationFailureSummary(validation: ValidationResult | null): string {
   return validation?.status === "failed" && validation.failureSummary !== undefined ? JSON.stringify(validation.failureSummary) : "null";
+}
+
+function boundPrompt(lines: string[], capabilitySchema: string, decisionContextSummary: string, directiveLine: string): string {
+  const prompt = lines.join("\n");
+  if (prompt.length <= MAX_AGENT_ACTION_PROMPT_CHARS) return prompt;
+  const optionalPrefixes = ["Strategy:", "PlanningPolicyContext:", "ExecutionPlanRepairContext:", "Builder:", "Profile context:"];
+  const retained = lines.filter((line) => !optionalPrefixes.some((prefix) => line.startsWith(prefix)));
+  const compact = retained.join("\n");
+  if (compact.length <= MAX_AGENT_ACTION_PROMPT_CHARS) return compact;
+  const requiredPrefix = `${capabilitySchema}\n`;
+  const decisionLine = `Decision context (bounded <= ${String(MAX_DECISION_CONTEXT_CHARS)} chars): ${decisionContextSummary}`;
+  const requiredDecision = directiveLine.length === 0 ? decisionLine : `${decisionLine}\n${directiveLine}`;
+  const tail = retained.filter((line) => !line.startsWith(capabilitySchema) && !line.startsWith("Decision context (bounded") && !line.startsWith("Decision directive:"));
+  const available = Math.max(0, MAX_AGENT_ACTION_PROMPT_CHARS - requiredPrefix.length - requiredDecision.length - 160);
+  return `${requiredPrefix}${truncate(tail.join("\n"), available)}\n${requiredDecision}\nPrompt content dropped deterministically due to the character bound.\nReturn a single JSON object, no prose, no markdown fence.`;
 }
 
 function renderValidationRepairInstruction(validation: ValidationResult | null): string {
@@ -135,15 +196,17 @@ function renderValidationSuccessInstruction(validation: ValidationResult | null)
   return "Validation success instruction: The latest validation is a fresh passing validation. If no newer mutation has happened, submit a final action with concise evidence. Do not submit a new execution plan or perform additional mutation just to restate completed work.";
 }
 
-function renderStrategyContext(context: StrategyPromptContext | undefined): string {
-  if (context === undefined) return "null";
-  return JSON.stringify({ phase: context.phase, decision: context.decision, plan: context.plan, explorationUsage: context.explorationUsage, remainingExplorationBudget: context.remainingExplorationBudget, workingSetSummary: context.workingSetSummary, changedFiles: context.changedFiles, validationState: context.validationState, allowedActionCategories: context.allowedActionCategories, lastStrategyRejection: context.lastStrategyRejection, planRepair: context.planRepair, transitionRequired: context.transitionRequired, guidance: context.guidance });
-}
-
-function renderBuilderContext(context: BuilderPromptContext | undefined): string {
-  if (context === undefined) return "null";
-  if (context.stepId === null) return JSON.stringify({ stepBound: false, redirect: context.redirect ?? null });
-  return JSON.stringify({ stepBound: true, stepId: context.stepId, operation: context.operation, targetFiles: context.targetFiles, rationale: context.rationale, expectedEffects: context.expectedEffects, contextBundle: context.contextBundle, redirect: context.redirect, productiveAction: context.productiveAction });
+function renderProfileContext(value: unknown, compact: boolean): string {
+  if (!compact) return JSON.stringify(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return "{}";
+  const object = value as { mode?: unknown; instructions?: unknown };
+  const instructions = Array.isArray(object.instructions)
+    ? object.instructions.filter((entry): entry is string => typeof entry === "string").map((entry) => entry.slice(0, 360)).join("\n")
+    : "";
+  return JSON.stringify({
+    mode: typeof object.mode === "string" ? object.mode : undefined,
+    instructions: truncate(instructions, 8_000)
+  });
 }
 
 function renderLastModelError(rejection: ModelActionRejection | null): string[] {
@@ -152,34 +215,6 @@ function renderLastModelError(rejection: ModelActionRejection | null): string[] 
   return [`Previous attempt was rejected (category: ${rejection.category}, attempt ${String(rejection.attempt)}): ${rejection.message}`, ...(issueLines.length === 0 ? [] : ["Issues:", ...issueLines]), "Fix the error above and return a valid JSON object matching the schema."];
 }
 
-const MAX_PROMPT_SEARCH_MATCHES = 10;
-const MAX_PROMPT_SEARCH_SNIPPET_CHARS = 240;
-
-function summarizeToolResultForPrompt(toolResult: ToolResult): string {
-  if (toolResult.status === "error") return JSON.stringify({ toolName: toolResult.toolName, status: "error", code: toolResult.error.code });
-  if (toolResult.toolName === "filesystem.read") {
-    if (toolResult.output.kind === "inline_text") return JSON.stringify({ toolName: toolResult.toolName, status: "success", kind: toolResult.output.kind, path: toolResult.output.path, mimeType: toolResult.output.mimeType, byteLength: toolResult.output.byteLength, currentHash: computeArtifactHash(toolResult.output.content), content: toolResult.output.content });
-    return JSON.stringify({ toolName: toolResult.toolName, status: "success", kind: toolResult.output.kind, path: toolResult.output.path, artifactId: toolResult.output.artifactId, mimeType: toolResult.output.mimeType, byteLength: toolResult.output.byteLength, reason: toolResult.output.reason, previewText: toolResult.output.previewText ?? null });
-  }
-  if (toolResult.toolName === "filesystem.search") {
-    const result = toolResult.output.result;
-    const matches = result.matches.slice(0, MAX_PROMPT_SEARCH_MATCHES).map((match) => ({
-      path: match.path,
-      line: match.line,
-      column: match.column,
-      snippet: match.snippet.slice(0, MAX_PROMPT_SEARCH_SNIPPET_CHARS)
-    }));
-    return JSON.stringify({
-      toolName: toolResult.toolName,
-      status: "success",
-      returnedMatches: result.returnedMatches,
-      truncated: result.truncated,
-      matches,
-      omittedMatches: Math.max(0, result.matches.length - matches.length)
-    });
-  }
-  if (toolResult.toolName === "filesystem.patch") return JSON.stringify({ toolName: toolResult.toolName, status: "success", path: toolResult.output.result.path, patchStatus: toolResult.output.result.status });
-  if (toolResult.toolName === "filesystem.write") return JSON.stringify({ toolName: toolResult.toolName, status: "success", path: toolResult.output.result.path, mode: toolResult.output.result.mode, hash: toolResult.output.result.hash, created: toolResult.output.result.created });
-  if (toolResult.toolName === "shell.execute") return JSON.stringify({ toolName: toolResult.toolName, status: "success", exitCode: toolResult.output.result.exitCode });
-  return JSON.stringify({ toolName: toolResult.toolName, status: "success" });
+function truncate(value: string, max: number): string {
+  return value.length <= max ? value : `${value.slice(0, Math.max(0, max - 1))}…`;
 }

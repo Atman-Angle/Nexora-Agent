@@ -3,6 +3,7 @@ import type { ToolRegistry } from "../../../tool-runtime/src/index.js";
 import type { HandlerDeps, HandlerOutcome } from "../agent-loop/outcome.js";
 import type { AgentLoopState } from "../agent-loop/state.js";
 import type { NoProgressSnapshot } from "../recovery/resume-boundary.js";
+import type { DecisionDirective } from "../strategy/decision-directive.js";
 
 /**
  * DispatchContext bundles all runtime values that any action handler might
@@ -126,6 +127,8 @@ export type ActionPolicyInput = {
   readonly deps: HandlerDeps;
   readonly strategyBypassedForRecovery: boolean;
   readonly usedSeededAction: boolean;
+  /** Per-iteration directive generated with the Prompt; never persisted. */
+  readonly decisionDirective?: DecisionDirective;
 };
 
 /**
@@ -252,7 +255,7 @@ export type CompletionGate = (
 
 /** Profile-owned action generation outcome; independent of any domain profile. */
 export type GenerateActionOutcome =
-  | { kind: "action"; action: AgentAction }
+  | { kind: "action"; action: AgentAction; decisionDirective?: DecisionDirective }
   | { kind: "fail"; code: string; message: string; retryable: boolean };
 
 export type AgentProfile = {

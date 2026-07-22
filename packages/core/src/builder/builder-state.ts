@@ -45,6 +45,8 @@ export function derivePlanStepsFromExecutionPlan(input: {
       targetFiles: [normalized],
       rationale: `Plan target ${normalized} (${operation}).`,
       expectedEffects: [],
+      requiredTools: [],
+      acceptanceCriteria: [],
       required: true,
       status: "planned",
       evidenceRefs: [],

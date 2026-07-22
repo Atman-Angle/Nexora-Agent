@@ -12,6 +12,7 @@ import {
   normalizeBuilderState,
   validateSubmittedExecutionPlan
 } from "../../builder/index.js";
+import { applyLedgerPatch } from "../../ledger-progress/index.js";
 import { clearPlanRepair } from "../../strategy/index.js";
 import { createIteration } from "../../agent-loop/iteration.js";
 import type { HandlerDeps, HandlerOutcome } from "../../agent-loop/outcome.js";
@@ -55,7 +56,8 @@ export async function handleSubmitExecutionPlan(
     plan: action.plan,
     steps: action.steps,
     policy,
-    satisfiedRequiredTargets: state.changedFiles
+    satisfiedRequiredTargets: state.changedFiles,
+    task: deps.input.task
   });
   if (!validation.valid) {
     const currentBuilder = readCodingState(state).builder;
@@ -117,8 +119,10 @@ export async function handleSubmitExecutionPlan(
   }
 
   const currentStrategy = readCodingState(state).strategy;
+  const validationRecovery = state.recoveryState?.latestFailure?.source === "validation";
   const nextStrategyState: StrategyState = clearPlanRepair({
     ...currentStrategy,
+    ...(validationRecovery ? { phase: "act" as const } : {}),
     plan: validation.plan,
     noProgressCount: 0,
     explorationUsage: {
@@ -142,6 +146,20 @@ export async function handleSubmitExecutionPlan(
     },
     deps.input.now()
   );
+  await deps.persistLedger(applyLedgerPatch({
+    ledger: state.ledger,
+    patch: {
+      currentStep: action.steps.find((step) => step.required)?.description ?? null,
+      appendPlanSteps: action.steps.filter((step) => step.required).map((step) => ({
+        description: step.description,
+        required: step.required,
+        requiredTools: step.requiredTools,
+        acceptanceCriteria: step.acceptanceCriteria
+      })),
+      appendDecisions: [action.rationale]
+    },
+    now: deps.input.now()
+  }));
   let nextRecoveryState: RecoveryCheckpointState | undefined = state.recoveryState;
   let nextReplanRequested = state.replanRequested;
   let nextRegroundRequested = state.regroundRequested;

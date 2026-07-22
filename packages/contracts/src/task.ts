@@ -167,6 +167,7 @@ export const TaskSchema = z.object({
   input: z.object({
     text: z.string(),
     taskType: TaskTypeSchema.default("analysis"),
+    successCriteria: z.array(z.string().min(1)).optional(),
     filePath: z.string().min(1).optional(),
     searchQuery: z.string().min(1).optional(),
     patchRequest: TaskPatchRequestSchema.optional(),
@@ -194,6 +195,7 @@ export function createTask(input: {
   filePath?: string;
   searchQuery?: string;
   taskType?: TaskType;
+  successCriteria?: string[];
   patchRequest?: TaskPatchRequest;
   validationRequest?: TaskValidationRequest;
   agentRequest?: TaskAgentRequest;
@@ -210,6 +212,7 @@ export function createTask(input: {
     input: {
       text: input.text,
       taskType: inferredTaskType,
+      successCriteria: input.successCriteria ?? [],
       ...(input.filePath === undefined ? {} : { filePath: input.filePath }),
       ...(input.searchQuery === undefined ? {} : { searchQuery: input.searchQuery }),
       ...(input.patchRequest === undefined ? {} : { patchRequest: input.patchRequest }),

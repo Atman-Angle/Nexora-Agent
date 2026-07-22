@@ -15,12 +15,24 @@ export const FailedAttemptSchema = z.object({
   createdAt: z.string().datetime()
 });
 
+/** Structured plan metadata used to bind a persisted step to real execution evidence. */
+export const PlanStepDefinitionSchema = z.object({
+  description: z.string().min(1),
+  required: z.boolean().default(true),
+  requiredTools: z.array(z.string().min(1)).optional(),
+  acceptanceCriteria: z.array(z.string().min(1)).optional()
+});
+
 export const PlanStepSchema = z.object({
   stepId: z.string().min(1),
   description: z.string().min(1),
   required: z.boolean(),
   status: z.enum(["planned", "in_progress", "completed", "blocked"]),
   evidenceRefs: z.array(z.string().min(1)),
+  /** When non-empty, only one of these exact Tool names may complete the step. */
+  requiredTools: z.array(z.string().min(1)).optional(),
+  /** Task acceptance criterion IDs that must have passing evidence before completion. */
+  acceptanceCriteria: z.array(z.string().min(1)).optional(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime()
 });
@@ -46,6 +58,7 @@ export const ProgressLedgerSchema = z.object({
 export const LedgerPatchSchema = z.object({
   currentStep: z.string().min(1).nullable().optional(),
   appendPlannedSteps: z.array(z.string().min(1)).optional(),
+  appendPlanSteps: z.array(PlanStepDefinitionSchema).optional(),
   appendCompletedSteps: z.array(z.string().min(1)).optional(),
   appendDecisions: z.array(z.string().min(1)).optional(),
   appendEvidenceRefs: z.array(z.string().min(1)).optional(),
@@ -55,6 +68,7 @@ export const LedgerPatchSchema = z.object({
 
 export type TaskAnchor = z.infer<typeof TaskAnchorSchema>;
 export type FailedAttempt = z.infer<typeof FailedAttemptSchema>;
+export type PlanStepDefinition = z.infer<typeof PlanStepDefinitionSchema>;
 export type PlanStep = z.infer<typeof PlanStepSchema>;
 export type ProgressLedger = z.infer<typeof ProgressLedgerSchema>;
 export type LedgerPatch = z.infer<typeof LedgerPatchSchema>;

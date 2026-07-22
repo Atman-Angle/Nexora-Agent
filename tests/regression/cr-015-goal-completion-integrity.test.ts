@@ -224,14 +224,7 @@ describe("CR-015 Goal Completion Integrity", () => {
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
           { type: "final", text: "done too early" },
-          {
-            type: "update_plan",
-            reason: "Plan the real write and validation.",
-            patch: {
-              currentStep: "Create src/Hero.tsx",
-              appendPlannedSteps: ["Create src/Hero.tsx", "Run node verify.js"]
-            }
-          },
+          heroPlanAction(["src/Hero.tsx"], "verify.js"),
           {
             type: "tool_call",
             toolCall: {
@@ -281,7 +274,7 @@ describe("CR-015 Goal Completion Integrity", () => {
 
     const state = session.readDatabaseState();
     expect(state.runs[0]?.status).toBe("succeeded");
-    expect(state.events.map((event) => event.type)).toContain("model.final.rejected");
+    expect(state.events.map((event) => event.type)).toContain("model.action.rejected");
     expect(state.events.map((event) => event.type)).toContain("model.final.accepted");
   });
 
@@ -351,35 +344,8 @@ describe("CR-015 Goal Completion Integrity", () => {
       ],
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
-          {
-            type: "tool_call",
-            toolCall: {
-              toolCallId: "mkdir-components",
-              toolName: "shell.execute",
-              input: {
-                command: process.execPath,
-                args: ["-e", "require('node:fs').mkdirSync('src/components', { recursive: true })"],
-                cwd: ".",
-                environment: {},
-                purpose: "prepare directory",
-                idempotencyKey: "mkdir-components"
-              },
-              timeoutMs: 2000
-            }
-          },
+          heroPlanAction(["src/components/Hero.tsx", "src/App.tsx"], "build.js"),
           { type: "final", text: "Directory created, task complete." },
-          {
-            type: "update_plan",
-            reason: "Plan the file creation and build validation.",
-            patch: {
-              currentStep: "Create src/components/Hero.tsx and write src/App.tsx",
-              appendPlannedSteps: [
-                "Create src/components/Hero.tsx",
-                "Write src/App.tsx",
-                "Run node build.js"
-              ]
-            }
-          },
           {
             type: "tool_call",
             toolCall: {
@@ -454,7 +420,7 @@ describe("CR-015 Goal Completion Integrity", () => {
     expect(payload.status).toBe("succeeded");
 
     const state = session.readDatabaseState();
-    const rejected = state.events.filter((event) => event.type === "model.final.rejected");
+    const rejected = state.events.filter((event) => event.type === "model.action.rejected" || event.type === "model.final.rejected");
     expect(rejected.length).toBeGreaterThanOrEqual(1);
     expect(state.runs[0]?.status).toBe("succeeded");
   });
@@ -464,4 +430,38 @@ function writeWorkspaceFile(workspaceRoot: string, relativePath: string, content
   const absolutePath = join(workspaceRoot, ...relativePath.split("/"));
   mkdirSync(dirname(absolutePath), { recursive: true });
   writeFileSync(absolutePath, content, "utf8");
+}
+
+function heroPlanAction(targetFiles: string[], validationFile: string) {
+  const now = new Date().toISOString();
+  return {
+    type: "submit_execution_plan" as const,
+    rationale: "Create the requested files and run the supplied validation.",
+    plan: {
+      targetFiles,
+      intendedChanges: ["Implement the Hero fixture."],
+      validationCommands: [validationCommandForCurrentNode(validationFile)]
+    },
+    steps: [{
+      stepId: "hero-files",
+      description: `Implement ${targetFiles.join(", ")}`,
+      operation: "modify" as const,
+      targetFiles,
+      rationale: "Apply the smallest file changes needed by the fixture.",
+      expectedEffects: ["The supplied validation passes."],
+      requiredTools: ["filesystem.write", "shell.execute"],
+      acceptanceCriteria: [],
+      required: true,
+      status: "planned" as const,
+      evidenceRefs: [],
+      dependsOn: [],
+      createdAt: now,
+      updatedAt: now
+    }]
+  };
+}
+
+function validationCommandForCurrentNode(file: string): string {
+  const executable = process.execPath.replace(/\\/g, "/").split("/").pop() ?? process.execPath;
+  return `${executable} ${file}`;
 }

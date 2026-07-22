@@ -13,10 +13,11 @@ export async function failRun(input: {
   code: string;
   message: string;
   retryable: boolean;
+  details?: Record<string, unknown>;
 }): Promise<never> {
   const failedAt = input.input.now();
   const failedRun = transitionRun(input.run, "failed", failedAt, input.code);
   input.input.runStore.updateRun(failedRun);
-  await input.appendEvent("run.failed", { code: input.code, message: input.message }, failedAt);
-  throw new AgentLoopRunFailure(input.code, input.message, input.retryable);
+  await input.appendEvent("run.failed", { code: input.code, message: input.message, ...(input.details ?? {}) }, failedAt);
+  throw new AgentLoopRunFailure(input.code, input.message, input.retryable, input.details);
 }

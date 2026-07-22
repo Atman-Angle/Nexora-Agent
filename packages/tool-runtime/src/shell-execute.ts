@@ -1,6 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { basename, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 
 import {
   ToolResultSchema,
@@ -59,9 +59,21 @@ export async function executeShellCommand(input: {
   let timedOut = false;
   let cancelled = false;
 
-  const child = spawn(input.toolCall.input.command, input.toolCall.input.args, {
+  const childEnvironment = buildChildEnvironment(input.toolCall.input.environment);
+  const resolvedCommand = await resolveCommandForPlatform(
+    input.toolCall.input.command,
+    input.toolCall.input.args,
+    childEnvironment,
+    input.signal
+  );
+  throwIfAborted(input.signal);
+  const remainingTimeoutMs = input.toolCall.timeoutMs - (Date.now() - startedAt);
+  if (remainingTimeoutMs <= 0) {
+    throw new ToolRuntimeError("TOOL_TIMEOUT", "Tool execution timed out.", true);
+  }
+  const child = spawn(resolvedCommand.command, resolvedCommand.args, {
     cwd: resolvedCwd,
-    env: buildChildEnvironment(input.toolCall.input.environment),
+    env: childEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32"
   });
@@ -74,7 +86,7 @@ export async function executeShellCommand(input: {
   const timeoutHandle = setTimeout(() => {
     timedOut = true;
     void terminateChildProcess(child.pid);
-  }, input.toolCall.timeoutMs);
+  }, remainingTimeoutMs);
   if (input.signal !== undefined) {
     input.signal.addEventListener("abort", () => {
       void abortHandler();
@@ -186,7 +198,7 @@ function buildChildEnvironment(environment: Record<string, string>): Record<stri
   const childEnvironment: Record<string, string> = {};
   const safeParentKeys =
     process.platform === "win32"
-      ? ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP", "Path", "PATH"]
+      ? ["SystemRoot", "WINDIR", "ComSpec", "PATHEXT", "TEMP", "TMP"]
       : ["PATH", "HOME", "TMPDIR"];
 
   for (const key of safeParentKeys) {
@@ -196,11 +208,79 @@ function buildChildEnvironment(environment: Record<string, string>): Record<stri
     }
   }
 
+  if (process.platform === "win32") {
+    const pathValue = process.env.Path ?? process.env.PATH;
+    if (pathValue !== undefined) childEnvironment.Path = pathValue;
+  }
+
   for (const [key, value] of Object.entries(environment)) {
-    childEnvironment[key] = value;
+    if (process.platform === "win32" && key.toLowerCase() === "path") childEnvironment.Path = value;
+    else childEnvironment[key] = value;
   }
 
   return childEnvironment;
+}
+
+async function resolveCommandForPlatform(
+  command: string,
+  args: string[],
+  environment: Record<string, string>,
+  signal: AbortSignal | undefined
+): Promise<{ command: string; args: string[] }> {
+  if (process.platform !== "win32" || !["pnpm", "pnpm.cmd"].includes(basename(command).toLowerCase())) {
+    return { command, args };
+  }
+
+  const commandDirectory = dirname(command);
+  const directories = commandDirectory === "."
+    ? (environment.Path ?? environment.PATH ?? "").split(delimiter).map(normalizePathEntry).filter(Boolean)
+    : [commandDirectory];
+  for (const directory of directories) {
+    throwIfAborted(signal);
+    if (!(await pathExists(join(directory, "pnpm.cmd")))) {
+      throwIfAborted(signal);
+      continue;
+    }
+    for (const cliPath of pnpmCliCandidates(directory)) {
+      throwIfAborted(signal);
+      if (await pathExists(cliPath)) {
+        throwIfAborted(signal);
+        return { command: process.execPath, args: [cliPath, ...args] };
+      }
+      throwIfAborted(signal);
+    }
+  }
+
+  return { command, args };
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw Object.assign(new Error("aborted"), { name: "AbortError" });
+  }
+}
+
+function pnpmCliCandidates(shimDirectory: string): string[] {
+  return [
+    join(shimDirectory, "node_modules", "pnpm", "bin", "pnpm.cjs"),
+    join(shimDirectory, "node_modules", "pnpm", "bin", "pnpm.mjs"),
+    join(shimDirectory, "node_modules", "corepack", "dist", "pnpm.js"),
+    join(shimDirectory, "..", "..", "node", "node_modules", "pnpm", "bin", "pnpm.mjs")
+  ];
+}
+
+function normalizePathEntry(pathEntry: string): string {
+  const trimmed = pathEntry.trim();
+  return trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function createCollector(sharedBudget: {

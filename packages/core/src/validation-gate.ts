@@ -68,6 +68,11 @@ export function validateArtifactForRun(run: Run, artifact: Artifact | null): Val
   });
 }
 
+/** Shared mutation-task classification used by the Completion Gate and plan bootstrap. */
+export function requiresMutationTaskType(taskType: Task["input"]["taskType"]): boolean {
+  return taskType === "workspace_mutation" || taskType === "bug_fix" || taskType === "feature";
+}
+
 export async function runCompletionGate(input: {
   run: Run;
   task: Task;
@@ -91,8 +96,7 @@ export async function runCompletionGate(input: {
   const events = input.events ?? [];
   const executedValidatorIds: string[] = [];
   const taskType = input.task.input.taskType;
-  const requiresValidation =
-    validationRequest !== undefined || taskType === "workspace_mutation" || taskType === "bug_fix" || taskType === "feature";
+  const requiresValidation = validationRequest !== undefined || requiresMutationTaskType(taskType);
   const changedFiles = collectChangedFiles(events);
   const finalProposalAttempt = Math.max(1, events.filter((event) => event.type === "model.final.proposed").length);
   const validationCwd = input.latestValidationResult?.validationCwd ?? validationRequest?.cwd ?? null;
@@ -395,7 +399,7 @@ async function evaluateArtifactChecks(input: {
   workspaceRoot: string | undefined;
 }): Promise<ValidationResult["artifactChecks"]> {
   const checks: ValidationResult["artifactChecks"] = [];
-  const requiresMutation = input.taskType === "workspace_mutation" || input.taskType === "bug_fix" || input.taskType === "feature";
+  const requiresMutation = requiresMutationTaskType(input.taskType);
 
   if (requiresMutation) {
     if (input.changedFiles.length === 0) {
@@ -461,7 +465,7 @@ async function evaluateArtifactChecks(input: {
   return checks;
 }
 
-async function evaluateAcceptanceCriteria(input: {
+export async function evaluateAcceptanceCriteria(input: {
   criteria: TaskAcceptanceCriterion[];
   workspaceRoot: string | undefined;
   changedFiles: string[];
@@ -478,6 +482,7 @@ async function evaluateAcceptanceCriteria(input: {
       results.push({
         ...base,
         status: input.changedFiles.length > 0 ? "passed" : "failed",
+        evidenceRefs: input.changedFiles.length > 0 ? [`acceptance:${criterion.id}`] : [],
         ...(input.changedFiles.length > 0 ? {} : { reason: "No changed files were produced." })
       });
       continue;
@@ -498,6 +503,7 @@ async function evaluateAcceptanceCriteria(input: {
       results.push({
         ...base,
         status: pathStats?.isFile() ? "passed" : "failed",
+        evidenceRefs: pathStats?.isFile() ? [`acceptance:${criterion.id}`] : [],
         ...(pathStats?.isFile() ? {} : { reason: `Required file ${criterion.check.path} does not exist.` })
       });
       continue;
@@ -508,6 +514,7 @@ async function evaluateAcceptanceCriteria(input: {
       results.push({
         ...base,
         status: pathStats?.isFile() && pathStats.size > 0 ? "passed" : "failed",
+        evidenceRefs: pathStats?.isFile() && pathStats.size > 0 ? [`acceptance:${criterion.id}`] : [],
         ...(pathStats?.isFile() && pathStats.size > 0 ? {} : { reason: `Required file ${criterion.check.path} is missing or empty.` })
       });
       continue;
@@ -518,16 +525,19 @@ async function evaluateAcceptanceCriteria(input: {
       results.push({
         ...base,
         status: entries !== null && entries.length > 0 ? "passed" : "failed",
+        evidenceRefs: entries !== null && entries.length > 0 ? [`acceptance:${criterion.id}`] : [],
         ...(entries !== null && entries.length > 0 ? {} : { reason: `Required directory ${criterion.check.path} is missing or empty.` })
       });
       continue;
     }
 
     const fileContent = await readFile(absolutePath, "utf8").catch(() => null);
+    const textCheckPassed = fileContent !== null && fileContent.includes(criterion.check.text);
     results.push({
       ...base,
-      status: fileContent !== null && fileContent.includes(criterion.check.text) ? "passed" : "failed",
-      ...(fileContent !== null && fileContent.includes(criterion.check.text)
+      status: textCheckPassed ? "passed" : "failed",
+      evidenceRefs: textCheckPassed ? [`acceptance:${criterion.id}`] : [],
+      ...(textCheckPassed
         ? {}
         : { reason: `Required text for ${criterion.id} was not found in ${criterion.check.path}.` })
     });
@@ -557,7 +567,7 @@ async function evaluateValidationFreshness(input: {
   lastMutationSequence: number;
   lastValidationSequence: number;
 }): Promise<ValidationFreshness> {
-  const requiresFreshValidation = input.taskType === "workspace_mutation" || input.taskType === "bug_fix" || input.taskType === "feature";
+  const requiresFreshValidation = requiresMutationTaskType(input.taskType);
   const validationSequence = input.latestValidationResult?.validationSequence ?? input.lastValidationSequence;
   const workspaceFingerprint =
     input.workspaceRoot === undefined || input.latestValidationResult?.changedFiles === undefined
@@ -594,7 +604,7 @@ async function evaluateValidationCwd(input: {
   validationCwd: string | null;
   changedFiles: string[];
 }): Promise<{ valid: boolean; reason?: string }> {
-  const requiresScopedCwd = input.taskType === "workspace_mutation" || input.taskType === "bug_fix" || input.taskType === "feature";
+  const requiresScopedCwd = requiresMutationTaskType(input.taskType);
   if (!requiresScopedCwd || input.workspaceRoot === undefined || input.validationCwd === null) {
     return { valid: true };
   }

@@ -14,6 +14,7 @@ import {
   type ValidationResult
 } from "../../../contracts/src/index.js";
 import { redactForEvidence } from "../agent-loop-runner.js";
+import { evaluateAcceptanceCriteria } from "../validation-gate.js";
 
 export async function runCommandValidation(input: {
   run: Run;
@@ -130,6 +131,12 @@ export async function runCommandValidation(input: {
     completedAt: input.now
   };
 
+  const acceptanceResults = await evaluateAcceptanceCriteria({
+    criteria: input.task.input.acceptanceCriteria,
+    workspaceRoot: input.workspaceRoot,
+    changedFiles: input.changedFiles
+  });
+
   return {
     status: evidence.length === 0 ? "passed" : "failed",
     evidence,
@@ -140,7 +147,7 @@ export async function runCommandValidation(input: {
     taskType: input.task.input.taskType,
     validationCwd: input.validationCwd,
     changedFiles: input.changedFiles,
-    acceptanceResults: [],
+    acceptanceResults,
     artifactChecks: [],
     ...(failureSummary === undefined ? {} : { failureSummary }),
     ...(input.changedFiles.length === 0

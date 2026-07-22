@@ -37,6 +37,10 @@ const MAX_AST_OUTPUT_BYTES = 512 * 1024;
 const RIPGREP_IGNORED_GLOBS = [...IGNORED_DIRECTORY_NAMES].map((name) => `!${name}/**`);
 const DOCUMENT_SUFFIX = /\.(pdf|docx|pptx|xlsx|png|jpe?g|tiff|bmp)$/i;
 
+export function isIgnoredSearchEntry(name: string, isDirectory: boolean, symlinkTargetIsDirectory: boolean): boolean {
+  return IGNORED_DIRECTORY_NAMES.has(name) && (isDirectory || symlinkTargetIsDirectory);
+}
+
 export async function executeFilesystemSearch(input: {
   runId: string;
   toolCall: FilesystemSearchToolCall;
@@ -113,9 +117,21 @@ export async function executeFilesystemSearch(input: {
     candidatePaths.add(match.path);
     addMatch(collectedMatches, match);
   }
+  const hasSourceMatches = [...collectedMatches.values()].some((match) => !DOCUMENT_SUFFIX.test(match.path));
   const documentSearch = structuralQuery
     ? { segments: [], readBytes: 0, truncated: false, workerDurationMs: 0, workerOutputBytes: 0 }
-    : await searchDocuments({ workspaceRoot: input.workspaceRoot, paths, ...(input.signal === undefined ? {} : { signal: input.signal }) });
+    : await searchDocuments({ workspaceRoot: input.workspaceRoot, paths, ...(input.signal === undefined ? {} : { signal: input.signal }) })
+      .catch((error: unknown) => {
+        if (
+          hasSourceMatches &&
+          error instanceof ToolRuntimeError &&
+          error.code === "RUNTIME_ERROR" &&
+          error.message === "Docling Python or preloaded model directory is not configured."
+        ) {
+          return { segments: [], readBytes: 0, truncated: false, workerDurationMs: 0, workerOutputBytes: 0 };
+        }
+        throw error;
+      });
   telemetry.readBytes += documentSearch.readBytes;
   telemetry.documentSegments = documentSearch.segments.length;
   telemetry.workerDurationMs = documentSearch.workerDurationMs;
@@ -130,7 +146,7 @@ export async function executeFilesystemSearch(input: {
     addMatch(collectedMatches, { path: segment.path, fileName, line: 0, column, snippet: `[${segment.location}] ${segment.text.slice(0, WORKING_SET_BUDGET.maxSnippetChars)}`, score: scorePathMatch(segment.path, fileName, normalizedQuery) + count * 8 + (column > 0 ? 80 : 0), reasons: ["content_keyword"] });
   }
 
-  const sortedMatches = [...collectedMatches.values()]
+  const rankedMatches = [...collectedMatches.values()]
     .sort((left, right) => {
       if (right.score !== left.score) {
         return right.score - left.score;
@@ -145,14 +161,20 @@ export async function executeFilesystemSearch(input: {
       }
 
       return left.column - right.column;
-    })
-    .slice(0, input.toolCall.input.limit);
+    });
+  const seenPaths = new Set<string>();
+  const distinctPathMatches: SearchMatch[] = [];
+  for (const match of rankedMatches) {
+    if (!seenPaths.has(match.path)) distinctPathMatches.push(match);
+    seenPaths.add(match.path);
+  }
+  const sortedMatches = distinctPathMatches.slice(0, input.toolCall.input.limit);
 
   const searchResult = SearchResultSchema.parse({
     query: normalizedQuery,
     totalCandidates: candidatePaths.size,
     returnedMatches: sortedMatches.length,
-    truncated: fileListing.outputLimited || contentSearch.outputLimited || fallbackSearch.outputLimited || astSearch.truncated || documentSearch.truncated || collectedMatches.size > sortedMatches.length,
+    truncated: fileListing.outputLimited || contentSearch.outputLimited || fallbackSearch.outputLimited || astSearch.truncated || documentSearch.truncated || candidatePaths.size > sortedMatches.length,
     matches: sortedMatches
   });
   const { workingSet, contextManifest } = buildWorkingSet(searchResult);
@@ -224,11 +246,13 @@ async function inspectWorkspaceSymlinks(workspaceRoot: string, signal?: AbortSig
     entries.sort((left, right) => left.name.localeCompare(right.name, "en"));
     for (const entry of entries) {
       const fullPath = join(currentDirectory, entry.name);
+      const symlinkTargetIsDirectory = IGNORED_DIRECTORY_NAMES.has(entry.name) && entry.isSymbolicLink()
+        ? (await stat(fullPath)).isDirectory()
+        : false;
+      if (isIgnoredSearchEntry(entry.name, entry.isDirectory(), symlinkTargetIsDirectory)) continue;
       const relativePath = relative(workspaceRoot, fullPath).replaceAll("\\", "/");
       if (entry.isDirectory()) {
-        if (!IGNORED_DIRECTORY_NAMES.has(entry.name)) {
-          await walk(fullPath);
-        }
+        await walk(fullPath);
         continue;
       }
       if (!entry.isSymbolicLink()) {
@@ -452,13 +476,18 @@ function normalizeSearchQuery(text: string): SearchQuery {
 function scorePathMatch(relativePath: string, fileName: string, query: SearchQuery): number {
   const normalizedPath = relativePath.toLowerCase();
   const normalizedFileName = fileName.toLowerCase();
+  const canonicalQuery = canonicalSymbol(query.normalizedText);
   let score = 0;
+
+  if (isProductionSourcePath(normalizedPath)) {
+    score += 40;
+  }
 
   if (looksLikeExplicitPath(query.text) && normalizedPath.includes(query.normalizedText)) {
     score += 120;
   }
 
-  if (normalizedFileName === query.normalizedText) {
+  if (normalizedFileName === query.normalizedText || (canonicalQuery.length > 0 && canonicalFileStem(fileName) === canonicalQuery)) {
     score += 100;
   }
 
@@ -478,11 +507,16 @@ function collectPathReasons(relativePath: string, fileName: string, query: Searc
   const normalizedPath = relativePath.toLowerCase();
   const normalizedFileName = fileName.toLowerCase();
 
+  if (isProductionSourcePath(normalizedPath)) {
+    reasons.add("production_source");
+  }
+
   if (looksLikeExplicitPath(query.text) && normalizedPath.includes(query.normalizedText)) {
     reasons.add("explicit_path");
   }
 
-  if (normalizedFileName === query.normalizedText) {
+  const canonicalQuery = canonicalSymbol(query.normalizedText);
+  if (normalizedFileName === query.normalizedText || (canonicalQuery.length > 0 && canonicalFileStem(fileName) === canonicalQuery)) {
     reasons.add("exact_file_name");
   }
 
@@ -495,6 +529,20 @@ function collectPathReasons(relativePath: string, fileName: string, query: Searc
   }
 
   return [...reasons];
+}
+
+function canonicalFileStem(fileName: string): string {
+  return canonicalSymbol(fileName.replace(/\.[^.]+$/u, ""));
+}
+
+function isProductionSourcePath(path: string): boolean {
+  return /^(?:apps|packages)\//u.test(path) &&
+    !/^packages\/contracts\//u.test(path) &&
+    /\.(?:[cm]?[jt]sx?|py|go|rs|java|kt|cs|c(?:pp)?|h(?:pp)?|html?|css|sql)$/u.test(path);
+}
+
+function canonicalSymbol(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/gu, "");
 }
 
 function createPathOnlyMatch(relativePath: string, fileName: string, score: number, reasons: string[]): SearchMatch {

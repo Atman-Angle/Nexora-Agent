@@ -73,8 +73,20 @@ export async function inspectRepository(input: InspectorInput): Promise<Reposito
   const warnings: RepositoryWarning[] = [];
   const evidenceRefs: string[] = [];
 
-  const instructionFiles = await discoverKnownFiles(absoluteRoot, INSTRUCTION_FILE_NAMES, budget.maxInstructionFiles, evidenceRefs);
-  const configFiles = await discoverKnownFiles(absoluteRoot, CONFIG_FILE_NAMES, budget.maxConfigFiles, evidenceRefs);
+  const instructionFiles = await discoverKnownFiles(
+    absoluteRoot,
+    INSTRUCTION_FILE_NAMES,
+    budget.maxInstructionFiles,
+    budget.maxFileReadBytes,
+    evidenceRefs
+  );
+  const configFiles = await discoverKnownFiles(
+    absoluteRoot,
+    CONFIG_FILE_NAMES,
+    budget.maxConfigFiles,
+    budget.maxFileReadBytes,
+    evidenceRefs
+  );
   const outline = await buildDirectoryOutline(absoluteRoot, budget, warnings);
 
   const { languages, frameworks, packageManagers, buildSystems, testSystems } = await detectTechnologies(
@@ -149,6 +161,7 @@ async function buildDirectoryOutline(
     childPackageDirs,
     scannedRef: { count: 0 },
     maxScanned: budget.maxEntries,
+    maxFileReadBytes: budget.maxFileReadBytes,
     warnings
   });
 
@@ -166,6 +179,7 @@ async function walkOutline(
     childPackageDirs: string[];
     scannedRef: { count: number };
     maxScanned: number;
+    maxFileReadBytes: number;
     warnings: RepositoryWarning[];
   }
 ): Promise<void> {
@@ -217,7 +231,7 @@ async function walkOutline(
       continue;
     }
 
-    const hash = await hashFile(fullPath);
+    const hash = await hashFile(fullPath, state.maxFileReadBytes);
     state.workspaceFiles.push(
       SourceReferenceSchema.parse({
         path: relativePath,
@@ -232,6 +246,7 @@ async function discoverKnownFiles(
   root: string,
   names: string[],
   budget: number,
+  maxFileReadBytes: number,
   evidenceRefs: string[]
 ): Promise<SourceReference[]> {
   const found: SourceReference[] = [];
@@ -244,7 +259,7 @@ async function discoverKnownFiles(
       const candidate = join(dir.absolutePath, name);
       if (await pathExists(candidate)) {
         const relativePath = relative(root, candidate).replaceAll("\\", "/");
-        const hash = await hashFile(candidate);
+        const hash = await hashFile(candidate, maxFileReadBytes);
         found.push(
           SourceReferenceSchema.parse({
             path: relativePath,
@@ -643,9 +658,20 @@ async function readJson(absolutePath: string, relativePath: string, warnings: Re
   }
 }
 
-async function hashFile(path: string): Promise<string | undefined> {
+async function hashFile(path: string, maxFileReadBytes: number): Promise<string | undefined> {
   try {
-    const content = await readFile(path, "utf8");
+    const fileStats = await stat(path);
+    if (!fileStats.isFile() || fileStats.size > maxFileReadBytes) {
+      return undefined;
+    }
+    const bytes = await readFile(path);
+    const content = bytes.toString("utf8");
+    // A lossy UTF-8 decode can make distinct binary files produce the same
+    // string hash (for example, invalid lead bytes both become U+FFFD). Do
+    // not publish an unsafe contentHash when the bytes do not round-trip.
+    if (!Buffer.from(content, "utf8").equals(bytes)) {
+      return undefined;
+    }
     return computeArtifactHash(content);
   } catch {
     return undefined;

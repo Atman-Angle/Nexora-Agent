@@ -43,11 +43,14 @@ export async function handleUpdatePlan(
   state: AgentLoopState, deps: HandlerDeps,
   action: Extract<AgentAction, { type: "update_plan" }>
 ): Promise<HandlerOutcome> {
-  const nextLedger = applyLedgerPatch({
-    ledger: state.ledger,
-    patch: action.patch,
-    now: deps.input.now()
-  });
+  const structuredPlanAccepted = readCodingState(state).builder.planAccepted;
+  const nextLedger = structuredPlanAccepted
+    ? state.ledger
+    : applyLedgerPatch({
+      ledger: state.ledger,
+      patch: action.patch,
+      now: deps.input.now()
+    });
   await deps.persistLedger(nextLedger);
   let ledger = nextLedger;
   await deps.checkpoint("plan_formed");

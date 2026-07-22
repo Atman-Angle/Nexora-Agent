@@ -18,14 +18,7 @@ describe("CR-008 Context Compaction", () => {
       fixturePath,
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
-          {
-            type: "update_plan",
-            reason: "Plan the fix.",
-            patch: {
-              currentStep: "Patch src/math.js",
-              appendPlannedSteps: ["Read src/math.js", "Patch src/math.js", "Run node verify.js"]
-            }
-          },
+          structuredPlanAction(),
           {
             type: "tool_call",
             toolCall: {
@@ -119,14 +112,7 @@ describe("CR-008 Context Compaction", () => {
       ],
       extraEnv: {
         NEXORA_FAKE_AGENT_SCRIPT_JSON: JSON.stringify([
-          {
-            type: "update_plan",
-            reason: "Plan the resume mutation.",
-            patch: {
-              currentStep: "Patch note.txt",
-              appendPlannedSteps: ["Patch note.txt", "Run node verify.js"]
-            }
-          },
+          structuredNotePlanAction(),
           {
             type: "tool_call",
             toolCall: {
@@ -191,3 +177,58 @@ describe("CR-008 Context Compaction", () => {
     expect(compactedAfterResume).toBeGreaterThanOrEqual(2);
   });
 });
+
+function structuredPlanAction() {
+  const now = new Date().toISOString();
+  const node = process.execPath.replace(/\\/g, "/").split("/").pop() ?? process.execPath;
+  return {
+    type: "submit_execution_plan" as const,
+    rationale: "Read, patch, and validate the math implementation.",
+    plan: {
+      targetFiles: ["src/math.js"],
+      intendedChanges: ["Fix add() implementation."],
+      validationCommands: [`${node} verify.js`]
+    },
+    steps: [
+      planStep(now, "cr008-read", "Read src/math.js", ["filesystem.read"]),
+      planStep(now, "cr008-mutate", "Patch src/math.js", ["filesystem.patch"]),
+      planStep(now, "cr008-validate", "Validate src/math.js", ["shell.execute"])
+    ]
+  };
+}
+
+function structuredNotePlanAction() {
+  const now = new Date().toISOString();
+  const node = process.execPath.replace(/\\/g, "/").split("/").pop() ?? process.execPath;
+  return {
+    type: "submit_execution_plan" as const,
+    rationale: "Patch note.txt and validate the resumed run.",
+    plan: {
+      targetFiles: ["note.txt"],
+      intendedChanges: ["Replace before with after."],
+      validationCommands: [`${node} verify.js`]
+    },
+    steps: [
+      planStep(now, "cr008-mutate", "Patch note.txt", ["filesystem.patch"]),
+      planStep(now, "cr008-validate", "Validate note.txt", ["shell.execute"])
+    ]
+  };
+}
+
+function planStep(now: string, stepId: string, description: string, requiredTools: string[]) {
+  return {
+    stepId,
+    description,
+    operation: "modify" as const,
+    targetFiles: [description.includes("note") ? "note.txt" : "src/math.js"],
+    rationale: "CR-008 structured execution step.",
+    expectedEffects: ["The requested repair is applied."],
+    requiredTools,
+    required: true,
+    status: "planned" as const,
+    evidenceRefs: [],
+    dependsOn: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}

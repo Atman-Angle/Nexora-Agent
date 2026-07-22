@@ -7,6 +7,8 @@ import { AgentLoopRunFailure } from "./errors.js";
 export function detectNoProgress(input: {
   previous: NoProgressSnapshot;
   current: NoProgressSnapshot;
+  /** True only when this tool execution added first repair-read evidence for the current failed validation. */
+  validationRepairEvidenceChanged?: boolean;
 }): string[] {
   const signals: string[] = [];
   const sameAction =
@@ -16,6 +18,7 @@ export function detectNoProgress(input: {
     input.previous.validationStatus !== null &&
     input.previous.validationStatus === input.current.validationStatus &&
     input.current.validationStatus === "failed";
+  const validationNotImproved = sameFailedValidation && input.validationRepairEvidenceChanged !== true;
   const sameArtifactHash =
     input.previous.artifactHash !== null &&
     input.current.artifactHash !== null &&
@@ -30,10 +33,10 @@ export function detectNoProgress(input: {
   if (sameAction && input.previous.ledgerVersion === input.current.ledgerVersion) {
     signals.push("ledger_unchanged");
   }
-  if ((sameAction || sameError || sameFailedValidation) && input.previous.evidenceCount === input.current.evidenceCount) {
+  if ((sameAction || sameError || validationNotImproved) && input.previous.evidenceCount === input.current.evidenceCount) {
     signals.push("no_new_evidence");
   }
-  if (sameFailedValidation) {
+  if (validationNotImproved) {
     signals.push("validation_not_improved");
   }
   if (sameArtifactHash) {

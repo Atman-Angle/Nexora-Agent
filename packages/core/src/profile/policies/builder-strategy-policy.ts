@@ -6,6 +6,11 @@ import {
   onStrategyRejection,
   validateActionWithStrategy
 } from "../../strategy/index.js";
+import {
+  deriveDecisionDirective,
+  isAgentActionAllowedByDirective,
+  type DecisionDirective
+} from "../../strategy/decision-directive.js";
 import { buildStrategyRejectionContext } from "../../agent-loop/strategy-rejection.js";
 import { handleSubmitExecutionPlan } from "../coding/submit-execution-plan.js";
 import { readCodingState, writeCodingState } from "../coding-profile-state.js";
@@ -28,15 +33,49 @@ export const builderStrategyPolicy: ActionPolicy = {
     const { action, state, deps, strategyBypassedForRecovery } = input;
     const cs = readCodingState(state);
 
-    // Stage 1: Always evaluate builder action
-    const builderActionEvaluation = evaluateBuilderAction({
-      strategyBypassedForRecovery,
-      strategyState: cs.strategy,
-      builderState: cs.builder,
-      action,
-      workspaceRoot: deps.input.workspaceRoot,
-      now: deps.input.now()
+    const toolRuntime = deps.input.toolRuntime as typeof deps.input.toolRuntime | null;
+    const executionRecords = toolRuntime === null ? [] : toolRuntime.listExecutionRecords(state.activeRun.runId);
+    const shouldUseDirective = input.decisionDirective !== undefined || (toolRuntime !== null && deps.input.task.input.agentRequest !== undefined);
+    const decisionDirective: DecisionDirective | null = !shouldUseDirective ? null : input.decisionDirective ?? deriveDecisionDirective({
+      runId: state.activeRun.runId,
+      ledger: state.ledger,
+      executionRecords,
+      workingSet: state.currentWorkingSet,
+      recentToolResult: state.recentToolResult,
+      recentValidationResult: state.recentValidationResult,
+      changedFiles: state.changedFiles,
+      taskAcceptanceCriteria: deps.input.task.input.acceptanceCriteria,
+      taskType: deps.input.task.input.taskType,
+      budget: deps.input.task.input.agentRequest!.budget,
+      usage: state.usage,
+      strategy: {
+        phase: cs.strategy.phase,
+        decision: cs.strategyDecision,
+        noProgressCount: cs.strategy.noProgressCount,
+        explorationUsage: cs.strategy.explorationUsage
+      },
+      builder: cs.builder,
+      pendingActionRejection: state.pendingActionRejection,
+      regroundRequested: state.regroundRequested,
+      replanRequested: state.replanRequested,
+      hasValidationRequest: deps.input.task.input.validationRequest !== undefined,
+      profile: "coding"
     });
+    const directiveAction = actionName(action);
+    const directiveAllowsAction = decisionDirective === null || isAgentActionAllowedByDirective(decisionDirective, action);
+    const directiveMismatch = !strategyBypassedForRecovery && !directiveAllowsAction;
+
+    // Stage 1: Always evaluate builder action
+    const builderActionEvaluation = directiveMismatch
+      ? { state: cs.builder, rejection: null, events: [] }
+      : evaluateBuilderAction({
+          strategyBypassedForRecovery,
+          strategyState: cs.strategy,
+          builderState: cs.builder,
+          action,
+          workspaceRoot: deps.input.workspaceRoot,
+          now: deps.input.now()
+        });
 
     const builderEvents: readonly EventDraft[] = builderActionEvaluation.events.map((e) => ({
       type: e.type,
@@ -65,7 +104,20 @@ export const builderStrategyPolicy: ActionPolicy = {
     }
 
     // Stage 3: Compute strategy policy
-    const strategyPolicy = strategyBypassedForRecovery
+    // A model `fail` is a terminal error signal, not a proposed workspace
+    // action.  It must reach the profile fail handler even when the current
+    // Directive requires plan bootstrap; routing it through strategy repair
+    // would turn provider/script exhaustion into a false no-progress failure.
+    const strategyPolicy = action.type === "fail"
+      ? ({ allowed: true } as const)
+      : directiveMismatch
+      ? ({
+          allowed: false as const,
+          code: "DECISION_DIRECTIVE_ACTION_REJECTED",
+          message: `Action ${directiveAction} is outside the current DecisionDirective (allowedAction=${decisionDirective?.allowedAction ?? "none"}, candidatePath=${decisionDirective?.candidatePath ?? "none"}, progressFingerprint=${decisionDirective?.progressFingerprint ?? "none"}).`,
+          reason: "decision_directive_action_mismatch"
+        } as const)
+      : strategyBypassedForRecovery
       ? ({ allowed: true } as const)
       : builderActionEvaluation.rejection !== null
         ? ({
@@ -291,3 +343,16 @@ export const builderStrategyPolicy: ActionPolicy = {
     };
   }
 };
+
+function actionName(action: AgentAction): string {
+  if (action.type === "tool_call" || action.type === "request_approval") return action.toolCall.toolName;
+  return action.type;
+}
+
+/**
+ * Plan control messages are lifecycle transitions, not Tool choices.  A
+ * legacy update_plan is intentionally narration-only after a structured plan
+ * has been accepted; it must not be rejected by the Tool directive and then
+ * reinterpreted as a competing next-step decision.  Structured plan
+ * submission remains constrained to the no-plan/plan-required boundary.
+ */

@@ -59,7 +59,7 @@ export function readDatabaseState(path: string): {
   try {
     const tasks = database.connection
       .prepare(
-        `SELECT id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, task_type, acceptance_criteria_json, execution_constraints_json, source, created_at
+        `SELECT id, schema_version, input_text, file_path, search_query, patch_path, expected_hash, patch_json, patch_encoding, idempotency_key, validation_request_json, agent_request_json, task_type, success_criteria_json, acceptance_criteria_json, execution_constraints_json, source, created_at
          FROM tasks
          ORDER BY created_at ASC`
       )
@@ -134,6 +134,10 @@ export function readDatabaseState(path: string): {
                   }
                 }),
             taskType: (((row as Record<string, unknown>).task_type as string | null) ?? null) ?? undefined,
+            successCriteria:
+              (((row as Record<string, unknown>).success_criteria_json as string | null) ?? null) === null
+                ? []
+                : (JSON.parse(String((row as Record<string, unknown>).success_criteria_json)) as string[]),
             acceptanceCriteria:
               (((row as Record<string, unknown>).acceptance_criteria_json as string | null) ?? null) === null
                 ? []
