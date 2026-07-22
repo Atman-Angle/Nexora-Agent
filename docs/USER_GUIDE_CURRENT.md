@@ -165,5 +165,6 @@ currentPlan required Checks
 - 新 1.1 Runtime 不迁移或恢复旧数据库。
 - E053 已通过确定性闭环和唯一真实 Provider canary；E048/E049/E052 的历史失败 Run 只供审计，不恢复或重跑。
 - E054 已通过 CLI subprocess + 本机 HTTP Provider 验证：启动目录 `.env` 自动加载，显式环境优先，目标 workspace 隔离，secret 不进入输出。
+- `filesystem.search` 使用随 Runtime 安装的 Ripgrep 二进制做大小写不敏感的字面量搜索；不接受自定义正则/参数，不搜索忽略目录、二进制或超过 256 KiB 的文件，最多返回 100 条稳定结果。
 
 调试和恢复时先运行 `inspect`，不要直接修改 SQLite。
