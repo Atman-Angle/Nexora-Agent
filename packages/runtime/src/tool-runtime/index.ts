@@ -19,12 +19,13 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     define("filesystem.read", "read", true, PathInput, { path: "README.md" }, async (input, context) => {
       const path = await workspacePath(context.workspace, input.path, "file");
       const bytes = await readFile(path);
+      const content = bytes.toString("utf8");
       const subjectRef = input.path;
       if (bytes.byteLength <= MAX_INLINE_BYTES) {
-        return success(subjectRef, { path: input.path, content: bytes.toString("utf8"), byteLength: bytes.byteLength });
+        return success(subjectRef, { path: input.path, content, digest: digest(content), byteLength: bytes.byteLength });
       }
-      const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(bytes.toString("utf8"));
-      return success(subjectRef, { path: input.path, preview: bytes.toString("utf8", 0, 500), artifactRef: artifact.digest, byteLength: artifact.byteLength });
+      const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(content);
+      return success(subjectRef, { path: input.path, preview: content.slice(0, 500), digest: digest(content), artifactRef: artifact.digest, byteLength: artifact.byteLength });
     }),
     define("filesystem.list", "read", true, z.object({ path: z.string().default(".") }).strict(), {}, async (input, context) => {
       const requestedPath = input.path ?? ".";

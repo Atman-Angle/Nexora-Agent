@@ -68,7 +68,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
 
 const ProviderResponseSchema = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().min(1) }).passthrough() }).passthrough()).min(1) }).passthrough();
 
-const DECISION_SYSTEM_PROMPT = `Return one JSON object matching an example in context.actionContract; no markdown or extra keys. Replace placeholders from context.run, use context.workspace exactly, and use Tool inputExample only as a field guide. Never provide Runtime-owned IDs or permissions, claim success, or treat text as evidence. Runtime owns approval, execution, evidence, validation, and completion.`;
+const DECISION_SYSTEM_PROMPT = `Return one JSON object matching an example in context.actionContract; no markdown or extra keys. Replace placeholders from context.run, use context.workspace exactly, use context.toolObservations as the authoritative Tool results, and use Tool inputExample only as a field guide. Never provide Runtime-owned IDs or permissions, claim success, or treat text as evidence. Runtime owns approval, execution, evidence, validation, and completion.`;
 const VALIDATION_SYSTEM_PROMPT = `Independently assess whether the proposed summary and cited persisted evidence satisfy the original natural-language input, Task Contract, Plan, and acceptance criteria. Return only JSON: {"passed":boolean,"issues":string[],"evidenceIds":string[]}. Never pass without relevant evidence.`;
 
 function required(environment: Record<string, string | undefined>, name: string): string {

@@ -2,11 +2,25 @@ import { z } from "zod";
 
 import type { Evidence, RunSnapshot, RuntimeAction, ToolInvocation } from "./contracts.js";
 
+export type ToolObservation = {
+  readonly invocationId: string;
+  readonly planVersion: number;
+  readonly stepId: string;
+  readonly toolName: string;
+  readonly status: "succeeded" | "failed";
+  readonly completedAt: string;
+  readonly result: ToolInvocation["resultJson"];
+  readonly error: ToolInvocation["errorJson"];
+  readonly truncated: boolean;
+  readonly digest: string;
+};
+
 export type ModelDecisionContext = {
   readonly workspace: string;
   readonly run: RunSnapshot;
   readonly allowedActions: readonly ("set_plan" | "call_tool" | "request_input" | "propose_finish")[];
   readonly actionContract: readonly RuntimeAction[];
+  readonly toolObservations: readonly ToolObservation[];
   readonly tools: readonly {
     readonly name: string;
     readonly risk: "read" | "write" | "execute";

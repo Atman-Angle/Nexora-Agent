@@ -268,19 +268,23 @@ async function observationProviderStub(workspace: string): Promise<ProviderStub>
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
-      const payload = JSON.parse(body.messages.at(-1)!.content) as { mode: "decide" | "validate"; context: ObservationContext };
+      const payload = JSON.parse(body.messages.at(-1)!.content) as {
+        mode: "decide" | "validate";
+        context: ObservationContext | { readonly evidence: readonly { readonly id: string }[] };
+      };
       let content: unknown;
       if (payload.mode === "validate") {
         validationCalls += 1;
         content = {
           passed: true,
           issues: [],
-          evidenceIds: payload.context.run.evidence.map((item) => item.id)
+          evidenceIds: (payload.context as { readonly evidence: readonly { readonly id: string }[] }).evidence.map((item) => item.id)
         };
       } else {
         const index = decisionContexts.length;
-        decisionContexts.push(structuredClone(payload.context));
-        content = observationDecision(workspace, payload.context, index);
+        const context = payload.context as ObservationContext;
+        decisionContexts.push(structuredClone(context));
+        content = observationDecision(workspace, context, index);
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));

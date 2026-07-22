@@ -25,11 +25,15 @@ import { ArtifactStore } from "./artifacts.js";
 import {
   SemanticValidationVerdictSchema,
   type ModelDecisionContext,
-  type RuntimeProvider
+  type RuntimeProvider,
+  type ToolObservation
 } from "./model-client.js";
 import { openRunStore, type RunStore } from "./run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
 import { digestTaskContract, validateCompletion } from "./validation.js";
+
+const MAX_TOOL_OBSERVATIONS = 8;
+const MAX_TOOL_OBSERVATION_BYTES = 32 * 1024;
 
 const ToolResultSchema = z.discriminatedUnion("status", [
   z.object({
@@ -758,6 +762,7 @@ export class RuntimeEngine {
         basedOnVersion: run.currentPlan?.version ?? null,
         includeTaskContract
       }),
+      toolObservations: projectToolObservations(this.#store.listToolInvocations(run.runId)),
       tools: [...this.#tools.values()].map((tool) => ({
         name: tool.name,
         risk: tool.risk,
@@ -900,6 +905,67 @@ function assertCompletedStepsUnchanged(run: RunSnapshot, nextSteps: readonly { r
 
 function digestJson(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+function projectToolObservations(invocations: readonly ToolInvocation[]): ToolObservation[] {
+  const observations = invocations
+    .filter((item): item is ToolInvocation & { status: "succeeded" | "failed"; completedAt: string } => (
+      (item.status === "succeeded" || item.status === "failed") && item.completedAt !== null
+    ))
+    .slice(-MAX_TOOL_OBSERVATIONS)
+    .map((item): ToolObservation => {
+      const result = item.status === "succeeded" ? item.resultJson : null;
+      const error = item.status === "failed" ? item.errorJson : null;
+      return {
+        invocationId: item.id,
+        planVersion: item.planVersion,
+        stepId: item.stepId,
+        toolName: item.toolName,
+        status: item.status,
+        completedAt: item.completedAt,
+        result,
+        error,
+        truncated: false,
+        digest: digestJson(item.status === "succeeded" ? result : error)
+      };
+    });
+  if (jsonBytes(observations) <= MAX_TOOL_OBSERVATION_BYTES || observations.length === 0) return observations;
+
+  const itemBudget = Math.floor((MAX_TOOL_OBSERVATION_BYTES - observations.length - 1) / observations.length);
+  return observations.map((observation) => boundObservation(observation, itemBudget));
+}
+
+function boundObservation(observation: ToolObservation, maxBytes: number): ToolObservation {
+  if (jsonBytes(observation) <= maxBytes) return observation;
+  const value = observation.status === "succeeded" ? observation.result : observation.error;
+  const serialized = JSON.stringify(value);
+  let lower = 0;
+  let upper = serialized.length;
+  let bounded = observationPreview(observation, "");
+  while (lower <= upper) {
+    const middle = Math.floor((lower + upper) / 2);
+    const candidate = observationPreview(observation, serialized.slice(0, middle));
+    if (jsonBytes(candidate) <= maxBytes) {
+      bounded = candidate;
+      lower = middle + 1;
+    } else {
+      upper = middle - 1;
+    }
+  }
+  return bounded;
+}
+
+function observationPreview(observation: ToolObservation, preview: string): ToolObservation {
+  return {
+    ...observation,
+    result: observation.status === "succeeded" ? { preview } : null,
+    error: observation.status === "failed" ? { preview } : null,
+    truncated: true
+  };
+}
+
+function jsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
 function requireWorkspace(value: string): string {

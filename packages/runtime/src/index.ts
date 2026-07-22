@@ -17,7 +17,8 @@ export type {
   ModelDecisionContext,
   RuntimeProvider,
   SemanticValidationContext,
-  SemanticValidationVerdict
+  SemanticValidationVerdict,
+  ToolObservation
 } from "./model-client.js";
 
 export type {
