@@ -41,8 +41,7 @@ const CheckBaseSchema = z.object({
 const ToolResultCheckSchema = CheckBaseSchema.extend({
   kind: z.literal("tool_result"),
   toolName: NonEmptyString,
-  expectedStatus: z.literal("success"),
-  expectedExitCode: z.number().int().optional()
+  expectedStatus: z.literal("success")
 }).strict();
 
 const StateAssertionCheckSchema = CheckBaseSchema.extend({
@@ -136,7 +135,15 @@ const RequestInputActionSchema = z.object({
 const ProposeFinishActionSchema = z.object({
   type: z.literal("propose_finish"),
   summary: NonEmptyString,
-  evidenceIds: z.array(NonEmptyString)
+  evidenceIds: z.array(NonEmptyString).min(1).superRefine((ids, context) => {
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate finish Evidence ID: ${id}` });
+      }
+      seen.add(id);
+    }
+  })
 }).strict();
 
 export const RuntimeActionSchema = z.discriminatedUnion("type", [

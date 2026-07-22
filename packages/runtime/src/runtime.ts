@@ -625,7 +625,8 @@ export class RuntimeEngine {
   }
 
   async #proposeFinish(runInput: RunSnapshot, action: Extract<RuntimeAction, { type: "propose_finish" }>, observer?: RuntimeObserver): Promise<RunSnapshot> {
-    const unresolved = this.#store.listToolInvocations(runInput.runId).filter((item) => item.status === "started" || item.status === "unknown").length;
+    const toolInvocations = this.#store.listToolInvocations(runInput.runId);
+    const unresolved = toolInvocations.filter((item) => item.status === "started" || item.status === "unknown").length;
     const deterministic = validateCompletion(runInput, action.evidenceIds, unresolved);
     if (!deterministic.passed) {
       return this.#validationFailed(runInput, deterministic.issues, observer);
@@ -644,14 +645,17 @@ export class RuntimeEngine {
     }, "validation.requested", { evidenceIds: deterministic.evidenceIds }, observer);
     let verdict: z.infer<typeof SemanticValidationVerdictSchema>;
     try {
+      const evidenceById = new Map(run.evidence.map((item) => [item.id, item]));
+      const citedEvidence = deterministic.evidenceIds.map((id) => evidenceById.get(id)!);
+      const citedInvocationIds = new Set(citedEvidence.flatMap((item) => item.invocationId === null ? [] : [item.invocationId]));
       verdict = SemanticValidationVerdictSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => this.#provider.validate({
         originalInput: run.inputHistory[0]!.text,
         currentInput: run.inputHistory.map((entry) => entry.text),
         taskContract: run.taskContract!,
         plan: run.currentPlan!,
         proposedSummary: action.summary,
-        evidence: run.evidence,
-        toolInvocations: this.#store.listToolInvocations(run.runId)
+        evidence: citedEvidence,
+        toolInvocations: toolInvocations.filter((item) => citedInvocationIds.has(item.id))
       })));
     } catch (error) {
       return this.#blockForProvider(run, error, observer);

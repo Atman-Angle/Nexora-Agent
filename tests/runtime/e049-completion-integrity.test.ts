@@ -33,7 +33,8 @@ describe("E049 completion integrity", () => {
     expect(result.status).toBe("waiting");
     expect(view.snapshot.result).toBeNull();
     expect(view.snapshot.stepProgress[0]?.status).not.toBe("completed");
-    expect(view.events.map((event) => event.type)).toContain("validation.failed");
+    expect(view.events.map((event) => event.type)).toContain("action.rejected");
+    expect(view.events.map((event) => event.type)).not.toContain("validation.requested");
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
     runtime.close();
   });
