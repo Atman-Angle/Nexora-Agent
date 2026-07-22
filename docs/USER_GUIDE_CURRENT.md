@@ -155,6 +155,8 @@ currentPlan required Checks
 → run.succeeded
 ```
 
+最终semantic validation只接收全部用户输入、候选summary和已引用Tool的输入/输出事实；Plan、TaskContract、Evidence/Invocation ID、digest、Fencing等执行元数据由Runtime确定性检查，不交给模型作语义推断。
+
 空/部分/未知 Evidence 引证、非零命令、failed/unknown Invocation、Provider 失败或未完成 Step 均不能成为成功。
 
 ## 7. 当前限制
