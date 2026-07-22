@@ -1,51 +1,20 @@
-# Nexora Loop Starter v1.2
+# Nexora 1.1
 
-这是 Nexora 从 0 开发时使用的精简 Loop 开发包。
+Nexora 是以自然语言为输入、可持久化执行真实多步骤任务的 CLI 与 Node.js/TypeScript Runtime。
 
-## 核心原则
+```powershell
+$env:NEXORA_MODEL_PROVIDER = "openai-compatible"
+$env:NEXORA_MODEL_BASE_URL = "https://provider.example/v1"
+$env:NEXORA_MODEL_API_KEY = "..."
+$env:NEXORA_MODEL_NAME = "..."
 
-- 根目录只保留少量长期真相文档。
-- 所有 Feature 全部放入 `specs/`。
-- 当前准备开发的 Feature 使用 `status: ready`。
-- 后续 Feature 使用 `status: outline`，只定义目标、依赖、链路和验收方向。
-- 每轮只读取当前 Feature，不一次加载全部 Spec。
-- 每次只推进一个纵向 Feature。
-- 当前 Feature 未完成时不得进入下一个 Feature。
-
-## 开发时优先读取
-
-1. `AGENTS.md`
-2. `PROJECT.md`
-3. `ARCHITECTURE.md`
-4. `LOOP.md`
-5. `DEVELOPMENT.md`
-6. 当前 Feature Spec
-7. 相关代码和测试
-
-## 当前 Feature
-
-```text
-F001 — Direct Mode
+pnpm nexora "检查项目，修复问题，补充测试并确认通过" --cwd D:\project
+pnpm nexora inspect <run-id> --cwd D:\project --json
+pnpm nexora resume <run-id> --cwd D:\project --approve <request-id>
 ```
 
-## 目录
+Node 程序可从 `@nexora/runtime` 导入 `createRuntime`、`createBuiltInTools` 和 Provider 工厂，调用 `start/resume/inspect/close`。CLI 与包调用共享同一持久化循环、状态机、工具、Evidence 和验证门。
 
-```text
-AGENTS.md
-PROJECT.md
-ARCHITECTURE.md
-LOOP.md
-DEVELOPMENT.md
-TESTS.md
-specs/
-docs/
-.agents/skills/
-```
+Run 中 Structured Plan 是唯一计划权威，State Machine 是唯一状态权威，Tool Invocation 是副作用恢复权威；只有 `status === "succeeded"` 表示成功。
 
-
-## v1.2 更新
-
-- 增加最小 Monorepo 项目目录规范；
-- 明确目录只随当前 Feature 生长，不提前生成空模块；
-- 将 F001 补全为可直接执行的 ready 级 Spec；
-- 增加 F001 的最小 Contracts、SQLite 表、CLI、Fake Model、状态迁移、测试与禁止范围。
+当前确定性验证通过，但唯一真实 Provider canary 失败，所以 E049 为 `verification_blocked`。详见 [当前目标](docs/audit/current-goals.md)、[架构](docs/audit/current-architecture.md) 和 [验证报告](docs/audit/validation-report.md)。旧实现可从 `local-workspace` 和 Git snapshot `2e2d4ae` 恢复。
