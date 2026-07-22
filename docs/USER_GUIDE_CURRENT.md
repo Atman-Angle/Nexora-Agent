@@ -22,7 +22,7 @@ CLI 的 start/resume 自动读取启动命令所在目录（`process.cwd()`）�
 pnpm nexora "读取 note.txt，把 before 改成 after，运行测试并确认通过" --cwd D:\project
 ```
 
-未提供目标时，CLI 会提示 `What should Nexora do?`，并在同一进程中交互处理后续输入或批准。提供目标时，CLI 输出一个 `RunResult` JSON 后退出；若需要批准或输入，状态为 `waiting`。
+未提供目标时，CLI 会提示 `What should Nexora do?`，并在同一进程中交互处理后续输入或批准。提供目标时，CLI 输出一个 `RunResult` JSON 后退出；成功时`summary`直接包含经过验证的最终回答，尚未产生Result时为`null`；若需要批准或输入，状态为 `waiting`。
 
 ### 查看 Run
 
