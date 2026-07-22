@@ -25,14 +25,14 @@ const workspace = ${JSON.stringify(root)};
 const provider = {
   async decide(context) {
     call += 1;
-    if (call === 1) return { type: "set_plan", basedOnVersion: null, taskContract: { version: 1, inputVersion: 1, goal: "Read target", workspace, constraints: [], acceptanceCriteria: ["read"] }, orderedSteps: [{ id: "read", objective: "Read", acceptanceChecks: [{ id: "check", kind: "tool_result", required: true, toolName: "filesystem.read", expectedStatus: "success" }] }] };
-    if (call === 2) return { type: "call_tool", stepId: "read", checkIds: ["check"], toolName: "filesystem.read", input: { path: "target.txt" } };
+    if (call === 1) return { type: "set_plan", basedOnVersion: null, taskContract: { version: 1, inputVersion: 1, goal: "Search target", workspace, constraints: [], acceptanceCriteria: ["search"] }, orderedSteps: [{ id: "search", objective: "Search", acceptanceChecks: [{ id: "check", kind: "tool_result", required: true, toolName: "filesystem.search", expectedStatus: "success" }] }] };
+    if (call === 2) return { type: "call_tool", stepId: "search", checkIds: ["check"], toolName: "filesystem.search", input: { query: "external consumer", path: "." } };
     return { type: "propose_finish", summary: "Verified", evidenceIds: context.run.evidence.map((item) => item.id) };
   },
   async validate(context) { return { passed: true, issues: [], evidenceIds: context.evidence.map((item) => item.id) }; }
 };
 const runtime = createRuntime({ workspace, provider, tools: createBuiltInTools() });
-const result = await runtime.start({ input: "Read target.txt" });
+const result = await runtime.start({ input: "Search for external consumer" });
 const view = await runtime.inspect(result.runId);
 runtime.close();
 console.log(JSON.stringify({ status: result.status, invocations: view.toolInvocations.length }));
@@ -42,7 +42,7 @@ console.log(JSON.stringify({ status: result.status, invocations: view.toolInvoca
 
     const packageRoot = join(root, "node_modules", "@nexora", "runtime");
     const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as { dependencies: Record<string, string> };
-    expect(Object.keys(packageJson.dependencies).sort()).toEqual(["better-sqlite3", "zod"]);
+    expect(Object.keys(packageJson.dependencies).sort()).toEqual(["@vscode/ripgrep", "better-sqlite3", "zod"]);
     const packedFiles = allFiles(packageRoot);
     expect(packedFiles.some((path) => path.includes("docling") || path.includes("packages/core"))).toBe(false);
     for (const path of packedFiles.filter((item) => /\.(?:js|d\.ts)$/.test(item))) {
