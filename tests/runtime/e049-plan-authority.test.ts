@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRuntime } from "../../packages/runtime/src/index.js";
-import { ScriptedRuntimeProvider, readStep, setPlan, successfulReadTool } from "./runtime-testkit.js";
+import { ScriptedRuntimeProvider, finishFromEvidence, readStep, setPlan, successfulReadTool } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -24,7 +24,7 @@ describe("E049 single Structured Plan authority", () => {
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
       { type: "call_tool", stepId: "inspect", checkIds: ["read-target"], toolName: "filesystem.read", input: { path: "src/index.ts" } },
-      (context) => ({ type: "propose_finish", summary: "Target inspected", evidenceIds: context.run.evidence.map((item) => item.id) })
+      finishFromEvidence("Target inspected")
     ]);
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [successfulReadTool(calls)] });
 
@@ -68,6 +68,33 @@ describe("E049 single Structured Plan authority", () => {
     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.id)).toEqual(["revised"]);
     expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
+    runtime.close();
+  });
+
+  it("invalidates evidence from a revised incomplete Step", async () => {
+    const workspace = tempRoot();
+    const firstStep = {
+      ...readStep(),
+      acceptanceChecks: [
+        readStep().acceptanceChecks[0],
+        { ...readStep().acceptanceChecks[0], id: "read-again" }
+      ]
+    };
+    const provider = new ScriptedRuntimeProvider([
+      { ...setPlan(workspace), orderedSteps: [firstStep] },
+      { type: "call_tool", stepId: "inspect", checkIds: ["read-target"], toolName: "filesystem.read", input: { path: "src/index.ts" } },
+      { type: "set_plan", basedOnVersion: 1, orderedSteps: [{ ...readStep(), objective: "Read the revised target" }] },
+      { type: "request_input", question: "Continue?", reason: "test stop" }
+    ]);
+    const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [successfulReadTool()] });
+
+    const result = await runtime.start({ input: "Inspect the target." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result.status).toBe("waiting");
+    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.snapshot.evidence).toEqual([]);
+    expect(view.snapshot.stepProgress).toEqual([{ stepId: "inspect", status: "active", evidenceIds: [] }]);
     runtime.close();
   });
 });

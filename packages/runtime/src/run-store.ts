@@ -154,6 +154,20 @@ export class RunStore {
     }));
   }
 
+  getLastEvent(runId: string): RunEvent | null {
+    const row = this.#database.prepare(`
+      SELECT run_id, sequence, type, occurred_at, payload_json
+      FROM run_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1
+    `).get(runId) as EventRow | undefined;
+    return row === undefined ? null : RunEventSchema.parse({
+      runId: row.run_id,
+      sequence: row.sequence,
+      type: row.type,
+      occurredAt: row.occurred_at,
+      payload: JSON.parse(row.payload_json)
+    });
+  }
+
   beginToolInvocation(intentInput: ToolInvocationIntent): ToolInvocation {
     const invocation = ToolInvocationSchema.parse({
       ...intentInput,
@@ -189,23 +203,36 @@ export class RunStore {
 
   getToolInvocation(invocationId: string): ToolInvocation | null {
     const row = this.#database.prepare("SELECT * FROM tool_invocations WHERE invocation_id = ?").get(invocationId) as ToolRow | undefined;
-    if (row === undefined) return null;
-    return ToolInvocationSchema.parse({
-      id: row.invocation_id,
-      runId: row.run_id,
-      planVersion: row.plan_version,
-      stepId: row.step_id,
-      toolName: row.tool_name,
-      inputDigest: row.input_digest,
-      idempotencyKey: row.idempotency_key,
-      idempotent: row.idempotent === 1,
-      fencingToken: row.fencing_token,
-      status: row.status,
-      startedAt: row.started_at,
-      completedAt: row.completed_at,
-      resultJson: row.result_json === null ? null : JSON.parse(row.result_json),
-      errorJson: row.error_json === null ? null : JSON.parse(row.error_json)
-    });
+    return row === undefined ? null : this.#parseToolRow(row);
+  }
+
+  listToolInvocations(runId: string): ToolInvocation[] {
+    const rows = this.#database.prepare("SELECT * FROM tool_invocations WHERE run_id = ? ORDER BY started_at, invocation_id").all(runId) as ToolRow[];
+    return rows.map((row) => this.#parseToolRow(row));
+  }
+
+  completeToolInvocation(input: {
+    readonly invocationId: string;
+    readonly status: "succeeded" | "failed" | "unknown";
+    readonly completedAt: string;
+    readonly resultJson?: unknown;
+    readonly errorJson?: unknown;
+  }): ToolInvocation {
+    const update = this.#database.prepare(`
+      UPDATE tool_invocations
+      SET status = ?, completed_at = ?, result_json = ?, error_json = ?
+      WHERE invocation_id = ? AND status = 'started'
+    `).run(
+      input.status,
+      input.completedAt,
+      input.resultJson === undefined ? null : JSON.stringify(input.resultJson),
+      input.errorJson === undefined ? null : JSON.stringify(input.errorJson),
+      input.invocationId
+    );
+    if (update.changes !== 1) throw new Error(`Tool invocation is not active: ${input.invocationId}`);
+    const invocation = this.getToolInvocation(input.invocationId);
+    if (invocation === null) throw new Error(`Tool invocation disappeared: ${input.invocationId}`);
+    return invocation;
   }
 
   close(): void {
@@ -222,6 +249,25 @@ export class RunStore {
       INSERT INTO run_events (run_id, sequence, type, occurred_at, payload_json)
       VALUES (?, ?, ?, ?, ?)
     `).run(runId, sequence, event.type, event.occurredAt, JSON.stringify(event.payload));
+  }
+
+  #parseToolRow(row: ToolRow): ToolInvocation {
+    return ToolInvocationSchema.parse({
+      id: row.invocation_id,
+      runId: row.run_id,
+      planVersion: row.plan_version,
+      stepId: row.step_id,
+      toolName: row.tool_name,
+      inputDigest: row.input_digest,
+      idempotencyKey: row.idempotency_key,
+      idempotent: row.idempotent === 1,
+      fencingToken: row.fencing_token,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      resultJson: row.result_json === null ? null : JSON.parse(row.result_json),
+      errorJson: row.error_json === null ? null : JSON.parse(row.error_json)
+    });
   }
 }
 

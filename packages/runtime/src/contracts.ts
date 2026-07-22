@@ -4,7 +4,7 @@ import { z } from "zod";
 
 const NonEmptyString = z.string().trim().min(1);
 const IsoDateTime = z.string().datetime({ offset: true });
-const JsonValueSchema: z.ZodType<unknown> = z.lazy(() => z.union([
+export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() => z.union([
   z.string(),
   z.number(),
   z.boolean(),
@@ -125,7 +125,11 @@ const CallToolActionSchema = z.object({
   checkIds: z.array(NonEmptyString).min(1),
   toolName: NonEmptyString,
   input: JsonValueSchema
-}).strict();
+}).strict().superRefine((action, context) => {
+  if (new Set(action.checkIds).size !== action.checkIds.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Tool action contains duplicate Check IDs." });
+  }
+});
 
 const RequestInputActionSchema = z.object({
   type: z.literal("request_input"),
@@ -139,7 +143,7 @@ const ProposeFinishActionSchema = z.object({
   evidenceIds: z.array(NonEmptyString)
 }).strict();
 
-export const RuntimeActionSchema = z.discriminatedUnion("type", [
+export const RuntimeActionSchema = z.union([
   SetPlanActionSchema,
   CallToolActionSchema,
   RequestInputActionSchema,
@@ -219,7 +223,7 @@ export const RunSnapshotSchema = z.object({
   budgets: RuntimeBudgetsSchema,
   budgetsUsed: BudgetUsageSchema,
   result: RunResultRecordSchema.nullable(),
-  evidenceRefs: z.array(NonEmptyString),
+  evidence: z.array(EvidenceSchema),
   lastError: RunErrorSchema.nullable(),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime
@@ -289,7 +293,7 @@ export function createInitialRunSnapshot(input: {
     budgets: input.budgets ?? DEFAULT_RUNTIME_BUDGETS,
     budgetsUsed: { iterations: 0, modelCalls: 0, toolCalls: 0, retries: 0, startedAt: now },
     result: null,
-    evidenceRefs: [],
+    evidence: [],
     lastError: null,
     createdAt: now,
     updatedAt: now

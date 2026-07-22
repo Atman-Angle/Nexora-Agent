@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRuntime } from "../../packages/runtime/src/index.js";
-import { ScriptedRuntimeProvider, setPlan, successfulReadTool, taskContract } from "./runtime-testkit.js";
+import { ScriptedRuntimeProvider, finishFromEvidence, setPlan, successfulReadTool, taskContract } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -47,7 +47,7 @@ describe("E049 one persisted Runtime loop", () => {
         orderedSteps: setPlan(workspace).orderedSteps
       },
       { type: "call_tool", stepId: "inspect", checkIds: ["read-target"], toolName: "filesystem.read", input: { path: "src/index.ts" } },
-      (context) => ({ type: "propose_finish", summary: "Inspected", evidenceIds: context.run.evidence.map((item) => item.id) })
+      finishFromEvidence("Inspected")
     ]);
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [successfulReadTool()] });
 

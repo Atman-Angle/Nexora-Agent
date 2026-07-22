@@ -20,6 +20,10 @@ export class ScriptedRuntimeProvider implements RuntimeProvider {
     if (action === undefined) throw new Error("Scripted Provider exhausted.");
     return typeof action === "function" ? action(context) : action;
   }
+
+  async validate(context: Parameters<RuntimeProvider["validate"]>[0]): Promise<unknown> {
+    return { passed: context.evidence.length > 0, issues: [], evidenceIds: context.evidence.map((item) => item.id) };
+  }
 }
 
 export function taskContract(workspace: string, inputVersion = 1) {
@@ -72,4 +76,12 @@ export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
       };
     }
   };
+}
+
+export function finishFromEvidence(summary: string): (context: ModelDecisionContext) => unknown {
+  return (context) => ({
+    type: "propose_finish",
+    summary,
+    evidenceIds: context.run.evidence.map((item) => item.id)
+  });
 }

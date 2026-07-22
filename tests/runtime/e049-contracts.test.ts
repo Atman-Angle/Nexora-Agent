@@ -95,6 +95,13 @@ describe("E049 authoritative runtime contracts", () => {
       toolName: "filesystem.read",
       input: { path: "src/index.ts" }
     }).type).toBe("call_tool");
+    expect(() => RuntimeActionSchema.parse({
+      type: "call_tool",
+      stepId: "inspect",
+      checkIds: ["read-source", "read-source"],
+      toolName: "filesystem.read",
+      input: { path: "src/index.ts" }
+    })).toThrow();
     expect(RuntimeActionSchema.parse({ type: "request_input", question: "Which target?", reason: "ambiguous" }).type).toBe("request_input");
     expect(RuntimeActionSchema.parse({ type: "propose_finish", summary: "Done", evidenceIds: ["ev-1"] }).type).toBe("propose_finish");
     expect(() => RuntimeActionSchema.parse({ type: "update_plan", steps: [] })).toThrow();
