@@ -262,13 +262,12 @@ async function capabilityProviderStub(workspace: string): Promise<CapabilityStub
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
       const payload = JSON.parse(body.messages.at(-1)!.content) as {
         mode: "decide" | "validate";
-        context: HttpContext | { readonly evidence: readonly { readonly id: string }[] };
+        context: HttpContext;
       };
       let content: unknown;
       if (payload.mode === "validate") {
         validationCalls += 1;
-        const context = payload.context as { readonly evidence: readonly { readonly id: string }[] };
-        content = { passed: true, issues: [], evidenceIds: context.evidence.map((item) => item.id) };
+        content = { passed: true, issues: [] };
       } else {
         const context = payload.context as HttpContext;
         const index = decisionContexts.length;

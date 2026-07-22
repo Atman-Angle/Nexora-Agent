@@ -270,16 +270,12 @@ async function observationProviderStub(workspace: string): Promise<ProviderStub>
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
       const payload = JSON.parse(body.messages.at(-1)!.content) as {
         mode: "decide" | "validate";
-        context: ObservationContext | { readonly evidence: readonly { readonly id: string }[] };
+        context: ObservationContext;
       };
       let content: unknown;
       if (payload.mode === "validate") {
         validationCalls += 1;
-        content = {
-          passed: true,
-          issues: [],
-          evidenceIds: (payload.context as { readonly evidence: readonly { readonly id: string }[] }).evidence.map((item) => item.id)
-        };
+        content = { passed: true, issues: [] };
       } else {
         const index = decisionContexts.length;
         const context = payload.context as ObservationContext;

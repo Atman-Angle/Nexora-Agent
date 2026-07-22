@@ -24,7 +24,7 @@ export class ScriptedRuntimeProvider implements RuntimeProvider {
 
   async validate(context: Parameters<RuntimeProvider["validate"]>[0]): Promise<unknown> {
     this.validationContexts.push(structuredClone(context));
-    return { passed: context.evidence.length > 0, issues: [], evidenceIds: context.evidence.map((item) => item.id) };
+    return { passed: context.facts.length > 0, issues: [] };
   }
 }
 

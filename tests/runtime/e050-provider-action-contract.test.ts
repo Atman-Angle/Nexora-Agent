@@ -60,7 +60,7 @@ describe("E050 Provider Action Contract convergence", () => {
     const server = await providerServer(async (request) => {
       requests.push(request);
       const payload = JSON.parse(request.messages.at(-1)!.content) as DecisionPayload;
-      if (payload.mode === "validate") return { passed: false, issues: ["not expected"], evidenceIds: [] };
+      if (payload.mode === "validate") return { passed: false, issues: ["not expected"] };
       decisions += 1;
       if (decisions === 1) return invalidAction;
       if (decisions === 2) {
@@ -195,7 +195,7 @@ describe("E050 Provider Action Contract convergence", () => {
         dataDir: join(workspace, ".nexora"),
         provider: {
           async decide() { return { type: "request_input", question: "Stop?", reason: "test" }; },
-          async validate() { return { passed: false, issues: ["not expected"], evidenceIds: [] }; }
+          async validate() { return { passed: false, issues: ["not expected"] }; }
         },
         tools: [exampleTool({ path: 42 })]
       });

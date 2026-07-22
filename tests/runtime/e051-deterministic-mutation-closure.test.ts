@@ -66,10 +66,9 @@ describe("E051 deterministic mutation closure", () => {
       ]);
       expect(stub.decisionCalls).toBe(5);
       expect(stub.validationContexts).toHaveLength(1);
-      expect(stub.validationContexts[0]!.evidence.map((item: { id: string }) => item.id))
-        .toEqual(view.snapshot.result?.evidenceIds);
-      expect(stub.validationContexts[0]!.toolInvocations.map((item: { id: string }) => item.id))
-        .toEqual(view.toolInvocations.map((item) => item.id));
+      expect(stub.validationContexts[0]!.facts.map((item) => item.toolName))
+        .toEqual(view.toolInvocations.map((item) => item.toolName));
+      expect(stub.validationContexts[0]!.inputs).toEqual(["Change note.txt from before to after and validate it."]);
     } finally {
       runtime.close();
     }
@@ -203,8 +202,9 @@ type DecisionContext = {
 };
 
 type ValidationContext = {
-  readonly evidence: readonly { readonly id: string }[];
-  readonly toolInvocations: readonly { readonly id: string }[];
+  readonly inputs: readonly string[];
+  readonly proposedSummary: string;
+  readonly facts: readonly { readonly toolName: string }[];
 };
 
 type ProviderStub = {
@@ -324,7 +324,7 @@ async function providerStub(decide: (context: DecisionContext, index: number) =>
       if (payload.mode === "validate") {
         const context = payload.context as ValidationContext;
         validationContexts.push(structuredClone(context));
-        content = { passed: true, issues: [], evidenceIds: context.evidence.map((item) => item.id) };
+        content = { passed: true, issues: [] };
       } else {
         content = decide(payload.context as DecisionContext, decisionCalls);
         decisionCalls += 1;

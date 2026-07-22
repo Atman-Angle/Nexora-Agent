@@ -29,7 +29,7 @@ const provider = {
     if (call === 2) return { type: "call_tool", stepId: "search", checkIds: ["check"], toolName: "filesystem.search", input: { query: "external consumer", path: "." } };
     return { type: "propose_finish", summary: "Verified", evidenceIds: context.run.evidence.map((item) => item.id) };
   },
-  async validate(context) { return { passed: true, issues: [], evidenceIds: context.evidence.map((item) => item.id) }; }
+  async validate() { return { passed: true, issues: [] }; }
 };
 const runtime = createRuntime({ workspace, provider, tools: createBuiltInTools() });
 const result = await runtime.start({ input: "Search for external consumer" });

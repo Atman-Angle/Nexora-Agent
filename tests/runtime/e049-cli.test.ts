@@ -24,7 +24,7 @@ describe("E049 natural-language CLI", () => {
       calls += 1;
       let content: unknown;
       if (payload.mode === "validate") {
-        content = { passed: true, issues: [], evidenceIds: payload.context.evidence.map((item: { id: string }) => item.id) };
+        content = { passed: true, issues: [] };
       } else if (calls === 1) {
         content = {
           type: "set_plan",

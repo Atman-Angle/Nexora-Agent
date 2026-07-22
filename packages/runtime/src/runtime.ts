@@ -24,6 +24,7 @@ import {
 import { ArtifactStore } from "./artifacts.js";
 import {
   SemanticValidationVerdictSchema,
+  type JsonValue,
   type ModelDecisionContext,
   type RuntimeProvider,
   type ToolObservation
@@ -657,23 +658,29 @@ export class RuntimeEngine {
     try {
       const evidenceById = new Map(run.evidence.map((item) => [item.id, item]));
       const citedEvidence = deterministic.evidenceIds.map((id) => evidenceById.get(id)!);
-      const citedInvocationIds = new Set(citedEvidence.flatMap((item) => item.invocationId === null ? [] : [item.invocationId]));
+      const invocationById = new Map(toolInvocations.map((item) => [item.id, item]));
+      const facts = citedEvidence.map((evidence) => {
+        const invocation = evidence.invocationId === null ? undefined : invocationById.get(evidence.invocationId);
+        if (invocation === undefined || invocation.status !== "succeeded") {
+          throw new Error(`Cited Tool Evidence has no succeeded Invocation: ${evidence.id}`);
+        }
+        return {
+          toolName: invocation.toolName,
+          subjectRef: evidence.subjectRef,
+          input: JsonValueSchema.parse(invocation.inputJson) as JsonValue,
+          output: JsonValueSchema.parse(invocation.resultJson) as JsonValue
+        };
+      });
       verdict = SemanticValidationVerdictSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => this.#provider.validate({
-        originalInput: run.inputHistory[0]!.text,
-        currentInput: run.inputHistory.map((entry) => entry.text),
-        taskContract: run.taskContract!,
-        plan: run.currentPlan!,
+        inputs: run.inputHistory.map((entry) => entry.text),
         proposedSummary: action.summary,
-        evidence: citedEvidence,
-        toolInvocations: toolInvocations.filter((item) => citedInvocationIds.has(item.id))
+        facts
       })));
     } catch (error) {
       return this.#blockForProvider(run, error, observer);
     }
-    const known = new Set(deterministic.evidenceIds);
-    const invalidCitations = verdict.evidenceIds.filter((id) => !known.has(id));
-    if (!verdict.passed || verdict.issues.length > 0 || invalidCitations.length > 0) {
-      return this.#validationFailed(run, [...verdict.issues, ...invalidCitations.map((id) => `UNKNOWN_SEMANTIC_EVIDENCE:${id}`)], observer);
+    if (!verdict.passed || verdict.issues.length > 0) {
+      return this.#validationFailed(run, verdict.issues, observer);
     }
 
     run = this.#commit(run, { ...run, lastError: null, updatedAt: this.#now() }, "validation.passed", {

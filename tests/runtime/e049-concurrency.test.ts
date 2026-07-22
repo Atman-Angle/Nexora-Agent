@@ -32,7 +32,7 @@ class PausedProvider implements RuntimeProvider {
   }
 
   async validate(): Promise<unknown> {
-    return { passed: false, issues: ["not used"], evidenceIds: [] };
+    return { passed: false, issues: ["not used"] };
   }
 }
 
@@ -48,7 +48,7 @@ describe("E049 lease and fencing", () => {
           ? { type: "unknown_action" }
           : { type: "request_input", question: "Continue?", reason: "lease test" };
       },
-      async validate() { return { passed: false, issues: [], evidenceIds: [] }; }
+      async validate() { return { passed: false, issues: [] }; }
     };
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [], leaseTtlMs: 60 });
     const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 10, maxModelCalls: 10, maxToolCalls: 1, maxRetries: 10, maxDurationMs: 10_000 } });
@@ -73,7 +73,7 @@ describe("E049 lease and fencing", () => {
     const second = createRuntime({
       workspace,
       dataDir,
-      provider: { async decide() { return { type: "request_input", question: "x", reason: "x" }; }, async validate() { return { passed: false, issues: [], evidenceIds: [] }; } },
+      provider: { async decide() { return { type: "request_input", question: "x", reason: "x" }; }, async validate() { return { passed: false, issues: [] }; } },
       tools: []
     });
     await expect(second.resume({ runId })).rejects.toThrow(/RUN_BUSY/);

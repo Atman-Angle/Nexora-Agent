@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-import type { Evidence, RunSnapshot, RuntimeAction, ToolInvocation } from "./contracts.js";
+import type { RunSnapshot, RuntimeAction, ToolInvocation } from "./contracts.js";
+
+export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 export type ToolObservation = {
   readonly invocationId: string;
@@ -31,19 +33,19 @@ export type ModelDecisionContext = {
 };
 
 export type SemanticValidationContext = {
-  readonly originalInput: string;
-  readonly currentInput: readonly string[];
-  readonly taskContract: NonNullable<RunSnapshot["taskContract"]>;
-  readonly plan: NonNullable<RunSnapshot["currentPlan"]>;
+  readonly inputs: readonly string[];
   readonly proposedSummary: string;
-  readonly evidence: readonly Evidence[];
-  readonly toolInvocations: readonly ToolInvocation[];
+  readonly facts: readonly {
+    readonly toolName: string;
+    readonly subjectRef: string;
+    readonly input: JsonValue;
+    readonly output: JsonValue;
+  }[];
 };
 
 export const SemanticValidationVerdictSchema = z.object({
   passed: z.boolean(),
-  issues: z.array(z.string().trim().min(1)),
-  evidenceIds: z.array(z.string().trim().min(1))
+  issues: z.array(z.string().trim().min(1))
 }).strict();
 export type SemanticValidationVerdict = z.infer<typeof SemanticValidationVerdictSchema>;
 

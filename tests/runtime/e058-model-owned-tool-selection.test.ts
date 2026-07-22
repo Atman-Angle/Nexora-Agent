@@ -14,10 +14,10 @@ function workspace(): string { const root = mkdtempSync(join(tmpdir(), "nexora-e
 class OriginalInputValidator extends ScriptedRuntimeProvider {
   override async validate(context: SemanticValidationContext): Promise<unknown> {
     this.validationContexts.push(structuredClone(context));
-    const hasRead = context.toolInvocations.some((item) => item.toolName === "filesystem.read" && item.status === "succeeded");
+    const hasRead = context.facts.some((item) => item.toolName === "filesystem.read");
     return hasRead
-      ? { passed: true, issues: [], evidenceIds: context.evidence.map((item) => item.id) }
-      : { passed: false, issues: ["Original input requires reading the matched file, but no read Evidence exists."], evidenceIds: [] };
+      ? { passed: true, issues: [] }
+      : { passed: false, issues: ["Original input requires reading the matched file, but no read Evidence exists."] };
   }
 }
 
