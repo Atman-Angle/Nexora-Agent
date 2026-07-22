@@ -32,13 +32,20 @@ describe("E049 Run status authority", () => {
 
   it("does not permit success without a passed Validation Gate", () => {
     expect(() => transitionRunStatus(runningRun(), "succeeded", { now: later })).toThrow(/validation/i);
+    expect(() => transitionRunStatus(runningRun(), "succeeded", {
+      now: later,
+      validation: { passed: true, evidenceIds: ["ev-final"] },
+      stopReason: "VALIDATED"
+    })).toThrow(/result/i);
     const succeeded = transitionRunStatus(runningRun(), "succeeded", {
       now: later,
       validation: { passed: true, evidenceIds: ["ev-final"] },
+      result: { summary: "Verified result", resultArtifact: null, evidenceIds: ["ev-final"] },
       stopReason: "VALIDATED"
     });
     expect(succeeded.status).toBe("succeeded");
     expect(succeeded.stopReason).toBe("VALIDATED");
+    expect(succeeded.result?.summary).toBe("Verified result");
   });
 
   it("keeps failed and succeeded terminal", () => {
@@ -47,6 +54,7 @@ describe("E049 Run status authority", () => {
     const succeeded = transitionRunStatus(runningRun(), "succeeded", {
       now: later,
       validation: { passed: true, evidenceIds: ["ev-final"] },
+      result: { summary: "Verified result", resultArtifact: null, evidenceIds: ["ev-final"] },
       stopReason: "VALIDATED"
     });
     expect(() => transitionRunStatus(succeeded, "running", { now: later })).toThrow();

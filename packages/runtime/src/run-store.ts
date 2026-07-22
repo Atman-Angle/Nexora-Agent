@@ -1,0 +1,230 @@
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+
+import Database from "better-sqlite3";
+
+import {
+  RunEventInputSchema,
+  RunEventSchema,
+  RunSnapshotSchema,
+  ToolInvocationSchema,
+  type RunEvent,
+  type RunEventInput,
+  type RunSnapshot,
+  type ToolInvocation,
+  type ToolInvocationIntent
+} from "./contracts.js";
+import { assertRunStatusTransition } from "./state-machine.js";
+
+const schemaSql = `
+CREATE TABLE IF NOT EXISTS runs (
+  run_id TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  snapshot_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS run_events (
+  run_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  PRIMARY KEY (run_id, sequence),
+  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS tool_invocations (
+  invocation_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  plan_version INTEGER NOT NULL,
+  step_id TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  idempotent INTEGER NOT NULL,
+  fencing_token INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  result_json TEXT,
+  error_json TEXT,
+  UNIQUE (run_id, idempotency_key),
+  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+);
+`;
+
+type RunRow = { snapshot_json: string; revision: number };
+type EventRow = { run_id: string; sequence: number; type: string; occurred_at: string; payload_json: string };
+type ToolRow = {
+  invocation_id: string;
+  run_id: string;
+  plan_version: number;
+  step_id: string;
+  tool_name: string;
+  input_digest: string;
+  idempotency_key: string;
+  idempotent: number;
+  fencing_token: number;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  result_json: string | null;
+  error_json: string | null;
+};
+
+export class RunStore {
+  readonly #database: Database.Database;
+
+  constructor(databasePath: string) {
+    const resolved = resolve(databasePath);
+    mkdirSync(dirname(resolved), { recursive: true });
+    this.#database = new Database(resolved);
+    this.#database.pragma("journal_mode = WAL");
+    this.#database.pragma("foreign_keys = ON");
+    this.#database.exec(schemaSql);
+  }
+
+  createRun(snapshotInput: RunSnapshot, eventInput: RunEventInput): RunSnapshot {
+    const snapshot = RunSnapshotSchema.parse(snapshotInput);
+    const event = RunEventInputSchema.parse(eventInput);
+    if (snapshot.revision !== 0) throw new Error("A new Run must start at revision 0.");
+
+    const transaction = this.#database.transaction(() => {
+      this.#database.prepare(`
+        INSERT INTO runs (run_id, revision, status, snapshot_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(snapshot.runId, snapshot.revision, snapshot.status, JSON.stringify(snapshot), snapshot.createdAt, snapshot.updatedAt);
+      this.#insertEvent(snapshot.runId, 1, event);
+    });
+    transaction();
+    return snapshot;
+  }
+
+  getRun(runId: string): RunSnapshot | null {
+    const row = this.#database.prepare("SELECT snapshot_json, revision FROM runs WHERE run_id = ?").get(runId) as RunRow | undefined;
+    return row === undefined ? null : RunSnapshotSchema.parse(JSON.parse(row.snapshot_json));
+  }
+
+  commitRun(input: {
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly event: RunEventInput;
+  }): RunSnapshot {
+    const previous = RunSnapshotSchema.parse(input.previous);
+    const nextInput = RunSnapshotSchema.parse(input.next);
+    const event = RunEventInputSchema.parse(input.event);
+    if (previous.runId !== nextInput.runId) throw new Error("Cannot commit a Run under another Run ID.");
+    if (previous.status !== nextInput.status) assertRunStatusTransition(previous.status, nextInput.status);
+
+    const transaction = this.#database.transaction(() => {
+      const row = this.#database.prepare("SELECT snapshot_json, revision FROM runs WHERE run_id = ?").get(previous.runId) as RunRow | undefined;
+      if (row === undefined) throw new Error(`Run not found: ${previous.runId}`);
+      if (row.revision !== previous.revision) {
+        throw new Error(`Run revision conflict: expected ${previous.revision}, found ${row.revision}`);
+      }
+      const persisted = RunSnapshotSchema.parse(JSON.parse(row.snapshot_json));
+      if (persisted.revision !== previous.revision) throw new Error("Persisted Run revision is inconsistent.");
+
+      const committed = RunSnapshotSchema.parse({ ...nextInput, revision: previous.revision + 1 });
+      const update = this.#database.prepare(`
+        UPDATE runs SET revision = ?, status = ?, snapshot_json = ?, updated_at = ?
+        WHERE run_id = ? AND revision = ?
+      `).run(committed.revision, committed.status, JSON.stringify(committed), committed.updatedAt, committed.runId, previous.revision);
+      if (update.changes !== 1) throw new Error(`Run revision conflict while committing ${committed.runId}.`);
+      this.#insertEvent(committed.runId, this.#nextSequence(committed.runId), event);
+      return committed;
+    });
+    return transaction();
+  }
+
+  listEvents(runId: string): RunEvent[] {
+    const rows = this.#database.prepare(`
+      SELECT run_id, sequence, type, occurred_at, payload_json
+      FROM run_events WHERE run_id = ? ORDER BY sequence
+    `).all(runId) as EventRow[];
+    return rows.map((row) => RunEventSchema.parse({
+      runId: row.run_id,
+      sequence: row.sequence,
+      type: row.type,
+      occurredAt: row.occurred_at,
+      payload: JSON.parse(row.payload_json)
+    }));
+  }
+
+  beginToolInvocation(intentInput: ToolInvocationIntent): ToolInvocation {
+    const invocation = ToolInvocationSchema.parse({
+      ...intentInput,
+      status: "started",
+      completedAt: null,
+      resultJson: null,
+      errorJson: null
+    });
+    this.#database.prepare(`
+      INSERT INTO tool_invocations (
+        invocation_id, run_id, plan_version, step_id, tool_name, input_digest,
+        idempotency_key, idempotent, fencing_token, status, started_at,
+        completed_at, result_json, error_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      invocation.id,
+      invocation.runId,
+      invocation.planVersion,
+      invocation.stepId,
+      invocation.toolName,
+      invocation.inputDigest,
+      invocation.idempotencyKey,
+      invocation.idempotent ? 1 : 0,
+      invocation.fencingToken,
+      invocation.status,
+      invocation.startedAt,
+      null,
+      null,
+      null
+    );
+    return invocation;
+  }
+
+  getToolInvocation(invocationId: string): ToolInvocation | null {
+    const row = this.#database.prepare("SELECT * FROM tool_invocations WHERE invocation_id = ?").get(invocationId) as ToolRow | undefined;
+    if (row === undefined) return null;
+    return ToolInvocationSchema.parse({
+      id: row.invocation_id,
+      runId: row.run_id,
+      planVersion: row.plan_version,
+      stepId: row.step_id,
+      toolName: row.tool_name,
+      inputDigest: row.input_digest,
+      idempotencyKey: row.idempotency_key,
+      idempotent: row.idempotent === 1,
+      fencingToken: row.fencing_token,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      resultJson: row.result_json === null ? null : JSON.parse(row.result_json),
+      errorJson: row.error_json === null ? null : JSON.parse(row.error_json)
+    });
+  }
+
+  close(): void {
+    this.#database.close();
+  }
+
+  #nextSequence(runId: string): number {
+    const row = this.#database.prepare("SELECT COALESCE(MAX(sequence), 0) AS sequence FROM run_events WHERE run_id = ?").get(runId) as { sequence: number };
+    return row.sequence + 1;
+  }
+
+  #insertEvent(runId: string, sequence: number, event: RunEventInput): void {
+    this.#database.prepare(`
+      INSERT INTO run_events (run_id, sequence, type, occurred_at, payload_json)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(runId, sequence, event.type, event.occurredAt, JSON.stringify(event.payload));
+  }
+}
+
+export function openRunStore(options: { readonly databasePath: string }): RunStore {
+  return new RunStore(options.databasePath);
+}
