@@ -3,15 +3,15 @@
 Nexora 是以自然语言为输入、可持久化执行真实多步骤任务的 CLI 与 Node.js/TypeScript Runtime。
 
 ```powershell
-$env:NEXORA_MODEL_PROVIDER = "openai-compatible"
-$env:NEXORA_MODEL_BASE_URL = "https://provider.example/v1"
-$env:NEXORA_MODEL_API_KEY = "..."
-$env:NEXORA_MODEL_NAME = "..."
+Copy-Item -LiteralPath .env.example -Destination .env
+# 编辑 .env，填写 Provider URL、API key 和模型名称
 
 pnpm nexora "检查项目，修复问题，补充测试并确认通过" --cwd D:\project
 pnpm nexora inspect <run-id> --cwd D:\project --json
 pnpm nexora resume <run-id> --cwd D:\project --approve <request-id>
 ```
+
+CLI 的 start/resume 自动加载启动目录（`process.cwd()`）下的 `.env`；显式进程环境变量优先。`--cwd` 目标项目中的 `.env` 不会被读取。`inspect` 不需要 Provider，也不加载 `.env`。
 
 Node 程序可从 `@nexora/runtime` 导入 `createRuntime`、`createBuiltInTools` 和 Provider 工厂，调用 `start/resume/inspect/close`。CLI 与包调用共享同一持久化循环、状态机、工具、Evidence 和验证门。
 

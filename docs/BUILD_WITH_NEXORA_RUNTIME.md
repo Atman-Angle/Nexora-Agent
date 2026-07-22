@@ -52,6 +52,8 @@ try {
 - `NEXORA_MODEL_NAME`；
 - 可选 `NEXORA_MODEL_TIMEOUT_MS`。
 
+仓库 CLI 的 start/resume 会自动加载启动目录 `.env`；但 `@nexora/runtime` 不读取文件或修改环境。包调用方必须显式提供进程环境，或直接调用 `createOpenAICompatibleProvider(...)` 传入配置。
+
 也可调用 `createOpenAICompatibleProvider(options)` 显式传入连接配置或自定义 `fetch`。
 
 ## Runtime API

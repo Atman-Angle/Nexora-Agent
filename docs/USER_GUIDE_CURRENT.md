@@ -8,13 +8,11 @@ Nexora 1.1 当前只有两个正式入口：接受自然语言目标的 CLI，�
 
 ```powershell
 pnpm install
-$env:NEXORA_MODEL_PROVIDER = "openai-compatible"
-$env:NEXORA_MODEL_BASE_URL = "https://provider.example/v1"
-$env:NEXORA_MODEL_API_KEY = "..."
-$env:NEXORA_MODEL_NAME = "..."
+Copy-Item -LiteralPath .env.example -Destination .env
+# 编辑 .env，填写 NEXORA_MODEL_BASE_URL、NEXORA_MODEL_API_KEY 和 NEXORA_MODEL_NAME
 ```
 
-CLI 不自动读取 `.env`。以上变量必须存在于启动 CLI 的进程环境中。可选的 `NEXORA_MODEL_TIMEOUT_MS` 必须是正整数毫秒。
+CLI 的 start/resume 自动读取启动命令所在目录（`process.cwd()`）的 `.env`。显式 PowerShell/CI/系统环境变量优先于文件值；`--cwd` 指向的目标项目 `.env` 不会被读取，避免目标仓库注入 Provider 配置。`.env` 不存在时仍可使用显式环境变量；两者都没有时返回 `MODEL_CONFIG_ERROR`。`inspect` 不加载 `.env`。可选的 `NEXORA_MODEL_TIMEOUT_MS` 必须是正整数毫秒。
 
 ## 2. 自然语言 CLI
 
@@ -166,5 +164,6 @@ currentPlan required Checks
 - CLI 不提供单独的 `ask/read/patch/verify/agent/approve` 命令；这些属于已删除的旧实现。
 - 新 1.1 Runtime 不迁移或恢复旧数据库。
 - E053 已通过确定性闭环和唯一真实 Provider canary；E048/E049/E052 的历史失败 Run 只供审计，不恢复或重跑。
+- E054 已通过 CLI subprocess + 本机 HTTP Provider 验证：启动目录 `.env` 自动加载，显式环境优先，目标 workspace 隔离，secret 不进入输出。
 
 调试和恢复时先运行 `inspect`，不要直接修改 SQLite。
