@@ -41,13 +41,14 @@ describe("E049 lease and fencing", () => {
     const workspace = tempRoot();
     const dataDir = join(workspace, ".nexora");
     const firstProvider = new PausedProvider();
-    const first = createRuntime({ workspace, dataDir, provider: firstProvider, tools: [] });
+    const first = createRuntime({ workspace, dataDir, provider: firstProvider, tools: [], leaseTtlMs: 120 });
     let runId = "";
     const firstRun = first.start({ input: "Wait for the Provider." }, (event) => {
       if (event.type === "run.created") runId = event.runId;
     });
     await firstProvider.enteredPromise;
     expect(runId).not.toBe("");
+    await new Promise((resolve) => setTimeout(resolve, 250));
 
     const second = createRuntime({
       workspace,
