@@ -30,3 +30,5 @@ export type {
   StructuredPlan,
   TaskContract
 } from "./contracts.js";
+
+export { createBuiltInTools } from "./tool-runtime/index.js";
