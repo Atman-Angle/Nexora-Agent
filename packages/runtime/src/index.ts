@@ -1,6 +1,7 @@
 export {
   RuntimeEngine,
   createRuntime,
+  type ApprovalDecision,
   type CreateRuntimeOptions,
   type ResumeInput,
   type RunResult,

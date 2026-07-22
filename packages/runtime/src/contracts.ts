@@ -170,7 +170,8 @@ export const PendingRequestSchema = z.object({
   id: NonEmptyString,
   kind: z.enum(["input", "approval"]),
   prompt: NonEmptyString,
-  createdAt: IsoDateTime
+  createdAt: IsoDateTime,
+  action: CallToolActionSchema.optional()
 }).strict();
 
 export const StepProgressSchema = z.object({

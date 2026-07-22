@@ -85,6 +85,7 @@ describe("E049 authoritative Run Store", () => {
       createInitialRunSnapshot({ runId: "run-tool", input: "Inspect", workspace: root, now }),
       { type: "run.created", occurredAt: now, payload: {} }
     );
+    const lease = store.acquireLease({ runId: "run-tool", ownerId: "store-test", now, ttlMs: 10_000 });
     store.beginToolInvocation({
       id: "inv-1",
       runId: "run-tool",
@@ -94,7 +95,7 @@ describe("E049 authoritative Run Store", () => {
       inputDigest: "sha256:input",
       idempotencyKey: "run-tool:1:inspect:1",
       idempotent: true,
-      fencingToken: 1,
+      fencingToken: lease.fencingToken,
       startedAt: now
     });
     expect(store.getToolInvocation("inv-1")).toEqual(expect.objectContaining({ status: "started", toolName: "filesystem.read" }));

@@ -23,7 +23,10 @@ CREATE TABLE IF NOT EXISTS runs (
   status TEXT NOT NULL,
   snapshot_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  lease_owner TEXT,
+  lease_until TEXT,
+  fencing_token INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS run_events (
@@ -56,7 +59,13 @@ CREATE TABLE IF NOT EXISTS tool_invocations (
 );
 `;
 
-type RunRow = { snapshot_json: string; revision: number };
+type RunRow = {
+  snapshot_json: string;
+  revision: number;
+  lease_owner?: string | null;
+  lease_until?: string | null;
+  fencing_token?: number;
+};
 type EventRow = { run_id: string; sequence: number; type: string; occurred_at: string; payload_json: string };
 type ToolRow = {
   invocation_id: string;
@@ -111,6 +120,7 @@ export class RunStore {
   commitRun(input: {
     readonly previous: RunSnapshot;
     readonly next: RunSnapshot;
+    readonly fencingToken?: number;
     readonly event: RunEventInput;
   }): RunSnapshot {
     const previous = RunSnapshotSchema.parse(input.previous);
@@ -120,8 +130,9 @@ export class RunStore {
     if (previous.status !== nextInput.status) assertRunStatusTransition(previous.status, nextInput.status);
 
     const transaction = this.#database.transaction(() => {
-      const row = this.#database.prepare("SELECT snapshot_json, revision FROM runs WHERE run_id = ?").get(previous.runId) as RunRow | undefined;
+      const row = this.#database.prepare("SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token FROM runs WHERE run_id = ?").get(previous.runId) as RunRow | undefined;
       if (row === undefined) throw new Error(`Run not found: ${previous.runId}`);
+      this.#assertFencing(row, input.fencingToken, event.occurredAt);
       if (row.revision !== previous.revision) {
         throw new Error(`Run revision conflict: expected ${previous.revision}, found ${row.revision}`);
       }
@@ -176,6 +187,9 @@ export class RunStore {
       resultJson: null,
       errorJson: null
     });
+    const run = this.#database.prepare("SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token FROM runs WHERE run_id = ?").get(invocation.runId) as RunRow | undefined;
+    if (run === undefined) throw new Error(`Run not found: ${invocation.runId}`);
+    this.#assertFencing(run, invocation.fencingToken, invocation.startedAt);
     this.#database.prepare(`
       INSERT INTO tool_invocations (
         invocation_id, run_id, plan_version, step_id, tool_name, input_digest,
@@ -215,9 +229,15 @@ export class RunStore {
     readonly invocationId: string;
     readonly status: "succeeded" | "failed" | "unknown";
     readonly completedAt: string;
+    readonly fencingToken: number;
     readonly resultJson?: unknown;
     readonly errorJson?: unknown;
   }): ToolInvocation {
+    const invocation = this.getToolInvocation(input.invocationId);
+    if (invocation === null) throw new Error(`Tool invocation not found: ${input.invocationId}`);
+    const run = this.#database.prepare("SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token FROM runs WHERE run_id = ?").get(invocation.runId) as RunRow | undefined;
+    if (run === undefined) throw new Error(`Run not found: ${invocation.runId}`);
+    this.#assertFencing(run, input.fencingToken, input.completedAt);
     const update = this.#database.prepare(`
       UPDATE tool_invocations
       SET status = ?, completed_at = ?, result_json = ?, error_json = ?
@@ -230,13 +250,71 @@ export class RunStore {
       input.invocationId
     );
     if (update.changes !== 1) throw new Error(`Tool invocation is not active: ${input.invocationId}`);
-    const invocation = this.getToolInvocation(input.invocationId);
-    if (invocation === null) throw new Error(`Tool invocation disappeared: ${input.invocationId}`);
-    return invocation;
+    const completed = this.getToolInvocation(input.invocationId);
+    if (completed === null) throw new Error(`Tool invocation disappeared: ${input.invocationId}`);
+    return completed;
   }
 
   close(): void {
     this.#database.close();
+  }
+
+  acquireLease(input: {
+    readonly runId: string;
+    readonly ownerId: string;
+    readonly now: string;
+    readonly ttlMs: number;
+  }): { readonly ownerId: string; readonly fencingToken: number; readonly leaseUntil: string } {
+    if (!input.ownerId.trim()) throw new Error("Lease owner ID must be non-empty.");
+    if (!Number.isInteger(input.ttlMs) || input.ttlMs <= 0) throw new Error("Lease TTL must be a positive integer.");
+    const nowMs = Date.parse(input.now);
+    if (!Number.isFinite(nowMs)) throw new Error("Lease time must be an ISO date.");
+    const leaseUntil = new Date(nowMs + input.ttlMs).toISOString();
+    const transaction = this.#database.transaction(() => {
+      const row = this.#database.prepare(`
+        SELECT snapshot_json, revision, lease_owner, lease_until, fencing_token
+        FROM runs WHERE run_id = ?
+      `).get(input.runId) as RunRow | undefined;
+      if (row === undefined) throw new Error(`Run not found: ${input.runId}`);
+      const active = row.lease_owner !== null
+        && row.lease_owner !== undefined
+        && row.lease_until !== null
+        && row.lease_until !== undefined
+        && Date.parse(row.lease_until) > nowMs;
+      if (active && row.lease_owner !== input.ownerId) {
+        throw new Error(`RUN_BUSY: Run ${input.runId} is owned by another Runtime.`);
+      }
+      const sameActiveOwner = active && row.lease_owner === input.ownerId;
+      const fencingToken = sameActiveOwner ? row.fencing_token ?? 0 : (row.fencing_token ?? 0) + 1;
+      this.#database.prepare(`
+        UPDATE runs SET lease_owner = ?, lease_until = ?, fencing_token = ? WHERE run_id = ?
+      `).run(input.ownerId, leaseUntil, fencingToken, input.runId);
+      return { ownerId: input.ownerId, fencingToken, leaseUntil };
+    });
+    return transaction();
+  }
+
+  renewLease(input: {
+    readonly runId: string;
+    readonly ownerId: string;
+    readonly fencingToken: number;
+    readonly now: string;
+    readonly ttlMs: number;
+  }): string {
+    const leaseUntil = new Date(Date.parse(input.now) + input.ttlMs).toISOString();
+    const update = this.#database.prepare(`
+      UPDATE runs SET lease_until = ?
+      WHERE run_id = ? AND lease_owner = ? AND fencing_token = ? AND lease_until > ?
+    `).run(leaseUntil, input.runId, input.ownerId, input.fencingToken, input.now);
+    if (update.changes !== 1) throw new Error(`RUN_LEASE_LOST: ${input.runId}`);
+    return leaseUntil;
+  }
+
+  releaseLease(input: { readonly runId: string; readonly ownerId: string; readonly fencingToken: number }): void {
+    this.#database.prepare(`
+      UPDATE runs SET lease_owner = NULL, lease_until = NULL
+      WHERE run_id = ? AND lease_owner = ? AND fencing_token = ?
+    `).run(input.runId, input.ownerId, input.fencingToken);
   }
 
   #nextSequence(runId: string): number {
@@ -268,6 +346,20 @@ export class RunStore {
       resultJson: row.result_json === null ? null : JSON.parse(row.result_json),
       errorJson: row.error_json === null ? null : JSON.parse(row.error_json)
     });
+  }
+
+  #assertFencing(row: RunRow, fencingToken: number | undefined, at: string): void {
+    const hasLease = row.lease_owner !== null && row.lease_owner !== undefined;
+    if (!hasLease && fencingToken === undefined) return;
+    if (
+      fencingToken === undefined
+      || fencingToken !== row.fencing_token
+      || row.lease_until === null
+      || row.lease_until === undefined
+      || Date.parse(row.lease_until) <= Date.parse(at)
+    ) {
+      throw new Error("Invalid or expired Fencing Token.");
+    }
   }
 }
 

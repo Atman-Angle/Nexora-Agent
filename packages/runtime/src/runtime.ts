@@ -62,10 +62,12 @@ export type CreateRuntimeOptions = {
   readonly tools: readonly RuntimeTool[];
   readonly now?: () => string;
   readonly createId?: () => string;
+  readonly leaseTtlMs?: number;
 };
 
 export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets };
-export type ResumeInput = { readonly runId: string; readonly input?: string };
+export type ApprovalDecision = { readonly requestId: string; readonly approved: boolean; readonly reason?: string };
+export type ResumeInput = { readonly runId: string; readonly input?: string; readonly approvalDecision?: ApprovalDecision };
 export type RuntimeObserver = (event: RunEvent) => void;
 
 export type RunResult = {
@@ -97,11 +99,18 @@ export class RuntimeEngine {
   readonly #store: RunStore;
   readonly #now: () => string;
   readonly #createId: () => string;
+  readonly #ownerId: string;
+  readonly #leaseTtlMs: number;
+  readonly #leases = new Map<string, number>();
   #closed = false;
 
   constructor(options: CreateRuntimeOptions) {
     this.#workspace = requireWorkspace(options.workspace);
     this.#provider = options.provider;
+    this.#now = options.now ?? (() => new Date().toISOString());
+    this.#createId = options.createId ?? randomUUID;
+    this.#ownerId = this.#createId();
+    this.#leaseTtlMs = options.leaseTtlMs ?? 60_000;
     this.#tools = new Map();
     for (const tool of options.tools) {
       if (this.#tools.has(tool.name)) throw new Error(`Duplicate Runtime Tool: ${tool.name}`);
@@ -109,8 +118,6 @@ export class RuntimeEngine {
     }
     const dataDir = resolve(options.dataDir ?? join(this.#workspace, ".nexora"));
     this.#store = openRunStore({ databasePath: join(dataDir, "runtime-v1.1.db") });
-    this.#now = options.now ?? (() => new Date().toISOString());
-    this.#createId = options.createId ?? randomUUID;
   }
 
   async start(input: StartInput, observer?: RuntimeObserver): Promise<RunResult> {
@@ -126,31 +133,65 @@ export class RuntimeEngine {
     });
     const created = this.#store.createRun(snapshot, { type: "run.created", occurredAt: now, payload: { inputSequence: 1 } });
     this.#notify(created.runId, observer);
-    return this.#runLoop(created, observer);
+    this.#acquireLease(created.runId);
+    try {
+      return await this.#runLoop(created, observer);
+    } finally {
+      this.#releaseLease(created.runId);
+    }
   }
 
   async resume(input: ResumeInput, observer?: RuntimeObserver): Promise<RunResult> {
     this.#assertOpen();
     let run = this.#requireRun(input.runId);
     if (run.status === "failed" || run.status === "succeeded") return toRunResult(run);
-    if (run.status === "waiting") {
-      if (run.pendingRequest?.kind !== "input" || input.input === undefined) return toRunResult(run);
-      const text = input.input.trim();
-      if (!text) throw new Error("Resume input must be non-empty.");
-      const now = this.#now();
-      const resumed = transitionRunStatus({
-        ...run,
-        inputHistory: [...run.inputHistory, {
-          id: this.#createId(),
-          sequence: run.inputHistory.length + 1,
-          text,
-          receivedAt: now
-        }]
-      }, "running", { now });
-      run = this.#commit(run, resumed, "run.resumed", { inputSequence: resumed.inputHistory.length }, observer);
+    this.#acquireLease(run.runId);
+    try {
+      if (run.status === "waiting") {
+        if (run.pendingRequest?.kind === "input") {
+          if (input.input === undefined) return toRunResult(run);
+          const text = input.input.trim();
+          if (!text) throw new Error("Resume input must be non-empty.");
+          const now = this.#now();
+          const resumed = transitionRunStatus({
+            ...run,
+            inputHistory: [...run.inputHistory, {
+              id: this.#createId(),
+              sequence: run.inputHistory.length + 1,
+              text,
+              receivedAt: now
+            }]
+          }, "running", { now });
+          run = this.#commit(run, resumed, "run.resumed", { inputSequence: resumed.inputHistory.length }, observer);
+        } else if (run.pendingRequest?.kind === "approval") {
+          const decision = input.approvalDecision;
+          if (decision === undefined || decision.requestId !== run.pendingRequest.id) {
+            throw new Error("Approval decision does not match the pending Approval Request.");
+          }
+          const pendingAction = RuntimeActionSchema.parse(run.pendingRequest.action);
+          if (pendingAction.type !== "call_tool") throw new Error("Pending Approval does not contain a Tool action.");
+          const resumed = transitionRunStatus(run, "running", { now: this.#now() });
+          run = this.#commit(run, resumed, decision.approved ? "approval.granted" : "approval.denied", {
+            requestId: decision.requestId,
+            ...(decision.reason === undefined ? {} : { reason: decision.reason })
+          }, observer);
+          if (decision.approved) run = await this.#callTool(run, pendingAction, observer, true);
+          else run = RunSnapshotSchema.parse({
+            ...run,
+            lastError: {
+              code: "APPROVAL_DENIED",
+              message: decision.reason?.trim() || "The user denied the protected Tool action.",
+              retryable: true,
+              detailsArtifact: null
+            }
+          });
+        }
+      }
+      if (run.status !== "running") return toRunResult(run);
+      return await this.#runLoop(run, observer);
+    } finally {
+      this.#releaseLease(run.runId);
     }
-    if (run.status !== "running") return toRunResult(run);
-    return this.#runLoop(run, observer);
   }
 
   async inspect(runId: string): Promise<RunView> {
@@ -276,7 +317,12 @@ export class RuntimeEngine {
     return this.#commit(run, next, "plan.set", { version, basedOnVersion: action.basedOnVersion }, observer);
   }
 
-  async #callTool(runInput: RunSnapshot, action: Extract<RuntimeAction, { type: "call_tool" }>, observer?: RuntimeObserver): Promise<RunSnapshot> {
+  async #callTool(
+    runInput: RunSnapshot,
+    action: Extract<RuntimeAction, { type: "call_tool" }>,
+    observer?: RuntimeObserver,
+    approved = false
+  ): Promise<RunSnapshot> {
     const plan = runInput.currentPlan;
     if (plan === null) throw new ActionRejectedError("A Tool cannot run without a Plan.");
     const active = runInput.stepProgress.find((item) => item.status === "active");
@@ -290,7 +336,25 @@ export class RuntimeEngine {
     }
     const tool = this.#tools.get(action.toolName);
     if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${action.toolName}`);
-    if (tool.risk !== "read") throw new ActionRejectedError("Protected Tools require the approval slice.");
+    if (tool.risk !== "read" && !approved) {
+      const now = this.#now();
+      const waiting = transitionRunStatus(runInput, "waiting", {
+        now,
+        stopReason: "APPROVAL_REQUIRED",
+        pendingRequest: {
+          id: this.#createId(),
+          kind: "approval",
+          prompt: `Allow ${tool.name} for Step ${step.id}?`,
+          createdAt: now,
+          action
+        }
+      });
+      return this.#commit(runInput, waiting, "approval.requested", {
+        requestId: waiting.pendingRequest?.id ?? null,
+        toolName: tool.name,
+        stepId: step.id
+      }, observer);
+    }
     const parsedInput = tool.inputSchema.parse(action.input);
     const invocationId = this.#createId();
     const startedAt = this.#now();
@@ -303,7 +367,7 @@ export class RuntimeEngine {
       inputDigest: digestJson(parsedInput),
       idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${runInput.budgetsUsed.toolCalls + 1}`,
       idempotent: tool.idempotent,
-      fencingToken: 1,
+      fencingToken: this.#requireFencingToken(runInput.runId),
       startedAt
     });
     let run = this.#commit(runInput, {
@@ -324,7 +388,13 @@ export class RuntimeEngine {
     }
     const completedAt = this.#now();
     if (result.status === "failure") {
-      this.#store.completeToolInvocation({ invocationId, status: "failed", completedAt, errorJson: result.error });
+      this.#store.completeToolInvocation({
+        invocationId,
+        status: "failed",
+        completedAt,
+        fencingToken: this.#requireFencingToken(run.runId),
+        errorJson: result.error
+      });
       const next = RunSnapshotSchema.parse({
         ...run,
         lastError: { ...result.error, detailsArtifact: null },
@@ -333,7 +403,13 @@ export class RuntimeEngine {
       return this.#commit(run, next, "tool.failed", { invocationId, error: result.error }, observer);
     }
 
-    this.#store.completeToolInvocation({ invocationId, status: "succeeded", completedAt, resultJson: result.output });
+    this.#store.completeToolInvocation({
+      invocationId,
+      status: "succeeded",
+      completedAt,
+      fencingToken: this.#requireFencingToken(run.runId),
+      resultJson: result.output
+    });
     const outputDigest = digestJson(result.output);
     const newEvidence: Evidence[] = action.checkIds.map((checkId) => ({
       id: this.#createId(),
@@ -483,7 +559,12 @@ export class RuntimeEngine {
     payload: Record<string, unknown>,
     observer?: RuntimeObserver
   ): RunSnapshot {
-    const committed = this.#store.commitRun({ previous, next, event: { type, occurredAt: this.#now(), payload } });
+    const committed = this.#store.commitRun({
+      previous,
+      next,
+      fencingToken: this.#requireFencingToken(previous.runId),
+      event: { type, occurredAt: this.#now(), payload }
+    });
     this.#notify(committed.runId, observer);
     return committed;
   }
@@ -502,6 +583,29 @@ export class RuntimeEngine {
 
   #assertOpen(): void {
     if (this.#closed) throw new Error("Runtime is closed.");
+  }
+
+  #acquireLease(runId: string): void {
+    const lease = this.#store.acquireLease({
+      runId,
+      ownerId: this.#ownerId,
+      now: this.#now(),
+      ttlMs: this.#leaseTtlMs
+    });
+    this.#leases.set(runId, lease.fencingToken);
+  }
+
+  #releaseLease(runId: string): void {
+    const fencingToken = this.#leases.get(runId);
+    if (fencingToken === undefined) return;
+    this.#store.releaseLease({ runId, ownerId: this.#ownerId, fencingToken });
+    this.#leases.delete(runId);
+  }
+
+  #requireFencingToken(runId: string): number {
+    const token = this.#leases.get(runId);
+    if (token === undefined) throw new Error(`RUN_LEASE_MISSING: ${runId}`);
+    return token;
   }
 }
 
