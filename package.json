@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && node scripts/copy-docling-worker.mjs",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run --no-file-parallelism",
@@ -28,8 +28,6 @@
     "vitest": "^3.2.4"
   },
   "dependencies": {
-    "@ast-grep/napi": "0.44.1",
-    "@vscode/ripgrep": "1.18.0",
     "better-sqlite3": "^12.2.0",
     "zod": "^3.25.76"
   }
