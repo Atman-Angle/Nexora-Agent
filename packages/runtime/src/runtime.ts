@@ -396,8 +396,9 @@ export class RuntimeEngine {
 
   async #runLoop(initial: RunSnapshot, observer?: RuntimeObserver): Promise<RunResult> {
     let run = initial;
+    const activeStartedAt = Date.parse(this.#now());
     while (run.status === "running") {
-      const budgetFailure = this.#budgetFailure(run);
+      const budgetFailure = this.#budgetFailure(run, activeStartedAt);
       if (budgetFailure !== null) {
         run = this.#fail(run, budgetFailure, budgetFailure, observer);
         break;
@@ -768,11 +769,11 @@ export class RuntimeEngine {
     return this.#commit(run, blocked, "run.blocked", { stopReason: "PROVIDER_UNAVAILABLE" }, observer);
   }
 
-  #budgetFailure(run: RunSnapshot): string | null {
+  #budgetFailure(run: RunSnapshot, activeStartedAt: number): string | null {
     if (run.budgetsUsed.iterations >= run.budgets.maxIterations) return "ITERATION_BUDGET_EXCEEDED";
     if (run.budgetsUsed.modelCalls >= run.budgets.maxModelCalls) return "MODEL_CALL_BUDGET_EXCEEDED";
     if (run.budgetsUsed.toolCalls >= run.budgets.maxToolCalls) return "TOOL_CALL_BUDGET_EXCEEDED";
-    if (Date.parse(this.#now()) - Date.parse(run.budgetsUsed.startedAt) >= run.budgets.maxDurationMs) return "DURATION_BUDGET_EXCEEDED";
+    if (Date.parse(this.#now()) - activeStartedAt >= run.budgets.maxDurationMs) return "DURATION_BUDGET_EXCEEDED";
     return null;
   }
 
