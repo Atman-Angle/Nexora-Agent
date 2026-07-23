@@ -94,7 +94,7 @@ function parseArguments(argv: string[]): ParsedArguments {
     return { command: "resume", runId, ...(cwd === undefined ? {} : { cwd }), ...(input === undefined ? {} : { input }), ...(approvalDecision === undefined ? {} : { approvalDecision }), ...(recoveryDecision === undefined ? {} : { recoveryDecision }) };
   }
   const goal = values.join(" ").trim();
-  return { command: "start", ...(goal ? { goal } : {}), ...(cwd === undefined ? {} : { cwd }), interactive: !goal };
+  return { command: "start", ...(goal ? { goal } : {}), ...(cwd === undefined ? {} : { cwd }), interactive: Boolean(stdin.isTTY) };
 }
 
 async function continueInteractive(runtime: ReturnType<typeof createRuntime>, initial: RunResult): Promise<RunResult> {
@@ -105,7 +105,7 @@ async function continueInteractive(runtime: ReturnType<typeof createRuntime>, in
     if (request === null) return result;
     if (request.kind === "input") result = await runtime.resume({ runId: result.runId, input: await prompt(`${request.prompt}\n> `) }, renderEvent);
     else {
-      const answer = (await prompt(`${request.prompt} [y/N] `)).trim().toLowerCase();
+      const answer = (await prompt(`${request.prompt}\n${JSON.stringify(request.action)}\nApprove? [y/N] `)).trim().toLowerCase();
       result = await runtime.resume({ runId: result.runId, approvalDecision: { requestId: request.id, approved: answer === "y" || answer === "yes" } }, renderEvent);
     }
   }
