@@ -22,7 +22,7 @@ CLI 的 start/resume 自动读取启动命令所在目录（`process.cwd()`）�
 pnpm nexora "读取 note.txt，把 before 改成 after，运行测试并确认通过" --cwd D:\project
 ```
 
-未提供目标时，CLI 会提示 `What should Nexora do?`，并在同一进程中交互处理后续输入或批准。提供目标时，CLI 输出一个 `RunResult` JSON 后退出；成功时`summary`直接包含经过验证的最终回答，尚未产生Result时为`null`；若需要批准或输入，状态为 `waiting`。
+未提供目标时，CLI 会提示 `What should Nexora do?`。在PowerShell等TTY终端中，带目标的CLI也会留在当前进程：遇到Approval时显示精确Action并询问，遇到Input Request时直接收集回答，直到终态。成功时`summary`直接包含经过验证的最终回答。管道、CI等非TTY环境保持一次调用返回`waiting`。
 
 ### 查看 Run
 
@@ -43,9 +43,12 @@ pnpm nexora inspect <run-id> --cwd D:\project --json
 ```powershell
 pnpm nexora resume <run-id> --cwd D:\project --approve <request-id>
 pnpm nexora resume <run-id> --cwd D:\project --deny <request-id>
+pnpm nexora resume <run-id> --cwd D:\project --deny <request-id> --reason "请改用兼容ES module的命令"
 ```
 
 批准只对应 Pending Request 中持久化的精确 Tool Action。该 input 已在 Approval 前通过真实 Tool Schema 并展开默认值；批准前应核对 path、command、args、cwd 和 timeout 等字段。错误或过期的 Request ID 不会执行 Tool，resume 会重新校验 persisted Action 后才创建 Invocation。
+
+交互拒绝时可以输入原因。非空原因会与`approval.denied`一起持久化，并作为新的`inputHistory`进入下一轮模型、Task Contract和最终语义验证。Run处于`waiting`期间的人工时间不计入`maxDurationMs`；每次start/resume活跃执行段仍受时长限制，模型/Tool/iteration/retry计数继续跨resume累计。
 
 ### 回复模型请求的补充输入
 

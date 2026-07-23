@@ -11,6 +11,8 @@ pnpm nexora inspect <run-id> --cwd D:\project --json
 pnpm nexora resume <run-id> --cwd D:\project --approve <request-id>
 ```
 
+在TTY终端直接提供自然语言目标时，CLI会在同一进程显示精确Pending Action并处理批准/输入，正常使用无需复制Run ID或Request ID。人工等待不消耗本次Runtime活跃执行时长预算。非TTY/CI仍在`waiting`时返回退出码2，供调用方显式resume。
+
 CLI 的 start/resume 自动加载启动目录（`process.cwd()`）下的 `.env`；显式进程环境变量优先。`--cwd` 目标项目中的 `.env` 不会被读取。`inspect` 不需要 Provider，也不加载 `.env`。
 
 Node 程序可从 `@nexora/runtime` 导入 `createRuntime`、`createBuiltInTools` 和 Provider 工厂，调用 `start/resume/inspect/close`。CLI 与包调用共享同一持久化循环、状态机、工具、Evidence 和验证门。
