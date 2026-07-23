@@ -217,23 +217,39 @@ export class RuntimeEngine {
           if (decision === undefined || decision.requestId !== run.pendingRequest.id) {
             throw new Error("Approval decision does not match the pending Approval Request.");
           }
+          const reason = decision.reason?.trim();
+          if (decision.approved && reason) throw new Error("Approval feedback is only valid for a denied request.");
           const pendingAction = RuntimeActionSchema.parse(run.pendingRequest.action);
           if (pendingAction.type !== "call_tool") throw new Error("Pending Approval does not contain a Tool action.");
-          const resumed = transitionRunStatus(run, "running", { now: this.#now() });
+          const now = this.#now();
+          const denialInput = !decision.approved && reason
+            ? {
+                ...run,
+                inputHistory: [...run.inputHistory, {
+                  id: this.#createId(),
+                  sequence: run.inputHistory.length + 1,
+                  text: reason,
+                  receivedAt: now
+                }],
+                lastError: { code: "APPROVAL_DENIED", message: reason, retryable: true, detailsArtifact: null }
+              }
+            : !decision.approved
+              ? {
+                  ...run,
+                  lastError: {
+                    code: "APPROVAL_DENIED",
+                    message: "The user denied the protected Tool action.",
+                    retryable: true,
+                    detailsArtifact: null
+                  }
+                }
+              : run;
+          const resumed = transitionRunStatus(RunSnapshotSchema.parse(denialInput), "running", { now });
           run = this.#commit(run, resumed, decision.approved ? "approval.granted" : "approval.denied", {
             requestId: decision.requestId,
-            ...(decision.reason === undefined ? {} : { reason: decision.reason })
+            ...(reason === undefined ? {} : { reason })
           }, observer);
           if (decision.approved) run = await this.#callTool(run, pendingAction, observer, true);
-          else run = RunSnapshotSchema.parse({
-            ...run,
-            lastError: {
-              code: "APPROVAL_DENIED",
-              message: decision.reason?.trim() || "The user denied the protected Tool action.",
-              retryable: true,
-              detailsArtifact: null
-            }
-          });
         }
       }
       if (run.status !== "running") return toRunResult(run);

@@ -81,11 +81,17 @@ function parseArguments(argv: string[]): ParsedArguments {
     const input = takeOption(values, "--input");
     const approve = takeOption(values, "--approve");
     const deny = takeOption(values, "--deny");
+    const reason = takeOption(values, "--reason");
     const confirmed = takePairOption(values, "--confirm-succeeded");
     const failed = takeOption(values, "--confirm-failed");
     const abandon = takeOption(values, "--abandon");
     if (values.length > 0) throw new Error(`Unknown resume arguments: ${values.join(" ")}`);
-    const approvalDecision = approve ? { requestId: approve, approved: true } : deny ? { requestId: deny, approved: false } : undefined;
+    if (reason !== undefined && deny === undefined) throw new Error("--reason requires --deny.");
+    const approvalDecision = approve
+      ? { requestId: approve, approved: true }
+      : deny && reason ? { requestId: deny, approved: false, reason }
+      : deny ? { requestId: deny, approved: false }
+      : undefined;
     const recoveryDecision: RecoveryDecision | undefined = confirmed
       ? { invocationId: confirmed[0], outcome: "confirmed_succeeded", subjectRef: confirmed[1] }
       : failed ? { invocationId: failed, outcome: "confirmed_failed" }
@@ -106,7 +112,12 @@ async function continueInteractive(runtime: ReturnType<typeof createRuntime>, in
     if (request.kind === "input") result = await runtime.resume({ runId: result.runId, input: await prompt(`${request.prompt}\n> `) }, renderEvent);
     else {
       const answer = (await prompt(`${request.prompt}\n${JSON.stringify(request.action)}\nApprove? [y/N] `)).trim().toLowerCase();
-      result = await runtime.resume({ runId: result.runId, approvalDecision: { requestId: request.id, approved: answer === "y" || answer === "yes" } }, renderEvent);
+      const approved = answer === "y" || answer === "yes";
+      const reason = approved ? "" : (await prompt("Why reject? (optional) ")).trim();
+      result = await runtime.resume({
+        runId: result.runId,
+        approvalDecision: { requestId: request.id, approved, ...(reason ? { reason } : {}) }
+      }, renderEvent);
     }
   }
   return result;
