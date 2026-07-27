@@ -40,7 +40,7 @@ describe("E060 semantic validation boundary", () => {
     runtime.close();
   });
 
-  it("gives the decision model generic minimum-sequence and need-based discovery guidance", async () => {
+  it("gives the decision model generic minimum-sequence, dedicated-Tool and Runtime-Approval guidance", async () => {
     const workspace = fixture();
     let systemPrompt = "";
     const provider = createOpenAICompatibleProvider({
@@ -63,6 +63,9 @@ describe("E060 semantic validation boundary", () => {
     expect(systemPrompt).toContain("single Capability");
     expect(systemPrompt).toContain("Use discovery only");
     expect(systemPrompt).toContain("unnecessary");
+    expect(systemPrompt).toContain("never for Tool permission or approval");
+    expect(systemPrompt).toContain("let Runtime request Approval");
+    expect(systemPrompt).toContain("Never use shell.execute to emulate a registered Tool");
     expect(systemPrompt).not.toMatch(/README|filesystem\.read|filesystem\.search/);
     runtime.close();
   });
