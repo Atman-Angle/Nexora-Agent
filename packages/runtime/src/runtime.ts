@@ -814,6 +814,9 @@ export class RuntimeEngine {
     const actions = allowedActions(run);
     const includeTaskContract = run.currentPlan === null || run.taskContract === null
       || run.taskContract.inputVersion < run.inputHistory.length;
+    const allStepsCompleted = run.currentPlan !== null
+      && run.stepProgress.length === run.currentPlan.orderedSteps.length
+      && run.stepProgress.every((item) => item.status === "completed");
     const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
     const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
     const callableTools = new Set(activeStep?.acceptanceChecks
@@ -827,7 +830,9 @@ export class RuntimeEngine {
         workspace: this.#workspace,
         inputVersion: run.inputHistory.length,
         basedOnVersion: run.currentPlan?.version ?? null,
-        includeTaskContract
+        includeTaskContract,
+        currentPlan: run.currentPlan,
+        finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
       }),
       toolObservations: projectToolObservations(this.#store.listToolInvocations(run.runId)),
       tools: [...this.#tools.values()].map((tool) => ({
