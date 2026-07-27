@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -45,6 +45,20 @@ describe("E049 built-in Tool Runtime", () => {
       .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ matches: [expect.objectContaining({ path: "src/value.ts", line: 1 })] }) }));
   });
 
+  it("rejects read and write paths that escape through a directory symlink", async () => {
+    const root = workspace();
+    const outside = workspace();
+    writeFileSync(join(outside, "secret.txt"), "outside\n", "utf8");
+    symlinkSync(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+    const tools = createBuiltInTools();
+
+    await expect(execute(tool(tools, "filesystem.read"), root, { path: "linked/secret.txt" }))
+      .resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "PATH_ESCAPE" }) }));
+    await expect(execute(tool(tools, "filesystem.write"), root, { path: "linked/created.txt", content: "escape" }))
+      .resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "PATH_ESCAPE" }) }));
+    expect(existsSync(join(outside, "created.txt"))).toBe(false);
+  });
+
   it("writes and patches deterministically and keeps both operations idempotent", async () => {
     const root = workspace();
     const tools = createBuiltInTools();
@@ -86,5 +100,36 @@ describe("E049 built-in Tool Runtime", () => {
     await expect(execute(tool(tools, "git.status"), root, {}))
       .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ stdout: expect.stringContaining("tracked.txt") }) }));
     expect(tool(tools, "git.status").contract.execution.effect.kind).toBe("read");
+  });
+
+  it("rejects shell entrypoints and kills descendant processes on timeout", async () => {
+    const root = workspace();
+    const marker = join(root, "descendant-effect.txt");
+    const tools = createBuiltInTools();
+    const shell = tool(tools, "shell.execute");
+
+    await expect(execute(shell, root, {
+      command: process.platform === "win32" ? "pwsh.exe" : "sh",
+      args: [],
+      cwd: "."
+    })).resolves.toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({ code: "COMMAND_REJECTED" })
+    }));
+
+    const descendant = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "leaked"), 1200)`;
+    const parent = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {stdio:"ignore",detached:${process.platform === "win32"}}).unref(); setTimeout(() => {}, 5000)`;
+    await expect(execute(shell, root, {
+      command: process.execPath,
+      args: ["-e", parent],
+      cwd: ".",
+      timeoutMs: 500
+    })).resolves.toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({ code: "TOOL_TIMEOUT" })
+    }));
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(existsSync(marker)).toBe(false);
   });
 });

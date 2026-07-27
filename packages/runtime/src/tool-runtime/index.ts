@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 
@@ -318,12 +318,29 @@ async function atomicWrite(path: string, content: string): Promise<void> {
 
 function runProcess(command: string, args: string[], cwd: string, timeoutMs: number): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean; timedOut: boolean }> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(command, args, { cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      cwd,
+      detached: process.platform !== "win32",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
     let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let timedOut = false;
     const append = (current: Buffer, chunk: Buffer) => Buffer.concat([current, chunk]).subarray(0, MAX_CAPTURE_BYTES);
     child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
     child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (process.platform === "win32" && child.pid !== undefined) {
+        const killed = spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+          windowsHide: true,
+          stdio: "ignore"
+        });
+        if (killed.error !== undefined || killed.status !== 0) child.kill("SIGKILL");
+      } else if (child.pid !== undefined) {
+        try { process.kill(-child.pid, "SIGKILL"); }
+        catch { child.kill("SIGKILL"); }
+      }
+    }, timeoutMs);
     child.once("error", (error) => { clearTimeout(timer); rejectPromise(error); });
     child.once("close", (code) => {
       clearTimeout(timer);
