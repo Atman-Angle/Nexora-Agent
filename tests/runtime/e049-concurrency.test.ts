@@ -44,16 +44,16 @@ describe("E049 lease and fencing", () => {
       async decide() {
         calls += 1;
         await new Promise((resolve) => setTimeout(resolve, 15));
-        return calls < 6
+        return calls < 30
           ? { type: "unknown_action" }
           : { type: "request_input", question: "Continue?", reason: "lease test" };
       },
       async validate() { return { passed: false, issues: [] }; }
     };
-    const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [], leaseTtlMs: 60 });
-    const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 10, maxModelCalls: 10, maxToolCalls: 1, maxRetries: 10, maxDurationMs: 10_000 } });
+    const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [], leaseTtlMs: 300 });
+    const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 40, maxModelCalls: 40, maxToolCalls: 1, maxRetries: 40, maxDurationMs: 10_000 } });
     expect(result.status).toBe("waiting");
-    expect(calls).toBe(6);
+    expect(calls).toBe(30);
     runtime.close();
   });
 
@@ -61,14 +61,14 @@ describe("E049 lease and fencing", () => {
     const workspace = tempRoot();
     const dataDir = join(workspace, ".nexora");
     const firstProvider = new PausedProvider();
-    const first = createRuntime({ workspace, dataDir, provider: firstProvider, tools: [], leaseTtlMs: 120 });
+    const first = createRuntime({ workspace, dataDir, provider: firstProvider, tools: [], leaseTtlMs: 1000 });
     let runId = "";
     const firstRun = first.start({ input: "Wait for the Provider." }, (event) => {
       if (event.type === "run.created") runId = event.runId;
     });
     await firstProvider.enteredPromise;
     expect(runId).not.toBe("");
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
 
     const second = createRuntime({
       workspace,

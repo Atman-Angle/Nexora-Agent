@@ -143,6 +143,49 @@ describe("E051 deterministic mutation closure", () => {
     expect(stub.decisionCalls).toBe(3);
   }, 60_000);
 
+  it("rejects a concurrent cross-process CLI resume before it can append input", async () => {
+    const fixture = mutationFixture();
+    let entered!: () => void;
+    const enteredPromise = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void;
+    const releasePromise = new Promise<void>((resolve) => { release = resolve; });
+    const stub = await providerStub(async (_context, index) => {
+      if (index === 0) {
+        return { type: "request_input", question: "First input?", reason: "Set up the persisted wait." };
+      }
+      entered();
+      await releasePromise;
+      return { type: "request_input", question: "Next input?", reason: "Keep the Run waiting." };
+    });
+    const environment = providerEnvironment(stub.baseUrl);
+
+    const started = await spawnCli(["Wait for input.", "--cwd", fixture.workspace], environment);
+    expect(started.code).toBe(2);
+    const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
+    const firstResume = spawnCli([
+      "resume", runId, "--cwd", fixture.workspace, "--input", "accepted input"
+    ], environment);
+    await enteredPromise;
+
+    const secondResume = await spawnCli([
+      "resume", runId, "--cwd", fixture.workspace, "--input", "rejected concurrent input"
+    ], environment);
+    expect(secondResume.code).toBe(64);
+    expect(secondResume.stderr).toContain("RUN_BUSY");
+
+    release();
+    const firstResult = await firstResume;
+    expect(firstResult.code).toBe(2);
+    const view = await inspectCli(runId, fixture.workspace);
+    expect(view.snapshot.status).toBe("waiting");
+    expect(view.snapshot.inputHistory.map((entry) => entry.text)).toEqual([
+      "Wait for input.",
+      "accepted input"
+    ]);
+    expect(view.events.filter((event) => event.type === "run.resumed")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "model.requested")).toHaveLength(2);
+  }, 60_000);
+
   it("does not replace partial finish citations with all persisted Run Evidence", async () => {
     const fixture = mutationFixture();
     const stub = await providerStub(mutationDecision(fixture, { validationExitCode: 0, citations: "read-only" }));
@@ -338,7 +381,9 @@ function mutationDecision(
   };
 }
 
-async function providerStub(decide: (context: DecisionContext, index: number) => unknown): Promise<ProviderStub> {
+async function providerStub(
+  decide: (context: DecisionContext, index: number) => unknown | Promise<unknown>
+): Promise<ProviderStub> {
   let decisionCalls = 0;
   const validationContexts: ValidationContext[] = [];
   const server = createServer(async (request, response) => {
@@ -356,7 +401,7 @@ async function providerStub(decide: (context: DecisionContext, index: number) =>
         validationContexts.push(structuredClone(context));
         content = { passed: true, issues: [] };
       } else {
-        content = decide(payload.context as DecisionContext, decisionCalls);
+        content = await decide(payload.context as DecisionContext, decisionCalls);
         decisionCalls += 1;
       }
       response.writeHead(200, { "content-type": "application/json" });
