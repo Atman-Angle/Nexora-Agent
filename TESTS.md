@@ -1,4 +1,4 @@
-# TESTS.md — 验收与回归
+# TESTS.md — Nexora 测试与验收策略
 
 ## 1. 测试层级
 
@@ -11,64 +11,164 @@ L4 Feature Chain
 L5 Recovery
 L6 Security
 L7 Agent Eval
-L8 Desktop E2E
+L8 User Acceptance
 ```
 
-## 2. 每个 Feature 必须提供
+测试层级是可选择的工具，不是每个 Feature 都必须全部执行。
+
+## 2. 风险分级
+
+### L1 — 局部修改
+
+适用于：
+
+- 纯函数和局部逻辑；
+- 错误信息或输出映射；
+- 不改变 Contract、状态、持久化和跨模块数据流的修改。
+
+最低验证：
 
 ```text
-输入证据
-执行证据
-状态证据
-持久化证据
-结果证据
-验证证据
+目标测试
++ 必要 Static Check
++ Diff Review
 ```
 
-## 3. Core Regression
+### L2 — 边界修改
 
-每完成一个 Feature，加入：
+适用于：
+
+- 模块间数据传输；
+- Tool/API Contract；
+- 持久化读写；
+- Approval、Context 或跨模块调用；
+- 已有边界内的行为变化。
+
+最低验证：
 
 ```text
-CR-001 Direct Mode
-CR-002 Read File
-CR-003 Search & Working Set
-CR-004 Patch File
-CR-005 Test & Verification
-CR-006 Multi-round Fix
-CR-007 Approval
-CR-008 Context Compaction
-CR-009 Recovery
-CR-010 New Conversation UI
-CR-011 Collapsed Workspace UI
-CR-012 Expanded Code View UI
+目标测试
++ Contract / Integration
++ 相关 Core Regression
++ Diff Review
 ```
 
-新 Feature 必须满足：
+必须验证：
 
 ```text
-当前 Feature Tests
-+
-全部既有 Core Regression
+发送方实际输出
+→ Contract
+→ 接收方实际读取
+→ 持久化
+→ 下游真实消费
 ```
 
-## 4. 禁止假成功
+不得 Mock 掉正在验证的关键边界。
 
-以下情况不得成功：
+### L3 — 系统级修改
 
-- Model 返回文本但未持久化；
-- Tool 返回成功但副作用未知；
-- 测试失败；
-- Final 无 Evidence；
-- API 成功但最终结果不可查询；
-- UI 使用 Mock 代替真实链路；
-- 生成结构合法但业务质量不合格。
+适用于：
 
-## 5. 性能和质量声明
+- Runtime Loop；
+- State Machine；
+- Completion Gate；
+- Checkpoint / Recovery；
+- 核心数据 Authority；
+- 安全边界；
+- Capability Integration。
 
-没有 Benchmark 或固定 Dataset，不得声明：
+最低验证：
 
-- 性能强悍；
-- 成功率高；
-- 质量优秀；
-- 优于其他 Agent。
+```text
+Feature Chain
++ Recovery / Security
++ 全部 Core Regression
++ 真实入口 UAT
++ 正向/逆向证据检查
+```
+
+涉及状态、持久化、跨模块 Contract、Approval、Completion 或 Recovery，
+最低为 L2；
+
+涉及 Authority、Run Loop、State Machine 或安全边界，
+必须为 L3。
+
+### Release
+
+发布候选执行：
+
+```text
+全部测试
++ 全部固定 UAT
++ 正向 SOP
++ 逆向 SOP
++ Git Diff / Packaging / Consumer 验证
+```
+
+## 3. Core Regression 标签
+
+Core Regression 按能力打标签：
+
+```text
+CR-direct
+CR-read
+CR-search
+CR-mutation
+CR-approval
+CR-validation
+CR-context
+CR-recovery
+CR-cli
+CR-ui
+```
+
+执行规则：
+
+```text
+L1 → 目标测试
+L2 → 目标测试 + 受影响标签
+L3 / Release → 全部 Core Regression
+```
+
+不得默认让每个 Feature 运行全部既有回归。
+
+## 4. 固定用户验收
+
+以下 UAT 用于 Capability Integration、Runtime 核心变化和发布前验收：
+
+```text
+UAT-01 Search / Read
+UAT-02 Literal Search
+UAT-03 Mutation / Approval / Validation
+UAT-04 Denial Safety
+```
+
+验收必须使用隔离的临时 Git 工作区，并检查：
+
+- 自然语言产生真实多步骤执行；
+- Tool 结果来自真实工作区；
+- inspect 可反查 Input、Plan、Invocation、Evidence 和 Result；
+- 写操作未批准前不执行；
+- 拒绝操作不误报成功；
+- 修改仅发生在允许范围；
+- 只有 succeeded / VALIDATED 才视为成功；
+- Runtime 或验证失败时没有成功 Result。
+
+## 5. 完成证据
+
+证据要求与风险匹配。
+
+- L1：行为和测试证据；
+- L2：边界输入、输出、持久化和消费证据；
+- L3：完整输入、执行、状态、持久化、结果和验证证据。
+
+不得仅凭以下内容宣布完成：
+
+- Model 输出 Final；
+- Tool 返回 success；
+- Schema 合法；
+- Mock 测试通过；
+- Build、Lint 或 Typecheck 通过；
+- AI 自己的总结。
+
+没有固定 Dataset 或 Benchmark 时，不得声明性能、成功率或质量优于其他系统。

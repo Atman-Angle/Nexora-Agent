@@ -270,3 +270,11 @@ packages/commerce
 ```
 
 目录结构必须服务于真实端到端链路，而不是提前复制完整架构图。
+
+模块	负责	不负责	可写 Authority
+Runtime	编排单一 Run Loop	保存第二套状态	无独立 Authority
+State Machine	Run 状态迁移	调用 Tool	Run Status
+Run Store	原子持久化	推断业务状态	持久化记录
+Tool Runtime	执行真实 Effect	宣布完成	Invocation Result
+Validation	判断 Evidence 是否满足	创建缺失 Evidence	Validation Result
+Provider	提出 Action	直接写状态	无
