@@ -195,6 +195,11 @@ export class RuntimeEngine {
     try {
       run = await this.#recoverToolInvocation(run, input.recoveryDecision, observer);
       if (run.status === "failed") return toRunResult(run);
+      if (run.status === "blocked" && run.stopReason === "PROVIDER_UNAVAILABLE") {
+        const now = this.#now();
+        const resumed = transitionRunStatus(run, "running", { now });
+        run = this.#commit(run, resumed, "run.resumed", { reason: "PROVIDER_RETRY" }, observer);
+      }
       if (run.status === "blocked") return toRunResult(run);
       if (run.status === "waiting") {
         if (run.pendingRequest?.kind === "input") {
