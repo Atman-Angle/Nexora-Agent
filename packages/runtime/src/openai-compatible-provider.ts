@@ -14,6 +14,8 @@ export class ModelConfigError extends Error {
   constructor(message: string) { super(message); this.name = "ModelConfigError"; }
 }
 
+class RetryableProviderError extends Error {}
+
 export function openAICompatibleProviderFromEnv(environment: Record<string, string | undefined> = process.env): RuntimeProvider {
   if (environment.NEXORA_MODEL_PROVIDER?.trim() !== "openai-compatible") {
     throw new ModelConfigError('NEXORA_MODEL_PROVIDER must be "openai-compatible".');
@@ -35,6 +37,19 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   const fetchImplementation = options.fetch ?? globalThis.fetch;
 
   async function complete(mode: "decide" | "validate", context: ModelDecisionContext | SemanticValidationContext): Promise<unknown> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await request(mode, context);
+      } catch (error) {
+        lastError = error;
+        if (!isRetryable(error) || attempt === 3) throw error;
+      }
+    }
+    throw lastError;
+  }
+
+  async function request(mode: "decide" | "validate", context: ModelDecisionContext | SemanticValidationContext): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -52,9 +67,19 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         }),
         signal: controller.signal
       });
-      if (!response.ok) throw new Error(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      if (!response.ok) {
+        const ErrorType = response.status === 429 || response.status >= 500
+          ? RetryableProviderError
+          : Error;
+        throw new ErrorType(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      }
       const body = ProviderResponseSchema.parse(await response.json());
       return JSON.parse(stripFence(body.choices[0]!.message.content));
+    } catch (error) {
+      if (error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError")) {
+        throw new RetryableProviderError(error instanceof Error ? error.message : String(error));
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -64,6 +89,10 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     decide: (context) => complete("decide", context),
     validate: (context) => complete("validate", context)
   };
+}
+
+function isRetryable(error: unknown): boolean {
+  return error instanceof RetryableProviderError;
 }
 
 const ProviderResponseSchema = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().min(1) }).passthrough() }).passthrough()).min(1) }).passthrough();
