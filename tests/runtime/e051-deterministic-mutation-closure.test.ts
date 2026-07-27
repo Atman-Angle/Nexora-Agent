@@ -113,6 +113,36 @@ describe("E051 deterministic mutation closure", () => {
     expect(stub.validationContexts).toHaveLength(1);
   }, 60_000);
 
+  it("stops the real CLI path immediately after a denied mutation", async () => {
+    const fixture = mutationFixture();
+    const stub = await providerStub(mutationDecision(fixture, { validationExitCode: 0, citations: "all" }));
+    const environment = providerEnvironment(stub.baseUrl);
+
+    const started = await spawnCli(["Change note.txt from before to after and validate it.", "--cwd", fixture.workspace], environment);
+    expect(started.code).toBe(2);
+    const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
+    const beforeDenial = await inspectCli(runId, fixture.workspace);
+    const request = beforeDenial.snapshot.pendingRequest!;
+    expect(request.action?.toolName).toBe("filesystem.patch");
+
+    const denied = await spawnCli([
+      "resume", runId, "--cwd", fixture.workspace,
+      "--deny", request.id, "--reason", "Do not modify the workspace."
+    ], environment);
+    expect(denied.code).toBe(2);
+    expect((JSON.parse(denied.stdout) as { status: string; stopReason: string }).status).toBe("waiting");
+
+    const view = await inspectCli(runId, fixture.workspace);
+    expect(view.snapshot.stopReason).toBe("INPUT_REQUIRED");
+    expect(view.snapshot.pendingRequest?.kind).toBe("input");
+    expect(view.snapshot.result).toBeNull();
+    expect(view.toolInvocations.map((item) => item.toolName)).toEqual(["filesystem.read"]);
+    expect(view.events.filter((event) => event.type === "model.requested")).toHaveLength(3);
+    expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
+    expect(readFileSync(fixture.path, "utf8")).toBe("before\n");
+    expect(stub.decisionCalls).toBe(3);
+  }, 60_000);
+
   it("does not replace partial finish citations with all persisted Run Evidence", async () => {
     const fixture = mutationFixture();
     const stub = await providerStub(mutationDecision(fixture, { validationExitCode: 0, citations: "read-only" }));

@@ -249,7 +249,24 @@ export class RuntimeEngine {
             requestId: decision.requestId,
             ...(reason === undefined ? {} : { reason })
           }, observer);
-          if (decision.approved) run = await this.#callTool(run, pendingAction, observer, true);
+          if (decision.approved) {
+            run = await this.#callTool(run, pendingAction, observer, true);
+          } else {
+            const waiting = transitionRunStatus(run, "waiting", {
+              now,
+              pendingRequest: {
+                id: this.#createId(),
+                kind: "input",
+                prompt: "The protected Tool action was denied. Provide new instructions to continue.",
+                createdAt: now
+              },
+              stopReason: "INPUT_REQUIRED"
+            });
+            run = this.#commit(run, waiting, "run.waiting", {
+              reason: "APPROVAL_DENIED",
+              requestId: waiting.pendingRequest?.id ?? null
+            }, observer);
+          }
         }
       }
       if (run.status !== "running") return toRunResult(run);
