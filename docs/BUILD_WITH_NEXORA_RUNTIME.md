@@ -133,11 +133,10 @@ const provider: RuntimeProvider = {
     return { type: "request_input", question: "需要哪个文件？", reason: "目标不明确" };
   },
   async validate(context) {
-    // 只能审查 finish 已明确引证的 persisted Evidence/Invocation。
+    // 只能审查全部用户输入、候选 summary 和 finish 已引证的 Tool facts。
     return {
-      passed: context.evidence.length > 0,
-      issues: [],
-      evidenceIds: context.evidence.map((item) => item.id)
+      passed: context.facts.length > 0,
+      issues: context.facts.length > 0 ? [] : ["No cited Tool facts."]
     };
   }
 };
@@ -152,20 +151,39 @@ import { z } from "zod";
 import type { RuntimeTool } from "@nexora/runtime";
 
 const inputSchema = z.object({ key: z.string().min(1) }).strict();
+const factsSchema = z.object({ value: z.string() }).strict();
 
 const lookup: RuntimeTool = {
-  name: "example.lookup",
-  description: "Read one value by key without modifying external state.",
-  risk: "read",
-  idempotent: true,
-  inputSchema,
-  inputExample: { key: "example" },
+  contract: {
+    identity: { name: "example.lookup" },
+    capability: {
+      purpose: "Read one value by key.",
+      nonGoals: ["Discover an unknown key.", "Modify a value."]
+    },
+    decision: {
+      useWhen: ["The exact key is known and its value is required."],
+      avoidWhen: ["The key is unknown or existing facts already contain the value."]
+    },
+    execution: {
+      effect: {
+        kind: "read",
+        description: "Reads one value without changing external state."
+      },
+      idempotent: true,
+      inputSchema,
+      inputExample: { key: "example" }
+    },
+    evidence: {
+      produces: ["The value stored for the key."],
+      factsSchema
+    }
+  },
   async execute(input) {
     const parsed = inputSchema.parse(input);
     return {
       status: "success",
       subjectRef: `key:${parsed.key}`,
-      output: { value: "result" }
+      facts: { value: "result" }
     };
   }
 };
@@ -173,13 +191,14 @@ const lookup: RuntimeTool = {
 
 规则：
 
+- Identity、Capability、Decision、Execution 和 Evidence 文本边界必须非空且有界；
 - `inputExample` 必须是 JSON，并在 Runtime 构造时通过同一个 `inputSchema`；
-- `description` 可选；提供时必须非空且最多 240 字符，Provider 在生成 Plan 前可用它选择 capability；
-- `risk` 为 `write` 或 `execute` 时，Runtime 自动要求批准；
+- `execution.effect.kind` 为 `write` 或 `execute` 时，Runtime 自动要求批准；
 - Runtime 在 Approval 前使用 `inputSchema` 校验并展开默认值；Pending Action、批准后的 Invocation 和 Tool execute 使用同一 canonical JSON，resume 会重校验；
-- Tool 只返回 success/failure，不得修改 Run；
+- Tool success 的 `facts` 必须通过 `evidence.factsSchema` 才能生成 Evidence；
+- Tool 只返回 success/failure，不得修改 Run 或宣布完成；
 - non-idempotent Tool 的结果未知时 Runtime 会 blocked，不能自动重试；
-- Tool 必须自行实现与其风险匹配的幂等和恢复语义。
+- Tool 必须自行实现与其 Effect 和幂等声明匹配的恢复语义。
 
 ## 成功与证据 Contract
 

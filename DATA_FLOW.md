@@ -98,7 +98,8 @@ flowchart LR
 ```mermaid
 flowchart TD
     RESUME["resume(runId)"] --> LEASE["Acquire 新 Fencing Token"]
-    LEASE --> UNRESOLVED{"未决 Invocation？"}
+    LEASE -- "其他进程持有有效 Lease" --> BUSY["RUN_BUSY<br/>不追加输入或执行 Effect"]
+    LEASE -- "成功" --> UNRESOLVED{"未决 Invocation？"}
     UNRESOLVED -- "无" --> STATUS{"当前状态"}
     UNRESOLVED -- "started + idempotent" --> RETRY["Claim 原 Invocation<br/>原输入重试"]
     UNRESOLVED -- "started + non-idempotent" --> UNKNOWN["标记 unknown<br/>Run → blocked"]
@@ -111,7 +112,9 @@ flowchart TD
     CONFIRM --> LOOP
     CONTINUE --> LOOP
     STATUS -- "waiting + 有输入/批准" --> LOOP
-    STATUS -- "running/blocked 可恢复" --> LOOP
+    STATUS -- "blocked / PROVIDER_UNAVAILABLE" --> PROVIDER["State Machine → running<br/>run.resumed / PROVIDER_RETRY"]
+    PROVIDER --> LOOP
+    STATUS -- "running" --> LOOP
     STATUS -- "failed/succeeded" --> TERMINAL["返回终态，不执行"]
 ```
 
@@ -142,3 +145,5 @@ E060验证流为 `全部inputHistory + proposedSummary + cited Evidence关联Inv
 E061工具流为`注册时五层Contract校验 → Model读取选择投影 → active inputExample → Runtime inputSchema/canonical Action → Tool执行单一Capability → success factsSchema → 原tool_invocations.result_json → Evidence/observation/semantic facts`。数据库列未改名或迁移；`result_json`仍是持久化权威，`facts`是运行时语义名称。非法Facts转为failed Invocation且不产生Evidence。
 
 E062–E064交互流为`TTY CLI → start → waiting Pending Action → 显示精确Action → y或拒绝原因 → 同一Runtime.resume`。人工等待不进入活跃段Duration；拒绝原因同时进入Approval Event、lastError和inputHistory，下一轮Task Contract/Decision/semantic validation从同一输入权威读取。没有Feedback Store。
+
+E065–E073没有增加第二条执行流：Provider decide/validate 每次最多三次无副作用 HTTP 尝试，耗尽后用现有 blocked 状态；`PROVIDER_UNAVAILABLE` resume 经 State Machine 回到同一 loop，并继续使用 persisted Invocation/Evidence。拒绝后立即进入 input waiting；重复完成 Step Action 在 Effect 前拒绝；跨进程 resume 由同一 Lease/Fencing 拒绝；Provider 只通过当前 Tool `inputExample` 生成 workspace-relative input。E073 固定 UAT 的十二个 Run 全部通过，并已反查三表、Artifact 与 Git。
