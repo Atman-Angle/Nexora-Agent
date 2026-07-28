@@ -494,185 +494,7 @@ export class RuntimeEngine {
     const current = run.currentPlan;
     let contract = run.taskContract;
     if (current === null) {
-      if (action.basedOnVersion !== null) throw new ActionRejectedError("The first Plan must be based on null.");
-      if (action.taskContract === undefined) throw new ActionRejectedError("The first Plan requires a Task Contract.");
-      contract = TaskContractSchema.parse(action.taskContract);
-    } else {
-      if (action.basedOnVersion !== current.version) throw new ActionRejectedError("Plan revision conflict.");
-      const hasNewInput = contract !== null && contract.inputVersion < run.inputHistory.length;
-      if (hasNewInput && action.taskContract === undefined) throw new ActionRejectedError("New user input requires an updated Task Contract.");
-      if (!hasNewInput && action.taskContract !== undefined) throw new ActionRejectedError("Task Contract cannot change without new user input.");
-      if (action.taskContract !== undefined) contract = TaskContractSchema.parse(action.taskContract);
-      assertCompletedStepsUnchanged(run, action.orderedSteps);
-    }
-    if (contract === null) throw new ActionRejectedError("Task Contract is missing.");
-    if (contract.workspace !== this.#workspace) throw new ActionRejectedError("Task Contract workspace does not match Runtime workspace.");
-    if (contract.inputVersion !== run.inputHistory.length) throw new ActionRejectedError("Task Contract does not cover the complete input history.");
-
-    const version = current === null ? 1 : current.version + 1;
-    const plan = StructuredPlanSchema.parse({
-      version,
-      basedOnVersion: action.basedOnVersion,
-      goalDigest: digestTaskContract(contract),
-      orderedSteps: action.orderedSteps
-    });
-    const completed = new Map(run.stepProgress.filter((item) => item.status === "completed").map((item) => [item.stepId, item]));
-    const completedStepIds = new Set(completed.keys());
-    const evidence = current === null ? [] : run.evidence.filter((item) => completedStepIds.has(item.stepId));
-    let activeAssigned = false;
-    const stepProgress = plan.orderedSteps.map((step) => {
-      const preserved = completed.get(step.id);
-      if (preserved !== undefined) return preserved;
-      if (!activeAssigned) {
-        activeAssigned = true;
-        return { stepId: step.id, status: "active" as const, evidenceIds: [] };
-      }
-      return { stepId: step.id, status: "pending" as const, evidenceIds: [] };
-    });
-    const next = RunSnapshotSchema.parse({
-      ...run,
-      taskContract: contract,
-      currentPlan: plan,
-      stepProgress,
-      evidence,
-      lastError: null,
-      updatedAt: this.#now()
-    });
-    return this.#commit(run, next, "plan.set", { version, basedOnVersion: action.basedOnVersion }, observer);
-  }
-
-  async #callTool(
-    runInput: RunSnapshot,
-    action: Extract<RuntimeAction, { type: "call_tool" }>,
-    observer?: RuntimeObserver,
-    approved = false
-  ): Promise<RunSnapshot> {
-    const plan = runInput.currentPlan;
-    if (plan === null) throw new ActionRejectedError("A Tool cannot run without a Plan.");
-    const active = runInput.stepProgress.find((item) => item.status === "active");
-    if (active === undefined || active.stepId !== action.stepId) throw new ActionRejectedError("Tool action does not target the active Step.");
-    const step = plan.orderedSteps.find((item) => item.id === action.stepId);
-    if (step === undefined) throw new ActionRejectedError("Active Step is missing from the Plan.");
-    const checks = action.checkIds.map((id) => step.acceptanceChecks.find((item) => item.id === id));
-    if (checks.some((check) => check === undefined)) throw new ActionRejectedError("Tool action references an unknown Acceptance Check.");
-    if (checks.some((check) => check?.kind !== "tool_result" || check.toolName !== action.toolName)) {
-      throw new ActionRejectedError("Tool action is not bound to a matching Tool Result Check.");
-    }
-    const tool = this.#tools.get(action.toolName);
-    if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${action.toolName}`);
-    const parsedInput = JsonValueSchema.parse(tool.contract.execution.inputSchema.parse(action.input));
-    const canonicalAction = { ...action, input: parsedInput };
-    const inputDigest = digestJson(parsedInput);
-    const idempotencyKey = `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${inputDigest}`;
-    if (this.#store.listToolInvocations(runInput.runId).some((item) => item.idempotencyKey === idempotencyKey)) {
-      throw new ActionRejectedError("Tool action duplicates an existing persisted Invocation.");
-    }
-    if (tool.contract.execution.effect.kind !== "read" && !approved) {
-      const now = this.#now();
-      const waiting = transitionRunStatus(runInput, "waiting", {
-        now,
-        stopReason: "APPROVAL_REQUIRED",
-        pendingRequest: {
-          id: this.#createId(),
-          kind: "approval",
-          prompt: `Allow ${tool.contract.identity.name} for Step ${step.id}?`,
-          createdAt: now,
-          action: canonicalAction
-        }
-      });
-      return this.#commit(runInput, waiting, "approval.requested", {
-        requestId: waiting.pendingRequest?.id ?? null,
-        toolName: tool.contract.identity.name,
-        stepId: step.id
-      }, observer);
-    }
-    const invocationId = this.#createId();
-    const startedAt = this.#now();
-    const started = this.#store.beginToolInvocationAndCommitRun({
-      intent: {
-        id: invocationId,
-        runId: runInput.runId,
-        planVersion: plan.version,
-        stepId: step.id,
-        checkIds: action.checkIds,
-        toolName: tool.contract.identity.name,
-        inputJson: parsedInput,
-        inputDigest,
-        idempotencyKey,
-        idempotent: tool.contract.execution.idempotent,
-        fencingToken: this.#requireFencingToken(runInput.runId),
-        startedAt
-      },
-      previous: runInput,
-      next: {
-      ...runInput,
-      budgetsUsed: { ...runInput.budgetsUsed, toolCalls: runInput.budgetsUsed.toolCalls + 1 },
-      updatedAt: startedAt
-      },
-      fencingToken: this.#requireFencingToken(runInput.runId),
-      event: { type: "tool.started", occurredAt: startedAt, payload: { invocationId, toolName: tool.contract.identity.name, stepId: step.id } }
-    });
-    this.#notify(runInput.runId, observer);
-    return this.#executeToolInvocation(started.run, started.invocation, tool, parsedInput, observer);
-  }
-
-  async #executeToolInvocation(
-    run: RunSnapshot,
-    invocation: ToolInvocation,
-    tool: RuntimeTool,
-    parsedInput: unknown,
-    observer?: RuntimeObserver
-  ): Promise<RunSnapshot> {
-    let result: RuntimeToolResult;
-    try {
-      const returned = ToolResultSchema.parse(await this.#withLeaseHeartbeat(run.runId, () => tool.execute(parsedInput, {
-        workspace: this.#workspace,
-        runId: run.runId,
-        invocationId: invocation.id
-      })));
-      result = returned.status === "success"
-        ? { ...returned, facts: JsonValueSchema.parse(tool.contract.evidence.factsSchema.parse(returned.facts)) }
-        : returned;
-    } catch (error) {
-      result = {
-        status: "failure",
-        subjectRef: invocation.stepId,
-        error: { code: "TOOL_EXECUTION_ERROR", message: errorMessage(error), retryable: false }
-      };
-    }
-    const completedAt = this.#now();
-    if (result.status === "failure") {
-      const next = RunSnapshotSchema.parse({
-        ...run,
-        lastError: { ...result.error, detailsArtifact: null },
-        updatedAt: completedAt
-      });
-      const completed = this.#store.completeToolInvocationAndCommitRun({
-        invocationId: invocation.id,
-        status: "failed",
-        completedAt,
-        fencingToken: this.#requireFencingToken(run.runId),
-        errorJson: result.error,
-        previous: run,
-        next,
-        event: { type: "tool.failed", occurredAt: completedAt, payload: { invocationId: invocation.id, error: result.error } }
-      });
-      this.#notify(run.runId, observer);
-      return completed.run;
-    }
-
-    const outputDigest = digestJson(result.facts);
-    const newEvidence: Evidence[] = invocation.checkIds.map((checkId) => ({
-      id: this.#createId(),
-      kind: "tool_result",
-      source: "tool",
-      producedAt: completedAt,
-      planVersion: invocation.planVersion,
-      stepId: invocation.stepId,
-      checkId,
-      subjectRef: result.subjectRef,
-      invocationId: invocation.id,
-      artifactRef: null,
+      if (action.basedOnVersion !== null) throw new ActionRejectedError("The first Plan mu…2078 tokens truncated…: null,
       digest: outputDigest
     }));
     const evidence = [...run.evidence, ...newEvidence];
@@ -955,9 +777,16 @@ export function createRuntime(options: CreateRuntimeOptions): RuntimeEngine {
 }
 
 function allowedActions(run: RunSnapshot): ModelDecisionContext["allowedActions"] {
-  return run.currentPlan === null
-    ? ["set_plan", "request_input"]
-    : ["set_plan", "call_tool", "request_input", "propose_finish"];
+  if (run.currentPlan === null) return ["set_plan", "request_input"];
+  const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
+    && run.stepProgress.every((item) => item.status === "completed");
+  if (allStepsCompleted) return ["set_plan", "request_input", "propose_finish"];
+  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+  const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+  const hasCallableCheck = activeStep?.acceptanceChecks.some((check) => check.kind === "tool_result") ?? false;
+  return hasCallableCheck
+    ? ["set_plan", "call_tool", "request_input"]
+    : ["set_plan", "request_input"];
 }
 
 function completeSatisfiedSteps(
@@ -1135,3 +964,4 @@ function toRunResult(run: RunSnapshot): RunResult {
     lastError: run.lastError
   };
 }
+
