@@ -562,6 +562,11 @@ export class RuntimeEngine {
     if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${action.toolName}`);
     const parsedInput = JsonValueSchema.parse(tool.contract.execution.inputSchema.parse(action.input));
     const canonicalAction = { ...action, input: parsedInput };
+    const inputDigest = digestJson(parsedInput);
+    const idempotencyKey = `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${inputDigest}`;
+    if (this.#store.listToolInvocations(runInput.runId).some((item) => item.idempotencyKey === idempotencyKey)) {
+      throw new ActionRejectedError("Tool action duplicates an existing persisted Invocation.");
+    }
     if (tool.contract.execution.effect.kind !== "read" && !approved) {
       const now = this.#now();
       const waiting = transitionRunStatus(runInput, "waiting", {
@@ -592,8 +597,8 @@ export class RuntimeEngine {
         checkIds: action.checkIds,
         toolName: tool.contract.identity.name,
         inputJson: parsedInput,
-        inputDigest: digestJson(parsedInput),
-        idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${digestJson(parsedInput)}`,
+        inputDigest,
+        idempotencyKey,
         idempotent: tool.contract.execution.idempotent,
         fencingToken: this.#requireFencingToken(runInput.runId),
         startedAt

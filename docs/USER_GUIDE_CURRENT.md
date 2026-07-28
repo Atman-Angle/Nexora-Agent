@@ -170,7 +170,7 @@ currentPlan required Checks
 - 没有 Desktop、HTTP 服务、Python/Rust SDK、MCP、Workflow DSL 或领域 Agent。
 - CLI 不提供单独的 `ask/read/patch/verify/agent/approve` 命令；这些属于已删除的旧实现。
 - 新 1.1 Runtime 不迁移或恢复旧数据库。
-- E073 固定真实 Provider release UAT 已通过 12/12：Read/Search、并发 Literal Search、Mutation 和 Denial 均连续 3/3；完整 Run ID 与持久化反查见 [E073 release UAT](../reports/2026-07-28-e073-release-uat.md)。
+- E076 固定真实 Provider release UAT 已通过 12/12：Read/Search、并发 Literal Search、Mutation 和 Denial 均连续 3/3；完整 Run ID 与持久化反查见 [E076 release UAT](../reports/2026-07-28-e076-repeat-action-safety-release.md)。
 - E048/E049/E052 等历史失败 Run 只供审计，不恢复或重跑；历史结论不能覆盖当前 tracked 代码与最新 release evidence。
 - `filesystem.search` 使用随 Runtime 安装的 Ripgrep 二进制做大小写不敏感的字面量搜索；不接受自定义正则/参数，不搜索忽略目录、二进制或超过 256 KiB 的文件，最多返回 100 条稳定结果。
 

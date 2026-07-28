@@ -24,7 +24,9 @@ flowchart TD
     ACTION -- "call_tool" --> BIND["绑定 active Step + Check"]
     BIND --> PARSE{"Tool Schema parse<br/>默认值展开 + JSON canonicalize"}
     PARSE -- "非法" --> REJECT
-    PARSE -- "合法" --> APPROVAL{"read 或已批准？"}
+    PARSE -- "合法" --> DUPLICATE{"同一 Invocation 幂等键已存在？"}
+    DUPLICATE -- "是" --> REJECT
+    DUPLICATE -- "否" --> APPROVAL{"read 或已批准？"}
     APPROVAL -- "否" --> WAIT
     APPROVAL -- "是" --> INTENT["原子保存 Tool Intent + Run + Event"]
     INTENT --> EFFECT["RuntimeTool.execute 真实 Effect"]
@@ -146,4 +148,4 @@ E061工具流为`注册时五层Contract校验 → Model读取选择投影 → a
 
 E062–E064交互流为`TTY CLI → start → waiting Pending Action → 显示精确Action → y或拒绝原因 → 同一Runtime.resume`。人工等待不进入活跃段Duration；拒绝原因同时进入Approval Event、lastError和inputHistory，下一轮Task Contract/Decision/semantic validation从同一输入权威读取。没有Feedback Store。
 
-E065–E073没有增加第二条执行流：Provider decide/validate 每次最多三次无副作用 HTTP 尝试，耗尽后用现有 blocked 状态；`PROVIDER_UNAVAILABLE` resume 经 State Machine 回到同一 loop，并继续使用 persisted Invocation/Evidence。拒绝后立即进入 input waiting；重复完成 Step Action 在 Effect 前拒绝；跨进程 resume 由同一 Lease/Fencing 拒绝；Provider 只通过当前 Tool `inputExample` 生成 workspace-relative input。E073 固定 UAT 的十二个 Run 全部通过，并已反查三表、Artifact 与 Git。
+E065–E076没有增加第二条执行流：Provider decide/validate 每次最多三次无副作用 HTTP 尝试，耗尽后用现有 blocked 状态；`PROVIDER_UNAVAILABLE` resume 经 State Machine 回到同一 loop，并继续使用 persisted Invocation/Evidence。拒绝后立即进入 input waiting；已持久化同一 Invocation 幂等键的 Action 在 Approval/Effect 前进入既有有界修复；跨进程 resume 由同一 Lease/Fencing 拒绝；Provider 只通过当前 Tool `inputExample` 生成 workspace-relative input。E076 固定 UAT 的十二个 Run 全部通过，并已反查三表、Artifact 与 Git。

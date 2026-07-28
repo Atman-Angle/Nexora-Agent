@@ -136,6 +136,7 @@ propose_finish cites Evidence IDs
 - 长 Provider/Tool 调用期间续租；过期 Fencing Token 不能提交。
 - Provider 调用最多三次同一无副作用请求；耗尽后 Run 为 `blocked/PROVIDER_UNAVAILABLE`。
 - `PROVIDER_UNAVAILABLE` resume 经 State Machine 回到同一 loop；已成功 Tool 仍由 persisted Invocation/Evidence 表示，不重复 Effect。
+- canonical Tool Action 的 Invocation 幂等键若已存在，Runtime 在 Approval 和 Effect 前按非法 Action 拒绝；重复 no-progress 受现有 repair 与 loop budget 限制。
 - started 幂等 Invocation 以原 ID 和 input 恢复。
 - started 非幂等 Invocation 转为 `unknown/TOOL_RESULT_UNKNOWN`，禁止自动重试。
 - unknown 只能接受绑定 Invocation 的 `confirmed_succeeded`、`confirmed_failed` 或 `abandon_run`。
