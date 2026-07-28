@@ -14,6 +14,8 @@ export class ModelConfigError extends Error {
   constructor(message: string) { super(message); this.name = "ModelConfigError"; }
 }
 
+class RetryableProviderError extends Error {}
+
 export function openAICompatibleProviderFromEnv(environment: Record<string, string | undefined> = process.env): RuntimeProvider {
   if (environment.NEXORA_MODEL_PROVIDER?.trim() !== "openai-compatible") {
     throw new ModelConfigError('NEXORA_MODEL_PROVIDER must be "openai-compatible".');
@@ -35,6 +37,19 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   const fetchImplementation = options.fetch ?? globalThis.fetch;
 
   async function complete(mode: "decide" | "validate", context: ModelDecisionContext | SemanticValidationContext): Promise<unknown> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        return await request(mode, context);
+      } catch (error) {
+        lastError = error;
+        if (!isRetryable(error) || attempt === 3) throw error;
+      }
+    }
+    throw lastError;
+  }
+
+  async function request(mode: "decide" | "validate", context: ModelDecisionContext | SemanticValidationContext): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -52,9 +67,19 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         }),
         signal: controller.signal
       });
-      if (!response.ok) throw new Error(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      if (!response.ok) {
+        const ErrorType = response.status === 429 || response.status >= 500
+          ? RetryableProviderError
+          : Error;
+        throw new ErrorType(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+      }
       const body = ProviderResponseSchema.parse(await response.json());
       return JSON.parse(stripFence(body.choices[0]!.message.content));
+    } catch (error) {
+      if (error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError")) {
+        throw new RetryableProviderError(error instanceof Error ? error.message : String(error));
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
     }
@@ -66,9 +91,13 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   };
 }
 
+function isRetryable(error: unknown): boolean {
+  return error instanceof RetryableProviderError;
+}
+
 const ProviderResponseSchema = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().min(1) }).passthrough() }).passthrough()).min(1) }).passthrough();
 
-const DECISION_SYSTEM_PROMPT = `Return one JSON object matching an example in context.actionContract; no markdown or extra keys. Replace placeholders from context.run, use context.workspace exactly, use context.toolObservations as authoritative Tool facts, and use an active Tool's execution.inputExample only as a field guide. Preserve every explicit user action, constraint, ordering requirement, and acceptance condition in the Task Contract and Plan. If existing facts satisfy the requirements, finish; if only the user can provide missing information, ask; otherwise choose the single Capability that most directly produces the missing fact. Use discovery only when a direct Capability's useWhen is not met, respect avoidWhen and nonGoals, and do not add an unnecessary Step whose facts are not needed by a later action or final answer. A Tool mentioned in a prohibition is forbidden, not required. A later Plan Step may depend on earlier facts, so its concrete input need not be known when the Plan is created. When calling a Tool, follow its inputExample and keep fields separate. Never provide Runtime-owned IDs or permissions, claim success, or treat text as evidence. Runtime owns approval, execution, evidence, validation, and completion.`;
+const DECISION_SYSTEM_PROMPT = `Return one JSON object matching an example in context.actionContract; no markdown or extra keys. Replace placeholders from context.run. Set only taskContract.workspace to context.workspace exactly; when calling a Tool, follow the active execution.inputExample without substituting context.workspace for relative values. Use context.toolObservations as authoritative Tool facts. Preserve every explicit user action, constraint, ordering requirement, and acceptance condition in the Task Contract and Plan. A set_plan example with current Steps is the legal revision baseline: copy completed Steps exactly, and only change unfinished Steps or append necessary Steps. If existing facts satisfy the requirements, finish; if only the user can provide missing information, ask; otherwise choose the single Capability that most directly produces the missing fact. Use request_input only for information or a decision only the user can supply; never for Tool permission or approval—submit a concrete call_tool and let Runtime request Approval. Use discovery only when a direct Capability's useWhen is not met, respect avoidWhen and nonGoals, and do not add an unnecessary Step whose facts are not needed by a later action or final answer. Never use shell.execute to emulate a registered Tool; use it only when an exact command is itself required and no dedicated Capability can produce the facts. A Tool mentioned in a prohibition is forbidden, not required. A later Plan Step may depend on earlier facts, so its concrete input need not be known when the Plan is created. Keep Tool input fields separate. Never provide Runtime-owned IDs or permissions, claim success, or treat text as evidence. Runtime owns approval, execution, evidence, validation, and completion.`;
 const VALIDATION_SYSTEM_PROMPT = `Independently assess whether proposedSummary is an accurate answer that satisfies every explicit action, constraint, ordering requirement, and acceptance condition in inputs, using only facts as execution evidence. The inputs are the sole semantic authority. Judge the user's requested outcome, not the model-generated plan or execution strategy. Do not infer or compare hidden metadata, hashes, IDs, or planning state. Return only JSON: {"passed":boolean,"issues":string[]}. Never pass without relevant facts, and reject a fact that proves a forbidden action occurred.`;
 
 function required(environment: Record<string, string | undefined>, name: string): string {

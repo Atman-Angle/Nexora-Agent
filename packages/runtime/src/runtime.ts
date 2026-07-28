@@ -195,6 +195,11 @@ export class RuntimeEngine {
     try {
       run = await this.#recoverToolInvocation(run, input.recoveryDecision, observer);
       if (run.status === "failed") return toRunResult(run);
+      if (run.status === "blocked" && run.stopReason === "PROVIDER_UNAVAILABLE") {
+        const now = this.#now();
+        const resumed = transitionRunStatus(run, "running", { now });
+        run = this.#commit(run, resumed, "run.resumed", { reason: "PROVIDER_RETRY" }, observer);
+      }
       if (run.status === "blocked") return toRunResult(run);
       if (run.status === "waiting") {
         if (run.pendingRequest?.kind === "input") {
@@ -249,7 +254,24 @@ export class RuntimeEngine {
             requestId: decision.requestId,
             ...(reason === undefined ? {} : { reason })
           }, observer);
-          if (decision.approved) run = await this.#callTool(run, pendingAction, observer, true);
+          if (decision.approved) {
+            run = await this.#callTool(run, pendingAction, observer, true);
+          } else {
+            const waiting = transitionRunStatus(run, "waiting", {
+              now,
+              pendingRequest: {
+                id: this.#createId(),
+                kind: "input",
+                prompt: "The protected Tool action was denied. Provide new instructions to continue.",
+                createdAt: now
+              },
+              stopReason: "INPUT_REQUIRED"
+            });
+            run = this.#commit(run, waiting, "run.waiting", {
+              reason: "APPROVAL_DENIED",
+              requestId: waiting.pendingRequest?.id ?? null
+            }, observer);
+          }
         }
       }
       if (run.status !== "running") return toRunResult(run);
@@ -540,6 +562,11 @@ export class RuntimeEngine {
     if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${action.toolName}`);
     const parsedInput = JsonValueSchema.parse(tool.contract.execution.inputSchema.parse(action.input));
     const canonicalAction = { ...action, input: parsedInput };
+    const inputDigest = digestJson(parsedInput);
+    const idempotencyKey = `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${inputDigest}`;
+    if (this.#store.listToolInvocations(runInput.runId).some((item) => item.idempotencyKey === idempotencyKey)) {
+      throw new ActionRejectedError("Tool action duplicates an existing persisted Invocation.");
+    }
     if (tool.contract.execution.effect.kind !== "read" && !approved) {
       const now = this.#now();
       const waiting = transitionRunStatus(runInput, "waiting", {
@@ -570,8 +597,8 @@ export class RuntimeEngine {
         checkIds: action.checkIds,
         toolName: tool.contract.identity.name,
         inputJson: parsedInput,
-        inputDigest: digestJson(parsedInput),
-        idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${digestJson(parsedInput)}`,
+        inputDigest,
+        idempotencyKey,
         idempotent: tool.contract.execution.idempotent,
         fencingToken: this.#requireFencingToken(runInput.runId),
         startedAt
@@ -797,6 +824,9 @@ export class RuntimeEngine {
     const actions = allowedActions(run);
     const includeTaskContract = run.currentPlan === null || run.taskContract === null
       || run.taskContract.inputVersion < run.inputHistory.length;
+    const allStepsCompleted = run.currentPlan !== null
+      && run.stepProgress.length === run.currentPlan.orderedSteps.length
+      && run.stepProgress.every((item) => item.status === "completed");
     const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
     const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
     const callableTools = new Set(activeStep?.acceptanceChecks
@@ -810,7 +840,9 @@ export class RuntimeEngine {
         workspace: this.#workspace,
         inputVersion: run.inputHistory.length,
         basedOnVersion: run.currentPlan?.version ?? null,
-        includeTaskContract
+        includeTaskContract,
+        currentPlan: run.currentPlan,
+        finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
       }),
       toolObservations: projectToolObservations(this.#store.listToolInvocations(run.runId)),
       tools: [...this.#tools.values()].map((tool) => ({

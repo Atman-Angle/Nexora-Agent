@@ -29,15 +29,23 @@ describe("E064 denial feedback context", () => {
 
     const waiting = await runtime.start({ input: "Write output." });
     const request = (await runtime.inspect(waiting.runId)).snapshot.pendingRequest!;
-    await runtime.resume({
+    const denied = await runtime.resume({
       runId: waiting.runId,
       approvalDecision: { requestId: request.id, approved: false, reason: "Use an ESM-compatible command instead." }
     });
+    expect(denied.status).toBe("waiting");
+    expect(provider.contexts).toHaveLength(2);
+
+    await runtime.resume({
+      runId: waiting.runId,
+      input: "Continue without writing."
+    });
     const view = await runtime.inspect(waiting.runId);
 
-    expect(provider.contexts[2]!.run.inputHistory.at(-1)?.text).toBe("Use an ESM-compatible command instead.");
+    expect(provider.contexts[2]!.run.inputHistory.at(-2)?.text).toBe("Use an ESM-compatible command instead.");
+    expect(provider.contexts[2]!.run.inputHistory.at(-1)?.text).toBe("Continue without writing.");
     expect(provider.contexts[2]!.run.lastError?.message).toBe("Use an ESM-compatible command instead.");
-    expect(view.snapshot.inputHistory).toHaveLength(2);
+    expect(view.snapshot.inputHistory).toHaveLength(3);
     expect(view.events.find((event) => event.type === "approval.denied")?.payload).toEqual(expect.objectContaining({
       requestId: request.id,
       reason: "Use an ESM-compatible command instead."
@@ -64,4 +72,3 @@ function writeTool(): RuntimeTool {
     async execute() { return { status: "success", subjectRef: "output", facts: { written: true } }; }
   };
 }
-
