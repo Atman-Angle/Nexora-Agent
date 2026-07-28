@@ -233,7 +233,8 @@ describe("E051 deterministic mutation closure", () => {
       expect(validation?.status).toBe("failed");
       expect(validation?.errorJson).toEqual(expect.objectContaining({ code: "COMMAND_FAILED" }));
       expect(view.snapshot.evidence.some((item) => item.stepId === "validate")).toBe(false);
-      expect(view.events.some((event) => event.type === "validation.failed")).toBe(true);
+      expect(view.events.some((event) => event.type === "action.rejected")).toBe(true);
+      expect(view.events.some((event) => event.type === "validation.failed")).toBe(false);
       expect(view.events.some((event) => event.type === "validation.passed" || event.type === "run.succeeded")).toBe(false);
       expect(stub.validationContexts).toHaveLength(0);
       expect(readFileSync(fixture.path, "utf8")).toBe("after\n");
@@ -503,3 +504,4 @@ function closeServer(server: Server): Promise<void> {
 function digest(content: string): string {
   return `sha256:${createHash("sha256").update(content).digest("hex")}`;
 }
+

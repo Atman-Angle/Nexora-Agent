@@ -62,7 +62,15 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: mode === "decide" ? DECISION_SYSTEM_PROMPT : VALIDATION_SYSTEM_PROMPT },
-            { role: "user", content: JSON.stringify({ mode, context }) }
+            {
+              role: "user",
+              content: JSON.stringify({
+                mode,
+                context: mode === "decide"
+                  ? projectDecisionContext(context as ModelDecisionContext)
+                  : context
+              })
+            }
           ]
         }),
         signal: controller.signal
@@ -97,8 +105,35 @@ function isRetryable(error: unknown): boolean {
 
 const ProviderResponseSchema = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().min(1) }).passthrough() }).passthrough()).min(1) }).passthrough();
 
-const DECISION_SYSTEM_PROMPT = `Return one JSON object matching an example in context.actionContract; no markdown or extra keys. Replace placeholders from context.run. Set only taskContract.workspace to context.workspace exactly; when calling a Tool, follow the active execution.inputExample without substituting context.workspace for relative values. Use context.toolObservations as authoritative Tool facts. Preserve every explicit user action, constraint, ordering requirement, and acceptance condition in the Task Contract and Plan. A set_plan example with current Steps is the legal revision baseline: copy completed Steps exactly, and only change unfinished Steps or append necessary Steps. If existing facts satisfy the requirements, finish; if only the user can provide missing information, ask; otherwise choose the single Capability that most directly produces the missing fact. Use request_input only for information or a decision only the user can supply; never for Tool permission or approval—submit a concrete call_tool and let Runtime request Approval. Use discovery only when a direct Capability's useWhen is not met, respect avoidWhen and nonGoals, and do not add an unnecessary Step whose facts are not needed by a later action or final answer. Never use shell.execute to emulate a registered Tool; use it only when an exact command is itself required and no dedicated Capability can produce the facts. A Tool mentioned in a prohibition is forbidden, not required. A later Plan Step may depend on earlier facts, so its concrete input need not be known when the Plan is created. Keep Tool input fields separate. Never provide Runtime-owned IDs or permissions, claim success, or treat text as evidence. Runtime owns approval, execution, evidence, validation, and completion.`;
+const DECISION_SYSTEM_PROMPT = `Return one JSON object matching an example in context.actionContract; no markdown or extra keys. Use context.run.inputs as the complete user-input history and context.run.currentPlan as the current Plan. Set only taskContract.workspace to context.workspace exactly. context.toolCatalog lists available Capabilities; context.tools contains only Tools callable for the active Step and their inputExample. When calling a Tool, copy its exact name and follow its inputExample without substituting context.workspace for relative values. Use context.toolObservations as authoritative Tool facts. Preserve every explicit user action, constraint, ordering requirement, and acceptance condition in the Task Contract and Plan. A set_plan example with current Steps is the legal revision baseline: copy completed Steps exactly, and only change unfinished Steps or append necessary Steps. If existing facts satisfy the requirements, finish; if only the user can provide missing information, ask; otherwise choose the single Capability that most directly produces the missing fact. Use request_input only for information or a decision only the user can supply; never for Tool permission or approval—submit a concrete call_tool and let Runtime request Approval. Use discovery only when a direct Capability's useWhen is not met, respect avoidWhen and nonGoals, and do not add an unnecessary Step whose facts are not needed by a later action or final answer. Never use shell.execute to emulate a registered Tool; use it only when an exact command is itself required and no dedicated Capability can produce the facts. A Tool mentioned in a prohibition is forbidden, not required. A later Plan Step may depend on earlier facts, so its concrete input need not be known when the Plan is created. Keep Tool input fields separate. Never provide Runtime-owned IDs or permissions, claim success, or treat text as evidence. Runtime owns approval, execution, evidence, validation, and completion.`;
 const VALIDATION_SYSTEM_PROMPT = `Independently assess whether proposedSummary is an accurate answer that satisfies every explicit action, constraint, ordering requirement, and acceptance condition in inputs, using only facts as execution evidence. The inputs are the sole semantic authority. Judge the user's requested outcome, not the model-generated plan or execution strategy. Do not infer or compare hidden metadata, hashes, IDs, or planning state. Return only JSON: {"passed":boolean,"issues":string[]}. Never pass without relevant facts, and reject a fact that proves a forbidden action occurred.`;
+
+function projectDecisionContext(context: ModelDecisionContext) {
+  const callableTools = context.tools.filter((tool) => tool.execution.inputExample !== undefined);
+  const run = context.run as Partial<ModelDecisionContext["run"]>;
+  return {
+    workspace: context.workspace,
+    run: {
+      inputs: run.inputHistory?.map((entry) => entry.text) ?? [],
+      taskContract: run.taskContract ?? null,
+      currentPlan: run.currentPlan ?? null,
+      stepProgress: run.stepProgress ?? [],
+      evidence: run.evidence ?? [],
+      lastError: run.lastError === undefined || run.lastError === null
+        ? null
+        : { code: run.lastError.code, message: run.lastError.message }
+    },
+    allowedActions: context.allowedActions,
+    actionContract: context.actionContract,
+    toolObservations: context.toolObservations,
+    toolCatalog: context.tools.map((tool) => ({
+      name: tool.identity.name,
+      purpose: tool.capability.purpose,
+      produces: tool.evidence.produces
+    })),
+    tools: callableTools
+  };
+}
 
 function required(environment: Record<string, string | undefined>, name: string): string {
   const value = environment[name]?.trim();
@@ -111,3 +146,4 @@ function stripFence(content: string): string {
   const match = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
   return match?.[1] ?? trimmed;
 }
+
