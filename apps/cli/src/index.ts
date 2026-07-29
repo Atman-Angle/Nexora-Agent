@@ -11,7 +11,9 @@ import {
   openAICompatibleProviderFromEnv,
   type ApprovalDecision,
   type RecoveryDecision,
-  type RunResult,
+  type RunHandle,
+  type RunInspection,
+  type RuntimeEvent,
   type RuntimeProvider
 } from "../../../packages/runtime/src/index.js";
 
@@ -32,19 +34,45 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       stdout.write(`${JSON.stringify(await runtime.inspect(parsed.runId))}\n`);
       return 0;
     }
-    let result: RunResult;
+    let run: RunHandle;
+    let inspection: RunInspection;
     if (parsed.command === "resume") {
-      result = await runtime.resume({
-        runId: parsed.runId,
-        ...(parsed.input === undefined ? {} : { input: parsed.input }),
-        ...(parsed.approvalDecision === undefined ? {} : { approvalDecision: parsed.approvalDecision }),
-        ...(parsed.recoveryDecision === undefined ? {} : { recoveryDecision: parsed.recoveryDecision })
-      }, renderEvent);
+      run = runtime.openRun(parsed.runId);
+      run.subscribe(renderEvent);
+      if (parsed.input !== undefined) {
+        await run.input(parsed.input);
+      } else if (parsed.approvalDecision?.approved === true) {
+        await run.approve({ requestId: parsed.approvalDecision.requestId });
+      } else if (parsed.approvalDecision?.approved === false) {
+        await run.deny({
+          requestId: parsed.approvalDecision.requestId,
+          ...(parsed.approvalDecision.reason === undefined
+            ? {}
+            : { reason: parsed.approvalDecision.reason })
+        });
+      } else {
+        const current = await run.inspect();
+        if (current.status === "blocked" || current.status === "running") {
+          await run.resume({
+            ...(parsed.recoveryDecision === undefined
+              ? {}
+              : { recovery: parsed.recoveryDecision })
+          });
+        } else if (parsed.recoveryDecision !== undefined) {
+          throw new Error("Recovery requires a blocked or interrupted Run.");
+        }
+      }
+      inspection = await run.wait();
     } else {
       const goal = parsed.goal ?? await prompt("What should Nexora do? ");
-      result = await runtime.start({ input: goal }, renderEvent);
-      if (parsed.interactive) result = await continueInteractive(runtime, result);
+      run = runtime.run(goal);
+      run.subscribe(renderEvent);
+      inspection = await run.wait();
+      if (parsed.interactive) {
+        inspection = await continueInteractive(run, inspection);
+      }
     }
+    const result = toCliResult(inspection);
     stdout.write(`${JSON.stringify(result)}\n`);
     return exitCode(result.status);
   } catch (error) {
@@ -52,7 +80,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     stderr.write(`${JSON.stringify({ code, message: error instanceof Error ? error.message : String(error) })}\n`);
     return 64;
   } finally {
-    runtime?.close();
+    await runtime?.close();
   }
 }
 
@@ -103,24 +131,44 @@ function parseArguments(argv: string[]): ParsedArguments {
   return { command: "start", ...(goal ? { goal } : {}), ...(cwd === undefined ? {} : { cwd }), interactive: Boolean(stdin.isTTY) };
 }
 
-async function continueInteractive(runtime: ReturnType<typeof createRuntime>, initial: RunResult): Promise<RunResult> {
-  let result = initial;
-  while (result.status === "waiting") {
-    const view = await runtime.inspect(result.runId);
-    const request = view.snapshot.pendingRequest;
-    if (request === null) return result;
-    if (request.kind === "input") result = await runtime.resume({ runId: result.runId, input: await prompt(`${request.prompt}\n> `) }, renderEvent);
+async function continueInteractive(
+  run: RunHandle,
+  initial: RunInspection
+): Promise<RunInspection> {
+  let inspection = initial;
+  while (
+    inspection.status === "waiting_for_input"
+    || inspection.status === "waiting_for_approval"
+  ) {
+    const request = inspection.pendingRequest;
+    if (request === null) return inspection;
+    if (request.kind === "input") {
+      await run.input(
+        await prompt(`${request.prompt}\n> `),
+        { requestId: request.id }
+      );
+    }
     else {
-      const answer = (await prompt(`${request.prompt}\n${JSON.stringify(request.action)}\nApprove? [y/N] `)).trim().toLowerCase();
+      const answer = (await prompt(
+        `${request.prompt}\n${JSON.stringify({
+          toolName: request.toolName,
+          stepId: request.stepId,
+          input: request.input
+        })}\nApprove? [y/N] `
+      )).trim().toLowerCase();
       const approved = answer === "y" || answer === "yes";
       const reason = approved ? "" : (await prompt("Why reject? (optional) ")).trim();
-      result = await runtime.resume({
-        runId: result.runId,
-        approvalDecision: { requestId: request.id, approved, ...(reason ? { reason } : {}) }
-      }, renderEvent);
+      if (approved) await run.approve({ requestId: request.id });
+      else {
+        await run.deny({
+          requestId: request.id,
+          ...(reason ? { reason } : {})
+        });
+      }
     }
+    inspection = await run.wait();
   }
-  return result;
+  return inspection;
 }
 
 async function prompt(question: string): Promise<string> {
@@ -147,8 +195,39 @@ function takePairOption(values: string[], name: string): [string, string] | unde
 }
 
 function removeFlag(values: string[], name: string): void { const index = values.indexOf(name); if (index >= 0) values.splice(index, 1); }
-function renderEvent(event: { type: string; runId: string; sequence: number }): void { stderr.write(`${JSON.stringify({ event: event.type, runId: event.runId, sequence: event.sequence })}\n`); }
-function exitCode(status: RunResult["status"]): number { return status === "succeeded" ? 0 : status === "waiting" ? 2 : status === "blocked" ? 3 : 4; }
+function renderEvent(event: RuntimeEvent): void { stderr.write(`${JSON.stringify({ event: event.type, runId: event.runId, sequence: event.sequence })}\n`); }
+
+function toCliResult(inspection: RunInspection): {
+  readonly runId: string;
+  readonly status:
+    | "running"
+    | "waiting"
+    | "blocked"
+    | "cancelled"
+    | "failed"
+    | "succeeded";
+  readonly stopReason: string | null;
+  readonly summary: string | null;
+  readonly resultArtifact: string | null;
+  readonly evidence: RunInspection["evidence"];
+  readonly lastError: RunInspection["error"];
+} {
+  const status = inspection.status === "waiting_for_input"
+    || inspection.status === "waiting_for_approval"
+    ? "waiting"
+    : inspection.status;
+  return {
+    runId: inspection.runId,
+    status,
+    stopReason: inspection.stopReason,
+    summary: inspection.result?.summary ?? null,
+    resultArtifact: inspection.result?.resultArtifact ?? null,
+    evidence: inspection.evidence,
+    lastError: inspection.error
+  };
+}
+
+function exitCode(status: ReturnType<typeof toCliResult>["status"]): number { return status === "succeeded" ? 0 : status === "waiting" ? 2 : status === "blocked" ? 3 : 4; }
 
 const inspectionProvider: RuntimeProvider = {
   async decide() { throw new Error("Provider is unavailable in inspect mode."); },

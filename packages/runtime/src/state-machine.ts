@@ -5,9 +5,10 @@ import {
 } from "./contracts.js";
 
 const allowedTransitions: Record<RunStatus, readonly RunStatus[]> = {
-  running: ["waiting", "blocked", "failed", "succeeded"],
-  waiting: ["running"],
-  blocked: ["running", "failed"],
+  running: ["waiting", "blocked", "cancelled", "failed", "succeeded"],
+  waiting: ["running", "cancelled"],
+  blocked: ["running", "cancelled", "failed"],
+  cancelled: [],
   failed: [],
   succeeded: []
 };
@@ -46,7 +47,15 @@ export function transitionRunStatus(
       throw new Error("A Run cannot succeed without a persisted result.");
     }
   }
-  if ((nextStatus === "blocked" || nextStatus === "failed" || nextStatus === "succeeded") && !options.stopReason?.trim()) {
+  if (
+    (
+      nextStatus === "blocked"
+      || nextStatus === "cancelled"
+      || nextStatus === "failed"
+      || nextStatus === "succeeded"
+    )
+    && !options.stopReason?.trim()
+  ) {
     throw new Error(`${nextStatus} requires a stop reason.`);
   }
 

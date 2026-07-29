@@ -2,22 +2,30 @@
   "name": "@nexora/runtime",
   "version": "1.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
     }
   },
   "files": [
     "dist/*.js",
     "dist/*.d.ts",
-    "dist/tool-runtime"
+    "dist/tool-runtime",
+    "dist/testing"
   ],
   "scripts": {
-    "build": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json",
-    "prepack": "node ../../node_modules/typescript/bin/tsc -p ../../tsconfig.runtime.json"
+    "build": "node ./scripts/build.mjs",
+    "prepack": "node ./scripts/build.mjs"
   },
   "dependencies": {
     "@vscode/ripgrep": "1.18.0",

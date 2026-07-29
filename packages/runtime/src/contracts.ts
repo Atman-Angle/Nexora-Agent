@@ -13,7 +13,14 @@ export const JsonValueSchema: z.ZodType<unknown> = z.lazy(() => z.union([
   z.record(JsonValueSchema)
 ]));
 
-export const RunStatusSchema = z.enum(["running", "waiting", "blocked", "failed", "succeeded"]);
+export const RunStatusSchema = z.enum([
+  "running",
+  "waiting",
+  "blocked",
+  "cancelled",
+  "failed",
+  "succeeded"
+]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
 export const InputEntrySchema = z.object({

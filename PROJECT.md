@@ -1,106 +1,310 @@
-# PROJECT.md — Nexora 产品与范围
+# PROJECT.md — Nexora 产品目标与版本范围
 
-## 1. 定义
+本文件定义 Nexora 的最终产品方向、各版本预期结果和长期不变量。
 
-Nexora 是：
+当前实现细节以 `ARCHITECTURE.md`、`DATA_FLOW.md` 和 `SYSTEM_SOP.md` 为准；当前开发状态以 `DEVELOPMENT.md` 为准。历史 Spec、路线图和报告只用于追溯，不能覆盖本文件、当前代码与已批准 Feature Contract。
 
-> 可直接使用的通用桌面 Agent，同时也是可被其他 AI 应用复用的 Agent Runtime。
+## 1. 最终产品定义
 
-它不是普通聊天应用，也不是单纯的 IDE 插件。
+Nexora 是面向开发者的、可嵌入和可深度扩展的通用 Agent Runtime。
 
-## 2. 核心需求
-
-Nexora 必须稳定完成：
+它提供一个足够强大的执行内核，使开发者能够在自己的应用、服务或工具中构建可靠的 Agent，而不必重新实现：
 
 ```text
-理解目标
-→ 保持任务状态
-→ 选择正确上下文
-→ 调用模型决定下一步
-→ 调用工具执行真实动作
-→ 获取真实结果
-→ 验证是否完成
-→ 保存证据和产物
-→ 中断后恢复
+目标与输入保持
+→ 计划与上下文构建
+→ 模型决策
+→ 工具与真实副作用
+→ 权限与人工批准
+→ 状态与持久化
+→ 证据与完成验证
+→ 中断恢复
+→ 运行审计
 ```
 
-## 3. 第一阶段最重要的六件事
+Nexora 自身不以 Desktop、聊天界面或某个垂类 Agent 作为最终产品。CLI 是 Runtime 的直接使用入口、开发工具和验收入口，不是另一套产品内核。
+
+## 2. 目标用户与价值
+
+Nexora 主要服务：
+
+- 构建 Agent 产品、自动化系统和 AI 功能的应用开发者；
+- 需要可靠执行、恢复和审计能力的平台团队；
+- 需要在通用内核之上实现领域策略、工具和验证方式的高级开发者。
+
+开发者使用 Nexora 后，应当能够把精力放在领域能力、用户体验和业务规则上，而不是重复处理 Agent Loop、工具副作用、批准、状态竞争、证据、恢复和错误成功。
+
+最短价值链是：
 
 ```text
-目标不丢
-状态不乱
-上下文不漂
-动作可执行
-结果可验证
-中断可恢复
+应用定义目标和可用能力
+→ 嵌入 Runtime
+→ Runtime 可靠执行并暴露状态
+→ 应用处理交互或展示
+→ Runtime 返回经过验证且可审计的结果
 ```
 
-## 4. 三种任务模式
+## 3. 产品质量原则
 
-### Direct Mode
+### 3.1 轻量不是功能简陋
 
-简单问答、总结、翻译、结构化生成。
+轻量意味着：
 
-### Tool Mode
+- 小而稳定的必需公共表面积；
+- 尽量少的强制依赖、后台服务和运行前提；
+- 单一数据 Authority 和单一主执行路径；
+- 按需启用扩展能力，不为未来设想预建基础设施；
+- 可测量的启动、资源、上下文和持久化成本；
+- 开发者可以理解、定位和替换非核心部分。
 
-单次或少量明确工具操作。
+轻量不意味着用玩具实现替代正确实现，也不以文件数、代码行数或抽象数量作为产品指标。
 
-### Agent Mode
+### 3.2 强大不是代码堆积
 
-多步骤开发、调试、验证和恢复任务。
+Runtime 内核的强大来自清晰的 Contract、正确的状态模型、严谨的失败语义和高质量的数据流，而不是不断增加分支、状态、兼容层和框架。
 
-## 5. 完成定义
-
-必须区分：
+默认演进顺序是：
 
 ```text
-执行成功
-持久化成功
-交付成功
-验证成功
-业务结果合格
+复用或删除
+→ 收敛 Authority
+→ 修正数据流
+→ 改善 Contract
+→ 选择适合问题复杂度的算法与实现
+→ 最后才增加模块、状态、依赖或基础设施
 ```
 
-模型不能自行宣布成功。
+每个基础模块必须满足其真实问题的可靠性、性能和可维护性要求。简单问题应有简单实现；复杂问题不能仅为了“少代码”而采用明显不足的方案。
 
-## 6. 唯一真值
+### 3.3 可扩展不是一句话配置
+
+Nexora 不追求通过一句 Prompt、一个开关或无代码界面完成所有扩展。
+
+高质量改装能力意味着：
+
+- 扩展边界明确，并有类型、Schema、生命周期和错误语义；
+- 开发者能够替换或组合模型、工具、上下文、策略、验证和宿主集成；
+- 扩展不能绕过状态机、权限、副作用记录、完成门和安全边界；
+- 扩展可以被独立测试、版本化、诊断和迁移；
+- 常见接入足够直接，深度定制保留必要的工程表达能力；
+- 不要求 Fork Core，也不把垂类字段写进 Runtime。
+
+抽象必须来自至少一个真实调用方和已经出现的变化轴。没有真实差异时，不提前建立通用 Registry 或插件框架。
+
+### 3.4 效率必须可证明
+
+Nexora 追求执行效率、上下文效率和开发效率，但不在没有 Dataset、Benchmark 或真实调用证据时声称性能更优。
+
+性能优化必须先定位瓶颈，并保持正确性、恢复和审计语义。Rust、缓存、并行、索引或外部服务只在测量证明必要时引入。
+
+## 4. Runtime 内核职责
+
+Nexora Core 对以下能力负责：
+
+- Run 生命周期、预算、取消、等待和合法状态转换；
+- 原始与追加输入、当前计划和下一轮决策上下文；
+- Provider 决策 Contract 与非法 Action 修复边界；
+- Tool Schema、权限、风险、Approval、执行与结果规范化；
+- 幂等写、非幂等副作用和结果未知时的恢复语义；
+- Evidence、确定性完成检查、语义验证和正式 Result；
+- Event、Artifact、Invocation 和可逆向审计；
+- 并发写入、Lease、Fencing 和持久化一致性；
+- 对宿主应用公开稳定、可观察和可测试的生命周期。
+
+宿主应用对以下内容负责：
+
+- 产品界面和用户交互形式；
+- 领域目标、业务规则和领域数据；
+- 选择并配置模型、工具和扩展能力；
+- 部署环境、凭据、计费和外部服务；
+- 领域级结果展示与产品验收。
+
+## 5. 长期不变量
+
+### 目标、计划和状态
+
+- 原始输入和后续补充输入必须保留，模型投影不能覆盖用户要求；
+- 每个 Run 只有一个当前 Structured Plan；
+- State Machine 是 Run Status 的唯一修改者；
+- Model、Tool、CLI 和宿主应用都不能直接宣布或写入成功状态。
+
+### 副作用和恢复
+
+- Tool Invocation 是工具意图、输入、结果和恢复判断的权威记录；
+- 写入和执行必须经过 Schema、权限、风险与 Approval 边界；
+- 非幂等且结果未知的副作用不能自动重试；
+- 恢复必须从持久化事实继续，不能依赖仅存在于旧进程的内存状态。
+
+### 证据和完成
+
+- Tool 返回成功不等于任务完成；
+- 正式结果必须引用真实持久化 Evidence；
+- 确定性检查和语义验证通过后，Run 才能进入 `succeeded`；
+- 只有持久化的 `status === "succeeded"` 表示成功；
+- 执行、持久化、验证和用户目标满足必须保持可区分。
+
+### 模块和扩展
+
+- Core 不包含垂类业务字段；
+- Runtime 不依赖具体 UI、Web 框架或宿主应用；
+- 扩展通过公开 Contract 接入，不能直接写 Core Store；
+- 大内容进入 Artifact，不把完整仓库、日志或文件塞入控制面 JSON；
+- 不允许第二套状态机、第二条 Tool Effect 路径或第二个完成 Authority。
+
+## 6. 权威事实
 
 ```text
-Task 原始目标 → Task Store
-Run 状态 → State Machine + Run Store
-任务进度 → Progress Ledger
-过程历史 → Event Store
-Tool 副作用 → Execution Record
-正式结果 → Artifact Store
-恢复位置 → Checkpoint Store
-文件事实 → Filesystem / Git
+原始及追加输入 → Run Snapshot input history
+当前计划       → Run-owned Structured Plan
+Run 状态       → State Machine + persisted Run
+工具意图与结果 → Tool Invocation
+完成依据       → persisted Evidence
+正式结果       → validated Run Result
+过程历史       → append-only Run Events
+大内容         → content-addressed Artifact
+外部真实状态   → 对应外部系统或工作区
 ```
 
-## 7. 可复用要求
+这些 Authority 可以产生面向模型、宿主和观察者的有界投影，但投影不能反向成为新的事实源。
 
-垂类应用只能通过：
+## 7. 版本路线
+
+版本号表达产品能力成熟度，不承诺固定日期，也不自动等同于 npm package 的 SemVer；包版本是否同步由独立发布决策确定。每个版本必须通过独立 Feature Contract 和对应验收，不能因为出现在路线图中就提前实现。
+
+1.1 和 1.2 是 Nexora 当前明确承诺的核心路线。1.3 及之后只描述产品验证阶段和启动条件，具体能力必须由真实应用、仓库外调用、外部使用或可重复实验触发；候选方向不构成实现授权。
+
+路线的验证顺序是：
 
 ```text
-Agent Definition
-Harness
-Tool
-Context Provider
-Validator
-Skill
-Artifact Renderer
-Adapter
+1.1 证明可靠
+→ 1.2 证明可用
+→ 1.3 证明有用
+→ 后续演进由真实证据决定
 ```
 
-接入，不得修改 Core 领域逻辑。
+### 1.1 — 可信执行内核
 
-## 8. v1 暂不做
+目标：证明单个 Runtime 能真实、持久、可恢复地完成多步骤任务，而不是只生成看似正确的回答。
 
-- 固定多 Agent 链；
-- Workflow 编辑器；
-- Skill 市场；
-- Cron / Channel / Remote Node；
-- 云端多租户；
-- 自动生产发布；
-- 自我修改；
-- 默认向量数据库；
-- 全 Rust 重写。
+预期结果：
+
+- 自然语言输入进入一个持久化 Run；
+- 一个 Structured Plan、一个 Agent Loop 和一个 State Machine；
+- Tool 执行经过 Schema、权限、Approval、Invocation 和 Evidence；
+- 写操作具备幂等与恢复语义；
+- 完成必须经过 Evidence 引证、确定性检查和语义验证；
+- CLI 与 Node.js/TypeScript 调用方复用同一 Runtime；
+- 正向执行和逆向审计链可复现。
+
+完成标准：固定 read/search/mutation/denial 场景通过，失败和未知副作用不能误报成功，包外 TypeScript 调用方能够运行完整闭环。
+
+当前状态：实现、确定性故障边界和包外 Consumer 已形成 Runtime Feature Core baseline；最新真实 Provider UAT 仍有 timeout 与交互收敛失败，因此 External Environment Acceptance 保持 `verification_blocked`，1.1 整体不声明发布完成。Provider 失败一旦暴露假成功、越权 Effect、Evidence 丢失或不可恢复，仍按 Feature Core 缺陷处理。具体分层见 `DEVELOPMENT.md`、`TESTS.md` 和 `reports/`。
+
+### 1.2 — 开发者级嵌入
+
+目标：把复杂可信内核封装成开发者可以直接使用且难以误用的 Developer API，让外部应用稳定地把 Nexora 当作 Runtime 依赖，而不是复制 CLI 代码或依赖内部实现。
+
+预期结果：
+
+- 公共生命周期、错误、事件和结果 Contract 清晰且有兼容策略；
+- 提供复用现有主路径的 `runtime.run()` 和 `RunHandle`，不产生第二套状态、执行或完成 Authority；
+- `RunHandle` 覆盖 inspect、wait、subscribe、输入、批准、取消、恢复和结果读取；
+- Provider Adapter 隐藏普通模型接入不需要理解的 Runtime Action 组装细节；
+- Tool Builders 以较小表面积生成完整 Tool Capability Contract；
+- typed Runtime Error、取消传播、资源释放和事件结束边界可供宿主程序化处理；
+- 提供 Runtime Testing Kit；
+- 配置、资源释放、并发使用和包分发行为可预测；
+- Core 内部变化不迫使正常调用方读取 Store 或复制编排逻辑。
+
+完成标准：至少两个形态不同的真实包外调用方通过打包产物完成同一可信闭环，并证明无内部导入、无旁路状态写入、无 CLI 依赖；公共示例、类型、事件和错误 Contract 由包外测试覆盖。
+
+限定范围：稳定公共 Contract、`runtime.run()`、`RunHandle`、Provider Adapter、Tool Builders、Runtime Testing Kit 和两个包外调用方。当前不授权插件 Registry、Workflow DSL、通用 Store Adapter、多 Agent、应用框架或为未来调用方预建的扩展系统。
+
+当前状态：1.2 Feature Core 已在本地完成。一次性 Worker 与长驻 HTTP/SSE Host 从同一个 tarball 安装，均只通过公开 Runtime 边界完成相同可信 mutation 闭环；完整确定性回归、类型、构建、package contents、并发、恢复、取消和资源退出证据通过。该状态不等于已 commit、npm 发布或真实 Provider External Acceptance 通过；具体证据与遗留边界见 `DEVELOPMENT.md` 和 `docs/audit/nexora-1.2-validation-report.md`。
+
+### 1.3 — 真实 Agent 应用验证
+
+目标：证明 Nexora 不只是内核实验，而是能够降低真实 Agent 应用的建设成本。
+
+验证方式：
+
+- 顺序构建至少一个旗舰应用和一个差异明显的对照应用，例如 Code Verifier 与 Research Agent；
+- 只有能提供新变化轴或领域边界证据时，才增加第三个领域应用或小型 Contract Fixture；
+- 应用只能使用正式公共 API，不读取 Store、不复制 CLI 编排、不直接写 Run；
+- 领域 Tool、Prompt、数据和结果留在应用侧；
+- 禁止为了单个应用向 Core 增加特判；
+- Core 新能力必须由重复摩擦、被破坏的既有 Contract 或可重复实验支持。
+
+完成标准：真实应用通过同一 Runtime 完成执行、交互、失败或恢复和验证；接入成本主要来自应用领域，而不是重建 Agent 基础设施；应用之间的差异没有进入 Core 特判。
+
+### 1.4 — 基于证据的能力演进
+
+目标：只解决 1.3 暴露的最重要共同瓶颈，不预设 Nexora 必然需要上下文系统、插件框架或多 Agent。
+
+候选方向包括上下文、长任务、扩展 Contract、Artifact、Human-in-the-loop、多 Agent 或其他被证据确认的问题。候选项不是待办清单，一次只能选择一个主要方向。
+
+启动条件：
+
+```text
+真实应用出现问题
+→ 证明不是应用自身缺陷
+→ 确认共同变化轴或被破坏的 Core Contract
+→ 定义一个独立 Feature Contract
+→ 实现并验证一条权威路径
+```
+
+### 1.5 — 发布与运行质量
+
+目标：只在出现真实长期调用方后，补齐其发布和运行所需的质量门禁。
+
+候选门禁包括压力与并发、观测与诊断、性能、安全、数据升级、资源释放和故障恢复。每项必须由真实运行环境、故障或发布需求触发，不预建面向假想规模的生产基础设施。
+
+启动条件：至少一个真实宿主以长期进程、重复任务或版本升级方式使用 Nexora，并能提供需要解决的具体运行证据。
+
+### 2.0 — 稳定 Runtime
+
+2.0 是成熟度结论，不是预定功能包。只有以下证据同时出现时，才定义 2.0 Feature Contract：
+
+- 多个独立真实应用复用同一内核；
+- 至少一个仓库外独立 Consumer；真实外部开发者使用是更强的附加证据，但不是完全不可控的单一硬门；
+- 公共 API 经历多个版本仍稳定或具备清晰迁移路径；
+- 升级、恢复和兼容性验证可以重复；
+- Core 没有因应用需求持续增加特判；
+- 新应用接入成本主要来自自身领域复杂度。
+
+不能仅凭 Demo 数量、代码规模、路线图标题或接口数量宣布 2.0。
+
+## 8. 当前 1.1 范围
+
+当前入口是自然语言 CLI 和 Node.js/TypeScript Runtime API。当前 Provider 为 OpenAI-compatible，当前工具覆盖受控文件、Shell 和 Git 操作。
+
+1.1 阶段允许：
+
+- 修复可信执行闭环中的真实缺陷；
+- 收敛重复 Authority、状态和数据路径；
+- 改善当前公开 Runtime 的正确性与可验证性；
+- 为 1.1 完成证据补充必要测试、文档和包外验证。
+
+1.1 阶段不因为未来路线而自动授权：
+
+- 1.2–2.0 能力实现；
+- 提前建立插件 Registry、Workflow DSL 或扩展市场；
+- 为尚不存在的调用方增加兼容层；
+- 无测量依据的性能基础设施；
+- 与当前可信执行闭环无关的产品功能。
+
+## 9. 产品非目标
+
+Nexora 不计划把以下内容作为自身产品：
+
+- Desktop / Electron / Renderer 或其他官方 GUI；
+- 面向终端用户的聊天产品；
+- 托管式 Agent SaaS 或云端多租户平台；
+- 无代码或低代码 Workflow 编辑器；
+- 以 Skill、MCP 或扩展市场作为产品中心；
+- 固定多 Agent 组织结构；
+- 某个垂类业务应用；
+- “一句话生成任意 Agent”的不可验证承诺；
+- 通过大量内置垂类模块证明所谓通用性。
+
+宿主应用可以自行实现 UI、服务端、MCP、Skill、工作流或多 Agent 协作；只有在这些能力形成 Runtime 的通用扩展需求并有真实调用方后，Nexora 才提供相应的最小公共边界。

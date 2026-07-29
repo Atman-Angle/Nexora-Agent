@@ -10,8 +10,10 @@ describe("E063 interactive CLI continuation", () => {
     expect(source).not.toContain("interactive: !goal");
   });
 
-  it("shows the exact persisted protected Action before asking for Approval", () => {
-    expect(source).toContain("JSON.stringify(request.action)");
+  it("shows the public canonical Tool request without exposing an internal Action", () => {
+    expect(source).toContain("toolName: request.toolName");
+    expect(source).toContain("stepId: request.stepId");
+    expect(source).toContain("input: request.input");
+    expect(source).not.toContain("request.action");
   });
 });
-

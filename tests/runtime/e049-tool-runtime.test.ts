@@ -25,7 +25,12 @@ function tool(tools: readonly RuntimeTool[], name: string): RuntimeTool {
 }
 
 async function execute(target: RuntimeTool, root: string, input: unknown) {
-  return target.execute(target.contract.execution.inputSchema.parse(input), { workspace: root, runId: "run-tools", invocationId: "inv-tools" });
+  return target.execute(target.contract.execution.inputSchema.parse(input), {
+    workspace: root,
+    runId: "run-tools",
+    invocationId: "inv-tools",
+    signal: new AbortController().signal
+  });
 }
 
 describe("E049 built-in Tool Runtime", () => {

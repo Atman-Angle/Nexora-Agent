@@ -61,7 +61,18 @@ export const SemanticValidationVerdictSchema = z.object({
 }).strict();
 export type SemanticValidationVerdict = z.infer<typeof SemanticValidationVerdictSchema>;
 
+export type RuntimeOperationContext = {
+  readonly signal: AbortSignal;
+};
+
 export interface RuntimeProvider {
-  decide(context: ModelDecisionContext): Promise<unknown>;
-  validate(context: SemanticValidationContext): Promise<unknown>;
+  decide(
+    context: ModelDecisionContext,
+    operation: RuntimeOperationContext
+  ): Promise<unknown>;
+  validate(
+    context: SemanticValidationContext,
+    operation: RuntimeOperationContext
+  ): Promise<unknown>;
+  dispose?(): void | Promise<void>;
 }

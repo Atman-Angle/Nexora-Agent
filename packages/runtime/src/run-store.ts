@@ -145,6 +145,25 @@ export class RunStore {
     }));
   }
 
+  listEventsAfter(runId: string, afterSequence: number): RunEvent[] {
+    if (!Number.isInteger(afterSequence) || afterSequence < 0) {
+      throw new Error("Event sequence cursor must be a non-negative integer.");
+    }
+    const rows = this.#database.prepare(`
+      SELECT run_id, sequence, type, occurred_at, payload_json
+      FROM run_events
+      WHERE run_id = ? AND sequence > ?
+      ORDER BY sequence
+    `).all(runId, afterSequence) as EventRow[];
+    return rows.map((row) => RunEventSchema.parse({
+      runId: row.run_id,
+      sequence: row.sequence,
+      type: row.type,
+      occurredAt: row.occurred_at,
+      payload: JSON.parse(row.payload_json)
+    }));
+  }
+
   getLastEvent(runId: string): RunEvent | null {
     const row = this.#database.prepare(`
       SELECT run_id, sequence, type, occurred_at, payload_json

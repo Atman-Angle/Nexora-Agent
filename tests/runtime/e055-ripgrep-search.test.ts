@@ -25,7 +25,12 @@ function searchTool(): RuntimeTool {
 
 async function search(root: string, input: unknown) {
   const tool = searchTool();
-  return tool.execute(tool.contract.execution.inputSchema.parse(input), { workspace: root, runId: "run-e055", invocationId: "inv-e055" });
+  return tool.execute(tool.contract.execution.inputSchema.parse(input), {
+    workspace: root,
+    runId: "run-e055",
+    invocationId: "inv-e055",
+    signal: new AbortController().signal
+  });
 }
 
 describe("E055 bundled Ripgrep search", () => {

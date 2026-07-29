@@ -1,6 +1,25 @@
 import { createHash } from "node:crypto";
 
-import type { Evidence, RunSnapshot, TaskContract } from "./contracts.js";
+import type { z } from "zod";
+
+import {
+  JsonValueSchema,
+  RunSnapshotSchema,
+  type Evidence,
+  type RunSnapshot,
+  type RuntimeAction,
+  type TaskContract
+} from "./contracts.js";
+import {
+  SemanticValidationVerdictSchema,
+  type JsonValue
+} from "./model-client.js";
+import {
+  type RuntimeObserver,
+  type RuntimeServices
+} from "./runtime-types.js";
+import { RuntimeError, cancellationReason } from "./runtime-error.js";
+import { transitionRunStatus } from "./state-machine.js";
 
 export type CompletionValidation = {
   readonly passed: boolean;
@@ -71,4 +90,179 @@ function findApplicableEvidence(
     && item.stepId === stepId
     && item.checkId === checkId
   ));
+}
+
+type ProposeFinishAction = Extract<RuntimeAction, { type: "propose_finish" }>;
+
+export async function proposeFinish(
+  services: RuntimeServices,
+  runInput: RunSnapshot,
+  action: ProposeFinishAction,
+  observer?: RuntimeObserver
+): Promise<RunSnapshot> {
+  throwIfCancelled(services, runInput.runId);
+  const toolInvocations = services.store.listToolInvocations(runInput.runId);
+  const unresolved = toolInvocations.filter(
+    (item) => item.status === "started" || item.status === "unknown"
+  ).length;
+  const deterministic = validateCompletion(
+    runInput,
+    action.evidenceIds,
+    unresolved
+  );
+  if (!deterministic.passed) {
+    return validationFailed(services, runInput, deterministic.issues, observer);
+  }
+  if (runInput.taskContract === null || runInput.currentPlan === null) {
+    return validationFailed(
+      services,
+      runInput,
+      ["TASK_OR_PLAN_MISSING"],
+      observer
+    );
+  }
+  if (runInput.budgetsUsed.modelCalls >= runInput.budgets.maxModelCalls) {
+    return services.fail(
+      runInput,
+      "BUDGET_EXCEEDED",
+      "MODEL_CALL_BUDGET_EXCEEDED",
+      observer
+    );
+  }
+
+  let run = services.commit(
+    runInput,
+    {
+      ...runInput,
+      budgetsUsed: {
+        ...runInput.budgetsUsed,
+        modelCalls: runInput.budgetsUsed.modelCalls + 1
+      },
+      updatedAt: services.now()
+    },
+    "validation.requested",
+    { evidenceIds: deterministic.evidenceIds },
+    observer
+  );
+
+  let verdict: z.infer<typeof SemanticValidationVerdictSchema>;
+  try {
+    const evidenceById = new Map(run.evidence.map((item) => [item.id, item]));
+    const citedEvidence = deterministic.evidenceIds.map(
+      (id) => evidenceById.get(id)!
+    );
+    const invocationById = new Map(
+      toolInvocations.map((item) => [item.id, item])
+    );
+    const facts = citedEvidence.map((evidence) => {
+      const invocation = evidence.invocationId === null
+        ? undefined
+        : invocationById.get(evidence.invocationId);
+      if (invocation === undefined || invocation.status !== "succeeded") {
+        throw new Error(
+          `Cited Tool Evidence has no succeeded Invocation: ${evidence.id}`
+        );
+      }
+      return {
+        toolName: invocation.toolName,
+        subjectRef: evidence.subjectRef,
+        input: JsonValueSchema.parse(invocation.inputJson) as JsonValue,
+        facts: JsonValueSchema.parse(invocation.resultJson) as JsonValue
+      };
+    });
+    verdict = SemanticValidationVerdictSchema.parse(
+      await services.withHeartbeat(run.runId, () => services.provider.validate({
+        inputs: run.inputHistory.map((entry) => entry.text),
+        proposedSummary: action.summary,
+        facts
+      }, { signal: services.signal }))
+    );
+  } catch (error) {
+    if (services.signal.aborted) {
+      throw new RuntimeError({
+        code: "CANCELLED",
+        message: cancellationReason(services.signal),
+        runId: run.runId,
+        cause: error
+      });
+    }
+    return services.blockForProvider(run, error, observer);
+  }
+
+  throwIfCancelled(services, run.runId);
+  if (!verdict.passed || verdict.issues.length > 0) {
+    return validationFailed(services, run, verdict.issues, observer);
+  }
+
+  run = services.commit(
+    run,
+    { ...run, lastError: null, updatedAt: services.now() },
+    "validation.passed",
+    { evidenceIds: deterministic.evidenceIds },
+    observer
+  );
+  const succeeded = transitionRunStatus(run, "succeeded", {
+    now: services.now(),
+    stopReason: "VALIDATED",
+    validation: {
+      passed: true,
+      evidenceIds: deterministic.evidenceIds
+    },
+    result: {
+      summary: action.summary,
+      resultArtifact: null,
+      evidenceIds: [...deterministic.evidenceIds]
+    }
+  });
+  return services.commit(
+    run,
+    succeeded,
+    "run.succeeded",
+    { evidenceIds: deterministic.evidenceIds },
+    observer
+  );
+}
+
+function throwIfCancelled(services: RuntimeServices, runId: string): void {
+  if (!services.signal.aborted) return;
+  throw new RuntimeError({
+    code: "CANCELLED",
+    message: cancellationReason(services.signal),
+    runId
+  });
+}
+
+function validationFailed(
+  services: RuntimeServices,
+  run: RunSnapshot,
+  issues: readonly string[],
+  observer?: RuntimeObserver
+): RunSnapshot {
+  const retries = run.budgetsUsed.retries + 1;
+  if (retries > run.budgets.maxRetries) {
+    return services.fail(
+      run,
+      "VALIDATION_REPAIR_EXHAUSTED",
+      "VALIDATION_FAILED",
+      observer
+    );
+  }
+  const next = RunSnapshotSchema.parse({
+    ...run,
+    budgetsUsed: { ...run.budgetsUsed, retries },
+    lastError: {
+      code: "VALIDATION_FAILED",
+      message: issues.join(", "),
+      retryable: true,
+      detailsArtifact: null
+    },
+    updatedAt: services.now()
+  });
+  return services.commit(
+    run,
+    next,
+    "validation.failed",
+    { issues: [...issues] },
+    observer
+  );
 }

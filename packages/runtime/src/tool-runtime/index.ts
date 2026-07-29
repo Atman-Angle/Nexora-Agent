@@ -43,8 +43,10 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         evidence: { produces: ["The target path, content or bounded preview, content digest, and byte length."], factsSchema: ReadFactsSchema }
       },
       async execute(input, context) {
+        throwIfAborted(context.signal);
         const path = await workspacePath(context.workspace, input.path, "file");
         const bytes = await readFile(path);
+        throwIfAborted(context.signal);
         const content = bytes.toString("utf8");
         if (bytes.byteLength <= MAX_INLINE_BYTES) return { subjectRef: input.path, facts: { path: input.path, content, digest: digest(content), byteLength: bytes.byteLength } };
         const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(content);
@@ -62,7 +64,8 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       async execute(input, context) {
         const requestedPath = input.path ?? ".";
         const directory = await workspacePath(context.workspace, requestedPath, "directory");
-        const entries = (await listFiles(directory)).map((path) => relativeFromRequested(requestedPath, directory, path));
+        const entries = (await listFiles(directory, context.signal))
+          .map((path) => relativeFromRequested(requestedPath, directory, path));
         return { subjectRef: requestedPath, facts: { entries: entries.slice(0, 2000), truncated: entries.length > 2000 } };
       }
     }),
@@ -77,7 +80,15 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       async execute(input, context) {
         const requestedPath = input.path ?? ".";
         const directory = await workspacePath(context.workspace, requestedPath, "directory");
-        return { subjectRef: `search:${input.query}`, facts: await searchWithRipgrep(directory, requestedPath, input.query) };
+        return {
+          subjectRef: `search:${input.query}`,
+          facts: await searchWithRipgrep(
+            directory,
+            requestedPath,
+            input.query,
+            context.signal
+          )
+        };
       }
     }),
     defineTool({
@@ -90,7 +101,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       },
       async execute(input, context) {
         const path = await writableWorkspacePath(context.workspace, input.path);
-        await atomicWrite(path, input.content);
+        await atomicWrite(path, input.content, context.signal);
         return { subjectRef: input.path, facts: { path: input.path, digest: digest(input.content), byteLength: Buffer.byteLength(input.content) } };
       }
     }),
@@ -103,8 +114,10 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         evidence: { produces: ["The changed path, resulting digest, and whether an idempotent replay was detected."], factsSchema: PatchFactsSchema }
       },
       async execute(input, context) {
+        throwIfAborted(context.signal);
         const path = await workspacePath(context.workspace, input.path, "file");
         const current = await readFile(path, "utf8");
+        throwIfAborted(context.signal);
         if (digest(current) !== input.expectedDigest) {
           if (!current.includes(input.find) && current.includes(input.replace)) return { subjectRef: input.path, facts: { path: input.path, digest: digest(current), replayed: true } };
           throw new ToolFailure("CONTENT_CONFLICT", "File content no longer matches expectedDigest.");
@@ -112,7 +125,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         const first = current.indexOf(input.find);
         if (first < 0 || current.indexOf(input.find, first + input.find.length) >= 0) throw new ToolFailure("PATCH_CONFLICT", "Patch find text must occur exactly once.");
         const next = `${current.slice(0, first)}${input.replace}${current.slice(first + input.find.length)}`;
-        await atomicWrite(path, next);
+        await atomicWrite(path, next, context.signal);
         return { subjectRef: input.path, facts: { path: input.path, digest: digest(next), replayed: false } };
       }
     }),
@@ -127,7 +140,13 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       async execute(input, context) {
         if (["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "sh", "bash"].includes(basename(input.command).toLowerCase())) throw new ToolFailure("COMMAND_REJECTED", "Interactive shell entrypoints are not allowed.");
         const cwd = await workspacePath(context.workspace, input.cwd ?? ".", "directory");
-        const result = await runProcess(input.command, input.args ?? [], cwd, input.timeoutMs ?? 60_000);
+        const result = await runProcess(
+          input.command,
+          input.args ?? [],
+          cwd,
+          input.timeoutMs ?? 60_000,
+          context.signal
+        );
         if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Tool execution timed out.", true);
         if (result.exitCode !== 0) {
           const detail = (result.stderr || result.stdout).trim().slice(0, 500);
@@ -140,12 +159,20 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
   ];
 }
 
-async function searchWithRipgrep(directory: string, requestedPath: string, query: string): Promise<{ matches: Array<{ path: string; line: number; text: string }>; truncated: boolean }> {
+async function searchWithRipgrep(
+  directory: string,
+  requestedPath: string,
+  query: string,
+  signal: AbortSignal
+): Promise<{
+  matches: Array<{ path: string; line: number; text: string }>;
+  truncated: boolean;
+}> {
   const ignoredGlobs = [...IGNORED].sort().flatMap((name) => ["--glob", `!${name}/**`]);
   const result = await runRipgrep([
     "--json", "--hidden", "--no-ignore", "--fixed-strings", "--ignore-case", "--max-filesize", "256K",
     ...ignoredGlobs, "-e", query, "--", "."
-  ], directory);
+  ], directory, signal);
   const matches: Array<{ path: string; line: number; text: string }> = [];
   for (const line of result.stdout.split(/\r?\n/)) {
     if (line.length === 0) continue;
@@ -166,8 +193,13 @@ async function searchWithRipgrep(directory: string, requestedPath: string, query
   return { matches: matches.slice(0, MAX_SEARCH_MATCHES), truncated: result.outputLimited || matches.length > MAX_SEARCH_MATCHES };
 }
 
-function runRipgrep(args: string[], cwd: string): Promise<{ stdout: string; outputLimited: boolean }> {
+function runRipgrep(
+  args: string[],
+  cwd: string,
+  signal: AbortSignal
+): Promise<{ stdout: string; outputLimited: boolean }> {
   return new Promise((resolvePromise, rejectPromise) => {
+    throwIfAborted(signal);
     const child = spawn(rgPath, args, { cwd, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     const chunks: Buffer[] = [];
     let outputBytes = 0;
@@ -175,13 +207,19 @@ function runRipgrep(args: string[], cwd: string): Promise<{ stdout: string; outp
     let stderr = "";
     let timedOut = false;
     let settled = false;
+    const abort = (): void => {
+      child.kill();
+      finish(new ToolFailure("CANCELLED", "Filesystem search was cancelled."));
+    };
     const finish = (error?: ToolFailure): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
       if (error === undefined) resolvePromise({ stdout: Buffer.concat(chunks).toString("utf8"), outputLimited });
       else rejectPromise(error);
     };
+    signal.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
       if (outputLimited) return;
       outputBytes += chunk.byteLength;
@@ -255,7 +293,13 @@ function gitTool<T>(definition: {
       evidence: { produces: definition.produces, factsSchema: ProcessFactsSchema }
     },
     async execute(input, context) {
-      const result = await runProcess("git", definition.args(input), context.workspace, 30_000);
+      const result = await runProcess(
+        "git",
+        definition.args(input),
+        context.workspace,
+        30_000,
+        context.signal
+      );
       if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Git command timed out.", true);
       if (result.exitCode !== 0) throw new ToolFailure("GIT_COMMAND_FAILED", result.stderr || "Git command failed.");
       return { subjectRef: `git:${definition.name}`, facts: result };
@@ -283,23 +327,31 @@ function defineTool<Input, Facts>(definition: {
     contract: definition.contract as RuntimeTool["contract"],
     async execute(input, context) {
       try {
+        throwIfAborted(context.signal);
         const result = await definition.execute(schema.parse(input), context);
+        throwIfAborted(context.signal);
         return { status: "success", subjectRef: result.subjectRef, facts: result.facts as never };
       }
       catch (error) {
-        const failure = error instanceof ToolFailure ? error : new ToolFailure("TOOL_EXECUTION_ERROR", error instanceof Error ? error.message : String(error), true);
+        const failure = context.signal.aborted
+          ? new ToolFailure("CANCELLED", "Tool execution was cancelled.")
+          : error instanceof ToolFailure
+            ? error
+            : new ToolFailure("TOOL_EXECUTION_ERROR", error instanceof Error ? error.message : String(error), true);
         return { status: "failure", subjectRef: definition.contract.identity.name, error: { code: failure.code, message: failure.message, retryable: failure.retryable } };
       }
     }
   };
 }
 
-async function listFiles(root: string): Promise<string[]> {
+async function listFiles(root: string, signal: AbortSignal): Promise<string[]> {
   const output: string[] = [];
   const pending = [root];
   while (pending.length > 0 && output.length < 2001) {
+    throwIfAborted(signal);
     const directory = pending.pop()!;
     for (const entry of await readdir(directory, { withFileTypes: true })) {
+      throwIfAborted(signal);
       if (entry.isSymbolicLink() || IGNORED.has(entry.name)) continue;
       const path = join(directory, entry.name);
       if (entry.isDirectory()) pending.push(path);
@@ -309,27 +361,72 @@ async function listFiles(root: string): Promise<string[]> {
   return output.sort();
 }
 
-async function atomicWrite(path: string, content: string): Promise<void> {
+async function atomicWrite(
+  path: string,
+  content: string,
+  signal: AbortSignal
+): Promise<void> {
+  throwIfAborted(signal);
   const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
   await writeFile(temporary, content, "utf8");
-  try { await rename(temporary, path); }
+  try {
+    throwIfAborted(signal);
+    await rename(temporary, path);
+  }
   catch (error) { await rm(temporary, { force: true }); throw error; }
 }
 
-function runProcess(command: string, args: string[], cwd: string, timeoutMs: number): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean; timedOut: boolean }> {
+function runProcess(
+  command: string,
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+  signal: AbortSignal
+): Promise<{
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  truncated: boolean;
+  timedOut: boolean;
+}> {
   return new Promise((resolvePromise, rejectPromise) => {
+    throwIfAborted(signal);
     const child = spawn(command, args, { cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let timedOut = false;
+    let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let timedOut = false; let settled = false;
     const append = (current: Buffer, chunk: Buffer) => Buffer.concat([current, chunk]).subarray(0, MAX_CAPTURE_BYTES);
     child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
     child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
-    child.once("error", (error) => { clearTimeout(timer); rejectPromise(error); });
-    child.once("close", (code) => {
+    const abort = (): void => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      cleanup();
+      rejectPromise(new ToolFailure("CANCELLED", "Process execution was cancelled."));
+    };
+    const cleanup = (): void => {
       clearTimeout(timer);
+      signal.removeEventListener("abort", abort);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectPromise(error);
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolvePromise({ exitCode: code ?? 1, stdout: stdout.toString("utf8"), stderr: stderr.toString("utf8"), truncated: stdout.length >= MAX_CAPTURE_BYTES || stderr.length >= MAX_CAPTURE_BYTES, timedOut });
     });
   });
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  throw new ToolFailure("CANCELLED", "Tool execution was cancelled.");
 }
 
 function digest(content: string): string { return `sha256:${createHash("sha256").update(content).digest("hex")}`; }

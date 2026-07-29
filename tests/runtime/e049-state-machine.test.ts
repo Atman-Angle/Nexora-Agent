@@ -11,11 +11,10 @@ function runningRun() {
 }
 
 describe("E049 Run status authority", () => {
-  it("permits only the five designed statuses", () => {
+  it("permits only the six designed statuses", () => {
     const run = runningRun();
     expect(run.status).toBe("running");
     expect(() => assertRunStatusTransition("running", "created" as never)).toThrow();
-    expect(() => assertRunStatusTransition("running", "cancelled" as never)).toThrow();
     expect(() => assertRunStatusTransition("running", "waiting_for_approval" as never)).toThrow();
   });
 
@@ -48,7 +47,32 @@ describe("E049 Run status authority", () => {
     expect(succeeded.result?.summary).toBe("Verified result");
   });
 
-  it("keeps failed and succeeded terminal", () => {
+  it("requires a reason for cancellation and keeps every terminal state terminal", () => {
+    expect(() => transitionRunStatus(runningRun(), "cancelled", {
+      now: later
+    })).toThrow(/stop reason/i);
+    const cancelled = transitionRunStatus(runningRun(), "cancelled", {
+      now: later,
+      stopReason: "USER_REQUESTED"
+    });
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.stopReason).toBe("USER_REQUESTED");
+    expect(() => transitionRunStatus(cancelled, "running", { now: later })).toThrow();
+    expect(() => transitionRunStatus(cancelled, "failed", {
+      now: later,
+      stopReason: "LATE_FAILURE"
+    })).toThrow();
+    expect(() => transitionRunStatus(cancelled, "succeeded", {
+      now: later,
+      validation: { passed: true, evidenceIds: ["ev-final"] },
+      result: {
+        summary: "Late result",
+        resultArtifact: null,
+        evidenceIds: ["ev-final"]
+      },
+      stopReason: "VALIDATED"
+    })).toThrow();
+
     const failed = transitionRunStatus(runningRun(), "failed", { now: later, stopReason: "BUDGET_EXCEEDED" });
     expect(() => transitionRunStatus(failed, "running", { now: later })).toThrow();
     const succeeded = transitionRunStatus(runningRun(), "succeeded", {

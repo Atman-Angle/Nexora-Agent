@@ -1,41 +1,45 @@
 # ARCHITECTURE.md — Nexora 核心架构
 
+本文件同时描述长期产品边界和当前 1.1 Runtime 实现。第 1–8 节定义必须长期保持的架构方向与 Authority；第 9 节记录当前真实仓库结构。尚未出现真实调用方的 Context Provider、MCP、Skill 等能力不是当前已实现模块；Desktop 已由 `PROJECT.md` 明确排除在产品方向之外。
+
 ## 1. 总体结构
 
 ```text
-Desktop / CLI / Server
-          ↓
-Runtime Gateway
+Host Application / CLI / Service
+              ↓
+       Runtime Gateway
           ↓
 Execution Kernel
     ├── Context Intelligence
     ├── Model Gateway
     ├── Action Runtime
     ├── Evidence & Verification
-    └── Checkpoint & Recovery
+    └── Invocation Recovery
           ↓
 State / Event / Artifact / Workspace
 ```
 
 ## 2. 六个核心域
 
+六个核心域是能力边界，不要求一域对应一个 package。当前 1.1 将已实现能力收敛在单一 `@nexora/runtime` 包内；未实现能力不得用空目录、Stub 或第二套状态提前占位。
+
 ### Core Contracts
 
 统一定义：
 
 ```text
-Task
+TaskContract
 Run
-Action
-ToolCall
-ToolResult
+RuntimeAction
+StructuredPlan
+RuntimeTool
+ToolInvocation
 Event
 Artifact
 Approval
 ValidationResult
-Checkpoint
-Ledger
-ExecutionRecord
+Evidence
+Result
 ```
 
 ### Execution Kernel
@@ -56,16 +60,14 @@ Cancellation
 包含：
 
 ```text
-Task Anchor
-Progress Ledger
-Working Set
-Retrieval
-Compaction
-Rehydration
-Workspace Memory
+Input History
+Task Contract
+Structured Plan
+Tool Observations
+Fresh External Facts
 ```
 
-上下文不是完整聊天历史，而是为下一步动态构建的工作集。
+上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。Working Set、Retrieval、Compaction 和 Rehydration 只是未来候选方向；只有真实应用或可重复实验暴露有界上下文问题，并由独立 Feature Contract 授权后才进入实现。
 
 ### Action Runtime
 
@@ -77,7 +79,7 @@ Action
 → Permission
 → Risk
 → Approval
-→ Execution Record
+→ Tool Invocation Intent
 → Worker
 → Timeout / Cancel
 → Normalize Result
@@ -93,7 +95,7 @@ Model proposes Final
 → succeeded / return to loop
 ```
 
-### Checkpoint & Recovery
+### Invocation Recovery
 
 必须区分：
 
@@ -108,64 +110,50 @@ Model proposes Final
 
 ## 3. 技术边界
 
-第一阶段推荐：
+长期产品边界：
 
-- Electron + React + TypeScript + Vite；
-- 独立 Node.js/TypeScript Runtime；
+- 可嵌入的 Node.js/TypeScript Runtime；
+- 宿主应用通过公开 Runtime Contract 集成；
 - SQLite WAL；
 - 本地 Artifact 文件；
 - OS Secure Storage；
-- Local JSON-RPC / pipe / socket；
 - Event Stream；
 - Rust 只用于测量后确认的热点。
 
-Core 不依赖 Electron。
-
-Renderer 不访问：
-
-- Node；
-- 文件系统；
-- SQLite；
-- Shell；
-- Secret；
-- Model Provider。
+Core 不依赖具体 UI、Web 框架、CLI 或宿主应用。宿主不能直接写 Core Store、Run Status、Tool Invocation 或 Evidence，也不能绕过 Runtime 的权限、Approval 和完成门。
 
 ## 4. 每轮 Agent Loop
 
 ```text
 Load Run
-→ Load Task Anchor
-→ Load Ledger
-→ Build Working Set
-→ Rehydrate Fresh Facts
-→ Assemble Context
+→ Load Input History and Current Plan
+→ Project Completed Tool Observations
+→ Rehydrate Required Fresh Facts
+→ Assemble Bounded Decision Context
 → Call Model
 → Parse Action
 → Validate / Authorize
 → Execute
 → Normalize Result
 → Verify
-→ Update Ledger
+→ Update Plan Step Progress and Evidence
 → Append Event
-→ Save Checkpoint
+→ Persist Run and Invocation State
 → Continue / Wait / Finish
 ```
 
 ## 5. Action 规则
 
-第一版每轮只允许一个主 Action：
+当前 1.1 每轮只允许一个主 Action：
 
 ```text
-tool_call
-update_plan
-ask_user
-request_approval
-create_artifact
-final
-fail
+set_plan
+call_tool
+request_input
+propose_finish
 ```
 
-只读操作可有限并发，写操作进入单一 Mutation Lane。
+Approval 不是模型 Action，而是 Runtime 对受保护 `call_tool` 的确定性执行边界。Runtime 内部失败通过 State Machine 进入 `failed`，不是模型可直接选择的成功旁路。
 
 ## 6. 数据传输
 
@@ -182,9 +170,11 @@ fail
 ## 7. 状态所有权
 
 - State Machine 唯一修改 Run Status；
-- Ledger Reducer 唯一修改 Progress Ledger；
+- Run-owned Structured Plan 是唯一当前计划；
+- Tool Invocation 是副作用意图、输入、结果和恢复判断的唯一 Authority；
+- Evidence 与 validated Run Result 是完成依据；
 - Tool 不直接修改 Run；
-- UI 不直接写 Core Store；
+- Host Application 不直接写 Core Store；
 - Model 不直接写状态；
 - FileSystem / Git 是工作区最新事实。
 
@@ -197,84 +187,55 @@ fail
 - Secret 脱敏；
 - Timeout；
 - Child Process Cleanup；
-- Renderer Isolation；
+- Host Boundary Isolation；
 - Skill/MCP 不得绕过权限。
 
 
 ## 9. Repository Structure
 
-Nexora 使用轻量 Monorepo。
-
-推荐总体结构：
+Nexora 当前使用轻量 Monorepo，真实生产入口和 Runtime 结构为：
 
 ```text
 nexora/
 ├── apps/
-│   ├── cli/
-│   └── desktop/
+│   └── cli/
 ├── packages/
-│   ├── contracts/
-│   ├── core/
-│   ├── storage/
-│   ├── model-gateway/
-│   ├── tool-runtime/
-│   ├── context/
-│   ├── verification/
-│   ├── recovery/
-│   └── testkit/
+│   └── runtime/
+│       └── src/
+│           ├── runtime.ts
+│           ├── runtime-execution.ts
+│           ├── validation.ts
+│           ├── runtime-types.ts
+│           ├── runtime-helpers.ts
+│           ├── contracts.ts
+│           ├── run-store.ts
+│           ├── state-machine.ts
+│           ├── model-client.ts
+│           ├── openai-compatible-provider.ts
+│           ├── artifacts.ts
+│           └── tool-runtime/
 ├── tests/
-│   ├── integration/
-│   ├── regression/
-│   └── fixtures/
+│   └── runtime/
 ├── specs/
 ├── docs/
-└── .agents/
+└── reports/
 ```
 
-但目录必须按 Feature 逐步创建。
+当前五个 Runtime 内部职责：
 
-第一原则：
+| 文件 | 负责 | 不负责 |
+| --- | --- | --- |
+| `runtime.ts` | start/resume、单一 Run Loop、Plan、Context、Lease 与协调 | Tool Effect、第二套状态 |
+| `runtime-execution.ts` | Approval、Invocation、Effect、Evidence 与 Recovery | 宣布 Run 成功 |
+| `validation.ts` | Evidence 引证、确定性/语义验证、成功提交 | 创建缺失 Evidence |
+| `runtime-types.ts` | Runtime 类型、Tool Result Schema 和内部依赖类型 | 保存运行状态 |
+| `runtime-helpers.ts` | Action、Step、Observation、Workspace 和错误纯函数 | Store、Provider 或外部副作用 |
+
+该结构已冻结。后续不因文件行数继续拆分，也不为 MCP、Skill、插件 Registry 或未来宿主预建模块；只有真实调用方、失败证据或性能测量证明需要时才改变边界。
+
+新增目录继续遵循：
 
 ```text
-当前 Feature 需要什么
-→ 创建什么
-
-当前 Feature 不需要什么
-→ 不提前创建空目录、空接口和 Stub
+当前 Feature 有真实需求和调用方 → 创建
+仅存在未来设想或架构图位置 → 不创建
 ```
-
-F001 阶段只允许建立：
-
-```text
-apps/cli
-packages/contracts
-packages/core
-packages/storage
-packages/model-gateway
-packages/testkit
-tests/integration
-tests/regression
-```
-
-当前禁止提前创建：
-
-```text
-apps/desktop
-packages/tool-runtime
-packages/context
-packages/verification
-packages/recovery
-packages/mcp
-packages/skills
-packages/commerce
-```
-
-目录结构必须服务于真实端到端链路，而不是提前复制完整架构图。
-
-模块	负责	不负责	可写 Authority
-Runtime	编排单一 Run Loop	保存第二套状态	无独立 Authority
-State Machine	Run 状态迁移	调用 Tool	Run Status
-Run Store	原子持久化	推断业务状态	持久化记录
-Tool Runtime	执行真实 Effect	宣布完成	Invocation Result
-Validation	判断 Evidence 是否满足	创建缺失 Evidence	Validation Result
-Provider	提出 Action	直接写状态	无

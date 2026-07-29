@@ -91,7 +91,8 @@ describe("E052 Provider observation closure", () => {
     const result = await read.execute({ path: "note.txt" }, {
       workspace,
       runId: "run",
-      invocationId: "invocation"
+      invocationId: "invocation",
+      signal: new AbortController().signal
     });
 
     expect(result).toEqual({

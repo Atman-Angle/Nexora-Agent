@@ -119,7 +119,7 @@ CR-validation
 CR-context
 CR-recovery
 CR-cli
-CR-ui
+CR-host-integration
 ```
 
 执行规则：
@@ -153,6 +153,35 @@ UAT-04 Denial Safety
 - 修改仅发生在允许范围；
 - 只有 succeeded / VALIDATED 才视为成功；
 - Runtime 或验证失败时没有成功 Result。
+
+### 4.1 Feature Core 与真实 Provider 验收边界
+
+固定场景同时用于两层证据，但结论必须分开：
+
+```text
+Feature Core
+→ deterministic failure injection
+→ real Store / Tool / package integration
+→ Authority, safety, persistence and recovery
+
+External Environment Acceptance
+→ real Provider endpoint
+→ timeout, rate limit, latency, Action repair and convergence
+```
+
+以下任一结果属于 Feature Core 失败，并阻断当前 Feature：
+
+- Provider 失败后仍产生成功 Result 或 `run.succeeded`；
+- protected Effect 在 Approval 前执行；
+- completed Invocation 与 Evidence/Result/Event 不一致；
+- unknown Effect 被自动重试或误报；
+- blocked/failed Run 无法 inspect、resume 或 recover；
+- Lease/Fencing、并发控制或资源释放失效；
+- package caller 必须导入 CLI、Store 或内部源码。
+
+如果 Runtime 正确持久化 blocked/failed、没有假成功、没有越权 Effect、保留已有 Invocation/Evidence 且可恢复，则特定 Provider 的 timeout、Action repair 次数、交互收敛轮数和并发成功率属于 External Environment Acceptance。
+
+External Acceptance 失败必须继续记录为失败或 `verification_blocked`，不能被确定性测试通过覆盖；但它不自动否定已由独立证据证明的 Runtime Feature Core。
 
 ## 5. 完成证据
 

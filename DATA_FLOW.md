@@ -6,8 +6,15 @@
 flowchart TD
     U["自然语言输入"] --> CLI["CLI main / Runtime 调用方"]
     ENV["启动目录 .env<br/>显式进程环境优先"] --> CLI
-    CLI --> START["RuntimeEngine.start 或 resume"]
+    CLI --> START["RuntimeEngine.run / start / resume"]
+    START --> HANDLE["RunHandle<br/>只保存 runId"]
     START --> SNAP["Run Snapshot<br/>inputHistory + status + plan + evidence"]
+    SNAP --> PUBLIC["RunInspection / RunFinalResult<br/>冻结只读投影"]
+    PUBLIC --> HANDLE
+    EVENTS["run_events.sequence<br/>persisted Event authority"] --> SUB["RuntimeEvent subscription<br/>回放 / afterSequence / 跟随"]
+    SUB --> HANDLE
+    HANDLE --> CONTROL["input / approve / deny / resume<br/>绑定当前 Pending Request / unknown Invocation"]
+    CONTROL --> START
     SNAP --> LOOP["单一 #runLoop"]
     LOOP --> BUDGET{"预算允许？"}
     BUDGET -- "否" --> FAIL["State Machine → failed"]
@@ -48,6 +55,9 @@ flowchart TD
 | 数据 | 创建 | 修改 | 读取/消费 | 持久化/销毁 |
 | --- | --- | --- | --- | --- |
 | 自然语言输入 | CLI/调用方 | Resume 只追加 | Provider、验证 | `runs.snapshot_json.inputHistory`；不改写 |
+| RunHandle | `runtime.run/openRun` | 不修改，只持有 `runId` | Host 调用 inspect/wait/result/subscribe/input/approve/deny/resume/cancel | 进程内 façade；不保存 Snapshot、Pending Request、状态或完成结果 |
+| RunInspection / RunFinalResult | Runtime 从当前 Snapshot、最后 Event sequence 和 Invocation 投影 | 深层冻结，不接受调用方修改 | 包外 Host | 每次读取重建；不持久化，不是 Authority |
+| RuntimeEvent subscription | Runtime 从 `run_events.sequence` 投影 | cursor 只记录交付位置，不修改 Event 或 Run | 包外 Host listener | timer/notification 只唤醒读取；terminal/close 时清理，不是 Authority |
 | CLI Provider 配置 | 启动目录 `.env` 或显式进程环境 | 不修改；显式环境优先 | CLI start/resume 创建 Provider | 只存在于进程环境；不读取目标 `--cwd`，不进入 Runtime/SQLite/Event/Artifact |
 | Task Contract | 首次 `set_plan` 候选 | 仅新输入时版本化 | Plan digest、Provider、验证 | Run snapshot；Zod 校验 |
 | Structured Plan | Model 提议，Runtime 生成 identity | CAS 修订，完成步骤不可改 | Action 授权、Step、完成门 | Run snapshot 唯一当前版本 |
@@ -123,7 +133,7 @@ flowchart TD
 4. 在该边界写 RED；不要在下游增加补偿状态。
 5. 修复后同时验证正向路径和 Resume/失败分支，确保没有第二个真相源。
 
-Provider Action Contract 是每轮从权威数据重新投影的进程内对象，`RuntimeEngine.close()` 后销毁；它不进入新表，也不能反写 Run。SQLite 和 Artifact 保留。1.1 不读取旧数据库、Checkpoint 或 Ledger。
+Provider Action Contract、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的进程内对象，`RuntimeEngine.close()` 后不再可读；它们不进入新表，也不能反写 Run。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。SQLite 和 Artifact 保留。1.1/1.2 不读取旧数据库、Checkpoint 或 Ledger。
 
 Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 是唯一权威，Context 只带 completed Invocation 的结果、关联 metadata、稳定 digest 和必要 preview，不复制 input、幂等键、Fencing 或 Lease。`filesystem.read` 的结果内另含内容 digest，供后续 patch 直接复制；大文件正文仍进入 Artifact。
 
@@ -141,4 +151,33 @@ E060验证流为 `全部inputHistory + proposedSummary + cited Evidence关联Inv
 
 E061工具流为`注册时五层Contract校验 → Model读取选择投影 → active inputExample → Runtime inputSchema/canonical Action → Tool执行单一Capability → success factsSchema → 原tool_invocations.result_json → Evidence/observation/semantic facts`。数据库列未改名或迁移；`result_json`仍是持久化权威，`facts`是运行时语义名称。非法Facts转为failed Invocation且不产生Evidence。
 
-E062–E064交互流为`TTY CLI → start → waiting Pending Action → 显示精确Action → y或拒绝原因 → 同一Runtime.resume`。人工等待不进入活跃段Duration；拒绝原因同时进入Approval Event、lastError和inputHistory，下一轮Task Contract/Decision/semantic validation从同一输入权威读取。没有Feedback Store。
+E062–E064 的交互语义在 D2 收敛为 `CLI/Host → runtime.run/openRun → RunHandle.wait/subscribe → input/approve/deny/resume → 同一 Runtime.resume/#runLoop`。人工等待不进入活跃段 Duration；拒绝原因同时进入 Approval Event、lastError 和 inputHistory，下一轮 Task Contract/Decision/semantic validation 从同一输入权威读取。CLI 不再复制 continuation authority，没有 Feedback Store。
+
+D3 取消语义收敛为 `Host cancel/Runtime close → active AbortSignal coordination → Invocation 明确结果或 unknown Recovery boundary → State Machine cancelled/blocked → persisted Event/Result`。signal、Promise 和 subscription 均不拥有 Run 状态或完成判断；started non-idempotent Effect 结果未知时必须保留 blocked/Recovery。
+
+D4 不增加新数据流：`defineProviderAdapter(single completion) → existing RuntimeProvider.decide/validate`，`defineTool(definition) → existing RuntimeTool → runtime-execution.callTool`，`createRuntimeHarness → production createRuntime → real temporary runtime-v1.1.db`。Adapter 的 request、Builder context 和 Scripted Provider descriptor 都是有界进程内输入，不持久化 Run 状态、不提交内部 Action、不生成 Evidence 或完成结论；Schema、Approval、Invocation、Evidence、Recovery、Validation 和 State Machine 仍沿用上述唯一链路。Testing Kit 只读取公共 Event/Error/Result Contract，close 后删除测试 workspace，不存在 Memory Store 或 Snapshot authority。
+
+## 6. 当前代码落点与冻结边界
+
+```text
+输入、Resume、单一循环、Plan、Context、Lease
+→ packages/runtime/src/runtime.ts
+
+Approval、Invocation Intent/Result、Tool Effect、Evidence、Recovery
+→ packages/runtime/src/runtime-execution.ts
+
+finish 引证、确定性验证、语义验证、Result、succeeded
+→ packages/runtime/src/validation.ts
+
+SQLite 三表、Revision、事务、Lease/Fencing
+→ packages/runtime/src/run-store.ts
+
+Run Status 合法迁移
+→ packages/runtime/src/state-machine.ts
+```
+
+`runtime-types.ts` 只定义类型和 Schema，`runtime-helpers.ts` 只保存无状态纯函数；二者都不拥有持久化 Authority。当前结构不再按文件行数拆分。性能修改必须先建立 SQL、Context 或模型调用的可重复基线，并证明瓶颈位于对应边界。
+
+`runtime-public.ts` 只投影并冻结 `RunInspection`/`RunFinalResult`；`result()` 必须先读取 State Machine 的 `failed/succeeded` 终态，waiting/blocked 不产生 Final。该 façade 不拥有持久化 Authority。
+
+`runtime-events.ts` 只从 `RunStore.listEventsAfter()` 读取 persisted sequence 并投影 `schemaVersion: 1` Event。notification/interval 只触发重新读取；listener memory、cursor 和 subscription terminal 判断不能写 Run，也不能替代 State Machine。Handle 控制先绑定当前 Pending Request 或 unknown Invocation，再通过同一 Lease/Fencing 和 `RuntimeEngine.resume()` 进入原执行、Evidence、Recovery 与 Completion 路径。
