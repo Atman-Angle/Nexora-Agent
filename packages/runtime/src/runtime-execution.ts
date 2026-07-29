@@ -66,6 +66,17 @@ export async function callTool(
   const parsedInput = JsonValueSchema.parse(
     tool.contract.execution.inputSchema.parse(action.input)
   );
+  const inputDigest = digestJson(parsedInput);
+  const idempotencyKey = `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${inputDigest}`;
+  if (
+    services.store.listToolInvocations(runInput.runId).some(
+      (item) => item.idempotencyKey === idempotencyKey
+    )
+  ) {
+    throw new ActionRejectedError(
+      "Tool action duplicates an existing persisted Invocation."
+    );
+  }
   const canonicalAction = { ...action, input: parsedInput };
 
   if (tool.contract.execution.effect.kind !== "read" && !approved) {
@@ -99,7 +110,6 @@ export async function callTool(
 
   const invocationId = services.createId();
   const startedAt = services.now();
-  const inputDigest = digestJson(parsedInput);
   const started = services.store.beginToolInvocationAndCommitRun({
     intent: {
       id: invocationId,
@@ -110,7 +120,7 @@ export async function callTool(
       toolName: tool.contract.identity.name,
       inputJson: parsedInput,
       inputDigest,
-      idempotencyKey: `${runInput.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${inputDigest}`,
+        idempotencyKey,
       idempotent: tool.contract.execution.idempotent,
       fencingToken: services.fencingToken(runInput.runId),
       startedAt

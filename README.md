@@ -152,7 +152,7 @@ const lookup = defineTool({
 
 Nexora 1.2 Feature Core 已在本地验证：同一个 `pnpm pack` 产物被安装到独立 Worker 与 HTTP Host 项目，二者都完成 `read → Approval → patch → verification → succeeded` 的可信闭环。HTTP Host 额外覆盖并发控制、SSE Event cursor、进程重启恢复、取消和资源退出。
 
-- 38 个测试文件、126 项测试通过
+- 42 个测试文件、142 项测试通过
 - typecheck、lint、根构建、Runtime 构建、package contents 与 diff check 通过
 - public exports 仅为 `@nexora/runtime` 与 `@nexora/runtime/testing`
 - 当前工作树尚未 commit、push 或发布

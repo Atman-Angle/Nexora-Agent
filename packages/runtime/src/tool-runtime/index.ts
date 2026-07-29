@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 
@@ -391,7 +391,12 @@ function runProcess(
 }> {
   return new Promise((resolvePromise, rejectPromise) => {
     throwIfAborted(signal);
-    const child = spawn(command, args, { cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      cwd,
+      detached: process.platform !== "win32",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
     let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let timedOut = false; let settled = false;
     const append = (current: Buffer, chunk: Buffer) => Buffer.concat([current, chunk]).subarray(0, MAX_CAPTURE_BYTES);
     child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
@@ -399,16 +404,36 @@ function runProcess(
     const abort = (): void => {
       if (settled) return;
       settled = true;
-      child.kill();
+      terminate();
       cleanup();
       rejectPromise(new ToolFailure("CANCELLED", "Process execution was cancelled."));
+    };
+    const terminate = (): void => {
+      if (process.platform === "win32" && child.pid !== undefined) {
+        const killed = spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+          windowsHide: true,
+          stdio: "ignore"
+        });
+        if (killed.error === undefined && killed.status === 0) return;
+      } else if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+          return;
+        } catch {
+          // Fall through to the direct child kill below.
+        }
+      }
+      child.kill("SIGKILL");
     };
     const cleanup = (): void => {
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
     };
     signal.addEventListener("abort", abort, { once: true });
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      terminate();
+    }, timeoutMs);
     child.once("error", (error) => {
       if (settled) return;
       settled = true;

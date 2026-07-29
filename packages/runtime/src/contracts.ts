@@ -216,6 +216,8 @@ export function runtimeActionContract(
     readonly inputVersion: number;
     readonly basedOnVersion: number | null;
     readonly includeTaskContract: boolean;
+    readonly currentPlan: StructuredPlan | null;
+    readonly finishEvidenceIds: readonly string[];
   }
 ): readonly RuntimeAction[] {
   return allowedActions.map((type) => {
@@ -229,6 +231,12 @@ export function runtimeActionContract(
       } else {
         delete example.taskContract;
       }
+      if (context.currentPlan !== null) {
+        example.orderedSteps = structuredClone(context.currentPlan.orderedSteps);
+      }
+    }
+    if (example.type === "propose_finish" && context.finishEvidenceIds.length > 0) {
+      example.evidenceIds = [...context.finishEvidenceIds];
     }
     return example;
   });

@@ -15,7 +15,18 @@ export class ActionRejectedError extends Error {
 }
 
 export function allowedActions(run: RunSnapshot): ModelDecisionContext["allowedActions"] {
-  return run.currentPlan === null ? ["set_plan", "request_input"] : ["set_plan", "call_tool", "request_input", "propose_finish"];
+  if (run.currentPlan === null) return ["set_plan", "request_input"];
+  const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
+    && run.stepProgress.every((item) => item.status === "completed");
+  if (allStepsCompleted) return ["set_plan", "request_input", "propose_finish"];
+  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+  const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+  const hasCallableCheck = activeStep?.acceptanceChecks.some(
+    (check) => check.kind === "tool_result"
+  ) ?? false;
+  return hasCallableCheck
+    ? ["set_plan", "call_tool", "request_input"]
+    : ["set_plan", "request_input"];
 }
 
 export function completeSatisfiedSteps(plan: NonNullable<RunSnapshot["currentPlan"]>, progress: RunSnapshot["stepProgress"], evidence: readonly Evidence[]): RunSnapshot["stepProgress"] {

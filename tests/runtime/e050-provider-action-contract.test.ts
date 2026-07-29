@@ -35,6 +35,7 @@ type DecisionPayload = {
     readonly workspace?: string;
     readonly actionContract?: readonly { readonly type: string }[];
     readonly run: { readonly lastError: { readonly message: string } | null };
+    readonly toolCatalog: readonly { readonly name: string }[];
     readonly tools: readonly { readonly identity: { readonly name: string }; readonly execution: { readonly inputExample?: unknown } }[];
   };
 };
@@ -115,13 +116,13 @@ describe("E050 Provider Action Contract convergence", () => {
     for (const example of decisionRequests[0]?.context.actionContract ?? []) {
       expect(RuntimeActionSchema.parse(example).type).toBe(example.type);
     }
-    expect(decisionRequests[0]?.context.tools).toContainEqual(expect.objectContaining({ identity: { name: "example.read" } }));
-    expect(decisionRequests[0]?.context.tools[0]?.execution).not.toHaveProperty("inputExample");
+    expect(decisionRequests[0]?.context.toolCatalog).toContainEqual(expect.objectContaining({ name: "example.read" }));
+    expect(decisionRequests[0]?.context.tools).toEqual([]);
     expect(decisionRequests[2]?.context.tools).toContainEqual(expect.objectContaining({
       identity: { name: "example.read" },
       execution: expect.objectContaining({ inputExample: { path: "target.txt" } })
     }));
-    expect(decisionRequests[2]?.context.tools.find((tool) => tool.identity.name === "example.other")?.execution).not.toHaveProperty("inputExample");
+    expect(decisionRequests[2]?.context.tools.find((tool) => tool.identity.name === "example.other")).toBeUndefined();
     const secondDiagnostic = JSON.parse(decisionRequests[1]!.context.run.lastError!.message) as {
       kind: string;
       actionType: string | null;

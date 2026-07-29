@@ -6,7 +6,8 @@ import {
   RuntimeActionSchema,
   StructuredPlanSchema,
   TaskContractSchema,
-  createInitialRunSnapshot
+  createInitialRunSnapshot,
+  runtimeActionContract
 } from "../../packages/runtime/src/contracts.js";
 
 const now = "2026-07-22T00:00:00.000Z";
@@ -107,6 +108,47 @@ describe("E049 authoritative runtime contracts", () => {
     expect(() => RuntimeActionSchema.parse({ type: "update_plan", steps: [] })).toThrow();
     expect(() => RuntimeActionSchema.parse({ type: "complete_step", stepId: "inspect" })).toThrow();
     expect(() => RuntimeActionSchema.parse({ type: "request_approval", toolName: "filesystem.write" })).toThrow();
+  });
+
+  it("projects the current Plan and exact finish Evidence into legal Action examples", () => {
+    const currentPlan = StructuredPlanSchema.parse(plan());
+    const actions = runtimeActionContract(["set_plan", "propose_finish"], {
+      workspace: "D:\\fixture",
+      inputVersion: 1,
+      basedOnVersion: 1,
+      includeTaskContract: false,
+      currentPlan,
+      finishEvidenceIds: ["evidence-full-id-1", "evidence-full-id-2"]
+    });
+    const setPlan = actions.find((action) => action.type === "set_plan");
+    const finish = actions.find((action) => action.type === "propose_finish");
+
+    expect(setPlan).toEqual({
+      type: "set_plan",
+      basedOnVersion: 1,
+      orderedSteps: currentPlan.orderedSteps
+    });
+    expect(finish).toEqual({
+      type: "propose_finish",
+      summary: "<verified-summary>",
+      evidenceIds: ["evidence-full-id-1", "evidence-full-id-2"]
+    });
+  });
+
+  it("keeps the finish placeholder when the Runtime has no complete Evidence set", () => {
+    const actions = runtimeActionContract(["propose_finish"], {
+      workspace: "D:\\fixture",
+      inputVersion: 1,
+      basedOnVersion: 1,
+      includeTaskContract: false,
+      currentPlan: StructuredPlanSchema.parse(plan()),
+      finishEvidenceIds: []
+    });
+    expect(actions[0]).toEqual({
+      type: "propose_finish",
+      summary: "<verified-summary>",
+      evidenceIds: ["<persisted-evidence-id>"]
+    });
   });
 
   it("requires every evidence record to bind to a plan check and real subject", () => {

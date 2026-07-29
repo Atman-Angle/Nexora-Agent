@@ -376,6 +376,21 @@ export class RuntimeEngine {
               observer,
               true
             );
+          } else {
+            const waiting = transitionRunStatus(run, "waiting", {
+              now,
+              pendingRequest: {
+                id: this.#createId(),
+                kind: "input",
+                prompt: "The protected Tool action was denied. Provide new instructions to continue.",
+                createdAt: now
+              },
+              stopReason: "INPUT_REQUIRED"
+            });
+            run = this.#commit(run, waiting, "run.waiting", {
+              reason: "APPROVAL_DENIED",
+              requestId: waiting.pendingRequest?.id ?? null
+            }, observer);
           }
         }
       }
@@ -556,9 +571,11 @@ export class RuntimeEngine {
       });
     }
     this.#assertControlIdle(runId);
-    const run = this.#requirePendingRequest(runId, "input", options.requestId);
-    await this.#performControl(runId, async () => {
-      await this.resume({ runId: run.runId, input: text });
+    await this.#withControlLease(runId, async () => {
+      const run = this.#requirePendingRequest(runId, "input", options.requestId);
+      await this.#performControl(runId, async () => {
+        await this.resume({ runId: run.runId, input: text });
+      });
     });
   }
 
@@ -568,21 +585,23 @@ export class RuntimeEngine {
     options: DenialOptions = {}
   ): Promise<void> {
     this.#assertControlIdle(runId);
-    const run = this.#requirePendingRequest(
-      runId,
-      "approval",
-      options.requestId
-    );
-    await this.#performControl(runId, async () => {
-      await this.resume({
-        runId: run.runId,
-        approvalDecision: {
-          requestId: run.pendingRequest!.id,
-          approved,
-          ...(!approved && options.reason !== undefined
-            ? { reason: options.reason }
-            : {})
-        }
+    await this.#withControlLease(runId, async () => {
+      const run = this.#requirePendingRequest(
+        runId,
+        "approval",
+        options.requestId
+      );
+      await this.#performControl(runId, async () => {
+        await this.resume({
+          runId: run.runId,
+          approvalDecision: {
+            requestId: run.pendingRequest!.id,
+            approved,
+            ...(!approved && options.reason !== undefined
+              ? { reason: options.reason }
+              : {})
+          }
+        });
       });
     });
   }
@@ -592,6 +611,7 @@ export class RuntimeEngine {
     options: RunHandleResumeOptions = {}
   ): Promise<void> {
     this.#assertControlIdle(runId);
+    await this.#withControlLease(runId, async () => {
     const run = this.#requireRun(runId);
     if (run.status !== "blocked" && run.status !== "running") {
       throw this.#controlConflict(
@@ -645,6 +665,7 @@ export class RuntimeEngine {
           ? {}
           : { recoveryDecision: options.recovery })
       });
+    });
     });
   }
 
@@ -783,6 +804,22 @@ export class RuntimeEngine {
         );
       }
       throw error;
+    }
+  }
+
+  async #withControlLease(
+    runId: string,
+    operation: () => Promise<void>
+  ): Promise<void> {
+    try {
+      this.#acquireLease(runId);
+    } catch (error) {
+      throw this.#mapControlBoundaryError(error, runId);
+    }
+    try {
+      await operation();
+    } finally {
+      this.#releaseLease(runId);
     }
   }
 
@@ -1192,6 +1229,9 @@ export class RuntimeEngine {
     const actions = allowedActions(run);
     const includeTaskContract = run.currentPlan === null || run.taskContract === null
       || run.taskContract.inputVersion < run.inputHistory.length;
+    const allStepsCompleted = run.currentPlan !== null
+      && run.stepProgress.length === run.currentPlan.orderedSteps.length
+      && run.stepProgress.every((item) => item.status === "completed");
     const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
     const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
     const callableTools = new Set(activeStep?.acceptanceChecks
@@ -1205,7 +1245,9 @@ export class RuntimeEngine {
         workspace: this.#workspace,
         inputVersion: run.inputHistory.length,
         basedOnVersion: run.currentPlan?.version ?? null,
-        includeTaskContract
+        includeTaskContract,
+        currentPlan: run.currentPlan,
+        finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
       }),
       toolObservations: projectToolObservationsFromHelpers(this.#store.listToolInvocations(run.runId)),
       tools: [...this.#tools.values()].map((tool) => ({

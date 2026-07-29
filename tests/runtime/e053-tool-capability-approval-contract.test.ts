@@ -192,7 +192,24 @@ type ContextTool = {
   readonly evidence: { readonly produces: readonly string[] };
 };
 
-type HttpContext = Omit<ModelDecisionContext, "tools"> & {
+type HttpContext = {
+  readonly workspace: string;
+  readonly run: {
+    readonly inputs: readonly string[];
+    readonly taskContract: ModelDecisionContext["run"]["taskContract"];
+    readonly currentPlan: ModelDecisionContext["run"]["currentPlan"];
+    readonly stepProgress: ModelDecisionContext["run"]["stepProgress"];
+    readonly evidence: ModelDecisionContext["run"]["evidence"];
+    readonly lastError: { readonly code: string; readonly message: string } | null;
+  };
+  readonly allowedActions: ModelDecisionContext["allowedActions"];
+  readonly actionContract: ModelDecisionContext["actionContract"];
+  readonly toolObservations: ModelDecisionContext["toolObservations"];
+  readonly toolCatalog: readonly {
+    readonly name: string;
+    readonly purpose: string;
+    readonly produces: readonly string[];
+  }[];
   readonly tools: readonly ContextTool[];
 };
 
@@ -302,10 +319,10 @@ function capabilityDecision(
   index: number
 ): { readonly action: unknown; readonly selected: boolean } {
   if (index === 0) {
-    const list = context.tools.find((tool) => tool.capability.purpose.includes("file names and paths"));
-    const read = context.tools.find((tool) => tool.capability.purpose.includes("content from one known"));
-    const patch = context.tools.find((tool) => tool.capability.purpose.includes("exact occurrence"));
-    const execute = context.tools.find((tool) => tool.capability.purpose.includes("executable"));
+    const list = context.toolCatalog.find((tool) => tool.purpose.includes("file names and paths"));
+    const read = context.toolCatalog.find((tool) => tool.purpose.includes("content from one known"));
+    const patch = context.toolCatalog.find((tool) => tool.purpose.includes("exact occurrence"));
+    const execute = context.toolCatalog.find((tool) => tool.purpose.includes("executable"));
     if (list === undefined || read === undefined || patch === undefined || execute === undefined) {
       return {
         action: { type: "request_input", question: "Tool capabilities are unavailable.", reason: "Missing Tool descriptions" },
@@ -314,10 +331,10 @@ function capabilityDecision(
     }
     return {
       action: plan(workspace, [
-        { id: "discover", objective: "Discover files", toolName: list.identity.name, checkId: "listed" },
-        { id: "read", objective: "Read discovered file", toolName: read.identity.name, checkId: "read" },
-        { id: "patch", objective: "Patch file", toolName: patch.identity.name, checkId: "patched" },
-        { id: "validate", objective: "Validate result", toolName: execute.identity.name, checkId: "validated" }
+        { id: "discover", objective: "Discover files", toolName: list.name, checkId: "listed" },
+        { id: "read", objective: "Read discovered file", toolName: read.name, checkId: "read" },
+        { id: "patch", objective: "Patch file", toolName: patch.name, checkId: "patched" },
+        { id: "validate", objective: "Validate result", toolName: execute.name, checkId: "validated" }
       ]),
       selected: true
     };
@@ -328,7 +345,8 @@ function capabilityDecision(
       action: {
         type: "propose_finish",
         summary: "Discovered, read, patched, and validated the file.",
-        evidenceIds: context.run.evidence.map((item) => item.id)
+        evidenceIds: context.actionContract
+          .find((action) => action.type === "propose_finish")?.evidenceIds ?? []
       },
       selected: false
     };
