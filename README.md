@@ -1,39 +1,165 @@
-# Nexora
+# Nexora Agent
 
-Nexora 是一个可嵌入 Node.js / TypeScript 应用的可信 Agent Runtime。
+**把 Agent 应用的精力留给领域能力，而不是再造状态机、Evidence、恢复与完成验证。**
 
-你的应用提供目标、模型和工具；Nexora 负责把一次 Agent 执行变成可持久化、可观察、可批准、可恢复且可验证的 Run。它不是聊天 UI、工作流框架或另一套 SDK，也不要求宿主复制 CLI 的执行循环。
+Nexora Agent 是面向 Node.js / TypeScript 应用的可嵌入可信 Agent Runtime。宿主提供目标、模型、领域 Tool 和产品体验；Nexora 把每次执行变成可持久化、可观察、可交互、可恢复并经过验证的 Run。
 
-> 当前分支完成了 Nexora 1.2 Developer Runtime API 的本地验收。它尚未 npm 发布；真实 Provider 环境验收仍单独跟踪。
+![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square)
+![Runtime](https://img.shields.io/badge/Runtime-embeddable-F4F7FA?style=flat-square)
+![Research Agent](https://img.shields.io/badge/Research_Agent-validated-5CE1A4?style=flat-square)
 
-## 你只需要理解四个概念
+<!--
+VISUAL SLOT: assets/readme/hero.webp
+Generation prompt: assets/readme/prompts.md#1-hero
+After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
+-->
 
-| 概念 | 宿主负责什么 | Nexora 保证什么 |
-| --- | --- | --- |
-| `Runtime` | 配置 workspace、Provider、Tools 和生命周期 | 持久化、并发、资源释放和唯一执行路径 |
-| `RunHandle` | 观察 Run、响应输入或批准、读取结果 | 合法状态转换、事件、冲突检测与恢复 |
-| `Provider` | 完成一次模型调用 | 不允许模型直接改变 Run、Tool 或成功状态 |
-| `Tool` | 声明领域能力并执行实际工作 | Schema、Approval、Invocation、Evidence、取消和 Recovery |
+## 一个真实 Run，而不是概念 Demo
 
-```text
-你的应用
-  → createRuntime(...)
-  → runtime.run(goal)
-  → RunHandle 观察和控制
-  → 已验证的终态 Result
-  → runtime.close()
+2026-08-01，应用侧 Scheduler 从已持久化的 Profile 发起了一次真实 Tavily + 真实模型任务。它通过同一个 Nexora Runtime 完成新闻发现、分析、产物生成、引用校验和成功终态：
+
+| 执行证据 | 结果 |
+| --- | --- |
+| Run | `204d7d37-7a4e-4117-b0c3-26905cc2d14a` |
+| 新闻语料 | 48 条原始结果 / 46 条 URL 去重结果 |
+| Runtime 链路 | 3 次 Tool Invocation / 3 条 Evidence |
+| 应用产物 | 自媒体文章、选题建议、视频脚本、领域追踪分析 |
+| 完成结论 | `StopReason=VALIDATED` / `run.succeeded` |
+
+这不是五条固定数据的样例。机器可读的完整产物、来源 URL、语料摘要和执行映射保存在 [`reports/canaries/2026-08-01T11-13-22-180Z-research-scheduler-one-shot.json`](reports/canaries/2026-08-01T11-13-22-180Z-research-scheduler-one-shot.json)，实现与验收说明见 [`docs/applications/research-agent.md`](docs/applications/research-agent.md)。
+
+<!--
+VISUAL SLOT: assets/readme/research-agent-proof.webp
+Generation prompt: assets/readme/prompts.md#3-research-agent-proof-board
+After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
+-->
+
+## Nexora Agent 是什么
+
+它是嵌入宿主进程的 TypeScript Runtime，不是托管 Agent SaaS，也不是要求应用采用特定 UI 或 Web 框架的工作流产品。
+
+| 应用拥有 | Nexora Runtime 拥有 |
+| --- | --- |
+| Profile、领域 Prompt、Tool、来源与凭据 | Run 持久化和唯一 State Machine |
+| Scheduler 与产品交互 | Run-owned Structured Plan |
+| 新闻数据、平台格式和最终产物 | Tool Invocation、Approval 与 Evidence |
+| “每天做什么”的业务定义 | 失败、恢复、事件、Artifact 与 Completion Gate |
+
+模型不能直接修改 Run，Tool 成功不等于任务成功，宿主也不能跳过 Evidence 或自行宣布完成。`result()` 只会返回 State Machine 已确认的终态。
+
+<!--
+VISUAL SLOT: assets/readme/runtime-architecture.webp
+Generation prompt: assets/readme/prompts.md#2-runtime-architecture
+After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
+-->
+
+## Research Agent 真的怎样调用 Nexora
+
+Research Agent 的生产依赖是工作区公共包：
+
+```json
+{
+  "dependencies": {
+    "@nexora/runtime": "workspace:*"
+  }
+}
 ```
 
-Run、State Machine、Structured Plan、Tool Invocation、Evidence、Validation 和 Completion Gate 始终由 Runtime 的持久化内核拥有。宿主不能直接写状态、提交内部 Action，或自行把 Tool 成功解释为任务成功。
+应用把 Profile、Tavily 来源和三个领域 Tool 交给公共 `createRuntime()`，每天只用 `runtime.run()` 创建 Run：
 
-## 最短接入
+```ts
+import { createRuntime } from "@nexora/runtime";
 
-安装已发布版本时使用包名；在本仓库验证候选包时，先打包再安装：
+export function createResearchAgent(options: ResearchAgentOptions) {
+  const runtime = createRuntime({
+    workspace: options.workspace,
+    provider: options.provider,
+    tools: createResearchTools(options.sources, options.profile)
+  });
+
+  return {
+    runtime,
+    runDaily(now = new Date(), runOptions?: RunOptions) {
+      return runtime.run(buildResearchGoal(options.profile, now), runOptions);
+    },
+    close: () => runtime.close()
+  };
+}
+```
+
+应用侧 Scheduler 只负责“哪个 Profile 今天到期”和“同一业务日期只创建一次”，随后等待公共 `RunHandle` 的结果：
+
+```ts
+const scheduler = createResearchScheduler({
+  store,
+  runWorkspaceDirectory: "D:/research-app/runs",
+  createAgent: ({ profile, workspace }) => createResearchAgent({
+    profile,
+    workspace,
+    provider,
+    sources
+  })
+});
+
+await scheduler.tick();
+const dailyPackage = await store.getDailyPackage(profile.id, "2026-08-01");
+```
+
+真实路径是：
+
+```mermaid
+flowchart LR
+  P["Saved Research Profile"] --> S["Application Scheduler"]
+  S --> A["createResearchAgent"]
+  A --> R["createRuntime"]
+  R --> H["runtime.run → RunHandle"]
+  H --> D["news.discover"]
+  D --> N["news.analyze_selection"]
+  N --> V["news.validate_output"]
+  V --> E["Evidence + validated Result"]
+  E --> O["DailyResearchPackage"]
+```
+
+这段集成没有重写 Runtime 机制：
+
+- 不读取 Core Store，不直接写 Run 或 Run Status；
+- 不复制 CLI 编排，不实现第二套 Agent loop 或 State Machine；
+- 不导入 `packages/runtime/src` 内部文件，只使用 `@nexora/runtime` 公共导出；
+- Scheduler 的原子 Claim 仅保证“每日创建一次 Run”，不保存或推导 Run 状态；
+- `DailyResearchPackage` 是应用产物归档，不是第二个执行 Authority；
+- Profile、Tavily、新闻 Tool、Prompt 和文章/脚本数据全部留在应用侧，Core 没有 Research 特判。
+
+对应代码可直接审计：[`apps/research-agent/src/index.ts`](apps/research-agent/src/index.ts) 创建 Runtime 和 Tool，[`apps/research-agent/src/scheduler.ts`](apps/research-agent/src/scheduler.ts) 通过 `RunHandle` 等待、检查并归档结果。
+
+## Runtime 提供的基础设施
+
+| 能力 | 对真实应用的意义 |
+| --- | --- |
+| State Machine | 只有合法转换能改变 Run 状态 |
+| Structured Plan | 当前计划由 Run 持有，不产生第二份计划真相 |
+| Invocation | Tool 副作用、失败和恢复判断有唯一记录 |
+| Evidence | 产物与真实执行证据可逆向审计 |
+| Approval / Input | 人工批准和补充输入走同一个 RunHandle |
+| Recovery | 原 Run 可恢复，不靠应用重新猜测执行进度 |
+| Events / Artifacts | 交互、观察和大内容具有持久化边界 |
+| Completion Gate | 模型输出或单次 Tool 成功不能冒充任务完成 |
+
+## 从源码开始
+
+当前仓库尚未声明 npm 正式发布版本。请先使用源码工作区验证。
+
+要求：Node.js 20+、pnpm 11。
 
 ```powershell
-pnpm --filter @nexora/runtime pack --pack-destination D:\tmp\nexora-package
-npm install D:\tmp\nexora-package\nexora-runtime-1.1.0.tgz
+git clone https://github.com/Atman-Angle/Nexora-Agent.git
+Set-Location -LiteralPath Nexora-Agent
+pnpm install
+pnpm typecheck
+pnpm test
 ```
+
+最小 Runtime 调用：
 
 ```ts
 import {
@@ -43,138 +169,92 @@ import {
 } from "@nexora/runtime";
 
 const runtime = createRuntime({
-  workspace: "D:\\project",
-  dataDir: "D:\\project\\.nexora",
+  workspace: "D:/my-agent-workspace",
   provider: openAICompatibleProviderFromEnv(),
   tools: createBuiltInTools()
 });
 
 try {
-  const run = runtime.run("读取 note.txt 并总结内容");
+  const run = runtime.run("读取 note.txt，给出有证据的摘要");
   const result = await run.result();
-
-  if (result.status === "succeeded") {
-    console.log(result.summary);
-  }
+  console.log(result.status, result.summary);
 } finally {
   await runtime.close();
 }
 ```
 
-`result()` 只返回 State Machine 已确认的 `succeeded`、`failed` 或 `cancelled` 终态。模型文本、单个 Tool 成功、Plan 结束、`waiting` 和 `blocked` 都不会被误报为成功。
+### 运行一次真实 Research Agent
 
-## 处理交互
+从仓库根目录复制环境模板；应用从当前工作目录的 `.env` 加载凭据：
 
-交互宿主订阅同一个 `RunHandle`。异步 UI 应带上看到的 `requestId`；过期、重复、并发或状态不允许的操作会抛出可程序化处理的 `RunControlError`。
-
-```ts
-const subscription = run.subscribe(async (event) => {
-  if (event.type === "input.required") {
-    await run.input(await askUser(event.prompt), {
-      requestId: event.requestId
-    });
-  }
-
-  if (event.type === "approval.required") {
-    await run.approve({ requestId: event.request.id });
-  }
-});
-
-const result = await run.result();
-await subscription.closed;
+```powershell
+Copy-Item -LiteralPath 'apps/research-agent/.env.example' -Destination '.env'
 ```
 
-进程重启后，只保存 Run ID 即可重新打开同一持久化 Run：
+填写：
 
-```ts
-const run = runtime.openRun(savedRunId);
-const inspection = await run.inspect();
-
-if (inspection.status === "blocked") {
-  await run.resume();
-}
+```dotenv
+TAVILY_API_KEY=tvly-...
+NEXORA_MODEL_PROVIDER=openai-compatible
+NEXORA_MODEL_BASE_URL=https://your-provider.example/v1
+NEXORA_MODEL_API_KEY=...
+NEXORA_MODEL_NAME=...
+NEXORA_MODEL_TIMEOUT_MS=180000
 ```
 
-完整的 input、deny、cancel、unknown side effect Recovery、SSE cursor 和 typed error 用法见 [Runtime 集成指南](docs/BUILD_WITH_NEXORA_RUNTIME.md)。
+执行 Scheduler 驱动的单次真实 Canary：
 
-## 接入自定义模型和工具
-
-普通模型接入只实现一次 completion transport：
-
-```ts
-import { defineProviderAdapter } from "@nexora/runtime";
-
-const provider = defineProviderAdapter({
-  async complete(request, operation) {
-    const response = await modelSdk.complete({
-      input: request.input,
-      signal: operation.signal
-    });
-    return response.text;
-  }
-});
+```powershell
+node --import tsx apps/research-agent/canaries/scheduler-live-e2e.ts
 ```
 
-Tool 使用 `defineTool()` 声明名称、输入/输出 Schema、Effect 类型和 `execute()`。Runtime 自动处理输入校验、Approval、Invocation、Evidence、取消和 Recovery；Tool 不会得到 Run、Store、State Machine 或 Completion Gate。
+它会保存应用 Profile、创建当日幂等 Claim、通过 Nexora Runtime 发起真实 Run，并在 `reports/canaries/` 写入机器报告。它不会启动长期驻留服务，也不会自动发布到第三方自媒体账号。
 
-```ts
-import { z } from "zod";
-import { defineTool } from "@nexora/runtime";
+## 仓库结构
 
-const lookup = defineTool({
-  name: "example.lookup",
-  description: "Read one value by key.",
-  useWhen: ["A persisted value is required as evidence."],
-  avoidWhen: ["The request requires a mutation."],
-  effect: "read",
-  idempotent: true,
-  inputSchema: z.object({ key: z.string().min(1) }).strict(),
-  inputExample: { key: "example" },
-  outputSchema: z.object({ value: z.string() }).strict(),
-  produces: ["key value"],
-  async execute(input) {
-    return { subjectRef: `key:${input.key}`, output: { value: "result" } };
-  }
-});
+```text
+Nexora-Agent/
+├─ packages/runtime/                 # 公共可信 Runtime
+├─ apps/cli/                         # Runtime 的薄 CLI 宿主
+├─ apps/research-agent/
+│  ├─ src/                           # 应用生产代码：Profile、Tools、Scheduler
+│  └─ canaries/                      # 真实 Provider / Tavily 验收入口
+├─ tests/
+│  ├─ runtime/                       # Runtime Contract 与回归
+│  └─ apps/                          # 应用边界和集成测试
+├─ docs/
+│  ├─ applications/                  # 真实应用说明
+│  └─ history/                       # 已过时但保留追溯的架构材料
+├─ reports/canaries/                 # 真实 Run 的机器证据
+├─ assets/readme/                    # README 配图提示词与未来素材
+├─ specs/                            # Feature 规范与历史决策
+└─ agent-evaluation/                 # 历史 Agent 评估产物
 ```
 
-测试时从 `@nexora/runtime/testing` 导入 Harness、scripted Provider 与断言工具。Testing Kit 使用生产 Runtime、临时 workspace 和 SQLite，不提供 Memory Store、Approval bypass 或 Completion shortcut。
-
-## 两种真实宿主示例
-
-- [一次性 Worker](examples/runtime/worker.ts)：发起 Run、订阅 Approval、读取可信结果并关闭 Runtime。
-- [HTTP/SSE Host](examples/runtime/http-host.ts)：以 Run ID 提供 inspect、events、input、approval、cancel、resume 和 result；每次请求均从持久化 Authority `openRun()`，不保存第二套 Run 状态。
-- [示例说明](examples/runtime/README.md)：安装、路由和运行方式。
-
-它们只依赖 `@nexora/runtime` 根出口和 Node 内置模块，不依赖 CLI、内部源码或 Store。
+根目录的 [`PROJECT.md`](PROJECT.md)、[`ARCHITECTURE.md`](ARCHITECTURE.md)、[`DATA_FLOW.md`](DATA_FLOW.md)、[`SYSTEM_SOP.md`](SYSTEM_SOP.md)、[`TESTS.md`](TESTS.md) 和 [`DEVELOPMENT.md`](DEVELOPMENT.md) 是当前活文档；历史报告不能覆盖它们。
 
 ## 验证状态
 
-Nexora 1.2 Feature Core 已在本地验证：同一个 `pnpm pack` 产物被安装到独立 Worker 与 HTTP Host 项目，二者都完成 `read → Approval → patch → verification → succeeded` 的可信闭环。HTTP Host 额外覆盖并发控制、SSE Event cursor、进程重启恢复、取消和资源退出。
+当前 Research Agent 的确定性应用测试覆盖 Profile、来源、自动筛选、完整产物、Scheduler 持久化与每日幂等；受影响 Runtime 回归覆盖输入、Evidence、Completion、Recovery 和包外公共调用。真实 one-shot 已验证失败/恢复链和一次直接成功的完整四产物链。
 
-- 42 个测试文件、142 项测试通过
-- typecheck、lint、根构建、Runtime 构建、package contents 与 diff check 通过
-- public exports 仅为 `@nexora/runtime` 与 `@nexora/runtime/testing`
-- 当前工作树尚未 commit、push 或发布
-- 真实 Provider External Acceptance 仍为 `verification_blocked`，不以确定性测试替代
+仍未宣称完成的部分是长期驻留部署、进程守护、告警和真实跨日观测。这些属于宿主运行环境验收，不应被伪装成 Runtime Core 能力。
 
-证据、限制与命令记录在 [Nexora 1.2 验证报告](docs/audit/nexora-1.2-validation-report.md)。
-
-## 文档
-
-- [Runtime 集成指南](docs/BUILD_WITH_NEXORA_RUNTIME.md)：完整 API、生命周期、错误、恢复、Provider、Tool 与 Testing Kit
-- [当前目标](docs/audit/current-goals.md) 与 [当前架构](docs/audit/current-architecture.md)
-- [开发状态](DEVELOPMENT.md) 与 [产品路线](PROJECT.md)
-- [文档索引](docs/README.md)
-
-## CLI
-
-CLI 是同一 Runtime 的直接使用和调试入口，并非宿主集成前提：
+常用门禁：
 
 ```powershell
-pnpm nexora "检查项目，修复问题，补充测试并确认通过" --cwd D:\project
-pnpm nexora inspect <run-id> --cwd D:\project --json
-pnpm nexora resume <run-id> --cwd D:\project --approve <request-id>
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm vitest run tests/apps/research-agent.test.ts tests/apps/tavily-news-source.test.ts tests/apps/research-scheduler.test.ts --no-file-parallelism
 ```
 
-CLI 在启动目录读取 `.env`；Runtime 包本身不读取文件或修改环境。Provider 配置、环境变量与 CLI 行为见 [Runtime 集成指南](docs/BUILD_WITH_NEXORA_RUNTIME.md)。
+## 继续阅读
+
+- [使用公共 Runtime 构建应用](docs/BUILD_WITH_NEXORA_RUNTIME.md)
+- [Research Agent：配置、调度、恢复与真实证据](docs/applications/research-agent.md)
+- [架构 Authority 与边界](ARCHITECTURE.md)
+- [测试和验收策略](TESTS.md)
+- [当前开发状态](DEVELOPMENT.md)
+- [README 三张配图的生成提示词](assets/readme/prompts.md)
+
+> License 尚未在仓库中声明。在采用、分发或发布前，请先补充明确的许可证。

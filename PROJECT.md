@@ -1,12 +1,12 @@
-# PROJECT.md — Nexora 产品目标与版本范围
+# PROJECT.md — Nexora Agent 产品目标与版本范围
 
-本文件定义 Nexora 的最终产品方向、各版本预期结果和长期不变量。
+本文件定义 Nexora Agent 的最终产品方向、各版本预期结果和长期不变量。
 
 当前实现细节以 `ARCHITECTURE.md`、`DATA_FLOW.md` 和 `SYSTEM_SOP.md` 为准；当前开发状态以 `DEVELOPMENT.md` 为准。历史 Spec、路线图和报告只用于追溯，不能覆盖本文件、当前代码与已批准 Feature Contract。
 
 ## 1. 最终产品定义
 
-Nexora 是面向开发者的、可嵌入和可深度扩展的通用 Agent Runtime。
+Nexora Agent 是面向开发者的、可嵌入和可深度扩展的通用 Agent Runtime。
 
 它提供一个足够强大的执行内核，使开发者能够在自己的应用、服务或工具中构建可靠的 Agent，而不必重新实现：
 
