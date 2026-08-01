@@ -1,8 +1,10 @@
+<p align="right"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
+
 # Nexora Agent
 
 **A trusted runtime for building reliable Agent applications.**
 
-Nexora Agent 是一个可嵌入 Node.js / TypeScript 应用的 Agent Runtime。你提供目标、模型和 Tool，Nexora 负责让每次执行可持久化、可交互、可恢复并经过验证。
+Nexora Agent is an embeddable Agent Runtime for Node.js and TypeScript applications. You provide the goal, model, and tools; Nexora makes each execution persistent, interactive, recoverable, and verifiable.
 
 ![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square)
@@ -17,33 +19,33 @@ After generating, add a centered, full-width image here with the alt text docume
 
 ## What is Nexora?
 
-构建 Agent 应用时，模型调用只是开始。真实产品还需要处理运行状态、Tool 副作用、人工批准、进程中断、失败恢复和结果验证。
+Calling a model is only the beginning of an Agent product. Production applications must also manage run state, tool side effects, human approval, process interruption, recovery, and result validation.
 
-Nexora 把这些通用问题收进一个 Runtime，让应用把代码留给真正有差异的部分：领域 Prompt、Tool、数据和用户体验。
+Nexora puts those shared concerns into one Runtime, so application code can stay focused on domain prompts, tools, data, and user experience.
 
-| 应用负责 | Nexora 负责 |
+| Your application owns | Nexora owns |
 | --- | --- |
-| 目标、Prompt 与领域 Tool | Run 生命周期与持久化 |
-| 模型和外部数据来源 | Plan、Invocation 与 Evidence |
-| UI、Scheduler 和产品交互 | Input、Approval、Events 与 Artifacts |
-| 领域结果与展示方式 | Recovery、并发控制与完成验证 |
+| Goals, prompts, and domain tools | Run lifecycle and persistence |
+| Models and external data sources | Plans, Invocations, and Evidence |
+| UI, schedulers, and product interactions | Input, Approval, Events, and Artifacts |
+| Domain results and presentation | Recovery, concurrency control, and completion validation |
 
-Nexora 不是聊天 UI、托管 Agent SaaS 或垂直应用框架。它通过公共 TypeScript API 嵌入宿主进程，不要求特定 Web 框架，也不接管应用数据。
+Nexora is not a chat UI, hosted Agent SaaS, or vertical application framework. It embeds into the host process through a public TypeScript API, requires no specific web framework, and does not take ownership of application data.
 
 ## Core capabilities
 
-- **Persistent Runs** — Run、事件和结果可以在进程重启后重新打开。
-- **Safe Tool execution** — Tool 调用经过 Schema、Approval、Invocation 和 Evidence。
-- **Human interaction** — 输入、批准和拒绝通过同一个 `RunHandle` 继续当前任务。
-- **Recovery** — 已知失败可以恢复，未知的非幂等副作用不会被冒险重放。
-- **Verified completion** — 模型文本或单个 Tool 成功不能直接冒充任务完成。
-- **Application ownership** — Prompt、Tool、业务数据和领域结果始终留在应用侧。
+- **Persistent Runs** — reopen Runs, events, and results after a process restart.
+- **Safe Tool execution** — execute tools through Schema, Approval, Invocation, and Evidence.
+- **Human interaction** — continue the same task with input, approval, or denial through `RunHandle`.
+- **Recovery** — resume known failures without blindly replaying unknown non-idempotent effects.
+- **Verified completion** — model text or one successful Tool call cannot impersonate task completion.
+- **Application ownership** — prompts, tools, business data, and domain results stay in the host application.
 
 ## Quick start
 
-> Nexora Agent 目前处于 pre-release 阶段，尚未发布到 npm。下面从源码工作区开始。
+> Nexora Agent is currently pre-release and is not yet published to npm. Start from the source workspace.
 
-要求：Node.js 20+、pnpm 11。
+Requirements: Node.js 20+ and pnpm 11.
 
 ```powershell
 git clone https://github.com/Atman-Angle/Nexora-Agent.git
@@ -52,7 +54,7 @@ pnpm install
 pnpm typecheck
 ```
 
-创建一个 Runtime，启动 Run，然后等待经过验证的结果：
+Create a Runtime, start a Run, and wait for its validated result:
 
 ```ts
 import {
@@ -68,7 +70,7 @@ const runtime = createRuntime({
 });
 
 try {
-  const run = runtime.run("读取 note.txt，并给出有证据的摘要");
+  const run = runtime.run("Read note.txt and produce an evidence-backed summary");
   const result = await run.result();
 
   console.log(result.status, result.summary);
@@ -77,7 +79,7 @@ try {
 }
 ```
 
-`runtime.run()` 返回 `RunHandle`。宿主可以用它订阅事件、提交输入或批准、取消任务、恢复执行，并在重启后重新打开原 Run。
+`runtime.run()` returns a `RunHandle`. A host can use it to subscribe to events, provide input or approval, cancel or resume execution, and reopen the original Run after a restart.
 
 ```ts
 const subscription = run.subscribe(async (event) => {
@@ -93,7 +95,7 @@ const subscription = run.subscribe(async (event) => {
 });
 ```
 
-完整接入说明见 [Build with the Nexora Runtime](docs/BUILD_WITH_NEXORA_RUNTIME.md)。
+See [Build with the Nexora Runtime](docs/BUILD_WITH_NEXORA_RUNTIME.md) for the complete integration guide.
 
 ## How it works
 
@@ -108,7 +110,7 @@ flowchart LR
   R <--> H["Input / Approval / Recovery"]
 ```
 
-Run、State Machine、Structured Plan、Tool Invocation、Evidence 和 Completion Gate 由 Runtime 统一拥有。模型和 Tool 只能通过公开边界参与执行，不能直接修改 Run 或宣布成功。
+The Runtime owns the Run, State Machine, Structured Plan, Tool Invocation, Evidence, and Completion Gate. Models and Tools participate only through public boundaries; neither can write Run state or declare success directly.
 
 <!--
 VISUAL SLOT: assets/readme/runtime-architecture.webp
@@ -118,7 +120,7 @@ After generating, add a centered, full-width image here with the alt text docume
 
 ## Reference harness: Research Agent
 
-[`apps/research-agent`](apps/research-agent) 是 Nexora 的真实应用 Harness。它在应用侧保存研究 Profile、连接 Tavily、定义新闻 Tool 并进行每日调度，然后只通过 `@nexora/runtime` 公共 API 发起和观察 Run：
+[`apps/research-agent`](apps/research-agent) is Nexora's real application harness. It keeps research Profiles, Tavily integration, news Tools, and daily scheduling on the application side, then starts and observes Runs exclusively through the public `@nexora/runtime` API:
 
 ```ts
 const runtime = createRuntime({ workspace, provider, tools });
@@ -126,9 +128,9 @@ const run = runtime.run(buildResearchGoal(profile));
 const result = await run.result();
 ```
 
-这个 Harness 用来验证同一个 Runtime 能支持真实数据检索、交互、失败恢复和结果验证，同时不读取 Core Store、不直接写 Run、不复制 CLI 编排，也不向 Core 添加 Research 特判。
+The harness verifies that the same Runtime can support real data retrieval, interaction, failure recovery, and result validation without reading the Core Store, writing Run state, copying CLI orchestration, or adding Research-specific branches to Core.
 
-**[查看 Research Agent 的完整流程、运行方式、产物效果与真实执行证据 →](docs/applications/research-agent.md)**
+**[Explore the complete Research Agent flow, setup, outputs, and live execution evidence →](docs/applications/research-agent.md)**
 
 ## Repository
 
@@ -156,7 +158,7 @@ Nexora-Agent/
 
 ## Project status
 
-Nexora Agent 目前处于 pre-release 阶段。Runtime、CLI 和 Research Agent Harness 可在本仓库中构建和测试；npm 发布、长期托管服务与开源许可证尚未完成或声明。
+Nexora Agent is currently pre-release. The Runtime, CLI, and Research Agent harness can be built and tested in this repository; npm publication, long-running hosted deployment, and an open-source license have not yet been completed or declared.
 
 ```powershell
 pnpm typecheck
@@ -165,4 +167,4 @@ pnpm build
 pnpm test
 ```
 
-> License 尚未声明。在采用、分发或发布前，请先确认许可证。
+> No license has been declared. Confirm licensing before adoption, distribution, or publication.
