@@ -22,11 +22,19 @@ const NewsItemSchema = z.object({
   title: z.string().min(1),
   url: z.string().url(),
   publishedAt: z.string().datetime(),
+  timestampKind: z.enum(["published", "retrieved"]).optional(),
   summary: z.string(),
   claims: z.array(NewsClaimSchema)
 }).strict();
 
 export type NewsItem = z.infer<typeof NewsItemSchema>;
+
+export {
+  createTavilyNewsSource,
+  createTavilyNewsSourceFromEnv,
+  loadResearchEnvironment,
+  type TavilyNewsSourceOptions
+} from "./tavily-source.js";
 
 const SampleNewsItem: NewsItem = {
   id: "example-1",
@@ -197,9 +205,6 @@ export function createResearchTools(
           }
           for (const item of result.value.items) {
             const parsed = NewsItemSchema.parse(item);
-            if (parsed.sourceId !== result.value.source.id) {
-              throw new Error(`News item ${parsed.id} does not belong to source ${result.value.source.id}.`);
-            }
             items.push(parsed);
           }
         }

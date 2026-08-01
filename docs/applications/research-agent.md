@@ -33,6 +33,28 @@ application scheduler
 
 `automatic` 是默认模式：热点选择完成后不等待用户每日确认，文章和脚本直接生成。`review` 只用于用户明确希望人工复核的 Profile。
 
+## Tavily 来源
+
+Tavily 凭据属于 Research Agent 应用，不进入 Runtime Tool input、Run、Invocation 或 Evidence。在启动目录的 `.env` 中配置：
+
+```dotenv
+TAVILY_API_KEY=tvly-...
+```
+
+应用入口需要显式加载环境并创建来源：
+
+```ts
+import {
+  createTavilyNewsSourceFromEnv,
+  loadResearchEnvironment
+} from "./index.js";
+
+loadResearchEnvironment();
+const tavily = createTavilyNewsSourceFromEnv();
+```
+
+Tavily 是一个搜索连接器，不是单一新闻发布方。连接器调用是否成功计入 `coverage`；热点的独立来源数按结果 URL 的发布方域名计算。没有发布时间的结果明确标记为 `timestampKind: "retrieved"`，不能伪装成已知发布时间。
+
 新闻来源、Profile、调度器、平台格式和成品归档都属于应用。Runtime 只负责统一执行、输入交互、持久化、失败/恢复、Invocation、Evidence 和完成验证。调度器不得把自己的 job 状态当成 Run 状态，也不能根据模型文本自行宣布成功。
 
 ## 当前纵向切片
