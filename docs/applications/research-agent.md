@@ -23,15 +23,17 @@ Profile 定义：
 application scheduler
 → agent.runDaily()
 → news.discover
-→ news.select_hotspots
-→ optional review input
+→ automatic: Tool 内按 Profile 选择有界热点
+→ review: news.select_hotspots → user input
 → news.analyze_selection
 → generate every configured deliverable
 → news.validate_output
 → validated persisted Result
 ```
 
-`automatic` 是默认模式：热点选择完成后不等待用户每日确认，文章和脚本直接生成。`review` 只用于用户明确希望人工复核的 Profile。
+`automatic` 是默认模式：`news.discover` 按 Profile 自动收敛热点，不把几百条候选重新交给模型抄写，也不等待用户每日确认；配置的文章、选题、脚本或追踪分析随后直接生成。`review` 只用于用户明确希望人工复核的 Profile。
+
+引用完成门要求一次提交 Profile 配置的全部产物。每个产物的 `citedSourceUrls` 必须与该产物选择的来源一致，并且每个完整 URL 必须逐字出现在正文中；仅在结构化字段声称“已引用”不能通过验证。
 
 ## Tavily 来源
 
@@ -57,6 +59,20 @@ Tavily 是一个搜索连接器，不是单一新闻发布方。连接器调用�
 
 新闻来源、Profile、调度器、平台格式和成品归档都属于应用。Runtime 只负责统一执行、输入交互、持久化、失败/恢复、Invocation、Evidence 和完成验证。调度器不得把自己的 job 状态当成 Run 状态，也不能根据模型文本自行宣布成功。
 
-## 当前纵向切片
+## 大规模真实端到端证据
 
-首个切片使用可注入的 `NewsSource`，验证多来源发现、自动热点选择、来源冲突分析，以及文章和脚本的引用完成门。真实 RSS/API Adapter、长期 Profile 存储、操作系统/服务调度和真实 Provider 执行属于后续 External Acceptance；它们仍留在 Research Agent 应用侧，不要求 Core 特判。
+2026-08-01 的真实 Tavily + 真实模型验收使用 25 个跨科技、商业、金融、科学、健康和能源领域的查询，在 24 小时时间窗内得到：
+
+- 328 条原始结果、290 条 URL 去重结果；
+- 自动收敛为 12 条代表来源，覆盖最多 6 个热点；
+- `news.discover` 与 `news.analyze_selection` 成功并各自产生 Evidence；
+- 首次引用校验因正文缺少完整 URL 连续失败，Run 正确进入 `blocked`，没有 Result；
+- 应用侧明确 Tool Contract 后，通过同一公共 `RunHandle.openRun().resume()` 恢复原 Run，没有重新搜索；
+- 最终 `news.validate_output` 成功，Run 产生第 3 条 Evidence、持久化 Result 和 `run.succeeded` 终态事件。
+
+Run ID 为 `7b59b2cc-ab65-4e6d-b5f1-7c5c476fa734`，语料 URL 摘要为 `sha256:3f586f6dfb9f84409d478126e29c1819c6a24a181d7e17910eaa70a4f96b4c44`。机器可读报告：
+
+- `reports/canaries/2026-08-01T09-57-28-114Z-research-agent-tavily-large-e2e.json`：首次执行及诚实的 blocked 边界；
+- `reports/canaries/2026-08-01-research-agent-tavily-large-e2e-resume.json`：同一 Run 恢复后的 succeeded 终态。
+
+当前尚未实现应用侧长期 Profile 存储和实际 cron/service 调度，因此完整自动日更产品仍是 `in_progress`。这些能力继续留在 Research Agent 应用侧，不要求 Core 特判。

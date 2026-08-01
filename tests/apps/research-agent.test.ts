@@ -57,10 +57,9 @@ describe("Automated Daily Research Agent", () => {
       decisions: [
         runtimeActions.plan({
           goal: "Generate the configured daily media outputs.",
-          acceptanceCriteria: ["covered discovery", "policy selection", "conflict analysis", "validated outputs"],
+          acceptanceCriteria: ["covered and selected discovery", "conflict analysis", "validated outputs"],
           steps: [
             { id: "discover", objective: "Discover daily candidates.", checks: [{ id: "discover-evidence", toolName: "news.discover" }] },
-            { id: "select", objective: "Select configured hotspots.", checks: [{ id: "selection-evidence", toolName: "news.select_hotspots" }] },
             { id: "analyze", objective: "Analyze source agreement and conflict.", checks: [{ id: "analysis-evidence", toolName: "news.analyze_selection" }] },
             { id: "deliver", objective: "Validate configured outputs.", checks: [{ id: "output-evidence", toolName: "news.validate_output" }] }
           ]
@@ -70,12 +69,6 @@ describe("Automated Daily Research Agent", () => {
           checkIds: ["discover-evidence"],
           toolName: "news.discover",
           input: { query: "人工智能 模型", since: "2026-08-01T00:00:00.000Z", limit: 20, excludeKeywords: ["招聘"] }
-        }),
-        runtimeActions.tool({
-          stepId: "select",
-          checkIds: ["selection-evidence"],
-          toolName: "news.select_hotspots",
-          input: { items: [first, second], maxHotspots: 3, minimumSources: 2 }
         }),
         runtimeActions.tool({
           stepId: "analyze",
@@ -101,7 +94,7 @@ describe("Automated Daily Research Agent", () => {
     const agent = createResearchAgent({
       workspace,
       provider,
-      sources: [source("alpha", first), source("beta", second), failingSource("offline")],
+      sources: [partialSource("alpha", first), source("beta", second), failingSource("offline")],
       profile
     });
     const run = agent.runDaily(new Date("2026-08-02T00:00:00.000Z"));
@@ -111,17 +104,16 @@ describe("Automated Daily Research Agent", () => {
     const inspection = await run.inspect();
     expect(inspection.invocations.map((item) => item.toolName)).toEqual([
       "news.discover",
-      "news.select_hotspots",
       "news.analyze_selection",
       "news.validate_output"
     ]);
     expect(inspection.invocations[0]?.resultJson).toMatchObject({
       coverage: { configured: 3, succeeded: 2, failed: 1 },
-      sourceErrors: [{ sourceId: "offline" }]
+      sourceErrors: [{ sourceId: "alpha:query-2" }, { sourceId: "offline" }]
     });
-    expect(inspection.invocations[1]?.resultJson).toMatchObject({ selections: [{ sourceCount: 2 }] });
-    expect(inspection.invocations[2]?.resultJson).toMatchObject({ subjects: [{ conflicting: true }] });
-    expect(result.evidence).toHaveLength(4);
+    expect(inspection.invocations[0]?.resultJson).toMatchObject({ hotspots: [{ sourceCount: 2 }] });
+    expect(inspection.invocations[1]?.resultJson).toMatchObject({ subjects: [{ conflicting: true }] });
+    expect(result.evidence).toHaveLength(3);
     expect(result.summary).toContain("开场：新模型真的更聪明了吗");
     await agent.close();
   });
@@ -168,8 +160,16 @@ describe("Automated Daily Research Agent", () => {
     const goal = buildResearchGoal(researchProfile(), new Date("2026-08-02T00:00:00.000Z"));
     expect(goal).toContain("不等待用户每日确认");
     expect(goal).toContain("脚本不是建议占位符");
+    expect(goal).toContain("每个 citedSourceUrls URL 都必须逐字出现在对应 draft 正文中");
     expect(goal).toContain("自媒体文章");
     expect(goal).toContain("可直接拍摄的脚本");
+  });
+
+  it("does not request an unconfigured script output", () => {
+    const goal = buildResearchGoal({ ...researchProfile(), outputs: ["ideas", "monitor"] }, new Date("2026-08-02T00:00:00.000Z"));
+    expect(goal).toContain("不要生成未配置的产物类型");
+    expect(goal).toContain("全部产物类型：ideas、monitor");
+    expect(goal).not.toContain("脚本不是建议占位符");
   });
 });
 
@@ -196,6 +196,19 @@ function source(id: string, item: NewsItem): NewsSource {
     name: item.sourceName,
     async search() {
       return [item];
+    }
+  };
+}
+
+function partialSource(id: string, item: NewsItem): NewsSource {
+  return {
+    id,
+    name: item.sourceName,
+    async search() {
+      return {
+        items: [item],
+        errors: [{ scope: "query-2", message: "one query was rate-limited" }]
+      };
     }
   };
 }
