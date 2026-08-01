@@ -12,6 +12,8 @@ import {
   type RuntimeTool
 } from "@nexora/runtime";
 
+import { validateDailySchedule } from "./schedule.js";
+
 const NewsClaimSchema = z.object({
   subject: z.string().min(1),
   stance: z.string().min(1),
@@ -89,8 +91,8 @@ export type ResearchProfile = {
   readonly name: string;
   readonly topics: readonly string[];
   readonly keywords: readonly string[];
-  readonly excludeKeywords?: readonly string[];
-  readonly sourceIds?: readonly string[];
+  readonly excludeKeywords?: readonly string[] | undefined;
+  readonly sourceIds?: readonly string[] | undefined;
   readonly lookbackHours: number;
   readonly maxHotspots: number;
   readonly minimumSources: number;
@@ -103,6 +105,25 @@ export type ResearchProfile = {
   };
 };
 
+export const ResearchProfileSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(200),
+  topics: z.array(z.string().trim().min(1).max(120)).min(1).max(50),
+  keywords: z.array(z.string().trim().min(1).max(200)).min(1).max(100),
+  excludeKeywords: z.array(z.string().trim().min(1).max(200)).max(100).optional(),
+  sourceIds: z.array(z.string().trim().min(1).max(120)).min(1).max(50).optional(),
+  lookbackHours: z.number().int().min(1).max(168),
+  maxHotspots: z.number().int().min(1).max(20),
+  minimumSources: z.number().int().min(1).max(20),
+  reviewMode: z.enum(["automatic", "review"]),
+  outputs: z.array(z.enum(["article", "ideas", "script", "monitor"])).min(1).max(4),
+  platforms: z.array(z.string().trim().min(1).max(120)).min(1).max(20),
+  schedule: z.object({
+    cron: z.string().trim().min(1).max(100),
+    timezone: z.string().trim().min(1).max(100)
+  }).strict()
+}).strict();
+
 export type ResearchAgent = {
   readonly runtime: RuntimeEngine;
   readonly profile: ResearchProfile;
@@ -111,7 +132,7 @@ export type ResearchAgent = {
 };
 
 export function createResearchAgent(options: ResearchAgentOptions): ResearchAgent {
-  validateProfile(options.profile);
+  validateResearchProfile(options.profile);
   const runtime = createRuntime({
     workspace: options.workspace,
     provider: options.provider,
@@ -130,7 +151,7 @@ export function createResearchAgent(options: ResearchAgentOptions): ResearchAgen
 }
 
 export function buildResearchGoal(profile: ResearchProfile, now: Date = new Date()): string {
-  validateProfile(profile);
+  validateResearchProfile(profile);
   const since = new Date(now.getTime() - profile.lookbackHours * 60 * 60 * 1000).toISOString();
   const outputDescriptions = profile.outputs.map((intent) => ({
     article: "自媒体文章（标题、导语、正文结构和来源引用）",
@@ -164,14 +185,17 @@ export function buildResearchGoal(profile: ResearchProfile, now: Date = new Date
   ].join("\n");
 }
 
-function validateProfile(profile: ResearchProfile): void {
-  if (!profile.id.trim() || !profile.name.trim()) throw new Error("Research Profile id and name are required.");
-  if (profile.topics.length === 0 || profile.keywords.length === 0) throw new Error("Research Profile requires topics and keywords.");
-  if (profile.lookbackHours < 1 || profile.lookbackHours > 168) throw new Error("lookbackHours must be between 1 and 168.");
-  if (profile.maxHotspots < 1 || profile.maxHotspots > 20) throw new Error("maxHotspots must be between 1 and 20.");
-  if (profile.minimumSources < 1) throw new Error("minimumSources must be positive.");
-  if (profile.outputs.length === 0 || profile.platforms.length === 0) throw new Error("Research Profile requires outputs and platforms.");
-  if (!profile.schedule.cron.trim() || !profile.schedule.timezone.trim()) throw new Error("Research Profile requires an application-owned schedule.");
+export function validateResearchProfile(profile: ResearchProfile): void {
+  parseResearchProfile(profile);
+}
+
+export function parseResearchProfile(value: unknown): ResearchProfile {
+  const profile = ResearchProfileSchema.parse(value);
+  if (new Set(profile.outputs).size !== profile.outputs.length) {
+    throw new Error("Research Profile output intents must be unique.");
+  }
+  validateDailySchedule(profile.schedule);
+  return profile;
 }
 
 export function createResearchTools(

@@ -2,6 +2,8 @@
 
 Research Agent 的主流程是“配置一次，自动日更”。用户先保存一个应用侧 `ResearchProfile`，应用用该 Profile 创建 Research Agent，外部调度器按 `cron/timezone` 每天调用一次 `agent.runDaily()`。每次调度创建一个新的持久化 Nexora Run；应用不自行维护 Run 状态、Plan、Approval、Evidence 或完成结论。
 
+当前应用侧 Scheduler 已实现该流程。Profile 的 cron 限定为每日一次的 `<minute> <hour> * * *`，时区使用有效 IANA timezone，例如 `0 8 * * *` 与 `Asia/Shanghai`。
+
 ## 用户配置
 
 Profile 定义：
@@ -59,6 +61,39 @@ Tavily 是一个搜索连接器，不是单一新闻发布方。连接器调用�
 
 新闻来源、Profile、调度器、平台格式和成品归档都属于应用。Runtime 只负责统一执行、输入交互、持久化、失败/恢复、Invocation、Evidence 和完成验证。调度器不得把自己的 job 状态当成 Run 状态，也不能根据模型文本自行宣布成功。
 
+## Profile 持久化与每日调度
+
+应用使用 `createResearchApplicationStore()` 保存经过 Schema 校验的 Profile，并通过 `createResearchScheduler()` 执行到期任务：
+
+```ts
+import { createResearchAgent } from "./index.js";
+import {
+  createResearchApplicationStore,
+  createResearchScheduler
+} from "./scheduler.js";
+
+const store = createResearchApplicationStore("D:/research-app/state");
+await store.saveProfile(profile);
+
+const scheduler = createResearchScheduler({
+  store,
+  runWorkspaceDirectory: "D:/research-app/runs",
+  createAgent: ({ profile, workspace }) => createResearchAgent({
+    profile,
+    workspace,
+    provider,
+    sources
+  })
+});
+
+const controller = scheduler.start();
+// 服务退出时：controller.stop();
+```
+
+Profile 使用应用侧追加日志持久化，更新同一 `profile.id` 时最新记录生效。Scheduler 根据 Profile 时区计算业务日期；达到当日计划时间后先创建原子 Claim，再调用 `agent.runDaily()`，最后保存 `profileId + businessDate → runId`。同一进程的重叠 tick、多个调度进程和应用重启都会命中同一个 Claim，不会创建第二个 Run；下一业务日期使用新的 Claim 并创建新 Run。
+
+调度记录只保存 Profile digest、业务日期、Claim 和 Run ID，不保存或推导 Run Status。Run 的状态、失败、恢复、Evidence 和 Result 仍只从公共 `RunHandle` 读取。若进程在 Claim 创建后、Run ID 落盘前崩溃，Claim 会以 `runId: null` 暴露供人工核对，而不会冒险自动创建可能重复的 Run。
+
 ## 大规模真实端到端证据
 
 2026-08-01 的真实 Tavily + 真实模型验收使用 25 个跨科技、商业、金融、科学、健康和能源领域的查询，在 24 小时时间窗内得到：
@@ -75,4 +110,4 @@ Run ID 为 `7b59b2cc-ab65-4e6d-b5f1-7c5c476fa734`，语料 URL 摘要为 `sha256
 - `reports/canaries/2026-08-01T09-57-28-114Z-research-agent-tavily-large-e2e.json`：首次执行及诚实的 blocked 边界；
 - `reports/canaries/2026-08-01-research-agent-tavily-large-e2e-resume.json`：同一 Run 恢复后的 succeeded 终态。
 
-当前尚未实现应用侧长期 Profile 存储和实际 cron/service 调度，因此完整自动日更产品仍是 `in_progress`。这些能力继续留在 Research Agent 应用侧，不要求 Core 特判。
+Profile 持久化、应用侧轮询 Scheduler 和每日幂等执行已经通过确定性集成测试。真实 Tavily/模型 E2E 与 Scheduler 持久化测试目前是分开的；长期运行的服务部署、进程守护、告警和真实跨日观察属于 External Environment Acceptance，不进入 Runtime Core。
