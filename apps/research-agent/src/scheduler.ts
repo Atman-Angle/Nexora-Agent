@@ -3,6 +3,7 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import type { RunInspection, RunOptions } from "@nexora/runtime";
+import { z } from "zod";
 
 import {
   parseResearchProfile,
@@ -13,6 +14,40 @@ import { getDailyScheduleState } from "./schedule.js";
 
 const PROFILE_JOURNAL_SCHEMA_VERSION = 1;
 const EXECUTION_SCHEMA_VERSION = 1;
+const DAILY_PACKAGE_SCHEMA_VERSION = 1;
+
+const ResearchIntentSchema = z.enum(["article", "ideas", "script", "monitor"]);
+const ValidatedDeliverableInputSchema = z.object({
+  intent: ResearchIntentSchema,
+  draft: z.string().min(1),
+  selectedSourceUrls: z.array(z.string().url()).min(1),
+  citedSourceUrls: z.array(z.string().url()).min(1)
+}).strict();
+const DailyResearchPackageSchema = z.object({
+  schemaVersion: z.literal(DAILY_PACKAGE_SCHEMA_VERSION),
+  profileId: z.string().min(1),
+  profileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  businessDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u),
+  runId: z.string().min(1),
+  generatedAt: z.string().datetime(),
+  resultSummary: z.string().min(1),
+  corpus: z.object({
+    rawItemCount: z.number().int().nonnegative(),
+    uniqueItemCount: z.number().int().nonnegative(),
+    returnedItemCount: z.number().int().nonnegative(),
+    urlDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u)
+  }).strict(),
+  hotspots: z.array(z.object({
+    subject: z.string().min(1),
+    sourceCount: z.number().int().positive(),
+    reason: z.string().min(1)
+  }).strict()),
+  deliverables: z.array(ValidatedDeliverableInputSchema.extend({
+    citedSourceCount: z.number().int().positive()
+  }).strict()).min(1).max(4)
+}).strict();
+
+export type DailyResearchPackage = z.infer<typeof DailyResearchPackageSchema>;
 
 export type PersistedResearchProfile = {
   readonly profile: ResearchProfile;
@@ -37,6 +72,7 @@ export type ResearchApplicationStore = {
   getProfile(profileId: string): Promise<PersistedResearchProfile | null>;
   listProfiles(): Promise<readonly PersistedResearchProfile[]>;
   getDailyExecution(profileId: string, businessDate: string): Promise<DailyExecutionRecord | null>;
+  getDailyPackage(profileId: string, businessDate: string): Promise<DailyResearchPackage | null>;
   claimDailyExecution(input: {
     readonly profile: PersistedResearchProfile;
     readonly businessDate: string;
@@ -49,6 +85,7 @@ export type ResearchApplicationStore = {
     readonly runStartedAt: Date;
     readonly runtimeWorkspace: string;
   }): Promise<DailyExecutionRecord>;
+  saveDailyPackage(value: DailyResearchPackage): Promise<DailyResearchPackage>;
 };
 
 export type ResearchAgentFactory = (input: {
@@ -116,6 +153,11 @@ export function createResearchApplicationStore(stateDirectory: string): Research
       return await readDailyExecution(root, profileId, businessDate);
     },
 
+    async getDailyPackage(profileId, businessDate) {
+      validateBusinessDate(businessDate);
+      return await readDailyPackage(root, profileId, businessDate);
+    },
+
     async claimDailyExecution(input) {
       validateBusinessDate(input.businessDate);
       const claimedAt = validIsoDate(input.claimedAt, "Execution claimedAt");
@@ -172,6 +214,27 @@ export function createResearchApplicationStore(stateDirectory: string): Research
         return existing;
       }
       return attached;
+    },
+
+    async saveDailyPackage(value) {
+      const researchPackage = DailyResearchPackageSchema.parse(value);
+      const execution = await readDailyExecution(root, researchPackage.profileId, researchPackage.businessDate);
+      if (execution?.runId !== researchPackage.runId) {
+        throw new Error("Daily research package Run does not match the persisted execution mapping.");
+      }
+      const path = dailyPackagePath(root, researchPackage.profileId, researchPackage.businessDate);
+      await mkdir(dirname(path), { recursive: true });
+      try {
+        await writeFile(path, `${JSON.stringify(researchPackage, null, 2)}\n`, { encoding: "utf8", flag: "wx" });
+        return researchPackage;
+      } catch (error) {
+        if (!isFileExistsError(error)) throw error;
+        const existing = await readDailyPackage(root, researchPackage.profileId, researchPackage.businessDate);
+        if (existing?.runId !== researchPackage.runId) {
+          throw new Error("Daily research package already belongs to another Run.");
+        }
+        return existing;
+      }
     }
   });
 }
@@ -249,7 +312,18 @@ export function createResearchScheduler(options: {
             } catch {
               // The persisted inspection is the scheduler's read-only outcome for blocked/failed Runs.
             }
-            return await run.inspect();
+            const inspection = await run.inspect();
+            if (inspection.status === "succeeded") {
+              const execution = await options.store.getDailyExecution(persisted.profile.id, schedule.businessDate);
+              if (execution === null) throw new Error("Succeeded scheduled Run has no application execution mapping.");
+              await options.store.saveDailyPackage(buildDailyResearchPackage({
+                profile: persisted,
+                execution,
+                inspection,
+                generatedAt: now()
+              }));
+            }
+            return inspection;
           } finally {
             await agent.close();
           }
@@ -351,6 +425,108 @@ async function readDailyExecution(
   return parseExecutionRun(runValue, claim);
 }
 
+async function readDailyPackage(
+  root: string,
+  profileId: string,
+  businessDate: string
+): Promise<DailyResearchPackage | null> {
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(dailyPackagePath(root, profileId, businessDate), "utf8"));
+  } catch (error) {
+    if (isFileNotFoundError(error)) return null;
+    throw new Error(`Daily research package is unreadable: ${errorMessage(error)}`);
+  }
+  const researchPackage = DailyResearchPackageSchema.parse(value);
+  if (researchPackage.profileId !== profileId || researchPackage.businessDate !== businessDate) {
+    throw new Error("Daily research package path does not match its identity.");
+  }
+  return researchPackage;
+}
+
+function buildDailyResearchPackage(input: {
+  readonly profile: PersistedResearchProfile;
+  readonly execution: DailyExecutionRecord;
+  readonly inspection: RunInspection;
+  readonly generatedAt: Date;
+}): DailyResearchPackage {
+  if (input.inspection.status !== "succeeded" || input.inspection.result?.status !== "succeeded") {
+    throw new Error("Only a succeeded validated Run can produce a daily research package.");
+  }
+  if (input.execution.runId !== input.inspection.runId) {
+    throw new Error("Daily research package inspection does not match the scheduled Run.");
+  }
+  const discovery = latestSucceededInvocation(input.inspection, "news.discover");
+  const validation = latestSucceededInvocation(input.inspection, "news.validate_output");
+  const discoveryOutput = z.object({
+    corpus: DailyResearchPackageSchema.shape.corpus,
+    hotspots: z.array(z.object({
+      subject: z.string().min(1),
+      sourceCount: z.number().int().positive(),
+      reason: z.string().min(1)
+    }).passthrough())
+  }).passthrough().parse(discovery.resultJson);
+  const validationInput = z.object({
+    deliverables: z.array(ValidatedDeliverableInputSchema).min(1).max(4)
+  }).strict().parse(validation.inputJson);
+  const validationOutput = z.object({
+    valid: z.literal(true),
+    deliverables: z.array(z.object({
+      intent: ResearchIntentSchema,
+      citedSourceCount: z.number().int().positive(),
+      draft: z.string().min(1)
+    }).strict()).min(1).max(4)
+  }).strict().parse(validation.resultJson);
+  const requiredIntents = [...new Set(input.profile.profile.outputs)].sort();
+  const receivedIntents = validationInput.deliverables.map((item) => item.intent).sort();
+  if (JSON.stringify(requiredIntents) !== JSON.stringify(receivedIntents)) {
+    throw new Error("Validated deliverables do not match the persisted Research Profile outputs.");
+  }
+  const outputByIntent = new Map(validationOutput.deliverables.map((item) => [item.intent, item]));
+  const deliverables = validationInput.deliverables.map((deliverable) => {
+    const output = outputByIntent.get(deliverable.intent);
+    const selected = [...new Set(deliverable.selectedSourceUrls)].sort();
+    const cited = [...new Set(deliverable.citedSourceUrls)].sort();
+    if (
+      output === undefined
+      || output.draft !== deliverable.draft
+      || output.citedSourceCount !== cited.length
+      || JSON.stringify(selected) !== JSON.stringify(cited)
+      || cited.some((url) => !deliverable.draft.includes(url))
+    ) {
+      throw new Error(`Validated ${deliverable.intent} output cannot be safely archived.`);
+    }
+    return {
+      ...deliverable,
+      citedSourceCount: output.citedSourceCount
+    };
+  });
+  return DailyResearchPackageSchema.parse({
+    schemaVersion: DAILY_PACKAGE_SCHEMA_VERSION,
+    profileId: input.profile.profile.id,
+    profileDigest: input.profile.digest,
+    businessDate: input.execution.businessDate,
+    runId: input.inspection.runId,
+    generatedAt: validIsoDate(input.generatedAt, "Daily research package generatedAt"),
+    resultSummary: input.inspection.result.summary,
+    corpus: discoveryOutput.corpus,
+    hotspots: discoveryOutput.hotspots.map((hotspot) => ({
+      subject: hotspot.subject,
+      sourceCount: hotspot.sourceCount,
+      reason: hotspot.reason
+    })),
+    deliverables
+  });
+}
+
+function latestSucceededInvocation(inspection: RunInspection, toolName: string) {
+  for (let index = inspection.invocations.length - 1; index >= 0; index -= 1) {
+    const invocation = inspection.invocations[index];
+    if (invocation?.toolName === toolName && invocation.status === "succeeded") return invocation;
+  }
+  throw new Error(`Succeeded Run is missing a successful ${toolName} Invocation.`);
+}
+
 function parseExecutionClaim(value: unknown): DailyExecutionRecord {
   if (
     !isRecord(value)
@@ -429,6 +605,10 @@ function dailyClaimPath(root: string, profileId: string, businessDate: string): 
 
 function dailyRunPath(root: string, profileId: string, businessDate: string): string {
   return join(root, "executions", profilePathSegment(profileId), `${businessDate}.run.json`);
+}
+
+function dailyPackagePath(root: string, profileId: string, businessDate: string): string {
+  return join(root, "packages", profilePathSegment(profileId), `${businessDate}.json`);
 }
 
 function profilePathSegment(profileId: string): string {

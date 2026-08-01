@@ -84,6 +84,20 @@ describe("Research Agent application scheduler", () => {
     expect(inspection.status).toBe("succeeded");
     expect(inspection.evidence).toHaveLength(3);
 
+    const researchPackage = await createResearchApplicationStore(stateDirectory)
+      .getDailyPackage(profile.id, "2026-08-02");
+    expect(researchPackage).toMatchObject({
+      profileId: profile.id,
+      runId: started[0]!.runId,
+      deliverables: [
+        { intent: "article", citedSourceCount: 2 },
+        { intent: "ideas", citedSourceCount: 2 },
+        { intent: "script", citedSourceCount: 2 },
+        { intent: "monitor", citedSourceCount: 2 }
+      ]
+    });
+    expect(researchPackage?.deliverables.every((item) => item.draft.includes("https://alpha.example/news"))).toBe(true);
+
     const execution = await createResearchApplicationStore(stateDirectory)
       .getDailyExecution(profile.id, "2026-08-02");
     expect(execution).toMatchObject({
@@ -110,6 +124,7 @@ describe("Research Agent application scheduler", () => {
     expect(nextDay.started[0]?.runId).not.toBe(started[0]!.runId);
     expect(createdAgentCount).toBe(2);
     expect((await nextDay.started[0]!.completion).status).toBe("succeeded");
+    expect((await store.getDailyPackage(profile.id, "2026-08-03"))?.runId).toBe(nextDay.started[0]!.runId);
   });
 });
 
@@ -142,15 +157,10 @@ function createSuccessfulAgent(profile: ResearchProfile, workspace: string) {
         checkIds: ["validate-check"],
         toolName: "news.validate_output",
         input: {
-          deliverables: [{
-            intent: "article",
-            draft,
-            selectedSourceUrls: newsItems.map((item) => item.url),
-            citedSourceUrls: newsItems.map((item) => item.url)
-          }]
+          deliverables
         }
       }),
-      runtimeActions.finish({ summary: draft, evidence: "all" })
+      runtimeActions.finish({ summary: "All four configured daily research outputs were validated and archived.", evidence: "all" })
     ],
     validations: [{ passed: true, issues: [] }]
   });
@@ -167,7 +177,7 @@ function researchProfile(): ResearchProfile {
     maxHotspots: 2,
     minimumSources: 2,
     reviewMode: "automatic",
-    outputs: ["article"],
+    outputs: ["article", "ideas", "script", "monitor"],
     platforms: ["微信公众号"],
     schedule: { cron: "0 8 * * *", timezone: "Asia/Shanghai" }
   };
@@ -204,7 +214,33 @@ const newsSource: NewsSource = {
   }
 };
 
-const draft = "今日 AI 产品发布引发关注，厂商公告与独立评测存在差异，正文完整保留双方证据。来源：https://alpha.example/news 与 https://beta.example/news。";
+const sourceLine = "来源：https://alpha.example/news 与 https://beta.example/news。";
+const deliverables = [
+  {
+    intent: "article" as const,
+    draft: `# 今日 AI 产品观察\n\n厂商正式发布新的 AI 产品，独立评测认为部分指标仍需复现。本文完整呈现双方证据及其分歧。${sourceLine}`,
+    selectedSourceUrls: newsItems.map((item) => item.url),
+    citedSourceUrls: newsItems.map((item) => item.url)
+  },
+  {
+    intent: "ideas" as const,
+    draft: `选题建议：新 AI 产品是否真的达到发布会宣称的能力？面向技术决策者，对比厂商公告、独立评测和可复现实验。${sourceLine}`,
+    selectedSourceUrls: newsItems.map((item) => item.url),
+    citedSourceUrls: newsItems.map((item) => item.url)
+  },
+  {
+    intent: "script" as const,
+    draft: `开场：新 AI 产品真的升级了吗？第一段介绍厂商公告，第二段展示独立测试，第三段解释指标差异，结尾给出持续复测建议。${sourceLine}`,
+    selectedSourceUrls: newsItems.map((item) => item.url),
+    citedSourceUrls: newsItems.map((item) => item.url)
+  },
+  {
+    intent: "monitor" as const,
+    draft: `领域追踪：今日新增事实是产品正式发布；主要冲突是独立评测未复现部分指标；未知项是后续版本能否稳定达到公告结果。${sourceLine}`,
+    selectedSourceUrls: newsItems.map((item) => item.url),
+    citedSourceUrls: newsItems.map((item) => item.url)
+  }
+];
 
 function temporaryRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-research-scheduler-"));

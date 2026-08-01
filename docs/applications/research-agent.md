@@ -94,6 +94,14 @@ Profile 使用应用侧追加日志持久化，更新同一 `profile.id` 时最�
 
 调度记录只保存 Profile digest、业务日期、Claim 和 Run ID，不保存或推导 Run Status。Run 的状态、失败、恢复、Evidence 和 Result 仍只从公共 `RunHandle` 读取。若进程在 Claim 创建后、Run ID 落盘前崩溃，Claim 会以 `runId: null` 暴露供人工核对，而不会冒险自动创建可能重复的 Run。
 
+成功 Run 完成后，Scheduler 从公共 `RunInspection` 中读取已成功的 discovery 和 validation Invocation，生成应用侧 `DailyResearchPackage`。产物包包含 Profile digest、业务日期、runId、语料统计、热点摘要、Result 摘要，以及配置的全部正文和引用。它按 Profile+业务日期原子写入，可在应用重启后读取：
+
+```ts
+const researchPackage = await store.getDailyPackage(profile.id, "2026-08-01");
+```
+
+产物包不保存 Run Status；若 Run 未成功、缺少配置产物、引用集合不一致或 runId 与调度映射不一致，应用拒绝归档。
+
 ## 大规模真实端到端证据
 
 2026-08-01 的真实 Tavily + 真实模型验收使用 25 个跨科技、商业、金融、科学、健康和能源领域的查询，在 24 小时时间窗内得到：
@@ -117,3 +125,5 @@ Profile 持久化、应用侧轮询 Scheduler 和每日幂等执行已经通过�
 2026-08-01 又执行了一次由新 Scheduler 发起的真实 one-shot：应用先持久化 Profile，Scheduler 为 `Asia/Shanghai` 业务日期创建原子 Claim，再创建 Nexora Run `8cba7fe3-eb3e-4a9a-a88e-96079d4837ef`。真实 Tavily 返回 48 条原始、46 条 URL 去重结果，自动收敛为 6 条代表来源；`news.discover → news.analyze_selection → news.validate_output` 三次 Invocation 均一次成功，并分别产生 Evidence。公共 CLI 逆向读取确认 Result 已持久化、`StopReason=VALIDATED`、最后事件为 `run.succeeded`。
 
 机器报告为 `reports/canaries/2026-08-01T11-01-23-031Z-research-scheduler-one-shot.json`。该验收只运行一次到终态，不包含长期驻留部署。
+
+随后使用 `outputs: ["article", "ideas", "script", "monitor"]` 完成第二次真实 one-shot。Run `204d7d37-7a4e-4117-b0c3-26905cc2d14a` 从 48 条原始、46 条去重新闻中选择 6 条代表来源，一次完成三个 Tool Invocation，并归档文章、选题、完整脚本和领域追踪分析四种产物。公共 CLI 再次确认 `StopReason=VALIDATED`、3 条 Evidence、持久化 Result 和 `run.succeeded`。完整产物包与机器报告位于 `reports/canaries/2026-08-01T11-13-22-180Z-research-scheduler-one-shot.json`。
