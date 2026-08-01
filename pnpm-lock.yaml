@@ -51,6 +51,15 @@ importers:
 
   apps/cli: {}
 
+  apps/research-agent:
+    dependencies:
+      '@nexora/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+
   packages/runtime:
     dependencies:
       '@vscode/ripgrep':
