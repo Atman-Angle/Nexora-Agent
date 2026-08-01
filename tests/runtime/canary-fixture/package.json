@@ -1,0 +1,8 @@
+{
+  "name": "nexora-e049-canary-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/verify.mjs"
+  }
+}
