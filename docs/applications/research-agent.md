@@ -1,5 +1,11 @@
 # Automated Daily Research Agent
 
+<!--
+VISUAL SLOT: assets/readme/research-agent-proof.webp
+Generation prompt: ../../assets/readme/prompts.md#3-research-agent-proof-board
+After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
+-->
+
 Research Agent 的主流程是“配置一次，自动日更”。用户先保存一个应用侧 `ResearchProfile`，应用用该 Profile 创建 Research Agent，外部调度器按 `cron/timezone` 每天调用一次 `agent.runDaily()`。每次调度创建一个新的持久化 Nexora Run；应用不自行维护 Run 状态、Plan、Approval、Evidence 或完成结论。
 
 当前应用侧 Scheduler 已实现该流程。Profile 的 cron 限定为每日一次的 `<minute> <hour> * * *`，时区使用有效 IANA timezone，例如 `0 8 * * *` 与 `Asia/Shanghai`。
