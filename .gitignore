@@ -2,6 +2,30 @@ node_modules/
 dist/
 coverage/
 
+# Local agent and development tooling; never publish these directories.
+.agents/
+.local-tool-settings/
+.local-agent-cache/
+.cursor/
+AGENTS.md
+MANIFEST.json
+DEVELOPMENT.md
+LOOP.md
+SYSTEM_SOP.md
+agent-evaluation/
+reports/
+specs/
+docs/audit/
+docs/history/
+docs/later/
+docs/private-design/
+docs/DECISIONS.md
+docs/F007_SAFETY_AUDIT.md
+apps/research-agent/canaries/
+scripts/
+prototype/
+assets/readme/prompts.md
+
 *.db
 *.db-wal
 *.db-shm
@@ -9,6 +33,17 @@ coverage/
 .env
 .env.*
 !.env.example
+!**/.env.example
+
+# Local credentials and machine-specific configuration.
+*.local
+*.secret
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets*.json
 
 *.log
 .tmp/
@@ -22,16 +57,3 @@ tmp/
 .tmp-e001/
 .tmp-e0013/
 .tmp-e0014/
-
-# E001 real-convergence loop snapshots (ephemeral per-run JSON)
-reports/e0013-real-convergence-*/
-reports/e0014-real-validation-repair-*/
-
-# Agent evaluation keeps durable JSON evidence; copied workspaces and local runtime data are reproducible.
-agent-evaluation/runs/**/workspace/
-agent-evaluation/runs/**/artifacts/
-agent-evaluation/runs/**/*.pid
-agent-evaluation/runs/**/diff.patch
-
-# Local tool settings
-.local-tool-settings/

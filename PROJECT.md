@@ -2,7 +2,7 @@
 
 本文件定义 Nexora Agent 的最终产品方向、各版本预期结果和长期不变量。
 
-当前实现细节以 `ARCHITECTURE.md`、`DATA_FLOW.md` 和 `SYSTEM_SOP.md` 为准；当前开发状态以 `DEVELOPMENT.md` 为准。历史 Spec、路线图和报告只用于追溯，不能覆盖本文件、当前代码与已批准 Feature Contract。
+当前实现细节以 `ARCHITECTURE.md`、`DATA_FLOW.md`、公开文档和当前代码为准。历史设计与验证材料不覆盖本文件、当前代码或公开 API Contract。
 
 ## 1. 最终产品定义
 
@@ -198,7 +198,7 @@ Run 状态       → State Machine + persisted Run
 
 完成标准：固定 read/search/mutation/denial 场景通过，失败和未知副作用不能误报成功，包外 TypeScript 调用方能够运行完整闭环。
 
-当前状态：实现、确定性故障边界和包外 Consumer 已形成 Runtime Feature Core baseline；最新真实 Provider UAT 仍有 timeout 与交互收敛失败，因此 External Environment Acceptance 保持 `verification_blocked`，1.1 整体不声明发布完成。Provider 失败一旦暴露假成功、越权 Effect、Evidence 丢失或不可恢复，仍按 Feature Core 缺陷处理。具体分层见 `DEVELOPMENT.md`、`TESTS.md` 和 `reports/`。
+当前状态：实现、确定性故障边界和包外 Consumer 已形成 Runtime Feature Core baseline；真实 Provider 的延迟、限流和交互收敛仍属于部署环境验收，不被本仓库的确定性测试结果替代。公共验收边界见 `TESTS.md`。
 
 ### 1.2 — 开发者级嵌入
 
@@ -220,7 +220,7 @@ Run 状态       → State Machine + persisted Run
 
 限定范围：稳定公共 Contract、`runtime.run()`、`RunHandle`、Provider Adapter、Tool Builders、Runtime Testing Kit 和两个包外调用方。当前不授权插件 Registry、Workflow DSL、通用 Store Adapter、多 Agent、应用框架或为未来调用方预建的扩展系统。
 
-当前状态：1.2 Feature Core 已在本地完成。一次性 Worker 与长驻 HTTP/SSE Host 从同一个 tarball 安装，均只通过公开 Runtime 边界完成相同可信 mutation 闭环；完整确定性回归、类型、构建、package contents、并发、恢复、取消和资源退出证据通过。该状态不等于已 commit、npm 发布或真实 Provider External Acceptance 通过；具体证据与遗留边界见 `DEVELOPMENT.md` 和 `docs/audit/nexora-1.2-validation-report.md`。
+当前状态：1.2 Feature Core 已形成公开 Runtime API、包外 Consumer、确定性回归、恢复、取消和资源释放边界。该状态不等于 npm 发布或真实 Provider External Acceptance 通过。
 
 ### 1.3 — 真实 Agent 应用验证
 

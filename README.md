@@ -165,11 +165,9 @@ Nexora-Agent/
 ├─ packages/runtime/                 # Public Runtime
 ├─ apps/cli/                         # Thin CLI host
 ├─ apps/research-agent/              # Real application harness
-│  ├─ src/                           # Application code
-│  └─ canaries/                      # Live end-to-end runners
+│  └─ src/                           # Application code
 ├─ tests/                            # Runtime and application contracts
 ├─ docs/                             # Guides and case studies
-├─ reports/canaries/                 # Machine-readable live evidence
 └─ assets/readme/                    # Logo and README visuals
 ```
 
@@ -180,7 +178,6 @@ Nexora-Agent/
 - [Architecture and authority boundaries](ARCHITECTURE.md)
 - [System data flow](DATA_FLOW.md)
 - [Testing strategy](TESTS.md)
-- [Current development state](DEVELOPMENT.md)
 
 ## Project status
 

@@ -216,9 +216,9 @@ nexora/
 │           └── tool-runtime/
 ├── tests/
 │   └── runtime/
-├── specs/
 ├── docs/
-└── reports/
+├── examples/
+└── assets/
 ```
 
 当前五个 Runtime 内部职责：

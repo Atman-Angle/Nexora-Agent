@@ -13,19 +13,12 @@ export default [
       "tests/fixtures/**",
       ".nexora/**",
       ".nexora-docling/**",
-      ".local-tool-settings/**",
       ".tmp-e001/**",
       ".tmp-e0013/**",
-      ".tmp-e0014/**",
-      "agent-evaluation/runs/**"
+      ".tmp-e0014/**"
     ]
   },
   js.configs.recommended,
-  {
-    files: ["scripts/**/*.mjs"],
-    languageOptions: { globals: { ...globals.node } },
-    rules: { "no-console": "off" }
-  },
   {
     files: ["**/*.ts"],
     languageOptions: {

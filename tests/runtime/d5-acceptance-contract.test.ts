@@ -4,14 +4,14 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("D5 Nexora 1.2 acceptance", () => {
-  it("records a requirement-to-evidence validation report", () => {
-    const report = source("docs", "audit", "nexora-1.2-validation-report.md");
+  it("keeps the public documentation boundary explicit", () => {
+    const docs = source("docs", "README.md");
+    const guide = source("docs", "BUILD_WITH_NEXORA_RUNTIME.md");
 
-    expect(report).toContain("Requirement-to-Evidence");
-    expect(report).toContain("Worker");
-    expect(report).toContain("HTTP Host");
-    expect(report).toContain("Feature Core");
-    expect(report).toContain("External Acceptance");
+    expect(docs).toContain("public documentation");
+    expect(docs).toContain("BUILD_WITH_NEXORA_RUNTIME.md");
+    expect(guide).toContain("@nexora/runtime");
+    expect(docs).not.toMatch(/audit|reports|specs|agent-evaluation/);
   });
 
   it("keeps package exports and public types structurally closed", () => {

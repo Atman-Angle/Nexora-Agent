@@ -165,11 +165,9 @@ Nexora-Agent/
 ├─ packages/runtime/                 # 公共 Runtime
 ├─ apps/cli/                         # 薄 CLI 宿主
 ├─ apps/research-agent/              # 真实应用 Harness
-│  ├─ src/                           # 应用代码
-│  └─ canaries/                      # 真实端到端入口
+│  └─ src/                           # 应用代码
 ├─ tests/                            # Runtime 与应用 Contract
 ├─ docs/                             # 指南与案例
-├─ reports/canaries/                 # 机器可读的真实证据
 └─ assets/readme/                    # Logo 与 README 配图
 ```
 
@@ -180,7 +178,6 @@ Nexora-Agent/
 - [架构与 Authority 边界](ARCHITECTURE.md)
 - [系统数据流](DATA_FLOW.md)
 - [测试策略](TESTS.md)
-- [当前开发状态](DEVELOPMENT.md)
 
 ## 项目状态
 
