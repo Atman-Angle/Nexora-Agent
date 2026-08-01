@@ -1,45 +1,77 @@
 <p align="right"><a href="./README.md">English</a> · <strong>简体中文</strong></p>
 
-# Nexora Agent
+<p align="center">
+  <img src="./assets/readme/logo.png" width="104" alt="Nexora Agent Logo">
+</p>
 
-**面向可靠 Agent 应用的可信 Runtime。**
+<h1 align="center">Nexora Agent</h1>
 
-Nexora Agent 是一个可嵌入 Node.js / TypeScript 应用的 Agent Runtime。你提供目标、模型和 Tool，Nexora 负责让每次执行可持久化、可交互、可恢复并经过验证。
+<p align="center"><strong>位于 Agent 应用之下的可信执行层。</strong></p>
 
-![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square)
-![Runtime](https://img.shields.io/badge/Runtime-embeddable-F4F7FA?style=flat-square)
-![Status](https://img.shields.io/badge/status-pre--release-8B98A7?style=flat-square)
+<p align="center">
+  使用你自己的模型、Tool、Prompt 和产品体验。<br>
+  让 Nexora 保证每次执行可持久、可控制、可恢复、可验证。
+</p>
 
-<!--
-VISUAL SLOT: assets/readme/hero.webp
-Generation prompt: assets/readme/prompts.md#1-hero
-After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
--->
+<p align="center">
+  <img alt="Node.js 20+" src="https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square">
+  <img alt="可嵌入 Runtime" src="https://img.shields.io/badge/Runtime-embeddable-F4F7FA?style=flat-square">
+  <img alt="Pre-release" src="https://img.shields.io/badge/status-pre--release-8B98A7?style=flat-square">
+</p>
 
-## Nexora 是什么？
+<p align="center">
+  <img src="./assets/readme/hero.png" width="100%" alt="Nexora Agent 将模型决策和 Tool Invocation 转换为持久 Evidence 与已验证结果">
+</p>
 
-构建 Agent 应用时，模型调用只是开始。真实产品还需要处理运行状态、Tool 副作用、人工批准、进程中断、失败恢复和结果验证。
+## Agent 应用下面的执行层
 
-Nexora 把这些通用问题收进一个 Runtime，让应用把代码留给真正有差异的部分：领域 Prompt、Tool、数据和用户体验。
+一个 Agent 产品包含三类不同职责：
 
-| 应用负责 | Nexora 负责 |
+| 层 | 负责什么 |
 | --- | --- |
-| 目标、Prompt 与领域 Tool | Run 生命周期与持久化 |
-| 模型和外部数据来源 | Plan、Invocation 与 Evidence |
-| UI、Scheduler 和产品交互 | Input、Approval、Events 与 Artifacts |
-| 领域结果与展示方式 | Recovery、并发控制与完成验证 |
+| **你的应用** | 定义目标、领域 Prompt、Tool、数据、UI 和产品行为。 |
+| **模型 Provider** | 观察当前上下文，提出 Agent 下一步应该做什么。 |
+| **Nexora Runtime** | 安全执行决策、持久化真实过程、处理交互和恢复，并判断任务是否真正完成。 |
 
-Nexora 不是聊天 UI、托管 Agent SaaS 或垂直应用框架。它通过公共 TypeScript API 嵌入宿主进程，不要求特定 Web 框架，也不接管应用数据。
+Nexora 是第三层。它不是另一个 Agent 人格，也不会替换你的应用框架。它把不稳定的模型调用和 Tool 调用转换成一个持久、可审计的 **Run**。
 
-## 核心能力
+```text
+目标
+  → 模型决策
+  → Tool Invocation
+  → 持久化 Evidence
+  → 下一次决策或人工交互
+  → 已验证的终态 Result
+```
 
-- **持久化 Run** — 进程重启后仍可重新打开 Run、事件和结果。
-- **安全 Tool 执行** — Tool 调用经过 Schema、Approval、Invocation 和 Evidence。
-- **人工交互** — 输入、批准和拒绝通过同一个 `RunHandle` 继续当前任务。
-- **失败恢复** — 已知失败可以恢复，未知的非幂等副作用不会被冒险重放。
-- **完成验证** — 模型文本或单个 Tool 成功不能直接冒充任务完成。
-- **应用所有权** — Prompt、Tool、业务数据和领域结果始终留在应用侧。
+如果没有 Runtime，每个应用最终都会重新实现状态标记、重试规则、批准流程、部分进度存储和“什么才算完成”。Nexora 为这些问题提供唯一执行路径，同时把所有领域行为留在应用侧。
+
+## 为什么使用 Nexora？
+
+当 Agent 不只是返回一次模型回答时，就适合使用 Nexora：
+
+- **它会执行真实操作。** Tool 调用经过 Schema 校验，并记录为权威 Invocation。
+- **它可能需要人工参与。** 输入、批准和拒绝暂停并继续同一个 Run。
+- **它必须承受进程中断。** 持久状态允许进程重启后重新打开 Run。
+- **它不能盲目重复副作用。** Recovery 能区分安全重试和状态未知的非幂等操作。
+- **它的结果必须可信。** Evidence 与 Completion Gate 阻止看似合理的模型文本冒充成功。
+- **它需要进入真实产品。** Nexora 通过 TypeScript API 嵌入，不接管领域数据或 UI。
+
+对于简单、无状态的一次性聊天调用，Nexora 可能没有必要。它面向具有状态、副作用、人工交互或明确完成 Contract 的 Agent。
+
+## 核心概念
+
+| 概念 | 含义 |
+| --- | --- |
+| `Runtime` | 配置好的执行环境：workspace、Provider、Tools、持久化和生命周期。 |
+| `Run` | 为实现一个目标进行的一次持久执行；只有它的 State Machine 可以改变 Run Status。 |
+| `RunHandle` | 宿主使用的公共控制面：观察事件、提供输入或批准、取消、恢复并读取结果。 |
+| `Provider` | 提出决策的模型适配器；不能直接执行 Tool 或写 Run 状态。 |
+| `Tool Invocation` | 一次真实操作请求及其执行结果的权威记录。 |
+| `Evidence` | 用于验证进度、判断是否有资格完成任务的持久证据。 |
+
+当前 Structured Plan 由 Run 持有。应用不维护第二份 Plan、第二套 State Machine 或第二个执行真相源。
 
 ## 快速开始
 
@@ -79,7 +111,7 @@ try {
 }
 ```
 
-`runtime.run()` 返回 `RunHandle`。宿主可以用它订阅事件、提交输入或批准、取消任务、恢复执行，并在重启后重新打开原 Run。
+`runtime.run()` 返回的是 `RunHandle`，而不是未经验证的模型答案。交互型宿主可以用同一个 Handle 继续 Run：
 
 ```ts
 const subscription = run.subscribe(async (event) => {
@@ -95,32 +127,26 @@ const subscription = run.subscribe(async (event) => {
 });
 ```
 
-完整接入说明见 [使用 Nexora Runtime 构建应用](docs/BUILD_WITH_NEXORA_RUNTIME.md)。
+Provider 适配、领域 Tool、事件、取消与恢复详见 [使用 Nexora Runtime 构建应用](docs/BUILD_WITH_NEXORA_RUNTIME.md)。
 
-## 工作原理
+## 一次 Run 如何执行？
 
-```mermaid
-flowchart LR
-  A["宿主应用"] --> R["Nexora Runtime"]
-  R --> P["模型决策"]
-  P --> I["Tool Invocation"]
-  I --> E["Evidence"]
-  E --> C["Completion Gate"]
-  C --> O["已验证结果"]
-  R <--> H["输入 / 批准 / 恢复"]
-```
+1. `runtime.run(goal)` 创建并持久化一个新 Run。
+2. Provider 观察 Run 上下文并提出下一步决策。
+3. Tool 请求经过校验；需要批准时，Run 会等待用户决定。
+4. Nexora 记录 Tool Invocation 及其 Evidence，然后才继续执行。
+5. 输入、失败、取消或进程重启都通过同一个持久 Run 处理。
+6. Completion Gate 检查 Run-owned Plan 和 Evidence，满足条件后 State Machine 才能将 Run 标记为成功。
 
-Run、State Machine、Structured Plan、Tool Invocation、Evidence 和 Completion Gate 由 Runtime 统一拥有。模型和 Tool 只能通过公开边界参与执行，不能直接修改 Run 或宣布成功。
+<p align="center">
+  <img src="./assets/readme/runtime-architecture.png" width="100%" alt="宿主应用、Nexora Runtime 与已验证输出之间的 Authority 边界">
+</p>
 
-<!--
-VISUAL SLOT: assets/readme/runtime-architecture.webp
-Generation prompt: assets/readme/prompts.md#2-runtime-architecture
-After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
--->
+这个边界是刻意设计的：模型、Tool 和宿主应用都不能直接写 Run Status。执行状态、副作用、恢复判断和完成结论始终只有一个 Authority。
 
 ## 参考 Harness：Research Agent
 
-[`apps/research-agent`](apps/research-agent) 是 Nexora 的真实应用 Harness。它在应用侧保存研究 Profile、连接 Tavily、定义新闻 Tool 并进行每日调度，然后只通过 `@nexora/runtime` 公共 API 发起和观察 Run：
+[`apps/research-agent`](apps/research-agent) 是基于 Nexora 公共 API 构建的真实应用 Harness。研究 Profile、Tavily、新闻 Tool、Scheduler 和生成内容全部属于应用；Nexora 负责它们下面的 Run 生命周期。
 
 ```ts
 const runtime = createRuntime({ workspace, provider, tools });
@@ -128,9 +154,9 @@ const run = runtime.run(buildResearchGoal(profile));
 const result = await run.result();
 ```
 
-这个 Harness 用来验证同一个 Runtime 能支持真实数据检索、交互、失败恢复和结果验证，同时不读取 Core Store、不直接写 Run、不复制 CLI 编排，也不向 Core 添加 Research 特判。
+这个 Harness 验证了真实检索、人工交互、失败恢复和完成验证，同时没有读取 Core Store、直接写 Run、复制 CLI 编排或向 Core 增加 Research 特判。
 
-**[查看 Research Agent 的完整流程、运行方式、产物效果与真实执行证据 →](docs/applications/research-agent.md)**
+**[查看 Research Agent 的完整配置、产物效果与真实执行证据 →](docs/applications/research-agent.md)**
 
 ## 仓库结构
 
@@ -143,7 +169,8 @@ Nexora-Agent/
 │  └─ canaries/                      # 真实端到端入口
 ├─ tests/                            # Runtime 与应用 Contract
 ├─ docs/                             # 指南与案例
-└─ reports/canaries/                 # 机器可读的真实证据
+├─ reports/canaries/                 # 机器可读的真实证据
+└─ assets/readme/                    # Logo 与 README 配图
 ```
 
 ## 文档
@@ -154,7 +181,6 @@ Nexora-Agent/
 - [系统数据流](DATA_FLOW.md)
 - [测试策略](TESTS.md)
 - [当前开发状态](DEVELOPMENT.md)
-- [README 配图提示词](assets/readme/prompts.md)
 
 ## 项目状态
 

@@ -1,10 +1,10 @@
 # Automated Daily Research Agent
 
-<!--
-VISUAL SLOT: assets/readme/research-agent-proof.webp
-Generation prompt: ../../assets/readme/prompts.md#3-research-agent-proof-board
-After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
--->
+<p align="center">
+  <img src="../../assets/readme/research-agent-proof.png" width="100%" alt="Research Agent article, topic ideas, video script, monitoring analysis, and validation timeline">
+</p>
+
+> **视觉说明：** 上图展示 `DailyResearchPackage` 的产品化呈现方式；图中的日期、Run ID、文章标题和存储地址是生成式视觉占位，不作为执行证据。真实指标、Run ID、来源和机器报告以下文记录为准。
 
 Research Agent 的主流程是“配置一次，自动日更”。用户先保存一个应用侧 `ResearchProfile`，应用用该 Profile 创建 Research Agent，外部调度器按 `cron/timezone` 每天调用一次 `agent.runDaily()`。每次调度创建一个新的持久化 Nexora Run；应用不自行维护 Run 状态、Plan、Approval、Evidence 或完成结论。
 

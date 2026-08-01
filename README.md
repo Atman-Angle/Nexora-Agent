@@ -1,45 +1,77 @@
 <p align="right"><strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a></p>
 
-# Nexora Agent
+<p align="center">
+  <img src="./assets/readme/logo.png" width="104" alt="Nexora Agent logo">
+</p>
 
-**A trusted runtime for building reliable Agent applications.**
+<h1 align="center">Nexora Agent</h1>
 
-Nexora Agent is an embeddable Agent Runtime for Node.js and TypeScript applications. You provide the goal, model, and tools; Nexora makes each execution persistent, interactive, recoverable, and verifiable.
+<p align="center"><strong>The trusted execution layer beneath your Agent application.</strong></p>
 
-![Node.js 20+](https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square)
-![Runtime](https://img.shields.io/badge/Runtime-embeddable-F4F7FA?style=flat-square)
-![Status](https://img.shields.io/badge/status-pre--release-8B98A7?style=flat-square)
+<p align="center">
+  Build with your own model, tools, prompts, and product experience.<br>
+  Let Nexora make every run persistent, controllable, recoverable, and verifiable.
+</p>
 
-<!--
-VISUAL SLOT: assets/readme/hero.webp
-Generation prompt: assets/readme/prompts.md#1-hero
-After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
--->
+<p align="center">
+  <img alt="Node.js 20+" src="https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square">
+  <img alt="Embeddable Runtime" src="https://img.shields.io/badge/Runtime-embeddable-F4F7FA?style=flat-square">
+  <img alt="Pre-release" src="https://img.shields.io/badge/status-pre--release-8B98A7?style=flat-square">
+</p>
 
-## What is Nexora?
+<p align="center">
+  <img src="./assets/readme/hero.png" width="100%" alt="Nexora Agent turns model decisions and tool invocations into persisted evidence and a validated result">
+</p>
 
-Calling a model is only the beginning of an Agent product. Production applications must also manage run state, tool side effects, human approval, process interruption, recovery, and result validation.
+## The execution layer beneath your Agent
 
-Nexora puts those shared concerns into one Runtime, so application code can stay focused on domain prompts, tools, data, and user experience.
+An Agent product has three distinct responsibilities:
 
-| Your application owns | Nexora owns |
+| Layer | Responsibility |
 | --- | --- |
-| Goals, prompts, and domain tools | Run lifecycle and persistence |
-| Models and external data sources | Plans, Invocations, and Evidence |
-| UI, schedulers, and product interactions | Input, Approval, Events, and Artifacts |
-| Domain results and presentation | Recovery, concurrency control, and completion validation |
+| **Your application** | Defines the goal, domain prompts, tools, data, UI, and product behavior. |
+| **The model Provider** | Observes the current context and proposes what the Agent should do next. |
+| **Nexora Runtime** | Executes that decision safely, persists what happened, handles interaction and recovery, and decides whether the task is truly complete. |
 
-Nexora is not a chat UI, hosted Agent SaaS, or vertical application framework. It embeds into the host process through a public TypeScript API, requires no specific web framework, and does not take ownership of application data.
+Nexora is the third layer. It is not another Agent persona and it does not replace your application framework. It is the runtime that turns an unreliable sequence of model calls and Tool calls into one durable, auditable **Run**.
 
-## Core capabilities
+```text
+goal
+  → model decision
+  → Tool Invocation
+  → persisted Evidence
+  → next decision or human interaction
+  → validated terminal Result
+```
 
-- **Persistent Runs** — reopen Runs, events, and results after a process restart.
-- **Safe Tool execution** — execute tools through Schema, Approval, Invocation, and Evidence.
-- **Human interaction** — continue the same task with input, approval, or denial through `RunHandle`.
-- **Recovery** — resume known failures without blindly replaying unknown non-idempotent effects.
-- **Verified completion** — model text or one successful Tool call cannot impersonate task completion.
-- **Application ownership** — prompts, tools, business data, and domain results stay in the host application.
+Without a runtime, every application eventually rebuilds its own state flags, retry rules, approval flow, partial-progress storage, and definition of “done.” Nexora provides one execution path for those concerns while leaving all domain behavior in the application.
+
+## Why use Nexora?
+
+Use Nexora when an Agent must do more than return one model response:
+
+- **It performs real actions.** Tool calls are schema-validated and recorded as authoritative Invocations.
+- **It may need a person.** Input, approval, and denial pause and continue the same Run.
+- **It must survive interruption.** Persisted state allows a Run to be reopened after a process restart.
+- **It cannot repeat side effects blindly.** Recovery distinguishes safe retry from unknown non-idempotent effects.
+- **Its result must be defensible.** Evidence and the Completion Gate prevent plausible model text from impersonating success.
+- **It lives inside a real product.** Nexora embeds through a TypeScript API and does not take ownership of domain data or UI.
+
+For a simple stateless chat completion, Nexora may be unnecessary. It is designed for Agents whose execution has state, side effects, human interaction, or a meaningful completion contract.
+
+## Core concepts
+
+| Concept | What it means |
+| --- | --- |
+| `Runtime` | The configured execution environment: workspace, Provider, Tools, persistence, and lifecycle. |
+| `Run` | One durable attempt to achieve a goal. Its State Machine is the only authority allowed to change Run status. |
+| `RunHandle` | The public control surface used by a host to observe events, provide input or approval, cancel, resume, and read the result. |
+| `Provider` | The model adapter that proposes decisions. It cannot execute Tools or write Run state directly. |
+| `Tool Invocation` | The authoritative record of a requested real-world action and its execution outcome. |
+| `Evidence` | Persisted proof used to validate progress and determine whether completion is justified. |
+
+The current Structured Plan belongs to the Run. The application does not maintain a second plan, second state machine, or second source of truth for execution.
 
 ## Quick start
 
@@ -79,7 +111,7 @@ try {
 }
 ```
 
-`runtime.run()` returns a `RunHandle`. A host can use it to subscribe to events, provide input or approval, cancel or resume execution, and reopen the original Run after a restart.
+`runtime.run()` returns a `RunHandle`, not an unverified model answer. Interactive hosts can use that same handle to continue the Run:
 
 ```ts
 const subscription = run.subscribe(async (event) => {
@@ -95,32 +127,26 @@ const subscription = run.subscribe(async (event) => {
 });
 ```
 
-See [Build with the Nexora Runtime](docs/BUILD_WITH_NEXORA_RUNTIME.md) for the complete integration guide.
+See [Build with the Nexora Runtime](docs/BUILD_WITH_NEXORA_RUNTIME.md) for packaging, Provider adapters, custom Tools, events, cancellation, and recovery.
 
-## How it works
+## What happens during a Run?
 
-```mermaid
-flowchart LR
-  A["Host Application"] --> R["Nexora Runtime"]
-  R --> P["Model decision"]
-  P --> I["Tool Invocation"]
-  I --> E["Evidence"]
-  E --> C["Completion Gate"]
-  C --> O["Validated Result"]
-  R <--> H["Input / Approval / Recovery"]
-```
+1. `runtime.run(goal)` creates and persists a new Run.
+2. The Provider observes the Run context and proposes the next decision.
+3. A Tool request is validated and, when required, waits for approval.
+4. Nexora records the Tool Invocation and its Evidence before continuing.
+5. Input, failure, cancellation, or restart is handled through the same persisted Run.
+6. The Completion Gate checks the Run-owned plan and Evidence before the State Machine can mark the Run as succeeded.
 
-The Runtime owns the Run, State Machine, Structured Plan, Tool Invocation, Evidence, and Completion Gate. Models and Tools participate only through public boundaries; neither can write Run state or declare success directly.
+<p align="center">
+  <img src="./assets/readme/runtime-architecture.png" width="100%" alt="Authority boundary between a host application, the Nexora Runtime, and validated outputs">
+</p>
 
-<!--
-VISUAL SLOT: assets/readme/runtime-architecture.webp
-Generation prompt: assets/readme/prompts.md#2-runtime-architecture
-After generating, add a centered, full-width image here with the alt text documented in the prompt catalog.
--->
+The boundary is intentional: the model, Tool, and host application cannot write Run status directly. This keeps execution state, side effects, recovery decisions, and completion under one authority.
 
 ## Reference harness: Research Agent
 
-[`apps/research-agent`](apps/research-agent) is Nexora's real application harness. It keeps research Profiles, Tavily integration, news Tools, and daily scheduling on the application side, then starts and observes Runs exclusively through the public `@nexora/runtime` API:
+[`apps/research-agent`](apps/research-agent) is a real application harness built on Nexora's public API. Research Profiles, Tavily integration, news Tools, scheduling, and generated content remain application-owned; Nexora owns the Run lifecycle beneath them.
 
 ```ts
 const runtime = createRuntime({ workspace, provider, tools });
@@ -128,9 +154,9 @@ const run = runtime.run(buildResearchGoal(profile));
 const result = await run.result();
 ```
 
-The harness verifies that the same Runtime can support real data retrieval, interaction, failure recovery, and result validation without reading the Core Store, writing Run state, copying CLI orchestration, or adding Research-specific branches to Core.
+The harness verifies real retrieval, human interaction, failure recovery, and validated completion without reading the Core Store, writing Run state, copying CLI orchestration, or adding Research-specific branches to Core.
 
-**[Explore the complete Research Agent flow, setup, outputs, and live execution evidence →](docs/applications/research-agent.md)**
+**[Explore the complete Research Agent setup, outputs, and live execution evidence →](docs/applications/research-agent.md)**
 
 ## Repository
 
@@ -143,7 +169,8 @@ Nexora-Agent/
 │  └─ canaries/                      # Live end-to-end runners
 ├─ tests/                            # Runtime and application contracts
 ├─ docs/                             # Guides and case studies
-└─ reports/canaries/                 # Machine-readable live evidence
+├─ reports/canaries/                 # Machine-readable live evidence
+└─ assets/readme/                    # Logo and README visuals
 ```
 
 ## Documentation
@@ -154,7 +181,6 @@ Nexora-Agent/
 - [System data flow](DATA_FLOW.md)
 - [Testing strategy](TESTS.md)
 - [Current development state](DEVELOPMENT.md)
-- [README visual prompts](assets/readme/prompts.md)
 
 ## Project status
 
