@@ -110,4 +110,10 @@ Run ID 为 `7b59b2cc-ab65-4e6d-b5f1-7c5c476fa734`，语料 URL 摘要为 `sha256
 - `reports/canaries/2026-08-01T09-57-28-114Z-research-agent-tavily-large-e2e.json`：首次执行及诚实的 blocked 边界；
 - `reports/canaries/2026-08-01-research-agent-tavily-large-e2e-resume.json`：同一 Run 恢复后的 succeeded 终态。
 
-Profile 持久化、应用侧轮询 Scheduler 和每日幂等执行已经通过确定性集成测试。真实 Tavily/模型 E2E 与 Scheduler 持久化测试目前是分开的；长期运行的服务部署、进程守护、告警和真实跨日观察属于 External Environment Acceptance，不进入 Runtime Core。
+Profile 持久化、应用侧轮询 Scheduler 和每日幂等执行已经通过确定性集成测试，并完成一次 Scheduler 驱动的真实 Tavily/模型 one-shot。长期运行的服务部署、进程守护、告警和真实跨日观察属于 External Environment Acceptance，不进入 Runtime Core。
+
+## Scheduler 真实单次验收
+
+2026-08-01 又执行了一次由新 Scheduler 发起的真实 one-shot：应用先持久化 Profile，Scheduler 为 `Asia/Shanghai` 业务日期创建原子 Claim，再创建 Nexora Run `8cba7fe3-eb3e-4a9a-a88e-96079d4837ef`。真实 Tavily 返回 48 条原始、46 条 URL 去重结果，自动收敛为 6 条代表来源；`news.discover → news.analyze_selection → news.validate_output` 三次 Invocation 均一次成功，并分别产生 Evidence。公共 CLI 逆向读取确认 Result 已持久化、`StopReason=VALIDATED`、最后事件为 `run.succeeded`。
+
+机器报告为 `reports/canaries/2026-08-01T11-01-23-031Z-research-scheduler-one-shot.json`。该验收只运行一次到终态，不包含长期驻留部署。
