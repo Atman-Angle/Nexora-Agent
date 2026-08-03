@@ -24,9 +24,12 @@ import {
   ActionRejectedError,
   allowedActions,
   assertCompletedStepsUnchanged,
+  deepFreeze,
+  digestJson,
   errorMessage,
   actionRejectionDiagnostic,
-  projectToolObservations as projectToolObservationsFromHelpers,
+  projectRelevantToolObservations,
+  projectRunContext,
   requireWorkspace,
   serializeRejectedAction,
   toRunResult,
@@ -1237,9 +1240,9 @@ export class RuntimeEngine {
     const callableTools = new Set(activeStep?.acceptanceChecks
       .filter((check) => check.kind === "tool_result")
       .map((check) => check.toolName) ?? []);
-    return {
+    const projection = deepFreeze(structuredClone({
       workspace: this.#workspace,
-      run,
+      run: projectRunContext(run),
       allowedActions: actions,
       actionContract: runtimeActionContract(actions, {
         workspace: this.#workspace,
@@ -1249,7 +1252,10 @@ export class RuntimeEngine {
         currentPlan: run.currentPlan,
         finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
       }),
-      toolObservations: projectToolObservationsFromHelpers(this.#store.listToolInvocations(run.runId)),
+      toolObservations: projectRelevantToolObservations(
+        run,
+        this.#store.listToolInvocations(run.runId)
+      ),
       tools: [...this.#tools.values()].map((tool) => ({
         identity: tool.contract.identity,
         capability: tool.contract.capability,
@@ -1262,7 +1268,19 @@ export class RuntimeEngine {
         },
         evidence: { produces: tool.contract.evidence.produces }
       }))
-    };
+    }));
+    return deepFreeze({
+      workspace: projection.workspace,
+      run: projection.run,
+      projection: {
+        schemaVersion: 1,
+        digest: digestJson(projection)
+      },
+      allowedActions: projection.allowedActions,
+      actionContract: projection.actionContract,
+      toolObservations: projection.toolObservations,
+      tools: projection.tools
+    });
   }
 
   #services(signal: AbortSignal): RuntimeServices {

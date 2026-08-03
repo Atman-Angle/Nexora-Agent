@@ -4,7 +4,11 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 import type { Evidence, RunSnapshot, ToolInvocation } from "./contracts.js";
-import type { ModelDecisionContext, ToolObservation } from "./model-client.js";
+import type {
+  ModelDecisionContext,
+  ProjectedRunContext,
+  ToolObservation
+} from "./model-client.js";
 import type { RunResult, RuntimeTool } from "./runtime-types.js";
 
 export const MAX_TOOL_OBSERVATIONS = 8;
@@ -50,6 +54,86 @@ export function assertCompletedStepsUnchanged(run: RunSnapshot, nextSteps: reado
 }
 
 export function digestJson(value: unknown): string { return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
+
+export function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.freeze(value);
+  for (const nested of Object.values(value)) deepFreeze(nested);
+  return value;
+}
+
+export function projectRunContext(run: RunSnapshot): ProjectedRunContext {
+  const coveredInputCount = run.taskContract?.inputVersion ?? 0;
+  return {
+    inputCount: run.inputHistory.length,
+    coveredInputCount,
+    inputHistory: run.inputHistory
+      .filter((entry) => entry.sequence > coveredInputCount)
+      .map((entry) => ({ sequence: entry.sequence, text: entry.text })),
+    taskContract: run.taskContract === null
+      ? null
+      : structuredClone(run.taskContract),
+    currentPlan: run.currentPlan === null
+      ? null
+      : structuredClone(run.currentPlan),
+    stepProgress: structuredClone(run.stepProgress),
+    evidence: structuredClone(run.evidence),
+    lastError: run.lastError === null
+      ? null
+      : {
+          code: run.lastError.code,
+          message: run.lastError.message,
+          retryable: run.lastError.retryable
+        }
+  };
+}
+
+export function projectRelevantToolObservations(
+  run: RunSnapshot,
+  invocations: readonly ToolInvocation[]
+): ToolObservation[] {
+  if (run.currentPlan === null) return [];
+  const activeStepId = run.stepProgress.find(
+    (progress) => progress.status === "active"
+  )?.stepId;
+  if (activeStepId === undefined) return [];
+  const activeStep = run.currentPlan.orderedSteps.find(
+    (step) => step.id === activeStepId
+  );
+  if (activeStep === undefined) return [];
+  const activeChecks = new Map(
+    activeStep.acceptanceChecks.map((check) => [check.id, check])
+  );
+  const upstreamEvidenceIds = new Set(
+    run.stepProgress
+      .filter((progress) => progress.status === "completed")
+      .flatMap((progress) => progress.evidenceIds)
+  );
+  const upstreamInvocationIds = new Set(
+    run.evidence
+      .filter((evidence) => upstreamEvidenceIds.has(evidence.id))
+      .flatMap((evidence) => evidence.invocationId === null ? [] : [evidence.invocationId])
+  );
+  const upstream = invocations.filter(
+    (invocation) => upstreamInvocationIds.has(invocation.id)
+  );
+  const active = invocations.filter((invocation) => (
+    invocation.stepId === activeStepId
+    && invocation.checkIds.some((checkId) => {
+      const check = activeChecks.get(checkId);
+      return check !== undefined
+        && (check.kind !== "tool_result" || check.toolName === invocation.toolName);
+    })
+  ));
+  const selected = new Map<string, ToolInvocation>();
+  for (const invocation of [...upstream, ...active]) {
+    selected.set(invocation.id, invocation);
+  }
+  return projectToolObservations([...selected.values()]);
+}
+
 export function projectToolObservations(invocations: readonly ToolInvocation[]): ToolObservation[] {
   const observations = invocations.filter((item): item is ToolInvocation & { status: "succeeded" | "failed"; completedAt: string } => (item.status === "succeeded" || item.status === "failed") && item.completedAt !== null).slice(-MAX_TOOL_OBSERVATIONS).map((item) => {
     const result = item.status === "succeeded" ? item.resultJson : null; const error = item.status === "failed" ? item.errorJson : null;

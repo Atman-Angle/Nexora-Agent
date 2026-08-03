@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-import type { RunSnapshot, RuntimeAction, ToolInvocation } from "./contracts.js";
+import type {
+  Evidence,
+  RunSnapshot,
+  RuntimeAction,
+  StructuredPlan,
+  TaskContract,
+  ToolInvocation
+} from "./contracts.js";
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
@@ -17,9 +24,31 @@ export type ToolObservation = {
   readonly digest: string;
 };
 
+export type ProjectedRunContext = {
+  readonly inputCount: number;
+  readonly coveredInputCount: number;
+  readonly inputHistory: readonly {
+    readonly sequence: number;
+    readonly text: string;
+  }[];
+  readonly taskContract: TaskContract | null;
+  readonly currentPlan: StructuredPlan | null;
+  readonly stepProgress: RunSnapshot["stepProgress"];
+  readonly evidence: readonly Evidence[];
+  readonly lastError: null | {
+    readonly code: string;
+    readonly message: string;
+    readonly retryable: boolean;
+  };
+};
+
 export type ModelDecisionContext = {
   readonly workspace: string;
-  readonly run: RunSnapshot;
+  readonly run: ProjectedRunContext;
+  readonly projection: {
+    readonly schemaVersion: 1;
+    readonly digest: string;
+  };
   readonly allowedActions: readonly ("set_plan" | "call_tool" | "request_input" | "propose_finish")[];
   readonly actionContract: readonly RuntimeAction[];
   readonly toolObservations: readonly ToolObservation[];

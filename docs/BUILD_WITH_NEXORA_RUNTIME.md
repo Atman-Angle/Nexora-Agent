@@ -286,6 +286,17 @@ const provider = defineProviderAdapter({
 
 `request.phase` 是 `"decision"` 或 `"validation"`，用于 transport 记录和模型参数选择。Adapter 负责 Nexora 的 prompt、bounded context、JSON parse、malformed response 和 validation failure 语义。Provider 不能直接写 Run、Plan、Invocation、Evidence 或成功状态；`operation.signal` 只通知当前 completion 停止，不是 Run 状态 Authority。
 
+Decision Provider 接收 `ProjectedRunContext`，不是完整 `RunSnapshot`：
+
+- `run.inputCount` 是持久化输入总数；
+- `run.coveredInputCount` 是当前 Task Contract 已覆盖的输入数；
+- `run.inputHistory` 只包含尚未覆盖的 `{ sequence, text }`；
+- 已覆盖要求必须从 `run.taskContract` 读取；
+- `toolObservations` 只包含 active Step/Check 和已完成前置 Evidence 所需的有界事实；
+- `projection.digest` 是当前完整决策投影的稳定摘要，可用于缓存键、日志关联和确定性测试，不能作为 Evidence。
+
+Provider 创建或修订 Task Contract 时必须把 `inputVersion` 设为 `run.inputCount`，不能使用 `run.inputHistory.length`。Semantic Validation 仍收到完整原始 inputs，因此 Decision Projection 不会降低最终完成校验范围。
+
 需要完全控制 `decide/validate` 的高级调用方仍可实现完整 `RuntimeProvider`。两种写法最终都进入同一个生产 Provider port 和 Runtime Loop；Adapter 不创建 Session、Registry、fallback 或第二执行协议。内置 `createOpenAICompatibleProvider()` 也构建在同一个 Adapter 上。
 
 ## 自定义 Tool

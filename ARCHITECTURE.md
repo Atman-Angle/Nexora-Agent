@@ -67,7 +67,9 @@ Tool Observations
 Fresh External Facts
 ```
 
-上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。Working Set、Retrieval、Compaction 和 Rehydration 只是未来候选方向；只有真实应用或可重复实验暴露有界上下文问题，并由独立 Feature Contract 授权后才进入实现。
+上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。当前 Context Projection 不再把完整 `RunSnapshot` 交给 Provider：`TaskContract.inputVersion` 之前的输入由当前 Task Contract 覆盖，模型只接收尚未覆盖的新输入；Tool Observation 由 active Step、其 Checks 和已完成前置 Evidence 投影，并继续受数量/字节边界约束。每份投影带稳定 digest，便于测试和调用诊断，但 digest 不拥有 Run 状态。
+
+Token Budget、Working Set、Retrieval、Compaction 和 Rehydration 仍是后续独立 Slice；当前 Slice 不创建 Checkpoint、摘要、Context Store 或第二套事实 Authority。
 
 ### Action Runtime
 

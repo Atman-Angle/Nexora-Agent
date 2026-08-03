@@ -152,18 +152,21 @@ function projectDecisionRequest(input: string): string {
     const callableTools = context.tools.filter(
       (tool) => tool.execution.inputExample !== undefined
     );
-    const run = context.run as Partial<ModelDecisionContext["run"]>;
+    const run = context.run;
     return JSON.stringify({
       mode: "decide",
       context: {
         workspace: context.workspace,
+        projection: context.projection,
         run: {
-          inputs: run.inputHistory?.map((entry) => entry.text) ?? [],
-          taskContract: run.taskContract ?? null,
-          currentPlan: run.currentPlan ?? null,
-          stepProgress: run.stepProgress ?? [],
-          evidence: run.evidence ?? [],
-          lastError: run.lastError === undefined || run.lastError === null
+          inputCount: run.inputCount,
+          coveredInputCount: run.coveredInputCount,
+          inputs: run.inputHistory.map((entry) => entry.text),
+          taskContract: run.taskContract,
+          currentPlan: run.currentPlan,
+          stepProgress: run.stepProgress,
+          evidence: run.evidence,
+          lastError: run.lastError === null
             ? null
             : { code: run.lastError.code, message: run.lastError.message }
         },

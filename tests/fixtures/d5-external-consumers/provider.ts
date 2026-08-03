@@ -20,6 +20,10 @@ export function createAcceptanceProvider() {
       };
       const context = payload.context;
       const firstInput = context.run.inputHistory[0]?.text ?? "";
+      const semanticInput = [
+        ...context.run.inputHistory.map((entry) => entry.text),
+        context.run.taskContract?.goal ?? ""
+      ].join("\n");
 
       if (firstInput.startsWith("Cancel")) {
         await new Promise<never>((_resolve, reject) => {
@@ -33,7 +37,7 @@ export function createAcceptanceProvider() {
 
       if (
         firstInput.startsWith("Ask")
-        && context.run.inputHistory.length === 1
+        && context.run.inputCount === 1
         && context.run.currentPlan === null
       ) {
         return JSON.stringify({
@@ -43,7 +47,7 @@ export function createAcceptanceProvider() {
         });
       }
 
-      const file = /\bnote(?:-[a-z])?\.txt\b/i.exec(firstInput)?.[0]
+      const file = /\bnote(?:-[a-z])?\.txt\b/i.exec(semanticInput)?.[0]
         ?? "note.txt";
       if (context.run.currentPlan === null) {
         return JSON.stringify(plan(context, file));
@@ -99,7 +103,7 @@ function plan(context: ModelDecisionContext, file: string) {
     basedOnVersion: null,
     taskContract: {
       version: 1,
-      inputVersion: context.run.inputHistory.length,
+      inputVersion: context.run.inputCount,
       goal: `Change ${file} from before to after and verify it`,
       workspace: context.workspace,
       constraints: [`Only change ${file}`],

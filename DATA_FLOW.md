@@ -133,9 +133,11 @@ flowchart TD
 4. 在该边界写 RED；不要在下游增加补偿状态。
 5. 修复后同时验证正向路径和 Resume/失败分支，确保没有第二个真相源。
 
-Provider Action Contract、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的进程内对象，`RuntimeEngine.close()` 后不再可读；它们不进入新表，也不能反写 Run。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。SQLite 和 Artifact 保留。1.1/1.2 不读取旧数据库、Checkpoint 或 Ledger。
+Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的进程内对象，`RuntimeEngine.close()` 后不再可读；它们不进入新表，也不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。SQLite 和 Artifact 保留。当前 Context Projection 不读取或创建 Checkpoint、Context Store 或 Ledger。
 
-Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 是唯一权威，Context 只带 completed Invocation 的结果、关联 metadata、稳定 digest 和必要 preview，不复制 input、幂等键、Fencing 或 Lease。`filesystem.read` 的结果内另含内容 digest，供后续 patch 直接复制；大文件正文仍进入 Artifact。
+Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 是唯一权威，Context 只带 active Step/Check 的 completed Invocation 与已完成前置 Evidence 对应的结果、关联 metadata、稳定 digest 和必要 preview，不复制 input、幂等键、Fencing 或 Lease。投影仍限制为最多 8 条、约 32 KiB，并优先把 active Step Observation 放在有界窗口末端，避免被较旧前置事实挤出。`filesystem.read` 的结果内另含内容 digest，供后续 patch 直接复制；大文件正文仍进入 Artifact。
+
+用户输入投影使用 `TaskContract.inputVersion` 作为覆盖边界：`sequence <= inputVersion` 的原文继续只保存在 `RunSnapshot.inputHistory`，Provider 读取当前 Task Contract；更大的 sequence 以 `{ sequence, text }` 进入 `ProjectedRunContext.inputHistory`，不暴露 Input ID、接收时间、Run revision、Budget、Pending Request 或 Result。`inputCount` 始终表示持久化输入总数，模型修订 Task Contract 时必须使用它，而不是可见输入数组长度。Semantic Validation 仍直接读取完整原始输入，不受 Decision Projection 裁剪影响。
 
 Tool capability 与 input 也不建立第二权威：description/inputExample 都来自已注册 `RuntimeTool`；description 每轮可见但有 240 字符上限，inputExample 仅 active callable Tool 可见。真正执行 input 只由 Tool 自身 Zod Schema 生成，protected Pending Action 保存默认值已展开的 canonical JSON；resume 不信任内存缓存，重新 parse 后才创建 Invocation。
 

@@ -11,6 +11,7 @@ import { createOpenAICompatibleProvider } from "../../packages/runtime/src/opena
 const context = {
   workspace: "D:\\fixture",
   run: {} as never,
+  projection: { schemaVersion: 1 as const, digest: "sha256:test" },
   allowedActions: [],
   actionContract: [],
   toolObservations: [],

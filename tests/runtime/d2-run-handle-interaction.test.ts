@@ -351,7 +351,7 @@ function writeDecision(
       basedOnVersion: null,
       taskContract: {
         version: 1,
-        inputVersion: context.run.inputHistory.length,
+        inputVersion: context.run.inputCount,
         goal: "Write protected output",
         workspace,
         constraints: [],
@@ -431,7 +431,7 @@ function readProvider(workspace: string): RuntimeProvider {
           basedOnVersion: null,
           taskContract: {
             version: 1,
-            inputVersion: context.run.inputHistory.length,
+            inputVersion: context.run.inputCount,
             goal: "Read target",
             workspace,
             constraints: [],

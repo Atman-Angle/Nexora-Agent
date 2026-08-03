@@ -37,6 +37,7 @@ export {
 
 export type {
   ModelDecisionContext,
+  ProjectedRunContext,
   RuntimeProvider,
   SemanticValidationContext,
   SemanticValidationVerdict,
