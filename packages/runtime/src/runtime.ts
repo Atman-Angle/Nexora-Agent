@@ -12,11 +12,23 @@ import {
   JsonValueSchema,
   createInitialRunSnapshot,
   runtimeActionContract,
+  type ModelCallIntent,
   type RunSnapshot,
   type RuntimeAction
 } from "./contracts.js";
 import { ArtifactStore } from "./artifacts.js";
-import type { ModelDecisionContext, RuntimeProvider } from "./model-client.js";
+import type {
+  ModelCallPhase,
+  ModelDecisionContext,
+  ProviderTokenUsage,
+  RuntimeProvider,
+  SemanticValidationContext
+} from "./model-client.js";
+import {
+  assessContextBudget,
+  parseProviderTokenUsage,
+  resolveProviderModelProfile
+} from "./context-budget.js";
 import { openRunStore, type RunStore } from "./run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
 import { digestTaskContract, proposeFinish } from "./validation.js";
@@ -169,6 +181,7 @@ export class RuntimeEngine {
       const dataDir = resolve(options.dataDir ?? join(workspace, ".nexora"));
       this.#workspace = workspace;
       this.#provider = options.provider;
+      resolveProviderModelProfile(options.provider);
       this.#now = now;
       this.#createId = createId;
       this.#ownerId = createId();
@@ -409,7 +422,8 @@ export class RuntimeEngine {
     return {
       snapshot: this.#requireRun(runId),
       events: this.#store.listEvents(runId),
-      toolInvocations: this.#store.listToolInvocations(runId)
+      toolInvocations: this.#store.listToolInvocations(runId),
+      modelCalls: this.#store.listModelCalls(runId)
     };
   }
 
@@ -1036,26 +1050,19 @@ export class RuntimeEngine {
         break;
       }
 
-      run = this.#commit(run, {
-        ...run,
-        budgetsUsed: {
-          ...run.budgetsUsed,
-          iterations: run.budgetsUsed.iterations + 1,
-          modelCalls: run.budgetsUsed.modelCalls + 1
-        },
-        updatedAt: this.#now()
-      }, "model.requested", { allowedActions: allowedActions(run) }, observer);
-
-      let rawAction: unknown;
-      try {
-        rawAction = await this.#withLeaseHeartbeat(
-          run.runId,
-          () => this.#provider.decide(
-            this.#decisionContext(run),
-            { signal }
-          )
-        );
-      } catch (error) {
+      const modelCall = await this.#requestModel(
+        run,
+        "decision",
+        this.#decisionContext(run),
+        { allowedActions: allowedActions(run) },
+        signal,
+        observer,
+        true
+      );
+      run = modelCall.run;
+      if (modelCall.outcome === "budget_exceeded") break;
+      if (modelCall.outcome === "failed") {
+        const error = modelCall.error;
         if (signal.aborted) {
           run = this.#cancelPersistedRun(
             run,
@@ -1067,6 +1074,7 @@ export class RuntimeEngine {
         run = this.#blockForProvider(run, error, observer);
         break;
       }
+      const rawAction = modelCall.output;
       if (signal.aborted) {
         run = this.#cancelPersistedRun(
           run,
@@ -1283,6 +1291,183 @@ export class RuntimeEngine {
     });
   }
 
+  async #requestModel(
+    runInput: RunSnapshot,
+    phase: ModelCallPhase,
+    context: ModelDecisionContext | SemanticValidationContext,
+    eventPayload: Record<string, unknown>,
+    signal: AbortSignal,
+    observer?: RuntimeObserver,
+    countIteration = false
+  ): Promise<
+    | { readonly outcome: "succeeded"; readonly run: RunSnapshot; readonly output: unknown }
+    | { readonly outcome: "failed"; readonly run: RunSnapshot; readonly error: unknown }
+    | { readonly outcome: "budget_exceeded"; readonly run: RunSnapshot }
+  > {
+    if (signal.aborted) {
+      return { outcome: "failed", run: runInput, error: signal.reason };
+    }
+    let assessment;
+    try {
+      assessment = await assessContextBudget(this.#provider, phase, context);
+    } catch (error) {
+      return { outcome: "failed", run: runInput, error };
+    }
+    if (signal.aborted) {
+      return { outcome: "failed", run: runInput, error: signal.reason };
+    }
+    const now = this.#now();
+    const intent: ModelCallIntent = {
+      id: this.#createId(),
+      runId: runInput.runId,
+      phase,
+      provider: assessment.profile.provider,
+      model: assessment.profile.model,
+      projectionDigest: phase === "decision"
+        ? (context as ModelDecisionContext).projection.digest
+        : null,
+      contextWindowTokens: assessment.profile.contextWindowTokens,
+      reservedOutputTokens: assessment.reservedOutputTokens,
+      softInputLimitTokens: assessment.softInputLimitTokens,
+      hardInputLimitTokens: assessment.hardInputLimitTokens,
+      measuredInputTokens: assessment.measurement.inputTokens,
+      measurementMethod: assessment.measurement.method,
+      meter: assessment.measurement.meter,
+      budgetDecision: assessment.decision,
+      startedAt: now
+    };
+
+    if (assessment.decision === "hard_limit_exceeded") {
+      const message = `Measured input ${assessment.measurement.inputTokens} tokens exceeds the ${assessment.hardInputLimitTokens}-token hard input limit for ${assessment.profile.provider}/${assessment.profile.model}.`;
+      const failedInput = RunSnapshotSchema.parse({
+        ...runInput,
+        budgetsUsed: countIteration
+          ? {
+              ...runInput.budgetsUsed,
+              iterations: runInput.budgetsUsed.iterations + 1
+            }
+          : runInput.budgetsUsed,
+        lastError: {
+          code: "CONTEXT_BUDGET_EXCEEDED",
+          message,
+          retryable: false,
+          detailsArtifact: null
+        },
+        updatedAt: now
+      });
+      const failed = transitionRunStatus(failedInput, "failed", {
+        now,
+        stopReason: "CONTEXT_BUDGET_EXCEEDED"
+      });
+      const persisted = this.#store.refuseModelCallAndCommitRun({
+        intent,
+        previous: runInput,
+        next: failed,
+        fencingToken: this.#requireFencingToken(runInput.runId),
+        event: {
+          type: "run.failed",
+          occurredAt: now,
+          payload: {
+            stopReason: "CONTEXT_BUDGET_EXCEEDED",
+            errorCode: "CONTEXT_BUDGET_EXCEEDED",
+            phase,
+            budgetDecision: assessment.decision,
+            measuredInputTokens: assessment.measurement.inputTokens,
+            hardInputLimitTokens: assessment.hardInputLimitTokens
+          }
+        }
+      });
+      this.#notify(persisted.run.runId, observer);
+      return { outcome: "budget_exceeded", run: persisted.run };
+    }
+
+    const requestedInput = RunSnapshotSchema.parse({
+      ...runInput,
+      budgetsUsed: {
+        ...runInput.budgetsUsed,
+        iterations: runInput.budgetsUsed.iterations + (countIteration ? 1 : 0),
+        modelCalls: runInput.budgetsUsed.modelCalls + 1
+      },
+      updatedAt: now
+    });
+    const requested = this.#store.beginModelCallAndCommitRun({
+      intent,
+      previous: runInput,
+      next: requestedInput,
+      fencingToken: this.#requireFencingToken(runInput.runId),
+      event: {
+        type: phase === "decision" ? "model.requested" : "validation.requested",
+        occurredAt: now,
+        payload: {
+          ...eventPayload,
+          callId: intent.id,
+          budgetDecision: assessment.decision,
+          measuredInputTokens: assessment.measurement.inputTokens
+        }
+      }
+    });
+    this.#notify(requested.run.runId, observer);
+
+    let reportedUsage: ProviderTokenUsage | undefined;
+    try {
+      signal.throwIfAborted();
+      const output = await this.#withLeaseHeartbeat(
+        requested.run.runId,
+        () => phase === "decision"
+          ? this.#provider.decide(context as ModelDecisionContext, {
+              signal,
+              reportTokenUsage: reportUsage
+            })
+          : this.#provider.validate(context as SemanticValidationContext, {
+              signal,
+              reportTokenUsage: reportUsage
+            })
+      );
+      this.#store.completeModelCall({
+        callId: intent.id,
+        fencingToken: this.#requireFencingToken(runInput.runId),
+        status: "succeeded",
+        completedAt: this.#now(),
+        ...(reportedUsage === undefined
+          ? {}
+          : {
+              actualInputTokens: reportedUsage.inputTokens,
+              actualOutputTokens: reportedUsage.outputTokens,
+              actualTotalTokens: reportedUsage.totalTokens
+            })
+      });
+      return { outcome: "succeeded", run: requested.run, output };
+    } catch (error) {
+      const cancelled = signal.aborted;
+      try {
+        this.#store.completeModelCall({
+          callId: intent.id,
+          fencingToken: this.#requireFencingToken(runInput.runId),
+          status: cancelled ? "cancelled" : "failed",
+          completedAt: this.#now(),
+          errorCode: cancelled ? "CANCELLED" : "PROVIDER_ERROR",
+          ...(reportedUsage === undefined
+            ? {}
+            : {
+                actualInputTokens: reportedUsage.inputTokens,
+                actualOutputTokens: reportedUsage.outputTokens,
+                actualTotalTokens: reportedUsage.totalTokens
+              })
+        });
+      } catch (ledgerError) {
+        return { outcome: "failed", run: requested.run, error: ledgerError };
+      }
+      return { outcome: "failed", run: requested.run, error };
+    }
+
+    function reportUsage(usage: ProviderTokenUsage): void {
+      if (reportedUsage !== undefined) {
+        throw new Error("Provider reported token usage more than once for one logical model call.");
+      }
+      reportedUsage = parseProviderTokenUsage(usage);
+    }
+  }
+
   #services(signal: AbortSignal): RuntimeServices {
     return {
       workspace: this.#workspace,
@@ -1296,6 +1481,17 @@ export class RuntimeEngine {
       notify: (runId, observer) => this.#notify(runId, observer),
       withHeartbeat: (runId, operation) => (
         this.#withLeaseHeartbeat(runId, operation)
+      ),
+      requestModel: (run, phase, context, eventPayload, observer, countIteration) => (
+        this.#requestModel(
+          run,
+          phase,
+          context,
+          eventPayload,
+          signal,
+          observer,
+          countIteration
+        )
       ),
       commit: (previous, next, type, payload, observer) => (
         this.#commit(previous, next, type, payload, observer)

@@ -1,11 +1,16 @@
 import {
   SemanticValidationVerdictSchema,
+  type ModelCallPhase,
   type ModelDecisionContext,
+  type ProviderModelProfile,
+  type ProviderTokenMeasurement,
+  type ProviderTokenUsage,
   type RuntimeOperationContext,
   type RuntimeProvider,
   type SemanticValidationContext,
   type SemanticValidationVerdict
 } from "./model-client.js";
+import { estimateTextTokens } from "./context-budget.js";
 import { RuntimeError } from "./runtime-error.js";
 
 export type ProviderCompletionRequest = {
@@ -17,9 +22,19 @@ export type ProviderCompletionRequest = {
 
 export type ProviderCompletionOperation = {
   readonly signal: AbortSignal;
+  readonly reportTokenUsage?: (usage: ProviderTokenUsage) => void;
 };
 
+export type ProviderRequestTokenMeter = (
+  request: ProviderCompletionRequest
+) => ProviderTokenMeasurement | Promise<ProviderTokenMeasurement>;
+
 export type ProviderAdapterDefinition = {
+  readonly modelProfile?: ProviderModelProfile;
+  readonly projectRequest?: (
+    request: ProviderCompletionRequest
+  ) => ProviderCompletionRequest;
+  readonly measureTokens?: ProviderRequestTokenMeter;
   complete(
     request: ProviderCompletionRequest,
     operation: ProviderCompletionOperation
@@ -48,22 +63,32 @@ export function defineProviderAdapter(
   ): Promise<unknown> {
     const signal = operation.signal;
     signal.throwIfAborted();
-    const content = await definition.complete(Object.freeze({
-      phase,
-      system: phase === "decision"
-        ? DECISION_SYSTEM_PROMPT
-        : VALIDATION_SYSTEM_PROMPT,
-      input: JSON.stringify({
-        mode: phase === "decision" ? "decide" : "validate",
-        context
-      }),
-      responseFormat: "json" as const
-    }), { signal });
+    const content = await definition.complete(
+      buildRequest(phase, context),
+      {
+        signal,
+        ...(operation.reportTokenUsage === undefined
+          ? {}
+          : { reportTokenUsage: operation.reportTokenUsage })
+      }
+    );
     signal.throwIfAborted();
     return parseCompletion(content);
   }
 
   return Object.freeze({
+    ...(definition.modelProfile === undefined
+      ? {}
+      : { modelProfile: definition.modelProfile }),
+    async measureTokens(
+      phase: ModelCallPhase,
+      context: ModelDecisionContext | SemanticValidationContext
+    ): Promise<ProviderTokenMeasurement> {
+      const request = buildRequest(phase, context);
+      return definition.measureTokens === undefined
+        ? estimateTextTokens(`${request.system}\n${request.input}`)
+        : await definition.measureTokens(request);
+    },
     async decide(
       context: ModelDecisionContext,
       operation: RuntimeOperationContext
@@ -90,6 +115,24 @@ export function defineProviderAdapter(
           }
         })
   });
+
+  function buildRequest(
+    phase: ModelCallPhase,
+    context: ModelDecisionContext | SemanticValidationContext
+  ): ProviderCompletionRequest {
+    const request = Object.freeze({
+      phase,
+      system: phase === "decision"
+        ? DECISION_SYSTEM_PROMPT
+        : VALIDATION_SYSTEM_PROMPT,
+      input: JSON.stringify({
+        mode: phase === "decision" ? "decide" : "validate",
+        context
+      }),
+      responseFormat: "json" as const
+    });
+    return Object.freeze(definition.projectRequest?.(request) ?? request);
+  }
 }
 
 function parseCompletion(content: unknown): unknown {

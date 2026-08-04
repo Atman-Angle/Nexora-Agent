@@ -62,6 +62,8 @@ flowchart TD
 | Task Contract | 首次 `set_plan` 候选 | 仅新输入时版本化 | Plan digest、Provider、验证 | Run snapshot；Zod 校验 |
 | Structured Plan | Model 提议，Runtime 生成 identity | CAS 修订，完成步骤不可改 | Action 授权、Step、完成门 | Run snapshot 唯一当前版本 |
 | Provider Action Contract | Runtime 从 Zod Schema、Run 状态和 Tool 定义投影 | 每轮随 Plan/Input/active Step 重建 | Provider 决策 | 进程内只读数据；不是第二权威 |
+| Context Budget | Provider Model Profile + Provider-aware Token Meter | 每次 decision/validation 调用前重算 | Runtime 硬拒绝或允许 Provider 调用 | 决策写入 `model_calls`；不写回 Context/Run task facts |
+| Model Call Ledger | Runtime 在 Provider 调用前创建 logical call | success/failure/cancel/interrupted/refused 与实际 usage 终结 | `runtime.inspect(runId).modelCalls`、成本/诊断 | `model_calls`；只拥有调用审计，不参与 Plan/Evidence/完成判断 |
 | Tool Capability Contract | Tool定义时必填五层结构 | Runtime构造时校验文本、example和Schema边界 | Model读取选择投影；Runtime读取Execution/Evidence内部字段 | 进程内静态metadata，不持久化 |
 | Tool inputExample | `contract.execution`定义 | 不修改；Runtime构造时过JSON + inputSchema | 仅active Step可调用Tool的Provider context | 不单独持久化 |
 | Tool Facts | Tool执行产生 | Runtime用`factsSchema`校验 | Invocation、Observation、Evidence、semantic validation | 保存在既有`tool_invocations.result_json`；不建新表 |
@@ -76,7 +78,7 @@ flowchart TD
 | Artifact | 大内容按 SHA-256 创建 | 不修改 | Tool result/ref、人工审计 | `.nexora/artifacts` |
 | Lease/Fencing | start/resume acquire | 操作前及长调用中 renew | 所有写事务校验 | `runs` lease 列；release 清空 |
 
-## 3. 三表与事务边界
+## 3. 四表与事务边界
 
 ```mermaid
 flowchart LR
@@ -89,6 +91,15 @@ flowchart LR
     TX2 --> RUNS
     TX2 --> EVENTS
 
+    RUNTIME -->|"模型预算通过"| TXM["事务：Model Call + Run Budget + Event"]
+    TXM --> CALLS["model_calls<br/>调用/Token 审计"]
+    TXM --> RUNS
+    TXM --> EVENTS
+    RUNTIME -->|"硬上限拒绝"| TXR["事务：Refusal + failed Run + Event"]
+    TXR --> CALLS
+    TXR --> RUNS
+    TXR --> EVENTS
+
     TOOL["RuntimeTool Effect"] -->|"结果"| TX3["事务：Result + Evidence + Run + Event"]
     TX3 --> INV
     TX3 --> RUNS
@@ -100,7 +111,7 @@ flowchart LR
     ART -->|"detailsArtifact"| EVENTS
 ```
 
-事务原则：Intent 与结果分成两个事务，使进程中断后能够区分“尚未开始”“结果明确”和“结果未知”；任何孤立 Artifact 都不能改变 Run 状态。
+事务原则：Tool Intent 与结果分成两个事务，使进程中断后能够区分“尚未开始”“结果明确”和“结果未知”；Model Call 的开始与 Run model-call budget/Event 原子写入，硬拒绝与 failed Run 原子写入，进程中断后的 started call 会在下次持 Lease 时标为 interrupted。任何 Ledger 行或孤立 Artifact 都不能改变任务事实或自行完成 Run。
 
 ## 4. Resume 与恢复流
 
@@ -133,7 +144,7 @@ flowchart TD
 4. 在该边界写 RED；不要在下游增加补偿状态。
 5. 修复后同时验证正向路径和 Resume/失败分支，确保没有第二个真相源。
 
-Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的进程内对象，`RuntimeEngine.close()` 后不再可读；它们不进入新表，也不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。SQLite 和 Artifact 保留。当前 Context Projection 不读取或创建 Checkpoint、Context Store 或 Ledger。
+Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 是独立持久化的调用审计：它引用 Run 和 projection digest，但不保存或覆盖 Context 内容，不是 Task Contract、Plan、Invocation、Evidence、Artifact 或 Run Status 的 Authority。当前实现仍不读取或创建 Checkpoint、Context Store、Eviction 或 Summary。
 
 Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 是唯一权威，Context 只带 active Step/Check 的 completed Invocation 与已完成前置 Evidence 对应的结果、关联 metadata、稳定 digest 和必要 preview，不复制 input、幂等键、Fencing 或 Lease。投影仍限制为最多 8 条、约 32 KiB，并优先把 active Step Observation 放在有界窗口末端，避免被较旧前置事实挤出。`filesystem.read` 的结果内另含内容 digest，供后续 patch 直接复制；大文件正文仍进入 Artifact。
 
@@ -171,8 +182,11 @@ Approval、Invocation Intent/Result、Tool Effect、Evidence、Recovery
 finish 引证、确定性验证、语义验证、Result、succeeded
 → packages/runtime/src/validation.ts
 
-SQLite 三表、Revision、事务、Lease/Fencing
+SQLite 四表、Revision、事务、Migration、Lease/Fencing
 → packages/runtime/src/run-store.ts
+
+Provider Profile、Token Meter fallback、软/硬预算计算
+→ packages/runtime/src/context-budget.ts
 
 Run Status 合法迁移
 → packages/runtime/src/state-machine.ts

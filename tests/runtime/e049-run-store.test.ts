@@ -24,7 +24,7 @@ function tempRoot(): string {
 }
 
 describe("E049 authoritative Run Store", () => {
-  it("creates only the three designed SQLite tables", () => {
+  it("creates the authoritative tables and the separate Model Call Ledger", () => {
     const root = tempRoot();
     const databasePath = join(root, "runtime-v1.1.db");
     const store = openRunStore({ databasePath });
@@ -33,7 +33,7 @@ describe("E049 authoritative Run Store", () => {
     const database = new Database(databasePath, { readonly: true });
     const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>;
     database.close();
-    expect(tables.map(({ name }) => name)).toEqual(["run_events", "runs", "tool_invocations"]);
+    expect(tables.map(({ name }) => name)).toEqual(["model_calls", "run_events", "runs", "tool_invocations"]);
   });
 
   it("persists one current snapshot and append-only events", () => {

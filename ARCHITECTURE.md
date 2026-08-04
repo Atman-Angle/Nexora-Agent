@@ -69,7 +69,9 @@ Fresh External Facts
 
 上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。当前 Context Projection 不再把完整 `RunSnapshot` 交给 Provider：`TaskContract.inputVersion` 之前的输入由当前 Task Contract 覆盖，模型只接收尚未覆盖的新输入；Tool Observation 由 active Step、其 Checks 和已完成前置 Evidence 投影，并继续受数量/字节边界约束。每份投影带稳定 digest，便于测试和调用诊断，但 digest 不拥有 Run 状态。
 
-Token Budget、Working Set、Retrieval、Compaction 和 Rehydration 仍是后续独立 Slice；当前 Slice 不创建 Checkpoint、摘要、Context Store 或第二套事实 Authority。
+每次 decision/validation 调用前，Runtime 由 Provider 自己声明的模型容量、输出预留、软阈值和 Token Meter 评估投影。硬上限拒绝发生在 Provider 调用前，软上限允许调用但进入持久化 Model Call Ledger；Provider 返回 usage 时同时保留实测值。Ledger 只拥有模型调用与计费审计，不拥有任务事实、Plan、Evidence 或 Run Status。
+
+Deterministic Eviction、Structured Compaction、Rehydration 和 Context Branching/Fork 仍是后续独立 Slice；当前 Slice 不创建 Checkpoint、摘要、Context Store 或第二套任务事实 Authority。
 
 ### Action Runtime
 

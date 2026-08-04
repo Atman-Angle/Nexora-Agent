@@ -90,11 +90,41 @@ export const SemanticValidationVerdictSchema = z.object({
 }).strict();
 export type SemanticValidationVerdict = z.infer<typeof SemanticValidationVerdictSchema>;
 
+export type ModelCallPhase = "decision" | "validation";
+
+export type ProviderModelProfile = {
+  readonly provider: string;
+  readonly model: string;
+  readonly contextWindowTokens: number;
+  readonly reservedOutputTokens: Readonly<Record<ModelCallPhase, number>>;
+  readonly softLimitRatio: number;
+};
+
+export type ProviderTokenMeasurement = {
+  readonly inputTokens: number;
+  readonly method: "exact" | "estimated";
+  readonly meter: string;
+};
+
+export type ProviderTokenUsage = {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+};
+
+export type ProviderTokenMeter = (
+  phase: ModelCallPhase,
+  context: ModelDecisionContext | SemanticValidationContext
+) => ProviderTokenMeasurement | Promise<ProviderTokenMeasurement>;
+
 export type RuntimeOperationContext = {
   readonly signal: AbortSignal;
+  readonly reportTokenUsage?: (usage: ProviderTokenUsage) => void;
 };
 
 export interface RuntimeProvider {
+  readonly modelProfile?: ProviderModelProfile;
+  readonly measureTokens?: ProviderTokenMeter;
   decide(
     context: ModelDecisionContext,
     operation: RuntimeOperationContext

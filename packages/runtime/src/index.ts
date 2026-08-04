@@ -37,7 +37,12 @@ export {
 
 export type {
   ModelDecisionContext,
+  ModelCallPhase,
   ProjectedRunContext,
+  ProviderModelProfile,
+  ProviderTokenMeasurement,
+  ProviderTokenMeter,
+  ProviderTokenUsage,
   RuntimeProvider,
   SemanticValidationContext,
   SemanticValidationVerdict,
@@ -46,6 +51,7 @@ export type {
 
 export type {
   Evidence,
+  ModelCallRecord,
   RunEvent,
   RunSnapshot,
   RunStatus,
@@ -67,7 +73,8 @@ export {
   defineProviderAdapter,
   type ProviderAdapterDefinition,
   type ProviderCompletionOperation,
-  type ProviderCompletionRequest
+  type ProviderCompletionRequest,
+  type ProviderRequestTokenMeter
 } from "./provider-adapter.js";
 
 export {

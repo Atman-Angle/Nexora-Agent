@@ -356,6 +356,42 @@ export const ToolInvocationSchema = z.object({
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
 export type ToolInvocationIntent = Omit<ToolInvocation, "status" | "completedAt" | "resultJson" | "errorJson">;
 
+export const ModelCallRecordSchema = z.object({
+  id: NonEmptyString,
+  runId: NonEmptyString,
+  sequence: z.number().int().positive(),
+  phase: z.enum(["decision", "validation"]),
+  provider: NonEmptyString,
+  model: NonEmptyString,
+  projectionDigest: NonEmptyString.nullable(),
+  contextWindowTokens: z.number().int().positive(),
+  reservedOutputTokens: z.number().int().nonnegative(),
+  softInputLimitTokens: z.number().int().nonnegative(),
+  hardInputLimitTokens: z.number().int().nonnegative(),
+  measuredInputTokens: z.number().int().nonnegative(),
+  measurementMethod: z.enum(["exact", "estimated"]),
+  meter: NonEmptyString,
+  budgetDecision: z.enum(["within_budget", "soft_limit_exceeded", "hard_limit_exceeded"]),
+  status: z.enum(["started", "succeeded", "failed", "cancelled", "interrupted", "refused"]),
+  actualInputTokens: z.number().int().nonnegative().nullable(),
+  actualOutputTokens: z.number().int().nonnegative().nullable(),
+  actualTotalTokens: z.number().int().nonnegative().nullable(),
+  errorCode: NonEmptyString.nullable(),
+  startedAt: IsoDateTime,
+  completedAt: IsoDateTime.nullable()
+}).strict();
+export type ModelCallRecord = z.infer<typeof ModelCallRecordSchema>;
+export type ModelCallIntent = Omit<
+  ModelCallRecord,
+  | "sequence"
+  | "status"
+  | "actualInputTokens"
+  | "actualOutputTokens"
+  | "actualTotalTokens"
+  | "errorCode"
+  | "completedAt"
+>;
+
 export const DEFAULT_RUNTIME_BUDGETS: RuntimeBudgets = {
   maxIterations: 50,
   maxModelCalls: 50,

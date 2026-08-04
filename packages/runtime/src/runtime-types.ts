@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { JsonValueSchema, type Evidence, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolInvocation } from "./contracts.js";
-import type { RuntimeProvider } from "./model-client.js";
+import { JsonValueSchema, type Evidence, type ModelCallRecord, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolInvocation } from "./contracts.js";
+import type { ModelCallPhase, ModelDecisionContext, RuntimeProvider, SemanticValidationContext } from "./model-client.js";
 import type { RunStore } from "./run-store.js";
 
 export const ToolResultSchema = z.discriminatedUnion("status", [
@@ -43,7 +43,12 @@ export type RecoveryDecision =
 export type ResumeInput = { readonly runId: string; readonly input?: string; readonly approvalDecision?: ApprovalDecision; readonly recoveryDecision?: RecoveryDecision };
 export type RuntimeObserver = (event: RunEvent) => void;
 export type RunResult = { readonly runId: string; readonly status: RunStatus; readonly stopReason: string | null; readonly summary: string | null; readonly resultArtifact: string | null; readonly evidence: readonly Evidence[]; readonly lastError: RunSnapshot["lastError"] };
-export type RunView = { readonly snapshot: RunSnapshot; readonly events: readonly RunEvent[]; readonly toolInvocations: readonly ToolInvocation[] };
+export type RunView = {
+  readonly snapshot: RunSnapshot;
+  readonly events: readonly RunEvent[];
+  readonly toolInvocations: readonly ToolInvocation[];
+  readonly modelCalls: readonly ModelCallRecord[];
+};
 export type RunOptions = { readonly budgets?: RuntimeBudgets };
 
 type DeepReadonly<T> =
@@ -235,6 +240,18 @@ export type RuntimeServices = {
     runId: string,
     operation: () => Promise<T>
   ) => Promise<T>;
+  readonly requestModel: (
+    run: RunSnapshot,
+    phase: ModelCallPhase,
+    context: ModelDecisionContext | SemanticValidationContext,
+    eventPayload: Record<string, unknown>,
+    observer?: RuntimeObserver,
+    countIteration?: boolean
+  ) => Promise<
+    | { readonly outcome: "succeeded"; readonly run: RunSnapshot; readonly output: unknown }
+    | { readonly outcome: "failed"; readonly run: RunSnapshot; readonly error: unknown }
+    | { readonly outcome: "budget_exceeded"; readonly run: RunSnapshot }
+  >;
   readonly commit: (
     previous: RunSnapshot,
     next: RunSnapshot,

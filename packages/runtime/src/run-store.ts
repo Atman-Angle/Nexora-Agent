@@ -4,10 +4,13 @@ import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 
 import {
+  ModelCallRecordSchema,
   RunEventInputSchema,
   RunEventSchema,
   RunSnapshotSchema,
   ToolInvocationSchema,
+  type ModelCallIntent,
+  type ModelCallRecord,
   type RunEvent,
   type RunEventInput,
   type RunSnapshot,
@@ -16,7 +19,7 @@ import {
 } from "./contracts.js";
 import { assertRunStatusTransition } from "./state-machine.js";
 
-const schemaSql = `
+const coreSchemaSql = `
 CREATE TABLE IF NOT EXISTS runs (
   run_id TEXT PRIMARY KEY,
   revision INTEGER NOT NULL,
@@ -61,6 +64,37 @@ CREATE TABLE IF NOT EXISTS tool_invocations (
 );
 `;
 
+const modelCallSchemaSql = `
+CREATE TABLE IF NOT EXISTS model_calls (
+  call_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  phase TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  projection_digest TEXT,
+  context_window_tokens INTEGER NOT NULL,
+  reserved_output_tokens INTEGER NOT NULL,
+  soft_input_limit_tokens INTEGER NOT NULL,
+  hard_input_limit_tokens INTEGER NOT NULL,
+  measured_input_tokens INTEGER NOT NULL,
+  measurement_method TEXT NOT NULL,
+  meter TEXT NOT NULL,
+  budget_decision TEXT NOT NULL,
+  status TEXT NOT NULL,
+  actual_input_tokens INTEGER,
+  actual_output_tokens INTEGER,
+  actual_total_tokens INTEGER,
+  error_code TEXT,
+  started_at TEXT NOT NULL,
+  completed_at TEXT,
+  UNIQUE (run_id, sequence),
+  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS model_calls_run_phase
+ON model_calls (run_id, phase, sequence);
+`;
+
 type RunRow = {
   snapshot_json: string;
   revision: number;
@@ -87,6 +121,30 @@ type ToolRow = {
   result_json: string | null;
   error_json: string | null;
 };
+type ModelCallRow = {
+  call_id: string;
+  run_id: string;
+  sequence: number;
+  phase: string;
+  provider: string;
+  model: string;
+  projection_digest: string | null;
+  context_window_tokens: number;
+  reserved_output_tokens: number;
+  soft_input_limit_tokens: number;
+  hard_input_limit_tokens: number;
+  measured_input_tokens: number;
+  measurement_method: string;
+  meter: string;
+  budget_decision: string;
+  status: string;
+  actual_input_tokens: number | null;
+  actual_output_tokens: number | null;
+  actual_total_tokens: number | null;
+  error_code: string | null;
+  started_at: string;
+  completed_at: string | null;
+};
 
 export class RunStore {
   readonly #database: Database.Database;
@@ -97,7 +155,7 @@ export class RunStore {
     this.#database = new Database(resolved);
     this.#database.pragma("journal_mode = WAL");
     this.#database.pragma("foreign_keys = ON");
-    this.#database.exec(schemaSql);
+    this.#migrate();
   }
 
   createRun(snapshotInput: RunSnapshot, eventInput: RunEventInput): RunSnapshot {
@@ -237,6 +295,93 @@ export class RunStore {
   listToolInvocations(runId: string): ToolInvocation[] {
     const rows = this.#database.prepare("SELECT * FROM tool_invocations WHERE run_id = ? ORDER BY started_at, invocation_id").all(runId) as ToolRow[];
     return rows.map((row) => this.#parseToolRow(row));
+  }
+
+  listModelCalls(runId: string): ModelCallRecord[] {
+    const rows = this.#database.prepare(`
+      SELECT * FROM model_calls WHERE run_id = ? ORDER BY sequence
+    `).all(runId) as ModelCallRow[];
+    return rows.map((row) => this.#parseModelCallRow(row));
+  }
+
+  beginModelCallAndCommitRun(input: {
+    readonly intent: ModelCallIntent;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly call: ModelCallRecord } {
+    const transaction = this.#database.transaction(() => {
+      const call = this.#insertModelCall(input.intent, "started", null);
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, call };
+    });
+    return transaction();
+  }
+
+  refuseModelCallAndCommitRun(input: {
+    readonly intent: ModelCallIntent;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly call: ModelCallRecord } {
+    const transaction = this.#database.transaction(() => {
+      const call = this.#insertModelCall(
+        input.intent,
+        "refused",
+        "CONTEXT_BUDGET_EXCEEDED"
+      );
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, call };
+    });
+    return transaction();
+  }
+
+  completeModelCall(input: {
+    readonly callId: string;
+    readonly fencingToken: number;
+    readonly status: "succeeded" | "failed" | "cancelled";
+    readonly completedAt: string;
+    readonly actualInputTokens?: number;
+    readonly actualOutputTokens?: number;
+    readonly actualTotalTokens?: number;
+    readonly errorCode?: string;
+  }): ModelCallRecord {
+    const transaction = this.#database.transaction(() => {
+      const call = this.#requireModelCall(input.callId);
+      const runRow = this.#requireRunRow(call.runId);
+      this.#assertFencing(runRow, input.fencingToken, input.completedAt);
+      const update = this.#database.prepare(`
+        UPDATE model_calls
+        SET status = ?, completed_at = ?, actual_input_tokens = ?,
+            actual_output_tokens = ?, actual_total_tokens = ?, error_code = ?
+        WHERE call_id = ? AND status = 'started'
+      `).run(
+        input.status,
+        input.completedAt,
+        input.actualInputTokens ?? null,
+        input.actualOutputTokens ?? null,
+        input.actualTotalTokens ?? null,
+        input.errorCode ?? null,
+        input.callId
+      );
+      if (update.changes !== 1) {
+        throw new Error(`Model call is not active: ${input.callId}`);
+      }
+      return this.#requireModelCall(input.callId);
+    });
+    return transaction();
   }
 
   completeToolInvocationAndCommitRun(input: {
@@ -392,6 +537,11 @@ export class RunStore {
       this.#database.prepare(`
         UPDATE runs SET lease_owner = ?, lease_until = ?, fencing_token = ? WHERE run_id = ?
       `).run(input.ownerId, leaseUntil, fencingToken, input.runId);
+      this.#database.prepare(`
+        UPDATE model_calls
+        SET status = 'interrupted', completed_at = ?, error_code = 'PROCESS_INTERRUPTED'
+        WHERE run_id = ? AND status = 'started'
+      `).run(input.now, input.runId);
       return { ownerId: input.ownerId, fencingToken, leaseUntil };
     });
     return transaction();
@@ -453,6 +603,72 @@ export class RunStore {
     });
   }
 
+  #parseModelCallRow(row: ModelCallRow): ModelCallRecord {
+    return ModelCallRecordSchema.parse({
+      id: row.call_id,
+      runId: row.run_id,
+      sequence: row.sequence,
+      phase: row.phase,
+      provider: row.provider,
+      model: row.model,
+      projectionDigest: row.projection_digest,
+      contextWindowTokens: row.context_window_tokens,
+      reservedOutputTokens: row.reserved_output_tokens,
+      softInputLimitTokens: row.soft_input_limit_tokens,
+      hardInputLimitTokens: row.hard_input_limit_tokens,
+      measuredInputTokens: row.measured_input_tokens,
+      measurementMethod: row.measurement_method,
+      meter: row.meter,
+      budgetDecision: row.budget_decision,
+      status: row.status,
+      actualInputTokens: row.actual_input_tokens,
+      actualOutputTokens: row.actual_output_tokens,
+      actualTotalTokens: row.actual_total_tokens,
+      errorCode: row.error_code,
+      startedAt: row.started_at,
+      completedAt: row.completed_at
+    });
+  }
+
+  #insertModelCall(
+    intentInput: ModelCallIntent,
+    status: "started" | "refused",
+    errorCode: string | null
+  ): ModelCallRecord {
+    const intent = ModelCallRecordSchema.omit({
+      sequence: true,
+      status: true,
+      actualInputTokens: true,
+      actualOutputTokens: true,
+      actualTotalTokens: true,
+      errorCode: true,
+      completedAt: true
+    }).parse(intentInput);
+    const sequence = (this.#database.prepare(`
+      SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
+      FROM model_calls WHERE run_id = ?
+    `).get(intent.runId) as { sequence: number }).sequence;
+    const completedAt = status === "refused" ? intent.startedAt : null;
+    this.#database.prepare(`
+      INSERT INTO model_calls (
+        call_id, run_id, sequence, phase, provider, model, projection_digest,
+        context_window_tokens, reserved_output_tokens, soft_input_limit_tokens,
+        hard_input_limit_tokens, measured_input_tokens, measurement_method,
+        meter, budget_decision, status, actual_input_tokens,
+        actual_output_tokens, actual_total_tokens, error_code, started_at,
+        completed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      intent.id, intent.runId, sequence, intent.phase, intent.provider,
+      intent.model, intent.projectionDigest, intent.contextWindowTokens,
+      intent.reservedOutputTokens, intent.softInputLimitTokens,
+      intent.hardInputLimitTokens, intent.measuredInputTokens,
+      intent.measurementMethod, intent.meter, intent.budgetDecision, status,
+      null, null, null, errorCode, intent.startedAt, completedAt
+    );
+    return this.#requireModelCall(intent.id);
+  }
+
   #assertFencing(row: RunRow, fencingToken: number | undefined, at: string): void {
     const hasLease = row.lease_owner !== null && row.lease_owner !== undefined;
     if (!hasLease && fencingToken === undefined) return;
@@ -509,6 +725,32 @@ export class RunStore {
     const invocation = this.getToolInvocation(invocationId);
     if (invocation === null) throw new Error(`Tool invocation not found: ${invocationId}`);
     return invocation;
+  }
+
+  #requireModelCall(callId: string): ModelCallRecord {
+    const row = this.#database.prepare(
+      "SELECT * FROM model_calls WHERE call_id = ?"
+    ).get(callId) as ModelCallRow | undefined;
+    if (row === undefined) throw new Error(`Model call not found: ${callId}`);
+    return this.#parseModelCallRow(row);
+  }
+
+  #migrate(): void {
+    const version = this.#database.pragma("user_version", { simple: true }) as number;
+    if (version > 2) {
+      throw new Error(`Runtime database schema ${version} is newer than supported schema 2.`);
+    }
+    const migrate = this.#database.transaction(() => {
+      if (version < 1) {
+        this.#database.exec(coreSchemaSql);
+        this.#database.pragma("user_version = 1");
+      }
+      if (version < 2) {
+        this.#database.exec(modelCallSchemaSql);
+        this.#database.pragma("user_version = 2");
+      }
+    });
+    migrate();
   }
 }
 

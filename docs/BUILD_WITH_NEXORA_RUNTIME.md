@@ -61,11 +61,12 @@ try {
 - `NEXORA_MODEL_BASE_URL`；
 - `NEXORA_MODEL_API_KEY`；
 - `NEXORA_MODEL_NAME`；
-- 可选 `NEXORA_MODEL_TIMEOUT_MS`。
+- 可选 `NEXORA_MODEL_TIMEOUT_MS`；
+- 可选 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`（默认 `128000`）。
 
 仓库 CLI 的 start/resume 会自动加载启动目录 `.env`；但 `@nexora/runtime` 不读取文件或修改环境。包调用方必须显式提供进程环境，或直接调用 `createOpenAICompatibleProvider(...)` 传入配置。
 
-也可调用 `createOpenAICompatibleProvider(options)` 显式传入连接配置或自定义 `fetch`。
+也可调用 `createOpenAICompatibleProvider(options)` 显式传入连接配置、自定义 `fetch`、`contextWindowTokens`、各 phase 的 `reservedOutputTokens`、`softLimitRatio`，以及能读取最终序列化 Provider Request 的 `tokenMeter`。未提供精确 Tokenizer 时，Adapter 使用标记为 `estimated` 的 UTF-8 字节估算，不会伪装成精确计量。
 
 ## Runtime API
 
@@ -419,5 +420,8 @@ Structured Plan 的 required Check 绑定具体 Tool。成功 Tool Invocation �
 - Evidence/Result：Run snapshot；
 - 审计：只追加 `run_events`；
 - 大内容：内容寻址 Artifact。
+- 模型调用与 Token 审计：独立 `model_calls` Ledger；它不参与任务完成判断。
 
-Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。没有旧 Checkpoint、Ledger、Profile 或第二套 Runtime。
+`runtime.inspect(runId).modelCalls` 按调用顺序返回 decision/validation 的 Provider、模型、projection digest、计量方法、软/硬预算决策、调用状态，以及 Provider 可用时返回的实际 input/output/total usage。硬上限拒绝不会调用 Provider，也不会消耗 `budgetsUsed.modelCalls`，但会持久化 `refused` Ledger 行用于审计。
+
+Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v2 在原有 Authority 表旁增加 `model_calls`，可从 schema v1 原地迁移；没有 Checkpoint、Summary、Context Store、Eviction、Branch State、Profile Store 或第二套 Runtime。

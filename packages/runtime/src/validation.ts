@@ -130,21 +130,7 @@ export async function proposeFinish(
     );
   }
 
-  let run = services.commit(
-    runInput,
-    {
-      ...runInput,
-      budgetsUsed: {
-        ...runInput.budgetsUsed,
-        modelCalls: runInput.budgetsUsed.modelCalls + 1
-      },
-      updatedAt: services.now()
-    },
-    "validation.requested",
-    { evidenceIds: deterministic.evidenceIds },
-    observer
-  );
-
+  let run = runInput;
   let verdict: z.infer<typeof SemanticValidationVerdictSchema>;
   try {
     const evidenceById = new Map(run.evidence.map((item) => [item.id, item]));
@@ -170,13 +156,21 @@ export async function proposeFinish(
         facts: JsonValueSchema.parse(invocation.resultJson) as JsonValue
       };
     });
-    verdict = SemanticValidationVerdictSchema.parse(
-      await services.withHeartbeat(run.runId, () => services.provider.validate({
+    const modelCall = await services.requestModel(
+      run,
+      "validation",
+      {
         inputs: run.inputHistory.map((entry) => entry.text),
         proposedSummary: action.summary,
         facts
-      }, { signal: services.signal }))
+      },
+      { evidenceIds: deterministic.evidenceIds },
+      observer
     );
+    run = modelCall.run;
+    if (modelCall.outcome === "budget_exceeded") return run;
+    if (modelCall.outcome === "failed") throw modelCall.error;
+    verdict = SemanticValidationVerdictSchema.parse(modelCall.output);
   } catch (error) {
     if (services.signal.aborted) {
       throw new RuntimeError({
