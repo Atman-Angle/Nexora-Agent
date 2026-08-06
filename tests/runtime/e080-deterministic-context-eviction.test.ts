@@ -158,6 +158,7 @@ describe("E080 deterministic Context Eviction", () => {
     `).all() as Array<{ name: string }>;
     database.close();
     expect(tables.map((row) => row.name)).toEqual([
+      "context_checkpoints",
       "model_calls",
       "run_events",
       "runs",
@@ -179,7 +180,7 @@ describe("E080 deterministic Context Eviction", () => {
         provider: "test-provider",
         model: "token-eviction-model",
         contextWindowTokens: 100,
-        reservedOutputTokens: { decision: 20, validation: 10 },
+        reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
         softLimitRatio: 0.75
       },
       measureTokens(_phase, context) {
@@ -373,7 +374,7 @@ describe("E080 deterministic Context Eviction", () => {
         provider: "test-provider",
         model: "hard-eviction-model",
         contextWindowTokens: 100,
-        reservedOutputTokens: { decision: 20, validation: 10 },
+        reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
         softLimitRatio: 0.75
       },
       measureTokens(_phase, context) {
@@ -590,8 +591,14 @@ describe("E080 deterministic Context Eviction", () => {
     const toolColumns = migrated.prepare(
       "PRAGMA table_info(tool_invocations)"
     ).all() as Array<{ name: string }>;
+    const tables = migrated.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(3);
+    expect(version).toBe(4);
+    expect(tables.map((row) => row.name)).toContain("context_checkpoints");
     expect(toolColumns.filter((row) => row.name === "payload_digest")).toHaveLength(1);
     expect(toolColumns.filter((row) => row.name === "payload_artifact_ref")).toHaveLength(1);
   });

@@ -146,7 +146,7 @@ describe("E079 Context Budget and Token Accounting", () => {
         provider: "test-provider",
         model: "async-meter",
         contextWindowTokens: 100,
-        reservedOutputTokens: { decision: 20, validation: 10 },
+        reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
         softLimitRatio: 0.75
       },
       async measureTokens() {
@@ -221,7 +221,7 @@ describe("E079 Context Budget and Token Accounting", () => {
       apiKey: "test-key",
       model: "provider-model",
       contextWindowTokens: 10_000,
-      reservedOutputTokens: { decision: 500, validation: 200 },
+      reservedOutputTokens: { decision: 500, validation: 200, compaction: 500 },
       tokenMeter(request) {
         meteredInput = request.input;
         return { inputTokens: 321, method: "exact", meter: "provider:test-tokenizer" };
@@ -287,8 +287,9 @@ describe("E079 Context Budget and Token Accounting", () => {
       "PRAGMA table_info(tool_invocations)"
     ).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(3);
+    expect(version).toBe(4);
     expect(tables.map((row) => row.name)).toEqual([
+      "context_checkpoints",
       "model_calls",
       "run_events",
       "runs",
@@ -381,7 +382,7 @@ function budgetedProvider(input: {
       provider: "test-provider",
       model: "test-model",
       contextWindowTokens: 100,
-      reservedOutputTokens: { decision: 20, validation: 10 },
+      reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
       softLimitRatio: 0.75
     },
     measureTokens() {
@@ -415,7 +416,7 @@ class CompletingBudgetProvider implements RuntimeProvider {
     provider: "test-provider",
     model: "completion-model",
     contextWindowTokens: 1_000,
-    reservedOutputTokens: { decision: 100, validation: 50 },
+    reservedOutputTokens: { decision: 100, validation: 50, compaction: 100 },
     softLimitRatio: 0.8
   } as const;
   readonly #actions: readonly unknown[];
@@ -435,7 +436,7 @@ class CompletingBudgetProvider implements RuntimeProvider {
     ];
   }
 
-  measureTokens(phase: "decision" | "validation") {
+  measureTokens(phase: "decision" | "validation" | "compaction") {
     return {
       inputTokens: phase === "decision" ? 20 : 12,
       method: "exact" as const,

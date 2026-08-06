@@ -21,7 +21,11 @@ flowchart TD
     BUDGET -- "是" --> CONTEXT["决策上下文<br/>workspace + Capability/Decision + allowed Action examples<br/>active Tool example + bounded observations"]
     INVOBS["tool_invocations<br/>completed result/error authority"] --> OBS["价值排序 + 普通候选默认 8 项<br/>full / deterministic fragment / Authority refs"]
     OBS --> CONTEXT
-    CONTEXT --> MODEL["RuntimeProvider.decide"]
+    CONTEXT --> COMPACT{"Eviction 耗尽且仍超预算？"}
+    COMPACT -- "是" --> COMPACTCALL["RuntimeProvider.compact + 严格校验<br/>写入 context_checkpoints"]
+    COMPACTCALL --> REBUILD["重建带 contextCheckpoint 的 Context"]
+    REBUILD --> MODEL
+    COMPACT -- "否" --> MODEL["RuntimeProvider.decide"]
     MODEL --> ACTION{"严格 Action Contract"}
     ACTION -- "非法" --> REJECT["结构化诊断 + 原始 Action Artifact<br/>action.rejected + 有界修复"]
     REJECT --> LOOP
@@ -144,7 +148,7 @@ flowchart TD
 4. 在该边界写 RED；不要在下游增加补偿状态。
 5. 修复后同时验证正向路径和 Resume/失败分支，确保没有第二个真相源。
 
-Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 是独立持久化的调用审计：它引用 Run 和 projection digest，但不保存或覆盖 Context 内容，不是 Task Contract、Plan、Invocation、Evidence、Artifact 或 Run Status 的 Authority。当前实现仍不读取或创建 Checkpoint、Context Store 或 Summary。
+Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 是独立持久化的调用审计：它引用 Run 和 projection digest，但不保存或覆盖 Context 内容，不是 Task Contract、Plan、Invocation、Evidence、Artifact 或 Run Status 的 Authority。`context_checkpoints` 是独立持久化的 Prompt 派生缓存：每条 `context_checkpoint` 行都携带 plan_version、revision、canonical summary digest 和按 sourceRef 捕获的 Source Digest 映射；Checkpoint 只引用既有 Authority 实体，从不改写 Run 或 Model Call，删除全部 Checkpoint 后 Decision Projection 必须从 Authority 确定性重建。
 
 Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 保留完整 Tool Authority。价值 class 依次覆盖 active Check、未解决错误、安全/审批失败和 predecessor Evidence，同 class 使用 `stepOrder → invocationSequence → invocationId`。大型 success/failure payload 都以 canonical JSON 计算 digest 并写入 Artifact；Invocation 保存 payload provenance，只有合法绑定同一成功 Invocation 的既有 Evidence 才引用该 Artifact。critical 大 payload 保留明确标记的固定 fragment，普通大 payload 转 reference。Provider soft token limit 会触发继续收缩并重测；32 KiB 仅作保险丝。任何 fragment/reference 都不能冒充完整 facts，当前 Slice也不执行 Rehydration。
 

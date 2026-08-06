@@ -507,6 +507,7 @@ function rebuildDecisionContext(
     allowedActions: context.allowedActions,
     actionContract: context.actionContract,
     toolObservations,
+    contextCheckpoint: context.contextCheckpoint,
     tools: context.tools
   };
   return deepFreeze({

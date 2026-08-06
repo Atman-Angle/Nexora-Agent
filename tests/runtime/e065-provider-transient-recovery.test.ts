@@ -15,6 +15,7 @@ const context = {
   allowedActions: [],
   actionContract: [],
   toolObservations: [],
+  contextCheckpoint: null,
   tools: []
 };
 const operation = { signal: new AbortController().signal };

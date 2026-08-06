@@ -19,6 +19,7 @@ export type OpenAICompatibleProviderOptions = {
   readonly reservedOutputTokens?: {
     readonly decision?: number;
     readonly validation?: number;
+    readonly compaction?: number;
   };
   readonly softLimitRatio?: number;
   readonly tokenMeter?: ProviderRequestTokenMeter;
@@ -63,6 +64,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let contextWindowTokens: number;
   let decisionOutputTokens: number;
   let validationOutputTokens: number;
+  let compactionOutputTokens: number;
   let softLimitRatio: number;
   let fetchImplementation: typeof globalThis.fetch;
   try {
@@ -79,12 +81,18 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     validationOutputTokens = z.number().int().nonnegative().parse(
       options.reservedOutputTokens?.validation ?? 1_024
     );
+    compactionOutputTokens = z.number().int().nonnegative().parse(
+      options.reservedOutputTokens?.compaction
+      ?? options.reservedOutputTokens?.decision
+      ?? 4_096
+    );
     softLimitRatio = z.number().positive().max(1).parse(
       options.softLimitRatio ?? 0.8
     );
     if (
       decisionOutputTokens >= contextWindowTokens
       || validationOutputTokens >= contextWindowTokens
+      || compactionOutputTokens >= contextWindowTokens
     ) {
       throw new Error("Reserved output tokens must be smaller than the context window.");
     }
@@ -106,7 +114,8 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       contextWindowTokens,
       reservedOutputTokens: {
         decision: decisionOutputTokens,
-        validation: validationOutputTokens
+        validation: validationOutputTokens,
+        compaction: compactionOutputTokens
       },
       softLimitRatio
     },

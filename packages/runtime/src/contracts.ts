@@ -370,7 +370,7 @@ export const ModelCallRecordSchema = z.object({
   id: NonEmptyString,
   runId: NonEmptyString,
   sequence: z.number().int().positive(),
-  phase: z.enum(["decision", "validation"]),
+  phase: z.enum(["decision", "validation", "compaction"]),
   provider: NonEmptyString,
   model: NonEmptyString,
   projectionDigest: NonEmptyString.nullable(),

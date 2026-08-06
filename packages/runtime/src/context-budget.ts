@@ -3,6 +3,7 @@ import { Buffer } from "node:buffer";
 import { z } from "zod";
 
 import type {
+  CompactionContext,
   ModelCallPhase,
   ModelDecisionContext,
   ProviderModelProfile,
@@ -18,11 +19,12 @@ const ProviderModelProfileSchema = z.object({
   contextWindowTokens: z.number().int().positive(),
   reservedOutputTokens: z.object({
     decision: z.number().int().nonnegative(),
-    validation: z.number().int().nonnegative()
+    validation: z.number().int().nonnegative(),
+    compaction: z.number().int().nonnegative()
   }).strict(),
   softLimitRatio: z.number().positive().max(1)
 }).strict().superRefine((profile, context) => {
-  for (const phase of ["decision", "validation"] as const) {
+  for (const phase of ["decision", "validation", "compaction"] as const) {
     if (profile.reservedOutputTokens[phase] >= profile.contextWindowTokens) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -52,7 +54,11 @@ const DEFAULT_MODEL_PROFILE: ProviderModelProfile = Object.freeze({
   provider: "custom",
   model: "unspecified",
   contextWindowTokens: 1_000_000_000,
-  reservedOutputTokens: Object.freeze({ decision: 1_024, validation: 256 }),
+  reservedOutputTokens: Object.freeze({
+    decision: 1_024,
+    validation: 256,
+    compaction: 1_024
+  }),
   softLimitRatio: 0.8
 });
 
@@ -72,7 +78,7 @@ export function resolveProviderModelProfile(provider: RuntimeProvider): Provider
 export async function assessContextBudget(
   provider: RuntimeProvider,
   phase: ModelCallPhase,
-  context: ModelDecisionContext | SemanticValidationContext
+  context: ModelDecisionContext | SemanticValidationContext | CompactionContext
 ): Promise<ContextBudgetAssessment> {
   const profile = resolveProviderModelProfile(provider);
   const measurement = ProviderTokenMeasurementSchema.parse(
@@ -113,7 +119,7 @@ export function estimateTextTokens(text: string): ProviderTokenMeasurement {
 }
 
 function estimateContextTokens(
-  context: ModelDecisionContext | SemanticValidationContext
+  context: ModelDecisionContext | SemanticValidationContext | CompactionContext
 ): ProviderTokenMeasurement {
   return estimateTextTokens(JSON.stringify(context));
 }

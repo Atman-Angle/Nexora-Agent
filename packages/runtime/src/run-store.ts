@@ -17,6 +17,7 @@ import {
   type ToolInvocation,
   type ToolInvocationIntent
 } from "./contracts.js";
+import { CompactionSummarySchema, type PersistedCheckpoint } from "./compaction.js";
 import { assertRunStatusTransition } from "./state-machine.js";
 
 const coreSchemaSql = `
@@ -100,6 +101,23 @@ ALTER TABLE tool_invocations ADD COLUMN payload_digest TEXT;
 ALTER TABLE tool_invocations ADD COLUMN payload_artifact_ref TEXT;
 `;
 
+const contextCheckpointSchemaSql = `
+CREATE TABLE IF NOT EXISTS context_checkpoints (
+  checkpoint_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  plan_version INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  summary_json TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  source_digests_json TEXT NOT NULL,
+  covered_invocations_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS context_checkpoints_run
+ON context_checkpoints (run_id, plan_version);
+`;
+
 type RunRow = {
   snapshot_json: string;
   revision: number;
@@ -151,6 +169,17 @@ type ModelCallRow = {
   error_code: string | null;
   started_at: string;
   completed_at: string | null;
+};
+type CheckpointRow = {
+  checkpoint_id: string;
+  run_id: string;
+  plan_version: number;
+  revision: number;
+  summary_json: string;
+  digest: string;
+  source_digests_json: string;
+  covered_invocations_json: string;
+  created_at: string;
 };
 
 export class RunStore {
@@ -307,6 +336,92 @@ export class RunStore {
   listToolInvocations(runId: string): ToolInvocation[] {
     const rows = this.#database.prepare("SELECT * FROM tool_invocations WHERE run_id = ? ORDER BY started_at, invocation_id").all(runId) as ToolRow[];
     return rows.map((row) => this.#parseToolRow(row));
+  }
+
+  /**
+   * Persists a Context Checkpoint without changing the Run snapshot. The write
+   * is fenced and revision-guarded: a stale revision, an expired Lease or an
+   * obsolete Fencing Token cannot write. Any prior Checkpoint for the Run is
+   * replaced atomically.
+   */
+  commitCheckpoint(input: {
+    readonly checkpoint: PersistedCheckpoint;
+    readonly previous: RunSnapshot;
+    readonly fencingToken?: number;
+    readonly event: RunEventInput;
+  }): PersistedCheckpoint {
+    const transaction = this.#database.transaction(() => {
+      const row = this.#requireRunRow(input.checkpoint.runId);
+      this.#assertFencing(row, input.fencingToken, input.event.occurredAt);
+      if (row.revision !== input.previous.revision) {
+        throw new Error(`Run revision conflict: expected ${input.previous.revision}, found ${row.revision}`);
+      }
+      this.#database.prepare(
+        "DELETE FROM context_checkpoints WHERE run_id = ?"
+      ).run(input.checkpoint.runId);
+      this.#database.prepare(`
+        INSERT INTO context_checkpoints (
+          checkpoint_id, run_id, plan_version, revision, summary_json, digest,
+          source_digests_json, covered_invocations_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.checkpoint.checkpointId,
+        input.checkpoint.runId,
+        input.checkpoint.planVersion,
+        input.checkpoint.revision,
+        JSON.stringify(input.checkpoint.summary),
+        input.checkpoint.digest,
+        JSON.stringify(input.checkpoint.sourceDigests),
+        JSON.stringify(input.checkpoint.coveredInvocations),
+        input.checkpoint.createdAt
+      );
+      this.#insertEvent(
+        input.checkpoint.runId,
+        this.#nextSequence(input.checkpoint.runId),
+        input.event
+      );
+    });
+    transaction();
+    return input.checkpoint;
+  }
+
+  getLatestCheckpoint(runId: string): PersistedCheckpoint | null {
+    const row = this.#database.prepare(`
+      SELECT * FROM context_checkpoints
+      WHERE run_id = ?
+      ORDER BY created_at DESC, checkpoint_id DESC
+      LIMIT 1
+    `).get(runId) as CheckpointRow | undefined;
+    return row === undefined ? null : this.#parseCheckpointRow(row);
+  }
+
+  listCheckpoints(runId: string): PersistedCheckpoint[] {
+    const rows = this.#database.prepare(`
+      SELECT * FROM context_checkpoints
+      WHERE run_id = ?
+      ORDER BY created_at, checkpoint_id
+    `).all(runId) as CheckpointRow[];
+    return rows.map((row) => this.#parseCheckpointRow(row));
+  }
+
+  deleteCheckpoints(runId: string): void {
+    this.#database.prepare(
+      "DELETE FROM context_checkpoints WHERE run_id = ?"
+    ).run(runId);
+  }
+
+  #parseCheckpointRow(row: CheckpointRow): PersistedCheckpoint {
+    return {
+      checkpointId: row.checkpoint_id,
+      runId: row.run_id,
+      planVersion: row.plan_version,
+      revision: row.revision,
+      summary: CompactionSummarySchema.parse(JSON.parse(row.summary_json)),
+      digest: row.digest,
+      sourceDigests: JSON.parse(row.source_digests_json) as Readonly<Record<string, string>>,
+      coveredInvocations: JSON.parse(row.covered_invocations_json) as readonly string[],
+      createdAt: row.created_at
+    };
   }
 
   listModelCalls(runId: string): ModelCallRecord[] {
@@ -765,8 +880,8 @@ export class RunStore {
 
   #migrate(): void {
     const version = this.#database.pragma("user_version", { simple: true }) as number;
-    if (version > 3) {
-      throw new Error(`Runtime database schema ${version} is newer than supported schema 3.`);
+    if (version > 4) {
+      throw new Error(`Runtime database schema ${version} is newer than supported schema 4.`);
     }
     const migrate = this.#database.transaction(() => {
       if (version < 1) {
@@ -780,6 +895,10 @@ export class RunStore {
       if (version < 3) {
         this.#database.exec(toolPayloadProvenanceMigrationSql);
         this.#database.pragma("user_version = 3");
+      }
+      if (version < 4) {
+        this.#database.exec(contextCheckpointSchemaSql);
+        this.#database.pragma("user_version = 4");
       }
     });
     migrate();

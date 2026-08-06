@@ -71,7 +71,7 @@ Fresh External Facts
 
 每次 decision/validation 调用前，Runtime 由 Provider 自己声明的模型容量、输出预留、软阈值和 Token Meter 评估投影。硬上限拒绝发生在 Provider 调用前，软上限允许调用但进入持久化 Model Call Ledger；Provider 返回 usage 时同时保留实测值。Ledger 只拥有模型调用与计费审计，不拥有任务事实、Plan、Evidence 或 Run Status。
 
-Structured Compaction、Rehydration 和 Context Branching/Fork 仍是后续独立 Slice；当前 Eviction 不调用 LLM，不创建 Checkpoint、摘要、Context Store 或第二套任务事实 Authority。
+Structured Compaction 是 Eviction 之后的第二层收缩：当 Eviction 耗尽且 Decision 上下文仍超过 Token 预算时，Runtime 调用 Provider 生成结构化 Summary（目标/约束、已完成工作、关键决策、未解决问题、相关 Artifact），每条陈述必须携带可解析到 Input、Invocation、Evidence、Event 或 Artifact 的 sourceRefs。Summary 在写入 `context_checkpoints` 之前必须通过 Schema、引用存在性、Run 归属、Source Digest 与 section 一致性校验；失败或拒绝的 Summary 不写入 Checkpoint，决策沿用 Eviction 后的上下文继续。Checkpoint 是 Prompt 派生缓存，不拥有 Authority，删除全部 Checkpoint 后 Runtime 必须从 Authority 确定性重建同一 Projection。Rehydration 和 Context Branching/Fork 仍是后续独立 Slice。
 
 ### Action Runtime
 

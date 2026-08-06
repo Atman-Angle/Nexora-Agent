@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type {
+  CompactionContext,
   ModelDecisionContext,
   RuntimeProvider
 } from "../../packages/runtime/src/model-client.js";
@@ -9,22 +10,37 @@ import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 export class ScriptedRuntimeProvider implements RuntimeProvider {
   readonly contexts: ModelDecisionContext[] = [];
   readonly validationContexts: Array<Parameters<RuntimeProvider["validate"]>[0]> = [];
+  readonly compactionContexts: CompactionContext[] = [];
   readonly #actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>;
+  readonly #compactions: Array<unknown | ((context: CompactionContext) => unknown)>;
 
-  constructor(actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>) {
+  constructor(
+    actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>,
+    options: {
+      readonly compactions?: Array<unknown | ((context: CompactionContext) => unknown)>;
+    } = {}
+  ) {
     this.#actions = [...actions];
+    this.#compactions = [...(options.compactions ?? [])];
   }
 
-  async decide(context: ModelDecisionContext): Promise<unknown> {
+  async decide(context: ModelDecisionContext, _operation?: unknown): Promise<unknown> {
     this.contexts.push(structuredClone(context));
     const action = this.#actions.shift();
     if (action === undefined) throw new Error("Scripted Provider exhausted.");
     return typeof action === "function" ? action(context) : action;
   }
 
-  async validate(context: Parameters<RuntimeProvider["validate"]>[0]): Promise<unknown> {
+  async validate(context: Parameters<RuntimeProvider["validate"]>[0], _operation?: unknown): Promise<unknown> {
     this.validationContexts.push(structuredClone(context));
     return { passed: context.facts.length > 0, issues: [] };
+  }
+
+  async compact(context: CompactionContext, _operation?: unknown): Promise<unknown> {
+    this.compactionContexts.push(structuredClone(context));
+    const action = this.#compactions.shift();
+    if (action === undefined) throw new Error("Scripted Provider compactions exhausted.");
+    return typeof action === "function" ? action(context) : action;
   }
 }
 

@@ -33,7 +33,7 @@ describe("E049 authoritative Run Store", () => {
     const database = new Database(databasePath, { readonly: true });
     const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>;
     database.close();
-    expect(tables.map(({ name }) => name)).toEqual(["model_calls", "run_events", "runs", "tool_invocations"]);
+    expect(tables.map(({ name }) => name)).toEqual(["context_checkpoints", "model_calls", "run_events", "runs", "tool_invocations"]);
   });
 
   it("persists one current snapshot and append-only events", () => {

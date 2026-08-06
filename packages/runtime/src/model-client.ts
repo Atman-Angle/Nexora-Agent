@@ -63,6 +63,7 @@ export type ModelDecisionContext = {
   readonly allowedActions: readonly ("set_plan" | "call_tool" | "request_input" | "propose_finish")[];
   readonly actionContract: readonly RuntimeAction[];
   readonly toolObservations: readonly ToolObservation[];
+  readonly contextCheckpoint: ContextCheckpoint | null;
   readonly tools: readonly {
     readonly identity: { readonly name: string };
     readonly capability: {
@@ -84,6 +85,43 @@ export type ModelDecisionContext = {
   }[];
 };
 
+/**
+ * A persisted, verifiable compacted view of Tool history. The summary is a
+ * prompt-derived cache: every statement carries sourceRefs that must resolve
+ * to real Run-owned authority entities (input/invocation/evidence/event/
+ * artifact). It is not an authority entity itself.
+ */
+export type CompactionSummary = {
+  readonly schemaVersion: 1;
+  readonly goal: CompactionStatement;
+  readonly constraints: readonly CompactionStatement[];
+  readonly completedWork: readonly CompactionStatement[];
+  readonly keyDecisions: readonly CompactionStatement[];
+  readonly unresolvedIssues: readonly CompactionStatement[];
+  readonly relatedArtifacts: readonly {
+    readonly artifactRef: string;
+    readonly description: string;
+  }[];
+};
+
+export type CompactionStatement = {
+  readonly statement: string;
+  readonly sourceRefs: readonly string[];
+};
+
+export type ContextCheckpoint = {
+  readonly checkpointId: string;
+  readonly digest: string;
+  readonly summary: CompactionSummary;
+};
+
+export type CompactionContext = {
+  readonly workspace: string;
+  readonly run: ProjectedRunContext;
+  readonly toolObservations: readonly ToolObservation[];
+  readonly budgetDecision: "soft_limit_exceeded" | "hard_limit_exceeded";
+};
+
 export type SemanticValidationContext = {
   readonly inputs: readonly string[];
   readonly proposedSummary: string;
@@ -101,7 +139,7 @@ export const SemanticValidationVerdictSchema = z.object({
 }).strict();
 export type SemanticValidationVerdict = z.infer<typeof SemanticValidationVerdictSchema>;
 
-export type ModelCallPhase = "decision" | "validation";
+export type ModelCallPhase = "decision" | "validation" | "compaction";
 
 export type ProviderModelProfile = {
   readonly provider: string;
@@ -125,7 +163,7 @@ export type ProviderTokenUsage = {
 
 export type ProviderTokenMeter = (
   phase: ModelCallPhase,
-  context: ModelDecisionContext | SemanticValidationContext
+  context: ModelDecisionContext | SemanticValidationContext | CompactionContext
 ) => ProviderTokenMeasurement | Promise<ProviderTokenMeasurement>;
 
 export type RuntimeOperationContext = {
@@ -142,6 +180,16 @@ export interface RuntimeProvider {
   ): Promise<unknown>;
   validate(
     context: SemanticValidationContext,
+    operation: RuntimeOperationContext
+  ): Promise<unknown>;
+  /**
+   * Optional structured compaction. When provided, the Runtime may ask the
+   * Provider to compact the Tool history after deterministic eviction is
+   * exhausted. The returned value is validated by the Runtime before any
+   * Checkpoint is persisted; an absent method preserves the Slice 3 behavior.
+   */
+  compact?(
+    context: CompactionContext,
     operation: RuntimeOperationContext
   ): Promise<unknown>;
   dispose?(): void | Promise<void>;
