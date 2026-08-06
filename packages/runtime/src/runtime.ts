@@ -12,8 +12,7 @@ import {
   JsonValueSchema,
   createInitialRunSnapshot,
   type RunSnapshot,
-  type RuntimeAction,
-  type ToolInvocation
+  type RuntimeAction
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
 import {
