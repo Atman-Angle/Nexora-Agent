@@ -12,19 +12,31 @@ export class ActionRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "ActionRejectedError"; }
 }
 
-export function allowedActions(run: RunSnapshot): ModelDecisionContext["allowedActions"] {
+export function allowedActions(
+  run: RunSnapshot,
+  hasAvailableRefs = false
+): ModelDecisionContext["allowedActions"] {
   if (run.currentPlan === null) return ["set_plan", "request_input"];
   const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
     && run.stepProgress.every((item) => item.status === "completed");
-  if (allStepsCompleted) return ["set_plan", "request_input", "propose_finish"];
-  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
-  const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
-  const hasCallableCheck = activeStep?.acceptanceChecks.some(
-    (check) => check.kind === "tool_result"
-  ) ?? false;
-  return hasCallableCheck
-    ? ["set_plan", "call_tool", "request_input"]
-    : ["set_plan", "request_input"];
+  const base: ModelDecisionContext["allowedActions"] = allStepsCompleted
+    ? ["set_plan", "request_input", "propose_finish"]
+    : (() => {
+        const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+        const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+        const hasCallableCheck = activeStep?.acceptanceChecks.some(
+          (check) => check.kind === "tool_result"
+        ) ?? false;
+        return hasCallableCheck
+          ? ["set_plan", "call_tool", "request_input"]
+          : ["set_plan", "request_input"];
+      })();
+  // request_context is a Harness control action, not a Core RuntimeAction. It
+  // is exposed whenever the model is still deciding and there is at least one
+  // sourceRef published this turn that could be rehydrated.
+  return hasAvailableRefs
+    ? [...base, "request_context"]
+    : base;
 }
 
 export function completeSatisfiedSteps(plan: NonNullable<RunSnapshot["currentPlan"]>, progress: RunSnapshot["stepProgress"], evidence: readonly Evidence[]): RunSnapshot["stepProgress"] {

@@ -21,6 +21,10 @@ import {
 import {
   buildDecisionContext
 } from "./context/decision-context.js";
+import {
+  parseRequestContextAction,
+  type RequestContextAction
+} from "./context/rehydration.js";
 import type {
   RuntimeProvider
 } from "./providers/model-client.js";
@@ -134,6 +138,16 @@ export class RuntimeEngine {
   readonly #subscriptions = new Map<
     string,
     Set<ManagedRuntimeSubscription>
+  >();
+  /**
+   * Transient rehydration bookkeeping. Not an authority: pending requests are
+   * rebuilt from the context.rehydrate_requested / context.rehydrated event
+   * pair on resume, and the available-context manifest is republished every
+   * decision turn.
+   */
+  readonly #rehydrationRequests = new Map<
+    string,
+    { readonly requestId: string; readonly refs: readonly string[] }
   >();
   #closed = false;
   #closePromise: Promise<void> | null = null;
@@ -408,6 +422,7 @@ export class RuntimeEngine {
         }
       }
       if (run.status !== "running") return toRunResult(run);
+      this.#rebuildRehydrationRequests(run.runId);
       return await this.#runLoop(run, controller.signal, observer);
     } finally {
       this.#leases.release(run.runId);
@@ -1047,6 +1062,15 @@ export class RuntimeEngine {
         break;
       }
 
+      const pendingRequest = this.#rehydrationRequests.get(run.runId);
+      const decisionResult = buildDecisionContext({
+        run,
+        store: this.#store,
+        workspace: this.#workspace,
+        tools: this.#tools,
+        artifactDir: this.#artifactDir,
+        ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs })
+      });
       const modelCall = await requestModel(
         {
           provider: this.#provider,
@@ -1062,18 +1086,20 @@ export class RuntimeEngine {
         },
         run,
         "decision",
-        buildDecisionContext({
-          run,
-          store: this.#store,
-          workspace: this.#workspace,
-          tools: this.#tools,
-          artifactDir: this.#artifactDir
-        }),
-        { allowedActions: allowedActions(run) },
+        decisionResult.context,
+        { allowedActions: decisionResult.context.allowedActions },
         signal,
         observer,
         true
       );
+      if (pendingRequest !== undefined && modelCall.outcome === "succeeded") {
+        this.#completeRehydrationRequest(
+          run.runId,
+          pendingRequest.requestId,
+          pendingRequest.refs,
+          observer
+        );
+      }
       run = modelCall.run;
       if (modelCall.outcome === "budget_exceeded") break;
       if (modelCall.outcome === "failed") {
@@ -1099,6 +1125,14 @@ export class RuntimeEngine {
         break;
       }
 
+      // ModelAction dispatch: request_context is a Harness control action and
+      // never reaches the Core state machine / #handleAction.
+      const requestContextAction = parseRequestContextAction(rawAction);
+      if (requestContextAction !== null) {
+        run = await this.#handleRequestContext(run, requestContextAction, signal, observer);
+        continue;
+      }
+
       let action: RuntimeAction;
       try {
         action = RuntimeActionSchema.parse(rawAction);
@@ -1121,6 +1155,86 @@ export class RuntimeEngine {
       }
     }
     return toRunResult(run);
+  }
+
+  /**
+   * Harness handler for the request_context control action. Validates the
+   * requested refs against the manifest of refs published to the model last
+   * turn (only refs the model actually saw, with matching digest), records a
+   * context.rehydrate_requested audit event, and queues the accepted refs for
+   * the next decision turn. The Run snapshot is never modified.
+   */
+  async #handleRequestContext(
+    run: RunSnapshot,
+    action: RequestContextAction,
+    signal: AbortSignal,
+    observer?: RuntimeObserver
+  ): Promise<RunSnapshot> {
+    signal.throwIfAborted();
+    // Every requested ref is queued; the next decision turn resolves each one
+    // against that turn's manifest (ref already published + digest matches) and
+    // reports the outcome back in rehydratedFacts. Refs that were never
+    // published, belong to another Run, or drifted resolve to REF_UNAVAILABLE
+    // without disclosing whether the object exists.
+    const requestId = this.#createId();
+    this.#store.recordRunEvent({
+      runId: run.runId,
+      event: {
+        type: "context.rehydrate_requested",
+        occurredAt: this.#now(),
+        payload: { requestId, refs: action.refs }
+      },
+      fencingToken: this.#leases.requireFencingToken(run.runId)
+    });
+    this.#notify(run.runId, observer);
+    this.#rehydrationRequests.set(run.runId, { requestId, refs: action.refs });
+    return run;
+  }
+
+  #completeRehydrationRequest(
+    runId: string,
+    requestId: string,
+    refs: readonly string[],
+    observer?: RuntimeObserver
+  ): void {
+    this.#store.recordRunEvent({
+      runId,
+      event: {
+        type: "context.rehydrated",
+        occurredAt: this.#now(),
+        payload: { requestId, refs }
+      },
+      fencingToken: this.#leases.requireFencingToken(runId)
+    });
+    this.#rehydrationRequests.delete(runId);
+    this.#notify(runId, observer);
+  }
+
+  /**
+   * Rebuilds transient rehydration requests from the audit event stream on
+   * resume: a context.rehydrate_requested event without a matching
+   * context.rehydrated event was never consumed, so its accepted refs are
+   * queued for the next decision turn. No authority table is involved.
+   */
+  #rebuildRehydrationRequests(runId: string): void {
+    const events = this.#store.listEvents(runId);
+    const fulfilled = new Set<string>();
+    for (const event of events) {
+      if (event.type !== "context.rehydrated") continue;
+      const requestId = event.payload.requestId;
+      if (typeof requestId === "string") fulfilled.add(requestId);
+    }
+    for (const event of events) {
+      if (event.type !== "context.rehydrate_requested") continue;
+      const requestId = event.payload.requestId;
+      if (typeof requestId !== "string" || fulfilled.has(requestId)) continue;
+      const refs = Array.isArray(event.payload.refs)
+        ? event.payload.refs.filter((item): item is string => typeof item === "string")
+        : [];
+      if (refs.length > 0) {
+        this.#rehydrationRequests.set(runId, { requestId, refs });
+      }
+    }
   }
 
   async #handleAction(

@@ -148,7 +148,7 @@ Load Run
 
 ## 5. Action 规则
 
-当前 1.1 每轮只允许一个主 Action：
+当前 1.1 每轮只允许一个主 Action。Core Runtime Action 仍为四种：
 
 ```text
 set_plan
@@ -156,6 +156,8 @@ call_tool
 request_input
 propose_finish
 ```
+
+此外 Harness 控制动作 `request_context` 属于模型可选的第五种动作，但它不是 Core Runtime Action：不进入 `RuntimeActionSchema`、不进入 State Machine、不进入 Core `#handleAction`。模型返回 `request_context` 时，Harness 识别并由 Context 子系统（Rehydration）处理——校验 refs、恢复原始内容、重新投影并继续循环，Run 状态不变。Core 的四种 Action 仍由 `#handleAction` 走状态机。
 
 Approval 不是模型 Action，而是 Runtime 对受保护 `call_tool` 的确定性执行边界。Runtime 内部失败通过 State Machine 进入 `failed`，不是模型可直接选择的成功旁路。
 

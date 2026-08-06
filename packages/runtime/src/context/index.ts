@@ -33,6 +33,21 @@ export {
 } from "./compaction.js";
 
 export {
+  MAX_REHYDRATED_TOKENS_PER_TURN,
+  MAX_REHYDRATION_REFS_PER_REQUEST,
+  MAX_SINGLE_FACT_TOKENS,
+  RequestContextActionSchema,
+  admitRehydratedFacts,
+  autoRehydrateForActiveStep,
+  buildAvailableContextRefs,
+  isValidSourceRefFormat,
+  parseRequestContextAction,
+  resolveRehydratedFact,
+  type RehydratedAdmission,
+  type RequestContextAction
+} from "./rehydration.js";
+
+export {
   requestModel,
   type RequestModelResult,
   type RequestModelServices

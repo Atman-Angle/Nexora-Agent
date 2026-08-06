@@ -241,7 +241,7 @@ export async function compactDecisionContext(
     workspace: services.workspace,
     tools: services.tools,
     artifactDir: services.artifactDir
-  });
+  }).context;
   const rebuiltAssessment = await assessContextBudget(
     services.provider,
     "decision",

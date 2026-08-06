@@ -65,6 +65,7 @@ function rebuildDecisionContext(
     actionContract: context.actionContract,
     toolObservations,
     contextCheckpoint: context.contextCheckpoint,
+    rehydratedFacts: context.rehydratedFacts,
     tools: context.tools
   };
   return deepFreeze({

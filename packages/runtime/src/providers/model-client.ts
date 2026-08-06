@@ -60,10 +60,11 @@ export type ModelDecisionContext = {
     readonly schemaVersion: 1;
     readonly digest: string;
   };
-  readonly allowedActions: readonly ("set_plan" | "call_tool" | "request_input" | "propose_finish")[];
-  readonly actionContract: readonly RuntimeAction[];
+  readonly allowedActions: readonly ("set_plan" | "call_tool" | "request_input" | "propose_finish" | "request_context")[];
+  readonly actionContract: readonly ModelAction[];
   readonly toolObservations: readonly ToolObservation[];
   readonly contextCheckpoint: ContextCheckpoint | null;
+  readonly rehydratedFacts: readonly RehydratedFact[];
   readonly tools: readonly {
     readonly identity: { readonly name: string };
     readonly capability: {
@@ -83,6 +84,37 @@ export type ModelDecisionContext = {
     };
     readonly evidence: { readonly produces: readonly string[] };
   }[];
+};
+
+/**
+ * Harness control action: the model asks the Runtime to rehydrate selected
+ * sourceRefs that were already exposed in the current context. Unlike the
+ * Core RuntimeActions, request_context is handled by the Harness (the run
+ * loop) and never reaches the state machine or the Core #handleAction.
+ */
+export type RequestContextAction = {
+  readonly type: "request_context";
+  readonly refs: readonly string[];
+};
+
+/** Every action a model may return in one decision call. */
+export type ModelAction = RuntimeAction | RequestContextAction;
+
+export type RehydrationError = "INVALID_REF" | "REF_UNAVAILABLE" | "REHYDRATION_BUDGET_EXCEEDED";
+export type RehydrationOrigin = "harness_required" | "model_request" | "harness_helpful";
+
+/**
+ * A rehydrated original fact, restored from the Authority Store by stable
+ * sourceRef. content is null when restoration failed; error explains why
+ * without leaking whether a cross-run object actually exists.
+ */
+export type RehydratedFact = {
+  readonly ref: string;
+  readonly kind: "invocation" | "evidence" | "artifact" | "input" | "event";
+  readonly origin: RehydrationOrigin;
+  readonly digest: string;
+  readonly content: JsonValue | null;
+  readonly error: RehydrationError | null;
 };
 
 /**

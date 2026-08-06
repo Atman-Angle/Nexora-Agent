@@ -293,6 +293,21 @@ export class RunStore {
     return input.checkpoint;
   }
 
+  /**
+   * Appends an audit event without changing the Run snapshot. Fenced like
+   * every other write; used by the Harness for rehydration bookkeeping
+   * (context.rehydrate_requested / context.rehydrated).
+   */
+  recordRunEvent(input: {
+    readonly runId: string;
+    readonly event: RunEventInput;
+    readonly fencingToken?: number;
+  }): void {
+    const row = this.#requireRunRow(input.runId);
+    this.#assertFencing(row, input.fencingToken, input.event.occurredAt);
+    this.#insertEvent(input.runId, this.#nextSequence(input.runId), input.event);
+  }
+
   getLatestCheckpoint(runId: string): PersistedCheckpoint | null {
     const row = this.#database.prepare(`
       SELECT * FROM context_checkpoints

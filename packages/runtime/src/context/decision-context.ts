@@ -8,6 +8,11 @@ import {
   deepFreeze,
   digestJson
 } from "../runtime-helpers.js";
+import type {
+  ModelAction,
+  ModelDecisionContext,
+  RehydratedFact
+} from "../providers/model-client.js";
 import type { RuntimeTool } from "../runtime-types.js";
 import { ArtifactStore } from "../store/artifacts.js";
 import type { RunStore } from "../store/run-store.js";
@@ -17,17 +22,35 @@ import {
   type PersistedCheckpoint
 } from "./compaction.js";
 import type {
-  ContextCheckpoint,
-  ModelDecisionContext
+  ContextCheckpoint
 } from "../providers/model-client.js";
 import {
   projectRelevantToolObservations,
   projectRunContext
 } from "./projection.js";
+import {
+  admitRehydratedFacts,
+  autoRehydrateForActiveStep,
+  buildAvailableContextRefs,
+  resolveRehydratedFact
+} from "./rehydration.js";
+
+export type DecisionContextResult = {
+  readonly context: ModelDecisionContext;
+  /** sourceRefs that were successfully restored into rehydratedFacts this turn. */
+  readonly injectedRehydratedRefs: readonly string[];
+};
 
 /**
  * Builds the full ModelDecisionContext the Provider sees for one decision
- * call. Pure function of (run, invocations, checkpoint, tools, workspace).
+ * call, including any rehydrated facts admitted this turn. Pure function of
+ * (run, invocations, checkpoint, tools, workspace, rehydrateRequests).
+ *
+ * Rehydration integrates here: the Harness passes this turn's model-requested
+ * refs (already validated against the previous turn's manifest) and the
+ * Harness auto-candidates are derived from the active step. Facts are admitted
+ * under a dedicated budget in priority order: harness_required >
+ * model_request > harness_helpful.
  */
 export function buildDecisionContext(args: {
   readonly run: RunSnapshot;
@@ -35,19 +58,9 @@ export function buildDecisionContext(args: {
   readonly workspace: string;
   readonly tools: ReadonlyMap<string, RuntimeTool>;
   readonly artifactDir: string;
-}): ModelDecisionContext {
+  readonly rehydrateRequests?: readonly string[];
+}): DecisionContextResult {
   const { run, store, workspace, tools, artifactDir } = args;
-  const actions = allowedActions(run);
-  const includeTaskContract = run.currentPlan === null || run.taskContract === null
-    || run.taskContract.inputVersion < run.inputHistory.length;
-  const allStepsCompleted = run.currentPlan !== null
-    && run.stepProgress.length === run.currentPlan.orderedSteps.length
-    && run.stepProgress.every((item) => item.status === "completed");
-  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
-  const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
-  const callableTools = new Set(activeStep?.acceptanceChecks
-    .filter((check) => check.kind === "tool_result")
-    .map((check) => check.toolName) ?? []);
   const invocations = store.listToolInvocations(run.runId);
   const observations = projectRelevantToolObservations(run, invocations);
   const checkpoint = findActiveCheckpoint({
@@ -66,22 +79,103 @@ export function buildDecisionContext(args: {
       digest: checkpoint.digest,
       summary: checkpoint.summary
     };
-  const projection = deepFreeze(structuredClone({
-    workspace,
-    run: projectRunContext(run),
-    allowedActions: actions,
-    actionContract: runtimeActionContract(actions, {
+
+  const manifest = buildAvailableContextRefs({
+    run,
+    observations,
+    checkpoint,
+    store,
+    artifactDir
+  });
+  const hasAvailableRefs = manifest.size > 0 && run.currentPlan !== null;
+  const actions = allowedActions(run, hasAvailableRefs);
+
+  const autoCandidates = autoRehydrateForActiveStep({ run, observations, invocations });
+  const modelRequests = args.rehydrateRequests ?? [];
+  const candidates: RehydratedFact[] = [];
+  for (const ref of autoCandidates.required) {
+    candidates.push(resolveRehydratedFact({
+      ref,
+      run,
+      store,
+      artifactDir,
+      manifest,
+      origin: "harness_required"
+    }));
+  }
+  for (const ref of modelRequests) {
+    if (!candidates.some((candidate) => candidate.ref === ref)) {
+      candidates.push(resolveRehydratedFact({
+        ref,
+        run,
+        store,
+        artifactDir,
+        manifest,
+        origin: "model_request"
+      }));
+    }
+  }
+  for (const ref of autoCandidates.helpful) {
+    if (!candidates.some((candidate) => candidate.ref === ref)) {
+      candidates.push(resolveRehydratedFact({
+        ref,
+        run,
+        store,
+        artifactDir,
+        manifest,
+        origin: "harness_helpful"
+      }));
+    }
+  }
+  const { accepted } = admitRehydratedFacts(candidates);
+  const seenFacts = new Set<string>();
+  const rehydratedFacts = accepted.filter((fact) => {
+    if (seenFacts.has(fact.ref)) return false;
+    seenFacts.add(fact.ref);
+    return true;
+  });
+  const injectedRehydratedRefs = rehydratedFacts
+    .filter((fact) => fact.error === null)
+    .map((fact) => fact.ref);
+
+  const includeTaskContract = run.currentPlan === null || run.taskContract === null
+    || run.taskContract.inputVersion < run.inputHistory.length;
+  const allStepsCompleted = run.currentPlan !== null
+    && run.stepProgress.length === run.currentPlan.orderedSteps.length
+    && run.stepProgress.every((item) => item.status === "completed");
+  const baseContract = runtimeActionContract(
+    actions.filter((item): item is "set_plan" | "call_tool" | "request_input" | "propose_finish" => item !== "request_context"),
+    {
       workspace,
       inputVersion: run.inputHistory.length,
       basedOnVersion: run.currentPlan?.version ?? null,
       includeTaskContract,
       currentPlan: run.currentPlan,
       finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
-    }),
+    }
+  );
+  const actionContract: readonly ModelAction[] = hasAvailableRefs
+    ? [
+        ...baseContract,
+        Object.freeze({ type: "request_context" as const, refs: ["<source-ref>"] })
+      ]
+    : baseContract;
+
+  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+  const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
+  const callableTools = new Set(activeStep?.acceptanceChecks
+    .filter((check) => check.kind === "tool_result")
+    .map((check) => check.toolName) ?? []);
+  const projection = deepFreeze(structuredClone({
+    workspace,
+    run: projectRunContext(run),
+    allowedActions: actions,
+    actionContract,
     toolObservations: checkpoint === null
       ? observations
       : observations.filter((item) => !covered.has(item.invocationId)),
     contextCheckpoint: checkpointView,
+    rehydratedFacts,
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
       capability: tool.contract.capability,
@@ -95,19 +189,21 @@ export function buildDecisionContext(args: {
       evidence: { produces: tool.contract.evidence.produces }
     }))
   }));
-  return deepFreeze({
+  const context = deepFreeze({
     workspace: projection.workspace,
     run: projection.run,
     projection: {
-      schemaVersion: 1,
+      schemaVersion: 1 as const,
       digest: digestJson(projection)
     },
     allowedActions: projection.allowedActions,
     actionContract: projection.actionContract,
     toolObservations: projection.toolObservations,
     contextCheckpoint: projection.contextCheckpoint,
+    rehydratedFacts: projection.rehydratedFacts,
     tools: projection.tools
   });
+  return { context, injectedRehydratedRefs };
 }
 
 /**

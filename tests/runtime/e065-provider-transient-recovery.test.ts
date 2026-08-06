@@ -16,6 +16,7 @@ const context = {
   actionContract: [],
   toolObservations: [],
   contextCheckpoint: null,
+  rehydratedFacts: [],
   tools: []
 };
 const operation = { signal: new AbortController().signal };
