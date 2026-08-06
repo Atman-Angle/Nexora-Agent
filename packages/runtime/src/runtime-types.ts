@@ -240,6 +240,10 @@ export type RuntimeServices = {
     runId: string,
     operation: () => Promise<T>
   ) => Promise<T>;
+  readonly putArtifactText: (
+    content: string,
+    mediaType?: string
+  ) => { readonly digest: string; readonly byteLength: number };
   readonly requestModel: (
     run: RunSnapshot,
     phase: ModelCallPhase,

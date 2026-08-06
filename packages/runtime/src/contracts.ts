@@ -351,10 +351,20 @@ export const ToolInvocationSchema = z.object({
   startedAt: IsoDateTime,
   completedAt: IsoDateTime.nullable(),
   resultJson: JsonValueSchema.nullable(),
-  errorJson: JsonValueSchema.nullable()
+  errorJson: JsonValueSchema.nullable(),
+  payloadDigest: NonEmptyString.nullable(),
+  payloadArtifactRef: NonEmptyString.nullable()
 }).strict();
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
-export type ToolInvocationIntent = Omit<ToolInvocation, "status" | "completedAt" | "resultJson" | "errorJson">;
+export type ToolInvocationIntent = Omit<
+  ToolInvocation,
+  | "status"
+  | "completedAt"
+  | "resultJson"
+  | "errorJson"
+  | "payloadDigest"
+  | "payloadArtifactRef"
+>;
 
 export const ModelCallRecordSchema = z.object({
   id: NonEmptyString,

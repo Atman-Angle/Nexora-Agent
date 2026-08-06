@@ -95,6 +95,11 @@ CREATE INDEX IF NOT EXISTS model_calls_run_phase
 ON model_calls (run_id, phase, sequence);
 `;
 
+const toolPayloadProvenanceMigrationSql = `
+ALTER TABLE tool_invocations ADD COLUMN payload_digest TEXT;
+ALTER TABLE tool_invocations ADD COLUMN payload_artifact_ref TEXT;
+`;
+
 type RunRow = {
   snapshot_json: string;
   revision: number;
@@ -120,6 +125,8 @@ type ToolRow = {
   completed_at: string | null;
   result_json: string | null;
   error_json: string | null;
+  payload_digest: string | null;
+  payload_artifact_ref: string | null;
 };
 type ModelCallRow = {
   call_id: string;
@@ -248,7 +255,9 @@ export class RunStore {
       status: "started",
       completedAt: null,
       resultJson: null,
-      errorJson: null
+      errorJson: null,
+      payloadDigest: null,
+      payloadArtifactRef: null
     });
     if (invocation.fencingToken !== input.fencingToken) throw new Error("Tool intent Fencing Token mismatch.");
     const transaction = this.#database.transaction(() => {
@@ -256,8 +265,9 @@ export class RunStore {
         INSERT INTO tool_invocations (
           invocation_id, run_id, plan_version, step_id, check_ids_json,
           tool_name, input_json, input_digest, idempotency_key, idempotent,
-          fencing_token, status, started_at, completed_at, result_json, error_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          fencing_token, status, started_at, completed_at, result_json, error_json,
+          payload_digest, payload_artifact_ref
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         invocation.id,
         invocation.runId,
@@ -272,6 +282,8 @@ export class RunStore {
         invocation.fencingToken,
         invocation.status,
         invocation.startedAt,
+        null,
+        null,
         null,
         null,
         null
@@ -391,6 +403,8 @@ export class RunStore {
     readonly fencingToken: number;
     readonly resultJson?: unknown;
     readonly errorJson?: unknown;
+    readonly payloadDigest: string;
+    readonly payloadArtifactRef?: string;
     readonly previous: RunSnapshot;
     readonly next: RunSnapshot;
     readonly event: RunEventInput;
@@ -401,13 +415,16 @@ export class RunStore {
       this.#assertFencing(runRow, input.fencingToken, input.completedAt);
       const update = this.#database.prepare(`
         UPDATE tool_invocations
-        SET status = ?, completed_at = ?, result_json = ?, error_json = ?
+        SET status = ?, completed_at = ?, result_json = ?, error_json = ?,
+            payload_digest = ?, payload_artifact_ref = ?
         WHERE invocation_id = ? AND status = 'started'
       `).run(
         input.status,
         input.completedAt,
         input.resultJson === undefined ? null : JSON.stringify(input.resultJson),
         input.errorJson === undefined ? null : JSON.stringify(input.errorJson),
+        input.payloadDigest,
+        input.payloadArtifactRef ?? null,
         input.invocationId
       );
       if (update.changes !== 1) throw new Error(`Tool invocation is not active: ${input.invocationId}`);
@@ -479,6 +496,7 @@ export class RunStore {
     readonly invocationId: string;
     readonly status: "succeeded" | "failed";
     readonly resolution: unknown;
+    readonly payloadDigest: string;
     readonly previous: RunSnapshot;
     readonly next: RunSnapshot;
     readonly fencingToken: number;
@@ -489,9 +507,17 @@ export class RunStore {
       if (invocation.status !== "unknown") throw new Error(`Tool invocation is not unknown: ${input.invocationId}`);
       this.#database.prepare(`
         UPDATE tool_invocations
-        SET status = ?, completed_at = ?, result_json = ?, fencing_token = ?
+        SET status = ?, completed_at = ?, result_json = ?, fencing_token = ?,
+            payload_digest = ?, payload_artifact_ref = NULL
         WHERE invocation_id = ? AND status = 'unknown'
-      `).run(input.status, input.event.occurredAt, JSON.stringify(input.resolution), input.fencingToken, input.invocationId);
+      `).run(
+        input.status,
+        input.event.occurredAt,
+        JSON.stringify(input.resolution),
+        input.fencingToken,
+        input.payloadDigest,
+        input.invocationId
+      );
       const run = this.#commitRunInTransaction({
         previous: input.previous,
         next: input.next,
@@ -599,7 +625,9 @@ export class RunStore {
       startedAt: row.started_at,
       completedAt: row.completed_at,
       resultJson: row.result_json === null ? null : JSON.parse(row.result_json),
-      errorJson: row.error_json === null ? null : JSON.parse(row.error_json)
+      errorJson: row.error_json === null ? null : JSON.parse(row.error_json),
+      payloadDigest: row.payload_digest,
+      payloadArtifactRef: row.payload_artifact_ref
     });
   }
 
@@ -737,8 +765,8 @@ export class RunStore {
 
   #migrate(): void {
     const version = this.#database.pragma("user_version", { simple: true }) as number;
-    if (version > 2) {
-      throw new Error(`Runtime database schema ${version} is newer than supported schema 2.`);
+    if (version > 3) {
+      throw new Error(`Runtime database schema ${version} is newer than supported schema 3.`);
     }
     const migrate = this.#database.transaction(() => {
       if (version < 1) {
@@ -748,6 +776,10 @@ export class RunStore {
       if (version < 2) {
         this.#database.exec(modelCallSchemaSql);
         this.#database.pragma("user_version = 2");
+      }
+      if (version < 3) {
+        this.#database.exec(toolPayloadProvenanceMigrationSql);
+        this.#database.pragma("user_version = 3");
       }
     });
     migrate();

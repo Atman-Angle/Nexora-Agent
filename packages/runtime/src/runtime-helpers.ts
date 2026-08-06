@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import type { Evidence, RunSnapshot, ToolInvocation } from "./contracts.js";
 import type {
+  JsonValue,
   ModelDecisionContext,
   ProjectedRunContext,
   ToolObservation
@@ -13,6 +14,7 @@ import type { RunResult, RuntimeTool } from "./runtime-types.js";
 
 export const MAX_TOOL_OBSERVATIONS = 8;
 export const MAX_TOOL_OBSERVATION_BYTES = 32 * 1024;
+export const MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES = 4 * 1024;
 
 export class ActionRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "ActionRejectedError"; }
@@ -54,6 +56,29 @@ export function assertCompletedStepsUnchanged(run: RunSnapshot, nextSteps: reado
 }
 
 export function digestJson(value: unknown): string { return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
+
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalJsonValue(value));
+}
+
+export function digestCanonicalJson(value: unknown): string {
+  return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => stringCompare(left, right))
+      .map(([key, nested]) => [key, canonicalJsonValue(nested)])
+  );
+}
+
+/** Locale-independent total order used by canonical serialization and value sorting. */
+function stringCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 export function deepFreeze<T>(value: T): T {
   if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
@@ -127,29 +152,369 @@ export function projectRelevantToolObservations(
         && (check.kind !== "tool_result" || check.toolName === invocation.toolName);
     })
   ));
-  const selected = new Map<string, ToolInvocation>();
-  for (const invocation of [...upstream, ...active]) {
-    selected.set(invocation.id, invocation);
+  const invocationOrder = new Map(
+    invocations.map((invocation, index) => [invocation.id, index])
+  );
+  const stepOrder = new Map(
+    run.currentPlan.orderedSteps.map((step, index) => [step.id, index])
+  );
+  const evidenceByInvocation = new Map<string, Evidence[]>();
+  for (const evidence of run.evidence) {
+    if (evidence.invocationId === null) continue;
+    const current = evidenceByInvocation.get(evidence.invocationId) ?? [];
+    current.push(evidence);
+    evidenceByInvocation.set(evidence.invocationId, current);
   }
-  return projectToolObservations([...selected.values()]);
+  const activeProgressEvidence = new Set(
+    run.stepProgress.find((progress) => progress.stepId === activeStepId)?.evidenceIds ?? []
+  );
+  const currentPlanStepIds = new Set(
+    run.currentPlan.orderedSteps.map((step) => step.id)
+  );
+  const safetyFailures = invocations.filter((invocation) => (
+    currentPlanStepIds.has(invocation.stepId)
+    && invocation.status === "failed"
+    && isSafetyFailure(invocation)
+  ));
+  const selected = new Map<string, ObservationCandidate>();
+  for (const invocation of upstream) {
+    selected.set(invocation.id, {
+      invocation,
+      retentionClass: "predecessor_evidence",
+      critical: (evidenceByInvocation.get(invocation.id) ?? [])
+        .some((evidence) => activeProgressEvidence.has(evidence.id)),
+      reasons: ["completed_predecessor_evidence"],
+      stepOrder: stepOrder.get(invocation.stepId) ?? -1,
+      invocationOrder: invocationOrder.get(invocation.id) ?? -1,
+      evidence: evidenceByInvocation.get(invocation.id) ?? []
+    });
+  }
+  for (const invocation of safetyFailures) {
+    selected.set(invocation.id, {
+      invocation,
+      retentionClass: "safety_constraint",
+      critical: true,
+      reasons: ["safety_or_approval_related_failure"],
+      stepOrder: stepOrder.get(invocation.stepId) ?? -1,
+      invocationOrder: invocationOrder.get(invocation.id) ?? -1,
+      evidence: evidenceByInvocation.get(invocation.id) ?? []
+    });
+  }
+  for (const invocation of active) {
+    const unresolved = isUnresolvedFailure(invocation, active, invocationOrder);
+    selected.set(invocation.id, {
+      invocation,
+      retentionClass: unresolved ? "unresolved_error" : "active_check",
+      critical: true,
+      reasons: unresolved
+        ? ["active_check", "unresolved_failure"]
+        : ["active_check"],
+      stepOrder: stepOrder.get(invocation.stepId) ?? -1,
+      invocationOrder: invocationOrder.get(invocation.id) ?? -1,
+      evidence: evidenceByInvocation.get(invocation.id) ?? []
+    });
+  }
+  return projectObservationCandidates([...selected.values()]);
 }
 
 export function projectToolObservations(invocations: readonly ToolInvocation[]): ToolObservation[] {
-  const observations = invocations.filter((item): item is ToolInvocation & { status: "succeeded" | "failed"; completedAt: string } => (item.status === "succeeded" || item.status === "failed") && item.completedAt !== null).slice(-MAX_TOOL_OBSERVATIONS).map((item) => {
-    const result = item.status === "succeeded" ? item.resultJson : null; const error = item.status === "failed" ? item.errorJson : null;
-    return { invocationId: item.id, planVersion: item.planVersion, stepId: item.stepId, toolName: item.toolName, status: item.status, completedAt: item.completedAt, facts: result, error, truncated: false, digest: digestJson(item.status === "succeeded" ? result : error) } satisfies ToolObservation;
+  return projectObservationCandidates(invocations.map((invocation, index) => ({
+    invocation,
+    retentionClass: "predecessor_evidence" as const,
+    critical: false,
+    reasons: ["generic_observation"],
+    stepOrder: index,
+    invocationOrder: index,
+    evidence: []
+  })));
+}
+
+type CompletedInvocation = ToolInvocation & {
+  readonly status: "succeeded" | "failed";
+  readonly completedAt: string;
+};
+
+type ObservationCandidate = {
+  readonly invocation: ToolInvocation;
+  readonly retentionClass: ToolObservation["retention"]["class"];
+  readonly critical: boolean;
+  readonly reasons: readonly string[];
+  readonly stepOrder: number;
+  readonly invocationOrder: number;
+  readonly evidence: readonly Evidence[];
+};
+
+type ProjectedObservationCandidate = ObservationCandidate & {
+  readonly invocation: CompletedInvocation;
+  readonly observation: ToolObservation;
+};
+
+function projectObservationCandidates(
+  candidates: readonly ObservationCandidate[]
+): ToolObservation[] {
+  const completed = candidates
+    .filter((candidate): candidate is ObservationCandidate & { readonly invocation: CompletedInvocation } => (
+      (candidate.invocation.status === "succeeded" || candidate.invocation.status === "failed")
+      && candidate.invocation.completedAt !== null
+    ))
+    .sort(compareObservationValueDescending);
+  const critical = completed.filter((candidate) => candidate.critical);
+  const criticalIds = new Set(critical.map((candidate) => candidate.invocation.id));
+  const selected = [
+    ...critical,
+    ...completed
+      .filter((candidate) => !criticalIds.has(candidate.invocation.id))
+      .slice(0, Math.max(0, MAX_TOOL_OBSERVATIONS - critical.length))
+  ];
+  let projected = selected
+    .map((candidate): ProjectedObservationCandidate => ({
+      ...candidate,
+      observation: fullObservation(candidate)
+    }));
+
+  for (const candidate of [...projected].sort(compareObservationValueAscending)) {
+    if (candidate.observation.originalBytes > MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES) {
+      projected = projected.map((item) => item.invocation.id === candidate.invocation.id
+        ? {
+            ...item,
+            observation: item.critical
+              ? fragmentObservation(item.observation)
+              : referenceObservation(item.observation)
+          }
+        : item);
+    }
+  }
+
+  while (jsonBytes(projected.map((item) => item.observation)) > MAX_TOOL_OBSERVATION_BYTES) {
+    const full = [...projected]
+      .filter((candidate) => candidate.observation.payloadMode === "full")
+      .sort(compareObservationValueAscending)[0];
+    if (full !== undefined) {
+      projected = projected.map((item) => item.invocation.id === full.invocation.id
+        ? {
+            ...item,
+            observation: item.critical
+              ? fragmentObservation(item.observation)
+              : referenceObservation(item.observation)
+          }
+        : item);
+      continue;
+    }
+    const lowest = [...projected]
+      .filter((candidate) => !candidate.critical)
+      .sort(compareObservationValueAscending)[0]
+      ?? [...projected].sort(compareObservationValueAscending)[0];
+    if (lowest === undefined) break;
+    projected = projected.filter((item) => item.invocation.id !== lowest.invocation.id);
+  }
+
+  return projected
+    .sort((left, right) => left.invocationOrder - right.invocationOrder)
+    .map((candidate) => candidate.observation);
+}
+
+function fullObservation(candidate: ObservationCandidate & { readonly invocation: CompletedInvocation }): ToolObservation {
+  const { invocation, evidence } = candidate;
+  const facts = invocation.status === "succeeded" ? invocation.resultJson : null;
+  const error = invocation.status === "failed" ? invocation.errorJson : null;
+  const value = invocation.status === "succeeded" ? facts : error;
+  return {
+    invocationId: invocation.id,
+    planVersion: invocation.planVersion,
+    stepId: invocation.stepId,
+    toolName: invocation.toolName,
+    status: invocation.status,
+    completedAt: invocation.completedAt,
+    facts,
+    error,
+    payloadFragment: null,
+    truncated: false,
+    payloadMode: "full",
+    originalBytes: jsonBytes(value),
+    sourceRefs: observationSourceRefs(invocation, evidence),
+    retention: {
+      class: candidate.retentionClass,
+      critical: candidate.critical,
+      reasons: [...candidate.reasons],
+      stepOrder: candidate.stepOrder,
+      invocationSequence: candidate.invocationOrder
+    },
+    digest: invocation.payloadDigest ?? digestCanonicalJson(value)
+  };
+}
+
+function fragmentObservation(observation: ToolObservation): ToolObservation {
+  const value = observation.status === "succeeded"
+    ? observation.facts
+    : observation.error;
+  if (value === null) return referenceObservation(observation);
+  return {
+    ...observation,
+    facts: null,
+    error: null,
+    payloadFragment: deterministicPayloadFragment(value),
+    truncated: true,
+    payloadMode: "fragment"
+  };
+}
+
+function referenceObservation(observation: ToolObservation): ToolObservation {
+  return {
+    ...observation,
+    facts: null,
+    error: null,
+    payloadFragment: null,
+    truncated: true,
+    payloadMode: "reference"
+  };
+}
+
+function observationSourceRefs(
+  invocation: CompletedInvocation,
+  evidence: readonly Evidence[]
+): string[] {
+  const refs = [`invocation:${invocation.id}`];
+  for (const item of evidence) refs.push(`evidence:${item.id}`);
+  const artifactRefs = new Set(
+    evidence.flatMap((item) => item.artifactRef === null ? [] : [item.artifactRef])
+  );
+  if (invocation.payloadArtifactRef !== null) {
+    artifactRefs.add(invocation.payloadArtifactRef);
+  }
+  for (const artifactRef of artifactRefs) {
+    refs.push(`artifact:${artifactRef}`);
+  }
+  return refs;
+}
+
+function compareObservationValueDescending(
+  left: ObservationCandidate,
+  right: ObservationCandidate
+): number {
+  return compareObservationValueAscending(right, left);
+}
+
+function compareObservationValueAscending(
+  left: ObservationCandidate,
+  right: ObservationCandidate
+): number {
+  const value = retentionClassRank(left.retentionClass)
+    - retentionClassRank(right.retentionClass);
+  if (value !== 0) return value;
+  if (left.stepOrder !== right.stepOrder) return left.stepOrder - right.stepOrder;
+  if (left.invocationOrder !== right.invocationOrder) {
+    return left.invocationOrder - right.invocationOrder;
+  }
+  return stringCompare(left.invocation.id, right.invocation.id);
+}
+
+function retentionClassRank(value: ObservationCandidate["retentionClass"]): number {
+  return {
+    predecessor_evidence: 1,
+    active_step: 2,
+    safety_constraint: 3,
+    unresolved_error: 4,
+    active_check: 5
+  }[value];
+}
+
+function isUnresolvedFailure(
+  invocation: ToolInvocation,
+  active: readonly ToolInvocation[],
+  invocationOrder: ReadonlyMap<string, number>
+): boolean {
+  if (invocation.status !== "failed") return false;
+  const order = invocationOrder.get(invocation.id) ?? -1;
+  return !active.some((candidate) => (
+    candidate.status === "succeeded"
+    && (invocationOrder.get(candidate.id) ?? -1) > order
+    && candidate.checkIds.some((checkId) => invocation.checkIds.includes(checkId))
+  ));
+}
+
+function isSafetyFailure(invocation: ToolInvocation): boolean {
+  if (invocation.status !== "failed" || invocation.errorJson === null) return false;
+  const code = typeof invocation.errorJson === "object"
+    && !Array.isArray(invocation.errorJson)
+    && "code" in invocation.errorJson
+    ? String(invocation.errorJson.code)
+    : "";
+  return /APPROVAL|DENIED|PERMISSION|SECURITY|UNSAFE|CANCELLED|UNKNOWN/i.test(code);
+}
+
+function deterministicPayloadFragment(value: unknown): JsonValue {
+  const serialized = canonicalJson(value);
+  const start = serialized.slice(0, 768);
+  const end = serialized.length > 1_024 ? serialized.slice(-256) : "";
+  const base: Record<string, JsonValue> = {
+    kind: "deterministic_excerpt",
+    originalBytes: Buffer.byteLength(serialized, "utf8"),
+    start,
+    end
+  };
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    if (typeof record.code === "string") base.code = record.code;
+    if (typeof record.retryable === "boolean") base.retryable = record.retryable;
+  }
+  return base;
+}
+
+export function evictDecisionContextOnce(
+  context: ModelDecisionContext
+): ModelDecisionContext | null {
+  const observations = [...context.toolObservations];
+  const byValue = [...observations].sort((left, right) => (
+    retentionClassRank(left.retention.class) - retentionClassRank(right.retention.class)
+    || left.retention.stepOrder - right.retention.stepOrder
+    || left.retention.invocationSequence - right.retention.invocationSequence
+    || stringCompare(left.invocationId, right.invocationId)
+  ));
+  for (const candidate of byValue) {
+    if (candidate.payloadMode === "full") {
+      return rebuildDecisionContext(context, observations.map((observation) => (
+        observation.invocationId === candidate.invocationId
+          ? (observation.retention.critical
+              ? fragmentObservation(observation)
+              : referenceObservation(observation))
+          : observation
+      )));
+    }
+    if (!candidate.retention.critical && candidate.payloadMode === "fragment") {
+      return rebuildDecisionContext(context, observations.map((observation) => (
+        observation.invocationId === candidate.invocationId
+          ? referenceObservation(observation)
+          : observation
+      )));
+    }
+    if (!candidate.retention.critical && candidate.payloadMode === "reference") {
+      return rebuildDecisionContext(
+        context,
+        observations.filter((observation) => observation.invocationId !== candidate.invocationId)
+      );
+    }
+  }
+  return null;
+}
+
+function rebuildDecisionContext(
+  context: ModelDecisionContext,
+  toolObservations: readonly ToolObservation[]
+): ModelDecisionContext {
+  const projection = {
+    workspace: context.workspace,
+    run: context.run,
+    allowedActions: context.allowedActions,
+    actionContract: context.actionContract,
+    toolObservations,
+    tools: context.tools
+  };
+  return deepFreeze({
+    ...projection,
+    projection: { schemaVersion: 1, digest: digestJson(projection) }
   });
-  if (jsonBytes(observations) <= MAX_TOOL_OBSERVATION_BYTES || observations.length === 0) return observations;
-  const itemBudget = Math.floor((MAX_TOOL_OBSERVATION_BYTES - observations.length - 1) / observations.length);
-  return observations.map((observation) => boundObservation(observation, itemBudget));
 }
-function boundObservation(observation: ToolObservation, maxBytes: number): ToolObservation {
-  if (jsonBytes(observation) <= maxBytes) return observation;
-  const value = observation.status === "succeeded" ? observation.facts : observation.error; const serialized = JSON.stringify(value); let lower = 0; let upper = serialized.length; let bounded = observationPreview(observation, "");
-  while (lower <= upper) { const middle = Math.floor((lower + upper) / 2); const candidate = observationPreview(observation, serialized.slice(0, middle)); if (jsonBytes(candidate) <= maxBytes) { bounded = candidate; lower = middle + 1; } else upper = middle - 1; }
-  return bounded;
-}
-function observationPreview(observation: ToolObservation, preview: string): ToolObservation { return { ...observation, facts: observation.status === "succeeded" ? { preview } : null, error: observation.status === "failed" ? { preview } : null, truncated: true }; }
+
 function jsonBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
 
 export function validateToolContract(contract: RuntimeTool["contract"]): void {

@@ -417,11 +417,13 @@ Structured Plan 的 required Check 绑定具体 Tool。成功 Tool Invocation �
 - Structured Plan：`RunSnapshot.currentPlan`；
 - Run Status：State Machine 写入的 `RunSnapshot.status`；
 - Tool 副作用：`tool_invocations`；
-- Evidence/Result：Run snapshot；
+- Evidence/Result：Run snapshot；大型 Tool facts 的 Evidence 可绑定内容寻址 Artifact；
 - 审计：只追加 `run_events`；
 - 大内容：内容寻址 Artifact。
 - 模型调用与 Token 审计：独立 `model_calls` Ledger；它不参与任务完成判断。
 
 `runtime.inspect(runId).modelCalls` 按调用顺序返回 decision/validation 的 Provider、模型、projection digest、计量方法、软/硬预算决策、调用状态，以及 Provider 可用时返回的实际 input/output/total usage。硬上限拒绝不会调用 Provider，也不会消耗 `budgetsUsed.modelCalls`，但会持久化 `refused` Ledger 行用于审计。
 
-Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v2 在原有 Authority 表旁增加 `model_calls`，可从 schema v1 原地迁移；没有 Checkpoint、Summary、Context Store、Eviction、Branch State、Profile Store 或第二套 Runtime。
+Decision Context 中的 Tool Observation 使用确定性 Eviction：active Check、未解决错误和安全失败高于普通 predecessor；同 class 采用稳定的 Step/Invocation/ID tie-breaker。8 条是普通候选默认值，约 32 KiB 是保险丝，实际收缩会根据 Provider Token Meter 的 soft limit 反复重测。`payloadMode: "fragment"` 只含固定算法片段，`reference` 完全省略 payload；两者都不能推断成完整事实。大型 success/failure payload 会按 object key 规范化后的 canonical JSON digest 存入 Artifact，Invocation 保存 provenance；只有合法成功 Evidence 才引用同一 Artifact。此过程不调用 LLM，也不产生 Summary。
+
+Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v3 在原有 Authority 表旁保留 `model_calls`，并为 `tool_invocations` 增加 payload digest/Artifact provenance，可从旧 schema 原地迁移；没有 Checkpoint、Summary、Context Store、Branch State、Profile Store 或第二套 Runtime。

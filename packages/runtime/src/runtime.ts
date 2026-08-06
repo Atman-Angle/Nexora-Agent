@@ -39,6 +39,7 @@ import {
   deepFreeze,
   digestJson,
   errorMessage,
+  evictDecisionContextOnce,
   actionRejectionDiagnostic,
   projectRelevantToolObservations,
   projectRunContext,
@@ -1307,9 +1308,28 @@ export class RuntimeEngine {
     if (signal.aborted) {
       return { outcome: "failed", run: runInput, error: signal.reason };
     }
+    let effectiveContext = context;
     let assessment;
+    let tokenEvictionCount = 0;
     try {
-      assessment = await assessContextBudget(this.#provider, phase, context);
+      assessment = await assessContextBudget(this.#provider, phase, effectiveContext);
+      while (
+        phase === "decision"
+        && assessment.decision !== "within_budget"
+      ) {
+        const evicted = evictDecisionContextOnce(
+          effectiveContext as ModelDecisionContext
+        );
+        if (evicted === null) break;
+        effectiveContext = evicted;
+        tokenEvictionCount += 1;
+        signal.throwIfAborted();
+        assessment = await assessContextBudget(
+          this.#provider,
+          phase,
+          effectiveContext
+        );
+      }
     } catch (error) {
       return { outcome: "failed", run: runInput, error };
     }
@@ -1324,7 +1344,7 @@ export class RuntimeEngine {
       provider: assessment.profile.provider,
       model: assessment.profile.model,
       projectionDigest: phase === "decision"
-        ? (context as ModelDecisionContext).projection.digest
+        ? (effectiveContext as ModelDecisionContext).projection.digest
         : null,
       contextWindowTokens: assessment.profile.contextWindowTokens,
       reservedOutputTokens: assessment.reservedOutputTokens,
@@ -1373,7 +1393,8 @@ export class RuntimeEngine {
             phase,
             budgetDecision: assessment.decision,
             measuredInputTokens: assessment.measurement.inputTokens,
-            hardInputLimitTokens: assessment.hardInputLimitTokens
+            hardInputLimitTokens: assessment.hardInputLimitTokens,
+            tokenEvictionCount
           }
         }
       });
@@ -1402,7 +1423,8 @@ export class RuntimeEngine {
           ...eventPayload,
           callId: intent.id,
           budgetDecision: assessment.decision,
-          measuredInputTokens: assessment.measurement.inputTokens
+          measuredInputTokens: assessment.measurement.inputTokens,
+          tokenEvictionCount
         }
       }
     });
@@ -1414,11 +1436,11 @@ export class RuntimeEngine {
       const output = await this.#withLeaseHeartbeat(
         requested.run.runId,
         () => phase === "decision"
-          ? this.#provider.decide(context as ModelDecisionContext, {
+          ? this.#provider.decide(effectiveContext as ModelDecisionContext, {
               signal,
               reportTokenUsage: reportUsage
             })
-          : this.#provider.validate(context as SemanticValidationContext, {
+          : this.#provider.validate(effectiveContext as SemanticValidationContext, {
               signal,
               reportTokenUsage: reportUsage
             })
@@ -1482,6 +1504,13 @@ export class RuntimeEngine {
       withHeartbeat: (runId, operation) => (
         this.#withLeaseHeartbeat(runId, operation)
       ),
+      putArtifactText: (content, mediaType) => {
+        const artifact = new ArtifactStore(this.#artifactDir).putText(
+          content,
+          mediaType
+        );
+        return { digest: artifact.digest, byteLength: artifact.byteLength };
+      },
       requestModel: (run, phase, context, eventPayload, observer, countIteration) => (
         this.#requestModel(
           run,

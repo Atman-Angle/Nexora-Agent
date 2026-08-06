@@ -283,14 +283,21 @@ describe("E079 Context Budget and Token Accounting", () => {
       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
       ORDER BY name
     `).all() as Array<{ name: string }>;
+    const toolColumns = migrated.prepare(
+      "PRAGMA table_info(tool_invocations)"
+    ).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(2);
+    expect(version).toBe(3);
     expect(tables.map((row) => row.name)).toEqual([
       "model_calls",
       "run_events",
       "runs",
       "tool_invocations"
     ]);
+    expect(toolColumns.map((row) => row.name)).toEqual(expect.arrayContaining([
+      "payload_digest",
+      "payload_artifact_ref"
+    ]));
   });
 
   it("marks an unfinished logical call interrupted when a new lease takes over after expiry", () => {

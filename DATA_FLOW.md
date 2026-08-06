@@ -19,7 +19,7 @@ flowchart TD
     LOOP --> BUDGET{"预算允许？"}
     BUDGET -- "否" --> FAIL["State Machine → failed"]
     BUDGET -- "是" --> CONTEXT["决策上下文<br/>workspace + Capability/Decision + allowed Action examples<br/>active Tool example + bounded observations"]
-    INVOBS["tool_invocations<br/>completed result/error authority"] --> OBS["最近 8 项 / 约 32 KiB<br/>digest + bounded preview"]
+    INVOBS["tool_invocations<br/>completed result/error authority"] --> OBS["价值排序 + 普通候选默认 8 项<br/>full / deterministic fragment / Authority refs"]
     OBS --> CONTEXT
     CONTEXT --> MODEL["RuntimeProvider.decide"]
     MODEL --> ACTION{"严格 Action Contract"}
@@ -71,8 +71,8 @@ flowchart TD
 | 被拒绝 Action | Provider 返回 | 不修改 | 下一轮修复、逆向审计 | 原始 JSON 进 Artifact；诊断/引用进 Event 与 lastError |
 | Run Status | 初始 snapshot | 仅 State Machine | CLI、Resume、验收 | `runs.status` + snapshot |
 | Tool Invocation | Runtime 生成 ID/digest/key/token | result/unknown/recovery 原子更新 | 恢复、完成门、语义验证 | `tool_invocations` |
-| Tool Observation | Runtime 从当前 Run completed Invocation 投影 | 每轮重建；不接受 Provider 修改 | 下一轮 Provider 决策 | 最多 8 项/约 32 KiB，进程内销毁；不是 Store |
-| Evidence | 成功 Tool/用户恢复确认 | Plan 修订仅保留有效证据 | Step、验证、Result | Run snapshot，绑定 Plan/Step/Check/Invocation |
+| Tool Observation | Runtime 从当前 Run completed Invocation 投影 | active Check/未解决错误/安全约束优先；稳定 tie-break；Token Meter 驱动收缩 | 下一轮 Provider 决策 | full/fragment/reference 都是可重建派生投影；8 项默认值、32 KiB 保险丝 |
+| Evidence | 成功 Tool/用户恢复确认 | Plan 修订仅保留有效证据；大型 facts 绑定内容寻址 Artifact | Step、验证、Result、Observation ref | Run snapshot，绑定 Plan/Step/Check/Invocation/可选 Artifact |
 | Finish Evidence 引证 | Provider `propose_finish` 提议，Runtime 解析 | 不修改；缺失/重复/未知/部分覆盖均拒绝 | 确定性完成、语义验证、Result、成功 Event | `validation.requested/passed` 与 Result 保存同一 ID 集；不是第二 Evidence Store |
 | Event | Store 成功提交时追加 | 永不修改 | observer、inspect、审计 | `run_events`；不是状态源 |
 | Artifact | 大内容按 SHA-256 创建 | 不修改 | Tool result/ref、人工审计 | `.nexora/artifacts` |
@@ -144,9 +144,9 @@ flowchart TD
 4. 在该边界写 RED；不要在下游增加补偿状态。
 5. 修复后同时验证正向路径和 Resume/失败分支，确保没有第二个真相源。
 
-Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 是独立持久化的调用审计：它引用 Run 和 projection digest，但不保存或覆盖 Context 内容，不是 Task Contract、Plan、Invocation、Evidence、Artifact 或 Run Status 的 Authority。当前实现仍不读取或创建 Checkpoint、Context Store、Eviction 或 Summary。
+Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 是独立持久化的调用审计：它引用 Run 和 projection digest，但不保存或覆盖 Context 内容，不是 Task Contract、Plan、Invocation、Evidence、Artifact 或 Run Status 的 Authority。当前实现仍不读取或创建 Checkpoint、Context Store 或 Summary。
 
-Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 是唯一权威，Context 只带 active Step/Check 的 completed Invocation 与已完成前置 Evidence 对应的结果、关联 metadata、稳定 digest 和必要 preview，不复制 input、幂等键、Fencing 或 Lease。投影仍限制为最多 8 条、约 32 KiB，并优先把 active Step Observation 放在有界窗口末端，避免被较旧前置事实挤出。`filesystem.read` 的结果内另含内容 digest，供后续 patch 直接复制；大文件正文仍进入 Artifact。
+Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 保留完整 Tool Authority。价值 class 依次覆盖 active Check、未解决错误、安全/审批失败和 predecessor Evidence，同 class 使用 `stepOrder → invocationSequence → invocationId`。大型 success/failure payload 都以 canonical JSON 计算 digest 并写入 Artifact；Invocation 保存 payload provenance，只有合法绑定同一成功 Invocation 的既有 Evidence 才引用该 Artifact。critical 大 payload 保留明确标记的固定 fragment，普通大 payload 转 reference。Provider soft token limit 会触发继续收缩并重测；32 KiB 仅作保险丝。任何 fragment/reference 都不能冒充完整 facts，当前 Slice也不执行 Rehydration。
 
 用户输入投影使用 `TaskContract.inputVersion` 作为覆盖边界：`sequence <= inputVersion` 的原文继续只保存在 `RunSnapshot.inputHistory`，Provider 读取当前 Task Contract；更大的 sequence 以 `{ sequence, text }` 进入 `ProjectedRunContext.inputHistory`，不暴露 Input ID、接收时间、Run revision、Budget、Pending Request 或 Result。`inputCount` 始终表示持久化输入总数，模型修订 Task Contract 时必须使用它，而不是可见输入数组长度。Semantic Validation 仍直接读取完整原始输入，不受 Decision Projection 裁剪影响。
 

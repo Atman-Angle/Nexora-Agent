@@ -20,7 +20,18 @@ export type ToolObservation = {
   readonly completedAt: string;
   readonly facts: ToolInvocation["resultJson"];
   readonly error: ToolInvocation["errorJson"];
+  readonly payloadFragment: JsonValue | null;
   readonly truncated: boolean;
+  readonly payloadMode: "full" | "fragment" | "reference";
+  readonly originalBytes: number;
+  readonly sourceRefs: readonly string[];
+  readonly retention: {
+    readonly class: "active_check" | "unresolved_error" | "safety_constraint" | "active_step" | "predecessor_evidence";
+    readonly critical: boolean;
+    readonly reasons: readonly string[];
+    readonly stepOrder: number;
+    readonly invocationSequence: number;
+  };
   readonly digest: string;
 };
 
