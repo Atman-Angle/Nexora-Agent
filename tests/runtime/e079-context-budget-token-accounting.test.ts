@@ -13,7 +13,7 @@ import {
   type SemanticValidationContext
 } from "../../packages/runtime/src/index.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
-import { openRunStore } from "../../packages/runtime/src/run-store.js";
+import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import {
   finishFromEvidence,
   setPlan,

@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { JsonValueSchema, type Evidence, type ModelCallRecord, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolInvocation } from "./contracts.js";
 import type { ModelCallPhase, ModelDecisionContext, RuntimeProvider, SemanticValidationContext } from "./providers/model-client.js";
-import type { RunStore } from "./run-store.js";
+import type { RunStore } from "./store/run-store.js";
 
 export const ToolResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("success"), subjectRef: z.string().trim().min(1), facts: JsonValueSchema }).strict(),

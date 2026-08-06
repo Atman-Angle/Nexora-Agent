@@ -16,107 +16,15 @@ import {
   type RunSnapshot,
   type ToolInvocation,
   type ToolInvocationIntent
-} from "./contracts.js";
-import { CompactionSummarySchema, type PersistedCheckpoint } from "./context/compaction.js";
-import { assertRunStatusTransition } from "./state-machine.js";
-
-const coreSchemaSql = `
-CREATE TABLE IF NOT EXISTS runs (
-  run_id TEXT PRIMARY KEY,
-  revision INTEGER NOT NULL,
-  status TEXT NOT NULL,
-  snapshot_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  lease_owner TEXT,
-  lease_until TEXT,
-  fencing_token INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS run_events (
-  run_id TEXT NOT NULL,
-  sequence INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  occurred_at TEXT NOT NULL,
-  payload_json TEXT NOT NULL,
-  PRIMARY KEY (run_id, sequence),
-  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS tool_invocations (
-  invocation_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL,
-  plan_version INTEGER NOT NULL,
-  step_id TEXT NOT NULL,
-  check_ids_json TEXT NOT NULL,
-  tool_name TEXT NOT NULL,
-  input_json TEXT NOT NULL,
-  input_digest TEXT NOT NULL,
-  idempotency_key TEXT NOT NULL,
-  idempotent INTEGER NOT NULL,
-  fencing_token INTEGER NOT NULL,
-  status TEXT NOT NULL,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  result_json TEXT,
-  error_json TEXT,
-  UNIQUE (run_id, idempotency_key),
-  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-);
-`;
-
-const modelCallSchemaSql = `
-CREATE TABLE IF NOT EXISTS model_calls (
-  call_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL,
-  sequence INTEGER NOT NULL,
-  phase TEXT NOT NULL,
-  provider TEXT NOT NULL,
-  model TEXT NOT NULL,
-  projection_digest TEXT,
-  context_window_tokens INTEGER NOT NULL,
-  reserved_output_tokens INTEGER NOT NULL,
-  soft_input_limit_tokens INTEGER NOT NULL,
-  hard_input_limit_tokens INTEGER NOT NULL,
-  measured_input_tokens INTEGER NOT NULL,
-  measurement_method TEXT NOT NULL,
-  meter TEXT NOT NULL,
-  budget_decision TEXT NOT NULL,
-  status TEXT NOT NULL,
-  actual_input_tokens INTEGER,
-  actual_output_tokens INTEGER,
-  actual_total_tokens INTEGER,
-  error_code TEXT,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  UNIQUE (run_id, sequence),
-  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS model_calls_run_phase
-ON model_calls (run_id, phase, sequence);
-`;
-
-const toolPayloadProvenanceMigrationSql = `
-ALTER TABLE tool_invocations ADD COLUMN payload_digest TEXT;
-ALTER TABLE tool_invocations ADD COLUMN payload_artifact_ref TEXT;
-`;
-
-const contextCheckpointSchemaSql = `
-CREATE TABLE IF NOT EXISTS context_checkpoints (
-  checkpoint_id TEXT PRIMARY KEY,
-  run_id TEXT NOT NULL,
-  plan_version INTEGER NOT NULL,
-  revision INTEGER NOT NULL,
-  summary_json TEXT NOT NULL,
-  digest TEXT NOT NULL,
-  source_digests_json TEXT NOT NULL,
-  covered_invocations_json TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS context_checkpoints_run
-ON context_checkpoints (run_id, plan_version);
-`;
+} from "../contracts.js";
+import { CompactionSummarySchema, type PersistedCheckpoint } from "../context/compaction.js";
+import { assertRunStatusTransition } from "../state-machine.js";
+import {
+  v1CoreSchemaSql,
+  v2ModelCallSchemaSql,
+  v3PayloadProvenanceMigrationSql,
+  v4ContextCheckpointSchemaSql
+} from "./schema/index.js";
 
 type RunRow = {
   snapshot_json: string;
@@ -885,19 +793,19 @@ export class RunStore {
     }
     const migrate = this.#database.transaction(() => {
       if (version < 1) {
-        this.#database.exec(coreSchemaSql);
+        this.#database.exec(v1CoreSchemaSql);
         this.#database.pragma("user_version = 1");
       }
       if (version < 2) {
-        this.#database.exec(modelCallSchemaSql);
+        this.#database.exec(v2ModelCallSchemaSql);
         this.#database.pragma("user_version = 2");
       }
       if (version < 3) {
-        this.#database.exec(toolPayloadProvenanceMigrationSql);
+        this.#database.exec(v3PayloadProvenanceMigrationSql);
         this.#database.pragma("user_version = 3");
       }
       if (version < 4) {
-        this.#database.exec(contextCheckpointSchemaSql);
+        this.#database.exec(v4ContextCheckpointSchemaSql);
         this.#database.pragma("user_version = 4");
       }
     });

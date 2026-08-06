@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ArtifactStore } from "../../packages/runtime/src/artifacts.js";
+import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
-import { openRunStore } from "../../packages/runtime/src/run-store.js";
+import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { transitionRunStatus } from "../../packages/runtime/src/state-machine.js";
 
 const roots: string[] = [];

@@ -18,7 +18,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/runtime/src/index.js";
-import { openRunStore } from "../../packages/runtime/src/run-store.js";
+import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { digestTaskContract } from "../../packages/runtime/src/validation.js";
 
 const roots: string[] = [];

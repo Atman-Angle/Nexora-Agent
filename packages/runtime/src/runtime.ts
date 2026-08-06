@@ -17,7 +17,7 @@ import {
   type RuntimeAction,
   type ToolInvocation
 } from "./contracts.js";
-import { ArtifactStore } from "./artifacts.js";
+import { ArtifactStore } from "./store/artifacts.js";
 import {
   digestCompactionSummary,
   isCheckpointValid,
@@ -40,7 +40,7 @@ import {
   resolveProviderModelProfile,
   type ContextBudgetAssessment
 } from "./context/budget.js";
-import { openRunStore, type RunStore } from "./run-store.js";
+import { openRunStore, type RunStore } from "./store/run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
 import { digestTaskContract, proposeFinish } from "./validation.js";
 import {

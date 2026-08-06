@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ArtifactStore } from "../../packages/runtime/src/artifacts.js";
+import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
 import { createRuntime, type RuntimeProvider } from "../../packages/runtime/src/index.js";
 import {
   canonicalJson,
