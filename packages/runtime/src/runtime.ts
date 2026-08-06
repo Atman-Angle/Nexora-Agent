@@ -11,7 +11,6 @@ import {
   TaskContractSchema,
   JsonValueSchema,
   createInitialRunSnapshot,
-  runtimeActionContract,
   type ModelCallIntent,
   type RunSnapshot,
   type RuntimeAction,
@@ -20,14 +19,15 @@ import {
 import { ArtifactStore } from "./store/artifacts.js";
 import {
   digestCompactionSummary,
-  isCheckpointValid,
   validateCompactionSummary,
-  type CompactionAuthority,
   type PersistedCheckpoint
 } from "./context/compaction.js";
+import {
+  buildCompactionAuthority,
+  buildDecisionContext
+} from "./context/decision-context.js";
 import type {
   CompactionContext,
-  ContextCheckpoint,
   ModelCallPhase,
   ModelDecisionContext,
   ProviderTokenUsage,
@@ -47,7 +47,6 @@ import {
   ActionRejectedError,
   allowedActions,
   assertCompletedStepsUnchanged,
-  deepFreeze,
   digestJson,
   errorMessage,
   actionRejectionDiagnostic,
@@ -57,10 +56,6 @@ import {
   validateToolContract
 } from "./runtime-helpers.js";
 import { evictDecisionContextOnce } from "./context/eviction.js";
-import {
-  projectRelevantToolObservations,
-  projectRunContext
-} from "./context/projection.js";
 import {
   callTool,
   recoverToolInvocation
@@ -1067,7 +1062,13 @@ export class RuntimeEngine {
       const modelCall = await this.#requestModel(
         run,
         "decision",
-        this.#decisionContext(run),
+        buildDecisionContext({
+          run,
+          store: this.#store,
+          workspace: this.#workspace,
+          tools: this.#tools,
+          artifactDir: this.#artifactDir
+        }),
         { allowedActions: allowedActions(run) },
         signal,
         observer,
@@ -1248,105 +1249,6 @@ export class RuntimeEngine {
     if (run.budgetsUsed.toolCalls >= run.budgets.maxToolCalls) return "TOOL_CALL_BUDGET_EXCEEDED";
     if (Date.parse(this.#now()) - activeStartedAt >= run.budgets.maxDurationMs) return "DURATION_BUDGET_EXCEEDED";
     return null;
-  }
-
-  #decisionContext(run: RunSnapshot): ModelDecisionContext {
-    const actions = allowedActions(run);
-    const includeTaskContract = run.currentPlan === null || run.taskContract === null
-      || run.taskContract.inputVersion < run.inputHistory.length;
-    const allStepsCompleted = run.currentPlan !== null
-      && run.stepProgress.length === run.currentPlan.orderedSteps.length
-      && run.stepProgress.every((item) => item.status === "completed");
-    const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
-    const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
-    const callableTools = new Set(activeStep?.acceptanceChecks
-      .filter((check) => check.kind === "tool_result")
-      .map((check) => check.toolName) ?? []);
-    const invocations = this.#store.listToolInvocations(run.runId);
-    const observations = projectRelevantToolObservations(run, invocations);
-    const checkpoint = this.#activeCheckpoint(run, invocations);
-    const covered = checkpoint === null
-      ? new Set<string>()
-      : new Set(checkpoint.coveredInvocations);
-    const checkpointView: ContextCheckpoint | null = checkpoint === null
-      ? null
-      : {
-        checkpointId: checkpoint.checkpointId,
-        digest: checkpoint.digest,
-        summary: checkpoint.summary
-      };
-    const projection = deepFreeze(structuredClone({
-      workspace: this.#workspace,
-      run: projectRunContext(run),
-      allowedActions: actions,
-      actionContract: runtimeActionContract(actions, {
-        workspace: this.#workspace,
-        inputVersion: run.inputHistory.length,
-        basedOnVersion: run.currentPlan?.version ?? null,
-        includeTaskContract,
-        currentPlan: run.currentPlan,
-        finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
-      }),
-      toolObservations: checkpoint === null
-        ? observations
-        : observations.filter((item) => !covered.has(item.invocationId)),
-      contextCheckpoint: checkpointView,
-      tools: [...this.#tools.values()].map((tool) => ({
-        identity: tool.contract.identity,
-        capability: tool.contract.capability,
-        decision: tool.contract.decision,
-        execution: {
-          effect: tool.contract.execution.effect,
-          ...(actions.includes("call_tool") && callableTools.has(tool.contract.identity.name)
-            ? { inputExample: tool.contract.execution.inputExample }
-            : {})
-        },
-        evidence: { produces: tool.contract.evidence.produces }
-      }))
-    }));
-    return deepFreeze({
-      workspace: projection.workspace,
-      run: projection.run,
-      projection: {
-        schemaVersion: 1,
-        digest: digestJson(projection)
-      },
-      allowedActions: projection.allowedActions,
-      actionContract: projection.actionContract,
-      toolObservations: projection.toolObservations,
-      contextCheckpoint: projection.contextCheckpoint,
-      tools: projection.tools
-    });
-  }
-
-  #activeCheckpoint(
-    run: RunSnapshot,
-    invocations: readonly ToolInvocation[]
-  ): PersistedCheckpoint | null {
-    if (run.currentPlan === null) return null;
-    const checkpoint = this.#store.getLatestCheckpoint(run.runId);
-    if (checkpoint === null) return null;
-    if (!isCheckpointValid(
-      checkpoint,
-      run,
-      invocations,
-      this.#store.listEvents(run.runId),
-      (digest) => new ArtifactStore(this.#artifactDir).has(digest)
-    )) {
-      return null;
-    }
-    return checkpoint;
-  }
-
-  #compactionAuthority(run: RunSnapshot): CompactionAuthority {
-    const invocations = this.#store.listToolInvocations(run.runId);
-    return {
-      run,
-      invocations,
-      events: this.#store.listEvents(run.runId),
-      evidence: new Map(run.evidence.map((item) => [item.id, item])),
-      artifactExists: (digest) => new ArtifactStore(this.#artifactDir).has(digest)
-    };
   }
 
   async #requestModel(
@@ -1598,7 +1500,11 @@ export class RuntimeEngine {
     | { readonly outcome: "skipped"; readonly run: RunSnapshot }
     | null
   > {
-    const authority = this.#compactionAuthority(run);
+    const authority = buildCompactionAuthority({
+      run,
+      store: this.#store,
+      artifactDir: this.#artifactDir
+    });
     const compactionContext: CompactionContext = {
       workspace: this.#workspace,
       run: context.run,
@@ -1758,7 +1664,13 @@ export class RuntimeEngine {
     });
     this.#notify(run.runId, observer);
 
-    const rebuilt = this.#decisionContext(run);
+    const rebuilt = buildDecisionContext({
+      run,
+      store: this.#store,
+      workspace: this.#workspace,
+      tools: this.#tools,
+      artifactDir: this.#artifactDir
+    });
     const rebuiltAssessment = await assessContextBudget(
       this.#provider,
       "decision",

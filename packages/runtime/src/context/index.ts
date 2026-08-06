@@ -32,6 +32,12 @@ export {
   type PersistedCheckpoint
 } from "./compaction.js";
 
+export {
+  buildCompactionAuthority,
+  buildDecisionContext,
+  findActiveCheckpoint
+} from "./decision-context.js";
+
 export { evictDecisionContextOnce, jsonBytes } from "./eviction.js";
 
 export {
