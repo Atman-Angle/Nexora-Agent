@@ -12,9 +12,9 @@ import {
   completeSatisfiedSteps,
   digestCanonicalJson,
   digestJson,
-  errorMessage,
-  MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES
+  errorMessage
 } from "./runtime-helpers.js";
+import { MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES } from "./context/projection.js";
 import {
   type RecoveryDecision,
   type RuntimeServices,

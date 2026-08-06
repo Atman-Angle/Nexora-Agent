@@ -17,7 +17,7 @@ import {
   type ToolInvocation,
   type ToolInvocationIntent
 } from "./contracts.js";
-import { CompactionSummarySchema, type PersistedCheckpoint } from "./compaction.js";
+import { CompactionSummarySchema, type PersistedCheckpoint } from "./context/compaction.js";
 import { assertRunStatusTransition } from "./state-machine.js";
 
 const coreSchemaSql = `

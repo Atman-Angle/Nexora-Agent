@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   digestCompactionSummary,
   type PersistedCheckpoint
-} from "../../packages/runtime/src/compaction.js";
+} from "../../packages/runtime/src/context/compaction.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { createRuntime, type RuntimeProvider } from "../../packages/runtime/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/run-store.js";
@@ -20,7 +20,7 @@ import type {
   ModelDecisionContext
 } from "../../packages/runtime/src/providers/model-client.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
-import { projectRelevantToolObservations } from "../../packages/runtime/src/runtime-helpers.js";
+import { projectRelevantToolObservations } from "../../packages/runtime/src/context/projection.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];

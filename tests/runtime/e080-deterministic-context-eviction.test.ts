@@ -10,9 +10,9 @@ import { ArtifactStore } from "../../packages/runtime/src/artifacts.js";
 import { createRuntime, type RuntimeProvider } from "../../packages/runtime/src/index.js";
 import {
   canonicalJson,
-  digestCanonicalJson,
-  projectRelevantToolObservations
+  digestCanonicalJson
 } from "../../packages/runtime/src/runtime-helpers.js";
+import { projectRelevantToolObservations } from "../../packages/runtime/src/context/projection.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 

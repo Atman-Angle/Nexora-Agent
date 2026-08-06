@@ -24,7 +24,7 @@ import {
   validateCompactionSummary,
   type CompactionAuthority,
   type PersistedCheckpoint
-} from "./compaction.js";
+} from "./context/compaction.js";
 import type {
   CompactionContext,
   ContextCheckpoint,
@@ -39,7 +39,7 @@ import {
   parseProviderTokenUsage,
   resolveProviderModelProfile,
   type ContextBudgetAssessment
-} from "./context-budget.js";
+} from "./context/budget.js";
 import { openRunStore, type RunStore } from "./run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
 import { digestTaskContract, proposeFinish } from "./validation.js";
@@ -50,15 +50,17 @@ import {
   deepFreeze,
   digestJson,
   errorMessage,
-  evictDecisionContextOnce,
   actionRejectionDiagnostic,
-  projectRelevantToolObservations,
-  projectRunContext,
   requireWorkspace,
   serializeRejectedAction,
   toRunResult,
   validateToolContract
 } from "./runtime-helpers.js";
+import { evictDecisionContextOnce } from "./context/eviction.js";
+import {
+  projectRelevantToolObservations,
+  projectRunContext
+} from "./context/projection.js";
 import {
   callTool,
   recoverToolInvocation

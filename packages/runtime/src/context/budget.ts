@@ -11,7 +11,7 @@ import type {
   ProviderTokenUsage,
   RuntimeProvider,
   SemanticValidationContext
-} from "./providers/model-client.js";
+} from "../providers/model-client.js";
 
 const ProviderModelProfileSchema = z.object({
   provider: z.string().trim().min(1),
