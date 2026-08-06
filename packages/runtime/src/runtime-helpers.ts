@@ -9,7 +9,7 @@ import type {
   ModelDecisionContext,
   ProjectedRunContext,
   ToolObservation
-} from "./model-client.js";
+} from "./providers/model-client.js";
 import type { RunResult, RuntimeTool } from "./runtime-types.js";
 
 export const MAX_TOOL_OBSERVATIONS = 8;

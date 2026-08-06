@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createBuiltInTools, createRuntime } from "../../packages/runtime/src/index.js";
-import type { SemanticValidationContext } from "../../packages/runtime/src/model-client.js";
+import type { SemanticValidationContext } from "../../packages/runtime/src/providers/model-client.js";
 import { finishFromEvidence, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];

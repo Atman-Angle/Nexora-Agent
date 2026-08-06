@@ -47,7 +47,7 @@ export type {
   SemanticValidationContext,
   SemanticValidationVerdict,
   ToolObservation
-} from "./model-client.js";
+} from "./providers/model-client.js";
 
 export type {
   Evidence,
@@ -67,7 +67,7 @@ export {
   createOpenAICompatibleProvider,
   openAICompatibleProviderFromEnv,
   type OpenAICompatibleProviderOptions
-} from "./openai-compatible-provider.js";
+} from "./providers/openai-compatible.js";
 
 export {
   defineProviderAdapter,
@@ -75,7 +75,7 @@ export {
   type ProviderCompletionOperation,
   type ProviderCompletionRequest,
   type ProviderRequestTokenMeter
-} from "./provider-adapter.js";
+} from "./providers/adapter.js";
 
 export {
   defineTool,

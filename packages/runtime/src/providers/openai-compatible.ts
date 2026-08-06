@@ -7,8 +7,8 @@ import type {
 import {
   defineProviderAdapter,
   type ProviderRequestTokenMeter
-} from "./provider-adapter.js";
-import { RuntimeError } from "./runtime-error.js";
+} from "./adapter.js";
+import { RuntimeError } from "../runtime-error.js";
 
 export type OpenAICompatibleProviderOptions = {
   readonly baseUrl: string;

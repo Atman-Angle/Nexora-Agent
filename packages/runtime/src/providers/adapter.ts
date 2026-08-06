@@ -11,8 +11,8 @@ import {
   type SemanticValidationContext,
   type SemanticValidationVerdict
 } from "./model-client.js";
-import { estimateTextTokens } from "./context-budget.js";
-import { RuntimeError } from "./runtime-error.js";
+import { estimateTextTokens } from "../context-budget.js";
+import { RuntimeError } from "../runtime-error.js";
 
 export type ProviderCompletionRequest = {
   readonly phase: "decision" | "validation" | "compaction";

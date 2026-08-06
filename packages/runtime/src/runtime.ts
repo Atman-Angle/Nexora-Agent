@@ -33,7 +33,7 @@ import type {
   ProviderTokenUsage,
   RuntimeProvider,
   SemanticValidationContext
-} from "./model-client.js";
+} from "./providers/model-client.js";
 import {
   assessContextBudget,
   parseProviderTokenUsage,

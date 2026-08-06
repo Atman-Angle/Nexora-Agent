@@ -7,7 +7,7 @@ import type {
   StructuredPlan,
   TaskContract,
   ToolInvocation
-} from "./contracts.js";
+} from "../contracts.js";
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 

@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRuntime } from "../../packages/runtime/src/index.js";
-import { createOpenAICompatibleProvider } from "../../packages/runtime/src/openai-compatible-provider.js";
-import type { SemanticValidationContext } from "../../packages/runtime/src/model-client.js";
+import { createOpenAICompatibleProvider } from "../../packages/runtime/src/providers/openai-compatible.js";
+import type { SemanticValidationContext } from "../../packages/runtime/src/providers/model-client.js";
 import { ScriptedRuntimeProvider, finishFromEvidence, setPlan, successfulReadTool } from "./runtime-testkit.js";
 
 const roots: string[] = [];

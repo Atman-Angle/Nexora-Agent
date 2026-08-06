@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import type { RunEvent, RunSnapshot, ToolInvocation } from "./contracts.js";
-import type { CompactionSummary } from "./model-client.js";
+import type { CompactionSummary } from "./providers/model-client.js";
 import { canonicalJson } from "./runtime-helpers.js";
 
 const MAX_STATEMENT_LENGTH = 500;

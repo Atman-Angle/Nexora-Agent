@@ -4,7 +4,7 @@ import type {
   CompactionContext,
   ModelDecisionContext,
   RuntimeProvider
-} from "../../packages/runtime/src/model-client.js";
+} from "../../packages/runtime/src/providers/model-client.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 
 export class ScriptedRuntimeProvider implements RuntimeProvider {

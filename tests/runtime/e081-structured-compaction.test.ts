@@ -18,7 +18,7 @@ import type {
   CompactionContext,
   CompactionSummary,
   ModelDecisionContext
-} from "../../packages/runtime/src/model-client.js";
+} from "../../packages/runtime/src/providers/model-client.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import { projectRelevantToolObservations } from "../../packages/runtime/src/runtime-helpers.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";

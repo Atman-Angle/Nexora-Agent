@@ -20,6 +20,7 @@
   "files": [
     "dist/*.js",
     "dist/*.d.ts",
+    "dist/providers",
     "dist/tool-runtime",
     "dist/testing"
   ],

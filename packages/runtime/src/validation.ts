@@ -13,7 +13,7 @@ import {
 import {
   SemanticValidationVerdictSchema,
   type JsonValue
-} from "./model-client.js";
+} from "./providers/model-client.js";
 import {
   type RuntimeObserver,
   type RuntimeServices
