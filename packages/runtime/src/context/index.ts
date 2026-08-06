@@ -33,6 +33,12 @@ export {
 } from "./compaction.js";
 
 export {
+  requestModel,
+  type RequestModelResult,
+  type RequestModelServices
+} from "./request-model.js";
+
+export {
   compactDecisionContext,
   type CompactionResult,
   type CompactionServices

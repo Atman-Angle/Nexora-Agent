@@ -11,30 +11,22 @@ import {
   TaskContractSchema,
   JsonValueSchema,
   createInitialRunSnapshot,
-  type ModelCallIntent,
   type RunSnapshot,
   type RuntimeAction,
   type ToolInvocation
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
 import {
-  compactDecisionContext
-} from "./context/compaction-flow.js";
+  requestModel
+} from "./context/request-model.js";
 import {
   buildDecisionContext
 } from "./context/decision-context.js";
 import type {
-  ModelCallPhase,
-  ModelDecisionContext,
-  ProviderTokenUsage,
-  RuntimeProvider,
-  SemanticValidationContext
+  RuntimeProvider
 } from "./providers/model-client.js";
 import {
-  assessContextBudget,
-  parseProviderTokenUsage,
-  resolveProviderModelProfile,
-  type ContextBudgetAssessment
+  resolveProviderModelProfile
 } from "./context/budget.js";
 import { openRunStore, type RunStore } from "./store/run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
@@ -43,7 +35,6 @@ import {
   ActionRejectedError,
   allowedActions,
   assertCompletedStepsUnchanged,
-  digestJson,
   errorMessage,
   actionRejectionDiagnostic,
   requireWorkspace,
@@ -51,7 +42,6 @@ import {
   toRunResult,
   validateToolContract
 } from "./runtime-helpers.js";
-import { evictDecisionContextOnce } from "./context/eviction.js";
 import {
   callTool,
   recoverToolInvocation
@@ -1055,7 +1045,19 @@ export class RuntimeEngine {
         break;
       }
 
-      const modelCall = await this.#requestModel(
+      const modelCall = await requestModel(
+        {
+          provider: this.#provider,
+          store: this.#store,
+          workspace: this.#workspace,
+          tools: this.#tools,
+          artifactDir: this.#artifactDir,
+          now: () => this.#now(),
+          createId: () => this.#createId(),
+          requireFencingToken: (runId) => this.#requireFencingToken(runId),
+          withLeaseHeartbeat: (runId, op) => this.#withLeaseHeartbeat(runId, op),
+          notify: (runId, obs) => this.#notify(runId, obs)
+        },
         run,
         "decision",
         buildDecisionContext({
@@ -1247,242 +1249,6 @@ export class RuntimeEngine {
     return null;
   }
 
-  async #requestModel(
-    runInput: RunSnapshot,
-    phase: ModelCallPhase,
-    context: ModelDecisionContext | SemanticValidationContext,
-    eventPayload: Record<string, unknown>,
-    signal: AbortSignal,
-    observer?: RuntimeObserver,
-    countIteration = false
-  ): Promise<
-    | { readonly outcome: "succeeded"; readonly run: RunSnapshot; readonly output: unknown }
-    | { readonly outcome: "failed"; readonly run: RunSnapshot; readonly error: unknown }
-    | { readonly outcome: "budget_exceeded"; readonly run: RunSnapshot }
-  > {
-    if (signal.aborted) {
-      return { outcome: "failed", run: runInput, error: signal.reason };
-    }
-    let runForLedger = runInput;
-    let effectiveContext = context;
-    let assessment;
-    let tokenEvictionCount = 0;
-    let compacted = false;
-    try {
-      assessment = await assessContextBudget(this.#provider, phase, effectiveContext);
-      while (
-        phase === "decision"
-        && assessment.decision !== "within_budget"
-      ) {
-        const evicted = evictDecisionContextOnce(
-          effectiveContext as ModelDecisionContext
-        );
-        if (evicted === null) break;
-        effectiveContext = evicted;
-        tokenEvictionCount += 1;
-        signal.throwIfAborted();
-        assessment = await assessContextBudget(
-          this.#provider,
-          phase,
-          effectiveContext
-        );
-      }
-      if (
-        phase === "decision"
-        && assessment.decision !== "within_budget"
-        && this.#provider.compact !== undefined
-        && (effectiveContext as ModelDecisionContext).toolObservations.length > 0
-      ) {
-        const compactedResult = await compactDecisionContext(
-          {
-            provider: this.#provider,
-            store: this.#store,
-            workspace: this.#workspace,
-            tools: this.#tools,
-            artifactDir: this.#artifactDir,
-            now: () => this.#now(),
-            createId: () => this.#createId(),
-            requireFencingToken: (runId) => this.#requireFencingToken(runId),
-            withLeaseHeartbeat: (runId, op) => this.#withLeaseHeartbeat(runId, op),
-            notify: (runId, obs) => this.#notify(runId, obs)
-          },
-          runForLedger,
-          effectiveContext as ModelDecisionContext,
-          assessment,
-          signal,
-          observer
-        );
-        if (compactedResult !== null) {
-          runForLedger = compactedResult.run;
-          if (compactedResult.outcome === "compacted") {
-            effectiveContext = compactedResult.context;
-            assessment = compactedResult.assessment;
-            compacted = true;
-          }
-        }
-      }
-    } catch (error) {
-      return { outcome: "failed", run: runForLedger, error };
-    }
-    if (signal.aborted) {
-      return { outcome: "failed", run: runForLedger, error: signal.reason };
-    }
-    const now = this.#now();
-    const intent: ModelCallIntent = {
-      id: this.#createId(),
-      runId: runForLedger.runId,
-      phase,
-      provider: assessment.profile.provider,
-      model: assessment.profile.model,
-      projectionDigest: phase === "decision"
-        ? (effectiveContext as ModelDecisionContext).projection.digest
-        : null,
-      contextWindowTokens: assessment.profile.contextWindowTokens,
-      reservedOutputTokens: assessment.reservedOutputTokens,
-      softInputLimitTokens: assessment.softInputLimitTokens,
-      hardInputLimitTokens: assessment.hardInputLimitTokens,
-      measuredInputTokens: assessment.measurement.inputTokens,
-      measurementMethod: assessment.measurement.method,
-      meter: assessment.measurement.meter,
-      budgetDecision: assessment.decision,
-      startedAt: now
-    };
-
-    if (assessment.decision === "hard_limit_exceeded") {
-      const message = `Measured input ${assessment.measurement.inputTokens} tokens exceeds the ${assessment.hardInputLimitTokens}-token hard input limit for ${assessment.profile.provider}/${assessment.profile.model}.`;
-      const failedInput = RunSnapshotSchema.parse({
-        ...runForLedger,
-        budgetsUsed: countIteration
-          ? {
-              ...runForLedger.budgetsUsed,
-              iterations: runForLedger.budgetsUsed.iterations + 1
-            }
-          : runForLedger.budgetsUsed,
-        lastError: {
-          code: "CONTEXT_BUDGET_EXCEEDED",
-          message,
-          retryable: false,
-          detailsArtifact: null
-        },
-        updatedAt: now
-      });
-      const failed = transitionRunStatus(failedInput, "failed", {
-        now,
-        stopReason: "CONTEXT_BUDGET_EXCEEDED"
-      });
-      const persisted = this.#store.refuseModelCallAndCommitRun({
-        intent,
-        previous: runForLedger,
-        next: failed,
-        fencingToken: this.#requireFencingToken(runForLedger.runId),
-        event: {
-          type: "run.failed",
-          occurredAt: now,
-          payload: {
-            stopReason: "CONTEXT_BUDGET_EXCEEDED",
-            errorCode: "CONTEXT_BUDGET_EXCEEDED",
-            phase,
-            budgetDecision: assessment.decision,
-            measuredInputTokens: assessment.measurement.inputTokens,
-            hardInputLimitTokens: assessment.hardInputLimitTokens,
-            tokenEvictionCount,
-            compacted
-          }
-        }
-      });
-      this.#notify(persisted.run.runId, observer);
-      return { outcome: "budget_exceeded", run: persisted.run };
-    }
-
-    const requestedInput = RunSnapshotSchema.parse({
-      ...runForLedger,
-      budgetsUsed: {
-        ...runForLedger.budgetsUsed,
-        iterations: runForLedger.budgetsUsed.iterations + (countIteration ? 1 : 0),
-        modelCalls: runForLedger.budgetsUsed.modelCalls + 1
-      },
-      updatedAt: now
-    });
-    const requested = this.#store.beginModelCallAndCommitRun({
-      intent,
-      previous: runForLedger,
-      next: requestedInput,
-      fencingToken: this.#requireFencingToken(runForLedger.runId),
-      event: {
-        type: phase === "decision" ? "model.requested" : "validation.requested",
-        occurredAt: now,
-        payload: {
-          ...eventPayload,
-          callId: intent.id,
-          budgetDecision: assessment.decision,
-          measuredInputTokens: assessment.measurement.inputTokens,
-          tokenEvictionCount,
-          compacted
-        }
-      }
-    });
-    this.#notify(requested.run.runId, observer);
-
-    let reportedUsage: ProviderTokenUsage | undefined;
-    try {
-      signal.throwIfAborted();
-      const output = await this.#withLeaseHeartbeat(
-        requested.run.runId,
-        () => phase === "decision"
-          ? this.#provider.decide(effectiveContext as ModelDecisionContext, {
-              signal,
-              reportTokenUsage: reportUsage
-            })
-          : this.#provider.validate(effectiveContext as SemanticValidationContext, {
-              signal,
-              reportTokenUsage: reportUsage
-            })
-      );
-      this.#store.completeModelCall({
-        callId: intent.id,
-        fencingToken: this.#requireFencingToken(runForLedger.runId),
-        status: "succeeded",
-        completedAt: this.#now(),
-        ...(reportedUsage === undefined
-          ? {}
-          : {
-              actualInputTokens: reportedUsage.inputTokens,
-              actualOutputTokens: reportedUsage.outputTokens,
-              actualTotalTokens: reportedUsage.totalTokens
-            })
-      });
-      return { outcome: "succeeded", run: requested.run, output };
-    } catch (error) {
-      const cancelled = signal.aborted;
-      try {
-        this.#store.completeModelCall({
-          callId: intent.id,
-          fencingToken: this.#requireFencingToken(runForLedger.runId),
-          status: cancelled ? "cancelled" : "failed",
-          completedAt: this.#now(),
-          errorCode: cancelled ? "CANCELLED" : "PROVIDER_ERROR",
-          ...(reportedUsage === undefined
-            ? {}
-            : {
-                actualInputTokens: reportedUsage.inputTokens,
-                actualOutputTokens: reportedUsage.outputTokens,
-                actualTotalTokens: reportedUsage.totalTokens
-              })
-        });
-      } catch (ledgerError) {
-        return { outcome: "failed", run: requested.run, error: ledgerError };
-      }
-      return { outcome: "failed", run: requested.run, error };
-    }
-
-    function reportUsage(usage: ProviderTokenUsage): void {
-      if (reportedUsage !== undefined) {
-        throw new Error("Provider reported token usage more than once for one logical model call.");
-      }
-      reportedUsage = parseProviderTokenUsage(usage);
-    }
-  }
-
   #services(signal: AbortSignal): RuntimeServices {
     return {
       workspace: this.#workspace,
@@ -1505,7 +1271,19 @@ export class RuntimeEngine {
         return { digest: artifact.digest, byteLength: artifact.byteLength };
       },
       requestModel: (run, phase, context, eventPayload, observer, countIteration) => (
-        this.#requestModel(
+        requestModel(
+          {
+            provider: this.#provider,
+            store: this.#store,
+            workspace: this.#workspace,
+            tools: this.#tools,
+            artifactDir: this.#artifactDir,
+            now: () => this.#now(),
+            createId: () => this.#createId(),
+            requireFencingToken: (runId) => this.#requireFencingToken(runId),
+            withLeaseHeartbeat: (runId, op) => this.#withLeaseHeartbeat(runId, op),
+            notify: (runId, obs) => this.#notify(runId, obs)
+          },
           run,
           phase,
           context,
