@@ -18,16 +18,12 @@ import {
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
 import {
-  digestCompactionSummary,
-  validateCompactionSummary,
-  type PersistedCheckpoint
-} from "./context/compaction.js";
+  compactDecisionContext
+} from "./context/compaction-flow.js";
 import {
-  buildCompactionAuthority,
   buildDecisionContext
 } from "./context/decision-context.js";
 import type {
-  CompactionContext,
   ModelCallPhase,
   ModelDecisionContext,
   ProviderTokenUsage,
@@ -1297,7 +1293,19 @@ export class RuntimeEngine {
         && this.#provider.compact !== undefined
         && (effectiveContext as ModelDecisionContext).toolObservations.length > 0
       ) {
-        const compactedResult = await this.#compactDecisionContext(
+        const compactedResult = await compactDecisionContext(
+          {
+            provider: this.#provider,
+            store: this.#store,
+            workspace: this.#workspace,
+            tools: this.#tools,
+            artifactDir: this.#artifactDir,
+            now: () => this.#now(),
+            createId: () => this.#createId(),
+            requireFencingToken: (runId) => this.#requireFencingToken(runId),
+            withLeaseHeartbeat: (runId, op) => this.#withLeaseHeartbeat(runId, op),
+            notify: (runId, obs) => this.#notify(runId, obs)
+          },
           runForLedger,
           effectiveContext as ModelDecisionContext,
           assessment,
@@ -1473,215 +1481,6 @@ export class RuntimeEngine {
       }
       reportedUsage = parseProviderTokenUsage(usage);
     }
-  }
-
-  /**
-   * Generates, validates and persists a structured Context Checkpoint when
-   * deterministic eviction is exhausted but the decision context is still over
-   * budget. Returns null when compaction cannot proceed at all (the compaction
-   * input itself exceeds the hard limit); returns { run, context: null } when
-   * the compaction attempt failed validation so the decision falls back to the
-   * pre-compaction assessment; returns { run, context, assessment } after a
-   * successful compaction with the rebuilt Projection re-measured.
-   */
-  async #compactDecisionContext(
-    run: RunSnapshot,
-    context: ModelDecisionContext,
-    assessment: ContextBudgetAssessment,
-    signal: AbortSignal,
-    observer?: RuntimeObserver
-  ): Promise<
-    | {
-      readonly outcome: "compacted";
-      readonly run: RunSnapshot;
-      readonly context: ModelDecisionContext;
-      readonly assessment: ContextBudgetAssessment;
-    }
-    | { readonly outcome: "skipped"; readonly run: RunSnapshot }
-    | null
-  > {
-    const authority = buildCompactionAuthority({
-      run,
-      store: this.#store,
-      artifactDir: this.#artifactDir
-    });
-    const compactionContext: CompactionContext = {
-      workspace: this.#workspace,
-      run: context.run,
-      toolObservations: context.toolObservations,
-      budgetDecision: assessment.decision === "within_budget"
-        ? "soft_limit_exceeded"
-        : assessment.decision
-    };
-    const now = this.#now();
-    const compactionAssessment = await assessContextBudget(
-      this.#provider,
-      "compaction",
-      compactionContext
-    );
-    if (compactionAssessment.decision === "hard_limit_exceeded") {
-      return null;
-    }
-    const intent: ModelCallIntent = {
-      id: this.#createId(),
-      runId: run.runId,
-      phase: "compaction",
-      provider: compactionAssessment.profile.provider,
-      model: compactionAssessment.profile.model,
-      projectionDigest: digestJson(compactionContext),
-      contextWindowTokens: compactionAssessment.profile.contextWindowTokens,
-      reservedOutputTokens: compactionAssessment.reservedOutputTokens,
-      softInputLimitTokens: compactionAssessment.softInputLimitTokens,
-      hardInputLimitTokens: compactionAssessment.hardInputLimitTokens,
-      measuredInputTokens: compactionAssessment.measurement.inputTokens,
-      measurementMethod: compactionAssessment.measurement.method,
-      meter: compactionAssessment.measurement.meter,
-      budgetDecision: compactionAssessment.decision,
-      startedAt: now
-    };
-    const requestedInput = RunSnapshotSchema.parse({
-      ...run,
-      budgetsUsed: {
-        ...run.budgetsUsed,
-        modelCalls: run.budgetsUsed.modelCalls + 1
-      },
-      updatedAt: now
-    });
-    const requested = this.#store.beginModelCallAndCommitRun({
-      intent,
-      previous: run,
-      next: requestedInput,
-      fencingToken: this.#requireFencingToken(run.runId),
-      event: {
-        type: "model.requested",
-        occurredAt: now,
-        payload: {
-          callId: intent.id,
-          phase: "compaction",
-          budgetDecision: compactionAssessment.decision,
-          measuredInputTokens: compactionAssessment.measurement.inputTokens
-        }
-      }
-    });
-    this.#notify(requested.run.runId, observer);
-
-    let reportedUsage: ProviderTokenUsage | undefined;
-    function reportCompactionUsage(usage: ProviderTokenUsage): void {
-      if (reportedUsage !== undefined) {
-        throw new Error("Provider reported token usage more than once for one compaction call.");
-      }
-      reportedUsage = parseProviderTokenUsage(usage);
-    }
-    let raw: unknown;
-    try {
-      signal.throwIfAborted();
-      raw = await this.#withLeaseHeartbeat(
-        requested.run.runId,
-        () => this.#provider.compact!(compactionContext, {
-          signal,
-          reportTokenUsage: reportCompactionUsage
-        })
-      );
-    } catch {
-      const cancelled = signal.aborted;
-      try {
-        this.#store.completeModelCall({
-          callId: intent.id,
-          fencingToken: this.#requireFencingToken(run.runId),
-          status: cancelled ? "cancelled" : "failed",
-          completedAt: this.#now(),
-          errorCode: cancelled ? "CANCELLED" : "PROVIDER_ERROR",
-          ...(reportedUsage === undefined
-            ? {}
-            : {
-                actualInputTokens: reportedUsage.inputTokens,
-                actualOutputTokens: reportedUsage.outputTokens,
-                actualTotalTokens: reportedUsage.totalTokens
-              })
-        });
-      } catch {
-        // The ledger row remains "started"; the decision still falls back.
-      }
-      return { outcome: "skipped", run: requested.run };
-    }
-    const validated = validateCompactionSummary(raw, authority);
-    if (!validated.ok) {
-      this.#store.completeModelCall({
-        callId: intent.id,
-        fencingToken: this.#requireFencingToken(run.runId),
-        status: "failed",
-        completedAt: this.#now(),
-        errorCode: "INVALID_COMPACTION_SUMMARY",
-        ...(reportedUsage === undefined
-          ? {}
-          : {
-              actualInputTokens: reportedUsage.inputTokens,
-              actualOutputTokens: reportedUsage.outputTokens,
-              actualTotalTokens: reportedUsage.totalTokens
-            })
-      });
-      return { outcome: "skipped", run: requested.run };
-    }
-    this.#store.completeModelCall({
-      callId: intent.id,
-      fencingToken: this.#requireFencingToken(run.runId),
-      status: "succeeded",
-      completedAt: this.#now(),
-      ...(reportedUsage === undefined
-        ? {}
-        : {
-            actualInputTokens: reportedUsage.inputTokens,
-            actualOutputTokens: reportedUsage.outputTokens,
-            actualTotalTokens: reportedUsage.totalTokens
-          })
-    });
-    const checkpoint: PersistedCheckpoint = {
-      checkpointId: this.#createId(),
-      runId: run.runId,
-      planVersion: run.currentPlan?.version ?? 0,
-      revision: requested.run.revision,
-      summary: validated.summary,
-      digest: digestCompactionSummary(validated.summary),
-      sourceDigests: validated.sourceDigests,
-      coveredInvocations: validated.coveredInvocations,
-      createdAt: this.#now()
-    };
-    this.#store.commitCheckpoint({
-      checkpoint,
-      previous: requested.run,
-      fencingToken: this.#requireFencingToken(run.runId),
-      event: {
-        type: "context.checkpointed",
-        occurredAt: this.#now(),
-        payload: {
-          checkpointId: checkpoint.checkpointId,
-          digest: checkpoint.digest,
-          planVersion: checkpoint.planVersion,
-          revision: checkpoint.revision,
-          coveredInvocations: checkpoint.coveredInvocations.length
-        }
-      }
-    });
-    this.#notify(run.runId, observer);
-
-    const rebuilt = buildDecisionContext({
-      run,
-      store: this.#store,
-      workspace: this.#workspace,
-      tools: this.#tools,
-      artifactDir: this.#artifactDir
-    });
-    const rebuiltAssessment = await assessContextBudget(
-      this.#provider,
-      "decision",
-      rebuilt
-    );
-    return {
-      outcome: "compacted",
-      run: requested.run,
-      context: rebuilt,
-      assessment: rebuiltAssessment
-    };
   }
 
   #services(signal: AbortSignal): RuntimeServices {

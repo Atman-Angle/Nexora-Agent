@@ -33,6 +33,12 @@ export {
 } from "./compaction.js";
 
 export {
+  compactDecisionContext,
+  type CompactionResult,
+  type CompactionServices
+} from "./compaction-flow.js";
+
+export {
   buildCompactionAuthority,
   buildDecisionContext,
   findActiveCheckpoint
