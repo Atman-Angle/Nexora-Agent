@@ -79,6 +79,7 @@ import {
   RuntimeError,
   cancellationReason
 } from "./runtime-error.js";
+import { LeaseManager } from "./runtime-lease.js";
 
 export type {
   ApprovalDecision,
@@ -127,10 +128,8 @@ export class RuntimeEngine {
   readonly #store: RunStore;
   readonly #now: () => string;
   readonly #createId: () => string;
-  readonly #ownerId: string;
-  readonly #leaseTtlMs: number;
   readonly #artifactDir: string;
-  readonly #leases = new Map<string, number>();
+  readonly #leases: LeaseManager;
   readonly #activeExecutions = new Map<string, Promise<RunResult>>();
   readonly #executionControllers = new Map<string, AbortController>();
   readonly #subscriptions = new Map<
@@ -179,12 +178,16 @@ export class RuntimeEngine {
       resolveProviderModelProfile(options.provider);
       this.#now = now;
       this.#createId = createId;
-      this.#ownerId = createId();
-      this.#leaseTtlMs = leaseTtlMs;
       this.#tools = tools;
       this.#artifactDir = join(dataDir, "artifacts");
       this.#store = openRunStore({
         databasePath: join(dataDir, "runtime-v1.1.db")
+      });
+      this.#leases = new LeaseManager({
+        store: this.#store,
+        ownerId: createId(),
+        leaseTtlMs,
+        now
       });
     } catch (error) {
       if (error instanceof RuntimeError) throw error;
@@ -287,7 +290,7 @@ export class RuntimeEngine {
     observer?: RuntimeObserver
   ): Promise<RunResult> {
     let run = initial;
-    this.#acquireLease(run.runId);
+    this.#leases.acquire(run.runId);
     try {
       run = await recoverToolInvocation(
         this.#services(controller.signal),
@@ -408,7 +411,7 @@ export class RuntimeEngine {
       if (run.status !== "running") return toRunResult(run);
       return await this.#runLoop(run, controller.signal, observer);
     } finally {
-      this.#releaseLease(run.runId);
+      this.#leases.release(run.runId);
     }
   }
 
@@ -491,11 +494,11 @@ export class RuntimeEngine {
     controller: AbortController,
     observer?: RuntimeObserver
   ): Promise<RunResult> {
-    this.#acquireLease(created.runId);
+    this.#leases.acquire(created.runId);
     try {
       return await this.#runLoop(created, controller.signal, observer);
     } finally {
-      this.#releaseLease(created.runId);
+      this.#leases.release(created.runId);
     }
   }
 
@@ -732,7 +735,7 @@ export class RuntimeEngine {
     }
 
     try {
-      this.#acquireLease(runId);
+      this.#leases.acquire(runId);
       run = this.#requireRun(runId);
       if (this.#hasUnknownInvocation(runId)) {
         throw this.#toolResultUnknown(runId);
@@ -751,7 +754,7 @@ export class RuntimeEngine {
     } catch (error) {
       throw this.#mapControlBoundaryError(error, runId);
     } finally {
-      this.#releaseLease(runId);
+      this.#leases.release(runId);
     }
   }
 
@@ -824,14 +827,14 @@ export class RuntimeEngine {
     operation: () => Promise<void>
   ): Promise<void> {
     try {
-      this.#acquireLease(runId);
+      this.#leases.acquire(runId);
     } catch (error) {
       throw this.#mapControlBoundaryError(error, runId);
     }
     try {
       await operation();
     } finally {
-      this.#releaseLease(runId);
+      this.#leases.release(runId);
     }
   }
 
@@ -1054,8 +1057,8 @@ export class RuntimeEngine {
           artifactDir: this.#artifactDir,
           now: () => this.#now(),
           createId: () => this.#createId(),
-          requireFencingToken: (runId) => this.#requireFencingToken(runId),
-          withLeaseHeartbeat: (runId, op) => this.#withLeaseHeartbeat(runId, op),
+          requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
+          withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
           notify: (runId, obs) => this.#notify(runId, obs)
         },
         run,
@@ -1258,10 +1261,10 @@ export class RuntimeEngine {
       now: () => this.#now(),
       createId: () => this.#createId(),
       signal,
-      fencingToken: (runId) => this.#requireFencingToken(runId),
+      fencingToken: (runId) => this.#leases.requireFencingToken(runId),
       notify: (runId, observer) => this.#notify(runId, observer),
       withHeartbeat: (runId, operation) => (
-        this.#withLeaseHeartbeat(runId, operation)
+        this.#leases.withHeartbeat(runId, operation)
       ),
       putArtifactText: (content, mediaType) => {
         const artifact = new ArtifactStore(this.#artifactDir).putText(
@@ -1280,8 +1283,8 @@ export class RuntimeEngine {
             artifactDir: this.#artifactDir,
             now: () => this.#now(),
             createId: () => this.#createId(),
-            requireFencingToken: (runId) => this.#requireFencingToken(runId),
-            withLeaseHeartbeat: (runId, op) => this.#withLeaseHeartbeat(runId, op),
+            requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
+            withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
             notify: (runId, obs) => this.#notify(runId, obs)
           },
           run,
@@ -1315,7 +1318,7 @@ export class RuntimeEngine {
     const committed = this.#store.commitRun({
       previous,
       next,
-      fencingToken: this.#requireFencingToken(previous.runId),
+      fencingToken: this.#leases.requireFencingToken(previous.runId),
       event: { type, occurredAt: this.#now(), payload }
     });
     this.#notify(committed.runId, observer);
@@ -1352,61 +1355,6 @@ export class RuntimeEngine {
     }
   }
 
-  #acquireLease(runId: string): void {
-    const lease = this.#store.acquireLease({
-      runId,
-      ownerId: this.#ownerId,
-      now: this.#now(),
-      ttlMs: this.#leaseTtlMs
-    });
-    this.#leases.set(runId, lease.fencingToken);
-  }
-
-  #releaseLease(runId: string): void {
-    const fencingToken = this.#leases.get(runId);
-    if (fencingToken === undefined) return;
-    this.#store.releaseLease({ runId, ownerId: this.#ownerId, fencingToken });
-    this.#leases.delete(runId);
-  }
-
-  #requireFencingToken(runId: string): number {
-    const token = this.#leases.get(runId);
-    if (token === undefined) throw new Error(`RUN_LEASE_MISSING: ${runId}`);
-    return token;
-  }
-
-  async #withLeaseHeartbeat<T>(runId: string, operation: () => Promise<T>): Promise<T> {
-    const fencingToken = this.#requireFencingToken(runId);
-    this.#store.renewLease({
-      runId,
-      ownerId: this.#ownerId,
-      fencingToken,
-      now: this.#now(),
-      ttlMs: this.#leaseTtlMs
-    });
-    let leaseError: unknown = null;
-    const interval = setInterval(() => {
-      if (leaseError !== null) return;
-      try {
-        this.#store.renewLease({
-          runId,
-          ownerId: this.#ownerId,
-          fencingToken,
-          now: this.#now(),
-          ttlMs: this.#leaseTtlMs
-        });
-      } catch (error) {
-        leaseError = error;
-      }
-    }, Math.max(10, Math.floor(this.#leaseTtlMs / 3)));
-    try {
-      const result = await operation();
-      if (leaseError !== null) throw leaseError;
-      return result;
-    } finally {
-      clearInterval(interval);
-    }
-  }
 }
 
 export function createRuntime(options: CreateRuntimeOptions): RuntimeEngine {
