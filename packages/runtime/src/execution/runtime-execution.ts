@@ -5,7 +5,7 @@ import {
   type RunSnapshot,
   type RuntimeAction,
   type ToolInvocation
-} from "./contracts.js";
+} from "../contracts.js";
 import {
   ActionRejectedError,
   canonicalJson,
@@ -13,8 +13,8 @@ import {
   digestCanonicalJson,
   digestJson,
   errorMessage
-} from "./runtime-helpers.js";
-import { MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES } from "./context/projection.js";
+} from "../runtime-helpers.js";
+import { MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES } from "../context/projection.js";
 import {
   type RecoveryDecision,
   type RuntimeServices,
@@ -22,9 +22,9 @@ import {
   type RuntimeObserver,
   type RuntimeTool,
   type RuntimeToolResult
-} from "./runtime-types.js";
-import { RuntimeError, cancellationReason } from "./runtime-error.js";
-import { transitionRunStatus } from "./state-machine.js";
+} from "../runtime-types.js";
+import { RuntimeError, cancellationReason } from "../runtime-error.js";
+import { transitionRunStatus } from "../state-machine.js";
 
 type CallToolAction = Extract<RuntimeAction, { type: "call_tool" }>;
 

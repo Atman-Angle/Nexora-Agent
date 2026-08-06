@@ -61,7 +61,7 @@ export type {
   TaskContract
 } from "./contracts.js";
 
-export { createBuiltInTools } from "./tool-runtime/index.js";
+export { createBuiltInTools } from "./execution/tool-runtime/index.js";
 export {
   ModelConfigError,
   createOpenAICompatibleProvider,
@@ -81,4 +81,4 @@ export {
   defineTool,
   type ToolBuilderContext,
   type ToolBuilderDefinition
-} from "./tool-builder.js";
+} from "./execution/tool-builder.js";

@@ -21,9 +21,9 @@
     "dist/*.js",
     "dist/*.d.ts",
     "dist/context",
+    "dist/execution",
     "dist/providers",
     "dist/store",
-    "dist/tool-runtime",
     "dist/testing"
   ],
   "scripts": {
