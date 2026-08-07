@@ -287,8 +287,10 @@ describe("E079 Context Budget and Token Accounting", () => {
       "PRAGMA table_info(tool_invocations)"
     ).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(4);
+    expect(version).toBe(5);
     expect(tables.map((row) => row.name)).toEqual([
+      "branch_fork_base",
+      "branches",
       "context_checkpoints",
       "model_calls",
       "run_events",

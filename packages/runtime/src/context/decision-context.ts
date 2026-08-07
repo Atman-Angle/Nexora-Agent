@@ -1,5 +1,6 @@
 import {
   runtimeActionContract,
+  type ForkContext,
   type RunSnapshot,
   type ToolInvocation
 } from "../contracts.js";
@@ -50,7 +51,8 @@ export type DecisionContextResult = {
  * refs (already validated against the previous turn's manifest) and the
  * Harness auto-candidates are derived from the active step. Facts are admitted
  * under a dedicated budget in priority order: harness_required >
- * model_request > harness_helpful.
+ * model_request > harness_helpful. When forkContext is present, the child's
+ * readable universe also includes the Fork Base inherited facts (read-only).
  */
 export function buildDecisionContext(args: {
   readonly run: RunSnapshot;
@@ -59,6 +61,7 @@ export function buildDecisionContext(args: {
   readonly tools: ReadonlyMap<string, RuntimeTool>;
   readonly artifactDir: string;
   readonly rehydrateRequests?: readonly string[];
+  readonly forkContext?: ForkContext | null;
 }): DecisionContextResult {
   const { run, store, workspace, tools, artifactDir } = args;
   const invocations = store.listToolInvocations(run.runId);
@@ -80,12 +83,22 @@ export function buildDecisionContext(args: {
       summary: checkpoint.summary
     };
 
+  const inherited = args.forkContext === undefined || args.forkContext === null
+    ? undefined
+    : (() => {
+        const parentRun = store.getRun(args.forkContext!.parentRunId);
+        return parentRun === null
+          ? undefined
+          : { parentRun, refs: args.forkContext!.forkBase.inheritedRefs };
+      })();
+
   const manifest = buildAvailableContextRefs({
     run,
     observations,
     checkpoint,
     store,
-    artifactDir
+    artifactDir,
+    ...(inherited === undefined ? {} : { inheritedRefs: inherited.refs })
   });
   const hasAvailableRefs = manifest.size > 0 && run.currentPlan !== null;
   const actions = allowedActions(run, hasAvailableRefs);
@@ -100,7 +113,8 @@ export function buildDecisionContext(args: {
       store,
       artifactDir,
       manifest,
-      origin: "harness_required"
+      origin: "harness_required",
+      ...(inherited === undefined ? {} : { inherited })
     }));
   }
   for (const ref of modelRequests) {
@@ -111,7 +125,8 @@ export function buildDecisionContext(args: {
         store,
         artifactDir,
         manifest,
-        origin: "model_request"
+        origin: "model_request",
+        ...(inherited === undefined ? {} : { inherited })
       }));
     }
   }
@@ -123,7 +138,8 @@ export function buildDecisionContext(args: {
         store,
         artifactDir,
         manifest,
-        origin: "harness_helpful"
+        origin: "harness_helpful",
+        ...(inherited === undefined ? {} : { inherited })
       }));
     }
   }

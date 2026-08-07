@@ -40,6 +40,8 @@ export {
   admitRehydratedFacts,
   autoRehydrateForActiveStep,
   buildAvailableContextRefs,
+  buildForkBaseInheritedFacts,
+  buildForkBaseInheritedRefs,
   isValidSourceRefFormat,
   parseRequestContextAction,
   resolveRehydratedFact,
@@ -64,6 +66,8 @@ export {
   buildDecisionContext,
   findActiveCheckpoint
 } from "./decision-context.js";
+
+export { type ForkContext } from "../contracts.js";
 
 export { evictDecisionContextOnce, jsonBytes } from "./eviction.js";
 

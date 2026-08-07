@@ -13,6 +13,7 @@ import {
   type PersistedCheckpoint
 } from "./compaction.js";
 import { buildCompactionAuthority, buildDecisionContext } from "./decision-context.js";
+import type { ForkContext } from "../contracts.js";
 import {
   assessContextBudget,
   parseProviderTokenUsage,
@@ -37,6 +38,7 @@ export type CompactionServices = {
   readonly requireFencingToken: (runId: string) => number;
   readonly withLeaseHeartbeat: <T>(runId: string, operation: () => Promise<T>) => Promise<T>;
   readonly notify: (runId: string, observer?: RuntimeObserver) => void;
+  readonly forkContext?: ForkContext | null;
 };
 
 export type CompactionResult =
@@ -240,7 +242,8 @@ export async function compactDecisionContext(
     store: services.store,
     workspace: services.workspace,
     tools: services.tools,
-    artifactDir: services.artifactDir
+    artifactDir: services.artifactDir,
+    ...(services.forkContext === undefined ? {} : { forkContext: services.forkContext })
   }).context;
   const rebuiltAssessment = await assessContextBudget(
     services.provider,

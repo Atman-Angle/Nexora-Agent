@@ -32,8 +32,21 @@ export {
   type RuntimeErrorCode,
   type RuntimeTool,
   type RuntimeToolResult,
-  type StartInput
+  type StartInput,
+  type BranchHandle,
+  type BranchView,
+  type ForkOptions,
+  type MergeDecisions,
+  type MergeOutcome
 } from "./runtime.js";
+
+export type {
+  BranchForkBase,
+  BranchRecord,
+  BranchStatus,
+  ForkContext,
+  InheritedFactProjection
+} from "./contracts.js";
 
 export type {
   ModelDecisionContext,

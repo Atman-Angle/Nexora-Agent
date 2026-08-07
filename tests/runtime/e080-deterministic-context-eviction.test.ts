@@ -158,6 +158,8 @@ describe("E080 deterministic Context Eviction", () => {
     `).all() as Array<{ name: string }>;
     database.close();
     expect(tables.map((row) => row.name)).toEqual([
+      "branch_fork_base",
+      "branches",
       "context_checkpoints",
       "model_calls",
       "run_events",
@@ -597,8 +599,9 @@ describe("E080 deterministic Context Eviction", () => {
       ORDER BY name
     `).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(4);
+    expect(version).toBe(5);
     expect(tables.map((row) => row.name)).toContain("context_checkpoints");
+    expect(tables.map((row) => row.name)).toContain("branches");
     expect(toolColumns.filter((row) => row.name === "payload_digest")).toHaveLength(1);
     expect(toolColumns.filter((row) => row.name === "payload_artifact_ref")).toHaveLength(1);
   });

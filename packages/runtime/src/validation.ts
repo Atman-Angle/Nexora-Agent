@@ -140,21 +140,34 @@ export async function proposeFinish(
     const invocationById = new Map(
       toolInvocations.map((item) => [item.id, item])
     );
+    const inheritedFacts = services.forkContext?.forkBase.inheritedFacts ?? {};
     const facts = citedEvidence.map((evidence) => {
       const invocation = evidence.invocationId === null
         ? undefined
         : invocationById.get(evidence.invocationId);
-      if (invocation === undefined || invocation.status !== "succeeded") {
-        throw new Error(
-          `Cited Tool Evidence has no succeeded Invocation: ${evidence.id}`
-        );
+      if (invocation !== undefined && invocation.status === "succeeded") {
+        return {
+          toolName: invocation.toolName,
+          subjectRef: evidence.subjectRef,
+          input: JsonValueSchema.parse(invocation.inputJson) as JsonValue,
+          facts: JsonValueSchema.parse(invocation.resultJson) as JsonValue
+        };
       }
-      return {
-        toolName: invocation.toolName,
-        subjectRef: evidence.subjectRef,
-        input: JsonValueSchema.parse(invocation.inputJson) as JsonValue,
-        facts: JsonValueSchema.parse(invocation.resultJson) as JsonValue
-      };
+      // Inherited Evidence (captured by the branch at its fork point): resolve
+      // the frozen parent fact projection instead of reaching into the parent's
+      // mutable authority.
+      const inherited = inheritedFacts[evidence.id];
+      if (inherited !== undefined) {
+        return {
+          toolName: inherited.toolName,
+          subjectRef: inherited.subjectRef,
+          input: inherited.input as JsonValue,
+          facts: inherited.facts as JsonValue
+        };
+      }
+      throw new Error(
+        `Cited Tool Evidence has no succeeded Invocation: ${evidence.id}`
+      );
     });
     const modelCall = await services.requestModel(
       run,

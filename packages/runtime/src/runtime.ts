@@ -11,17 +11,27 @@ import {
   TaskContractSchema,
   JsonValueSchema,
   createInitialRunSnapshot,
+  type BranchRecord,
   type RunSnapshot,
   type RuntimeAction
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
+import {
+  branchWorkspaceExists,
+  cleanupStagingWorkspaces,
+  removeDirectoryTree,
+  snapshotWorkspace
+} from "./store/branch-workspace.js";
 import {
   requestModel
 } from "./context/request-model.js";
 import {
   buildDecisionContext
 } from "./context/decision-context.js";
+import type { ForkContext } from "./contracts.js";
 import {
+  buildForkBaseInheritedFacts,
+  buildForkBaseInheritedRefs,
   parseRequestContextAction,
   type RequestContextAction
 } from "./context/rehydration.js";
@@ -38,6 +48,7 @@ import {
   ActionRejectedError,
   allowedActions,
   assertCompletedStepsUnchanged,
+  deepFreeze,
   errorMessage,
   actionRejectionDiagnostic,
   requireWorkspace,
@@ -50,24 +61,29 @@ import {
   recoverToolInvocation
 } from "./execution/runtime-execution.js";
 import type {
+  BranchHandle,
+  BranchView,
   CreateRuntimeOptions,
+  DenialOptions,
+  ForkOptions,
+  MergeDecisions,
+  MergeOutcome,
+  RequestOptions,
   ResumeInput,
-  RunResult,
   RunFinalResult,
   RunHandle,
   RunHandleResumeOptions,
   RunInspection,
   RunOptions,
+  RunResult,
   RunView,
-  RuntimeObserver,
   RuntimeEventListener,
-  RuntimeSubscription,
-  SubscribeOptions,
-  RequestOptions,
-  DenialOptions,
+  RuntimeObserver,
   RuntimeServices,
+  RuntimeSubscription,
   RuntimeTool,
-  StartInput
+  StartInput,
+  SubscribeOptions
 } from "./runtime-types.js";
 import {
   projectRunFinalResult,
@@ -86,7 +102,12 @@ import { LeaseManager } from "./runtime-lease.js";
 
 export type {
   ApprovalDecision,
+  BranchHandle,
+  BranchView,
   CreateRuntimeOptions,
+  ForkOptions,
+  MergeDecisions,
+  MergeOutcome,
   PublicEvidence,
   PublicPendingRequest,
   PublicPlan,
@@ -126,6 +147,7 @@ export {
 
 export class RuntimeEngine {
   readonly #workspace: string;
+  readonly #dataDir: string;
   readonly #provider: RuntimeProvider;
   readonly #tools: Map<string, RuntimeTool>;
   readonly #store: RunStore;
@@ -139,6 +161,9 @@ export class RuntimeEngine {
     string,
     Set<ManagedRuntimeSubscription>
   >();
+  /** Branch child runId → isolated workspace root (directory snapshot). */
+  readonly #branchWorkspaces = new Map<string, string>();
+  readonly #branchWorkspaceCleanups = new Map<string, () => void>();
   /**
    * Transient rehydration bookkeeping. Not an authority: pending requests are
    * rebuilt from the context.rehydrate_requested / context.rehydrated event
@@ -187,6 +212,7 @@ export class RuntimeEngine {
       }
       const dataDir = resolve(options.dataDir ?? join(workspace, ".nexora"));
       this.#workspace = workspace;
+      this.#dataDir = dataDir;
       this.#provider = options.provider;
       resolveProviderModelProfile(options.provider);
       this.#now = now;
@@ -202,6 +228,7 @@ export class RuntimeEngine {
         leaseTtlMs,
         now
       });
+      this.#recoverBranchWorkspaces(dataDir);
     } catch (error) {
       if (error instanceof RuntimeError) throw error;
       throw new RuntimeError({
@@ -306,7 +333,7 @@ export class RuntimeEngine {
     this.#leases.acquire(run.runId);
     try {
       run = await recoverToolInvocation(
-        this.#services(controller.signal),
+        this.#services(controller.signal, run.runId),
         run,
         input.recoveryDecision,
         observer
@@ -397,7 +424,7 @@ export class RuntimeEngine {
           }, observer);
           if (decision.approved) {
             run = await callTool(
-              this.#services(controller.signal),
+              this.#services(controller.signal, run.runId),
               run,
               pendingAction,
               observer,
@@ -852,6 +879,24 @@ export class RuntimeEngine {
     }
   }
 
+  /**
+   * Synchronous variant of #withControlLease for control-plane operations that
+   * write the parent Run (fork / merge / discard): acquires the parent's lease,
+   * runs the fenced write, and releases it in a finally block.
+   */
+  #withControlLeaseSync<T>(runId: string, operation: () => T): T {
+    try {
+      this.#leases.acquire(runId);
+    } catch (error) {
+      throw this.#mapControlBoundaryError(error, runId);
+    }
+    try {
+      return operation();
+    } finally {
+      this.#leases.release(runId);
+    }
+  }
+
   #mapControlBoundaryError(error: unknown, runId: string): Error {
     if (error instanceof RuntimeError) return error;
     const message = errorMessage(error);
@@ -1066,23 +1111,25 @@ export class RuntimeEngine {
       const decisionResult = buildDecisionContext({
         run,
         store: this.#store,
-        workspace: this.#workspace,
+        workspace: this.#workspaceFor(run.runId),
         tools: this.#tools,
         artifactDir: this.#artifactDir,
-        ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs })
+        ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs }),
+        forkContext: this.#forkContextFor(run.runId)
       });
       const modelCall = await requestModel(
         {
           provider: this.#provider,
           store: this.#store,
-          workspace: this.#workspace,
+          workspace: this.#workspaceFor(run.runId),
           tools: this.#tools,
           artifactDir: this.#artifactDir,
           now: () => this.#now(),
           createId: () => this.#createId(),
           requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
           withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
-          notify: (runId, obs) => this.#notify(runId, obs)
+          notify: (runId, obs) => this.#notify(runId, obs),
+          forkContext: this.#forkContextFor(run.runId)
         },
         run,
         "decision",
@@ -1262,9 +1309,9 @@ export class RuntimeEngine {
       }, observer);
     }
     if (action.type === "call_tool") {
-      return callTool(this.#services(signal), run, action, observer);
+      return callTool(this.#services(signal, run.runId), run, action, observer);
     }
-    return proposeFinish(this.#services(signal), run, action, observer);
+    return proposeFinish(this.#services(signal, run.runId), run, action, observer);
   }
 
   #setPlan(run: RunSnapshot, action: Extract<RuntimeAction, { type: "set_plan" }>, observer?: RuntimeObserver): RunSnapshot {
@@ -1283,7 +1330,7 @@ export class RuntimeEngine {
       assertCompletedStepsUnchanged(run, action.orderedSteps);
     }
     if (contract === null) throw new ActionRejectedError("Task Contract is missing.");
-    if (contract.workspace !== this.#workspace) throw new ActionRejectedError("Task Contract workspace does not match Runtime workspace.");
+    if (contract.workspace !== this.#workspaceFor(run.runId)) throw new ActionRejectedError("Task Contract workspace does not match Runtime workspace.");
     if (contract.inputVersion !== run.inputHistory.length) throw new ActionRejectedError("Task Contract does not cover the complete input history.");
 
     const version = current === null ? 1 : current.version + 1;
@@ -1365,9 +1412,9 @@ export class RuntimeEngine {
     return null;
   }
 
-  #services(signal: AbortSignal): RuntimeServices {
+  #services(signal: AbortSignal, runId?: string): RuntimeServices {
     return {
-      workspace: this.#workspace,
+      workspace: this.#workspaceFor(runId),
       provider: this.#provider,
       tools: this.#tools,
       store: this.#store,
@@ -1376,6 +1423,7 @@ export class RuntimeEngine {
       signal,
       fencingToken: (runId) => this.#leases.requireFencingToken(runId),
       notify: (runId, observer) => this.#notify(runId, observer),
+      ...(runId === undefined ? {} : { forkContext: this.#forkContextFor(runId) }),
       withHeartbeat: (runId, operation) => (
         this.#leases.withHeartbeat(runId, operation)
       ),
@@ -1387,19 +1435,20 @@ export class RuntimeEngine {
         return { digest: artifact.digest, byteLength: artifact.byteLength };
       },
       requestModel: (run, phase, context, eventPayload, observer, countIteration) => (
-        requestModel(
-          {
-            provider: this.#provider,
-            store: this.#store,
-            workspace: this.#workspace,
-            tools: this.#tools,
-            artifactDir: this.#artifactDir,
-            now: () => this.#now(),
-            createId: () => this.#createId(),
-            requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
-            withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
-            notify: (runId, obs) => this.#notify(runId, obs)
-          },
+          requestModel(
+            {
+              provider: this.#provider,
+              store: this.#store,
+              workspace: this.#workspaceFor(run.runId),
+              tools: this.#tools,
+              artifactDir: this.#artifactDir,
+              now: () => this.#now(),
+              createId: () => this.#createId(),
+              requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
+              withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
+              notify: (runId, obs) => this.#notify(runId, obs),
+              forkContext: this.#forkContextFor(run.runId)
+            },
           run,
           phase,
           context,
@@ -1465,6 +1514,385 @@ export class RuntimeEngine {
         code: "RUNTIME_CLOSED",
         message: "Runtime is closed."
       });
+    }
+  }
+
+  /** Resolves the workspace root for a Run: branch children use their isolated snapshot, others the root workspace. */
+  #workspaceFor(runId?: string): string {
+    if (runId !== undefined) {
+      const branchRoot = this.#branchWorkspaces.get(runId);
+      if (branchRoot !== undefined) return branchRoot;
+    }
+    return this.#workspace;
+  }
+
+  /** When the run is a branch child, its read-only parent inheritance boundary. */
+  #forkContextFor(runId: string): ForkContext | null {
+    const branch = this.#store.getBranchByChild(runId);
+    if (branch === null) return null;
+    const forkBase = this.#store.getForkBase(branch.branchId);
+    if (forkBase === null) return null;
+    return { parentRunId: branch.parentRunId, forkBase };
+  }
+
+  /** Fork API: creates an isolated exploratory branch from the parent's current revision. */
+  async fork(runId: string, _options: ForkOptions = {}): Promise<BranchHandle | null> {
+    this.#assertOpen();
+    return this.#forkRun(runId, undefined);
+  }
+
+  listBranches(runId: string): BranchRecord[] {
+    this.#assertOpen();
+    return this.#store.listBranches(runId);
+  }
+
+  getBranch(branchId: string): BranchView | null {
+    this.#assertOpen();
+    const branch = this.#store.getBranch(branchId);
+    if (branch === null) return null;
+    return this.#branchView(branch);
+  }
+
+  discardBranch(branchId: string, reason?: string): BranchRecord {
+    this.#assertOpen();
+    const branch = this.#store.getBranch(branchId);
+    if (branch === null) throw new Error(`Branch not found: ${branchId}`);
+    if (branch.status === "merged" || branch.status === "discarded") {
+      throw new Error(`Branch is already ${branch.status}: ${branchId}`);
+    }
+    return this.#withControlLeaseSync(branch.parentRunId, () => {
+      this.#assertControlIdle(branch.parentRunId);
+      const cleanup = this.#branchWorkspaceCleanups.get(branch.childRunId);
+      this.#store.updateBranchStatus({
+        branchId,
+        status: "discarded",
+        parentRunId: branch.parentRunId,
+        event: {
+          type: "branch.discarded",
+          occurredAt: this.#now(),
+          payload: { branchId, childRunId: branch.childRunId, reason: reason ?? null }
+        },
+        fencingToken: this.#leases.requireFencingToken(branch.parentRunId)
+      });
+      if (cleanup !== undefined) cleanup();
+      this.#branchWorkspaces.delete(branch.childRunId);
+      this.#branchWorkspaceCleanups.delete(branch.childRunId);
+      this.#notify(branch.parentRunId, undefined);
+      return this.#store.getBranch(branchId)!;
+    });
+  }
+
+  mergeBranch(branchId: string, options: { readonly decisions: MergeDecisions }): MergeOutcome {
+    this.#assertOpen();
+    const branch = this.#store.getBranch(branchId);
+    if (branch === null) throw new Error(`Branch not found: ${branchId}`);
+    if (branch.status !== "active" && branch.status !== "creating") {
+      throw new Error(`Branch ${branchId} is not mergeable (status ${branch.status}).`);
+    }
+    return this.#withControlLeaseSync(branch.parentRunId, () => {
+      this.#assertControlIdle(branch.parentRunId);
+      return this.#applyBranchMerge(branch, options.decisions);
+    });
+  }
+
+  #applyBranchMerge(branch: BranchRecord, decisions: MergeDecisions): MergeOutcome {
+    const parent = this.#requireRun(branch.parentRunId);
+    const child = this.#store.getRun(branch.childRunId);
+    if (child === null) throw new Error(`Branch child run missing: ${branch.childRunId}`);
+
+    // Strict whitelist: only inputs, a Plan proposal, artifact references, and a
+    // non-authority summary may be merged. Evidence / Invocations / Approval /
+    // completion state / side effects are never merged.
+    const acceptedInputs: string[] = [];
+    for (const input of decisions.inputs ?? []) {
+      const text = input.trim();
+      if (text) acceptedInputs.push(text);
+    }
+    const acceptedArtifacts: string[] = [];
+    for (const ref of decisions.artifacts ?? []) {
+      const match = /^sha256:[0-9a-f]{64}$/.exec(ref);
+      if (match !== null && new ArtifactStore(this.#artifactDir).has(ref)) {
+        acceptedArtifacts.push(ref);
+      }
+    }
+    const planProposal = decisions.planProposal === true;
+    const summary = decisions.summary === true;
+
+    // The parent advances by a new revision (fenced, optimistic concurrency).
+    const now = this.#now();
+    const next = RunSnapshotSchema.parse({
+      ...parent,
+      updatedAt: now
+    });
+    const committed = this.#store.commitRun({
+      previous: parent,
+      next,
+      fencingToken: this.#leases.requireFencingToken(parent.runId),
+      event: {
+        type: "branch.merged",
+        occurredAt: now,
+        payload: {
+          branchId: branch.branchId,
+          childRunId: branch.childRunId,
+          inputs: acceptedInputs,
+          planProposal,
+          artifacts: acceptedArtifacts,
+          summary,
+          rejected: { currentPlan: planProposal === false, evidence: true, invocations: true, sideEffects: true }
+        }
+      }
+    });
+    const merged = this.#store.updateBranchStatus({
+      branchId: branch.branchId,
+      status: "merged",
+      parentRunId: branch.parentRunId,
+      event: {
+        type: "branch.merged",
+        occurredAt: now,
+        payload: { branchId: branch.branchId, childRunId: branch.childRunId }
+      },
+      fencingToken: this.#leases.requireFencingToken(branch.parentRunId)
+    });
+    this.#branchWorkspaceCleanups.get(branch.childRunId)?.();
+    this.#branchWorkspaces.delete(branch.childRunId);
+    this.#branchWorkspaceCleanups.delete(branch.childRunId);
+    this.#notify(branch.parentRunId, undefined);
+    return {
+      branch: merged,
+      parentRunId: branch.parentRunId,
+      parentRevision: committed.revision,
+      accepted: { inputs: acceptedInputs, planProposal, artifacts: acceptedArtifacts, summary },
+      rejected: { currentPlan: !planProposal, evidence: true, invocations: true, sideEffects: true }
+    };
+  }
+
+  #branchView(branch: BranchRecord): BranchView {
+    const forkBase = this.#store.getForkBase(branch.branchId);
+    if (forkBase === null) throw new Error(`Branch fork base missing: ${branch.branchId}`);
+    const child = this.#requireRun(branch.childRunId);
+    const childInspection = projectRunInspection(
+      child,
+      this.#store.listToolInvocations(child.runId),
+      this.#store.getLastEvent(child.runId)?.sequence ?? 0
+    );
+    return deepFreeze({ branch, forkBase, child: childInspection });
+  }
+
+  #createBranchHandle(branch: BranchRecord): BranchHandle {
+    return {
+      id: branch.branchId,
+      inspect: async () => this.#branchView(branch),
+      run: (options) => this.#executeBranchRun(branch, options),
+      input: (text) => this.#inputHandle(branch.childRunId, text),
+      approve: (options) => this.#approvalHandle(branch.childRunId, true, options),
+      deny: (options) => this.#approvalHandle(branch.childRunId, false, options),
+      cancel: (reason) => this.#cancelHandle(branch.childRunId, reason),
+      merge: async (options) => this.mergeBranch(branch.branchId, options),
+      discard: async (reason) => this.discardBranch(branch.branchId, reason)
+    };
+  }
+
+  async #forkRun(
+    runId: string,
+    observer?: RuntimeObserver
+  ): Promise<BranchHandle | null> {
+    const parent = this.#requireRun(runId);
+    let handle: BranchHandle | null = null;
+    await this.#withControlLease(runId, async () => {
+      this.#assertControlIdle(runId);
+      handle = this.#forkParentRun(parent, observer);
+    });
+    return handle;
+  }
+
+  #forkParentRun(
+    parent: RunSnapshot,
+    observer?: RuntimeObserver
+  ): BranchHandle | null {
+    const runId = parent.runId;
+    const now = this.#now();
+    const branchId = this.#createId();
+    const childRunId = this.#createId();
+    const lastEvent = this.#store.getLastEvent(runId);
+    const forkEventSequence = lastEvent?.sequence ?? 1;
+
+    // 1. Isolated workspace directory snapshot. If a reliable snapshot cannot
+    // be produced (e.g. symlinks present), the fork is refused rather than
+    // sharing mutable workspace state with the parent.
+    const branchesBase = join(this.#dataDir, "branches");
+    let snapshot: {
+      readonly root: string;
+      readonly cleanup: () => void;
+    } | null = null;
+    try {
+      snapshot = snapshotWorkspace({
+        parentWorkspace: this.#workspace,
+        targetBase: branchesBase,
+        branchId,
+        dataDir: this.#dataDir
+      });
+    } catch {
+      return null;
+    }
+
+    // 2. Child snapshot deep-copied from the parent's current revision; the
+    // child's Task Contract workspace is redirected to the branch snapshot.
+    // The Plan's goalDigest is recomputed alongside so the invariant
+    // `plan.goalDigest === digestTaskContract(taskContract)` stays intact for
+    // the child (completion validation relies on it).
+    const child = this.#store.createRunFromSnapshot(parent, childRunId, now);
+    const redirectedContract = child.taskContract === null
+      ? null
+      : { ...child.taskContract, workspace: snapshot!.root };
+    const childWithBranchWorkspace = RunSnapshotSchema.parse({
+      ...child,
+      taskContract: redirectedContract,
+      currentPlan: child.currentPlan === null
+        ? null
+        : {
+            ...child.currentPlan,
+            ...(redirectedContract === null
+              ? {}
+              : { goalDigest: digestTaskContract(redirectedContract) })
+          }
+    });
+
+    // 3. Read-only inheritance boundary (parent facts at the fork point).
+    const inheritedRefs = buildForkBaseInheritedRefs({
+      parent,
+      store: this.#store,
+      artifactDir: this.#artifactDir
+    });
+    const inheritedFacts = buildForkBaseInheritedFacts({
+      parent,
+      store: this.#store,
+      artifactDir: this.#artifactDir
+    });
+
+    // 4. Branch + Fork Base persisted atomically with the child run.
+    const lineage: BranchRecord["lineage"] = [{
+      parentRunId: runId,
+      forkRevision: parent.revision,
+      forkEventSequence
+    }];
+    const branch: BranchRecord = {
+      branchId,
+      parentRunId: runId,
+      forkRevision: parent.revision,
+      forkEventSequence,
+      childRunId,
+      status: "creating",
+      lineage,
+      createdAt: now
+    };
+    this.#store.createBranch({
+      branch,
+      forkBase: {
+        branchId,
+        parentRunId: runId,
+        forkRevision: parent.revision,
+        forkEventSequence,
+        inheritedRefs,
+        inheritedFacts
+      },
+      child: childWithBranchWorkspace,
+      parentEvent: {
+        type: "branch.created",
+        occurredAt: now,
+        payload: { branchId, childRunId, forkRevision: parent.revision }
+      },
+      parentFencingToken: this.#leases.requireFencingToken(runId)
+    });
+
+    // 5. Register the branch workspace and mark the branch active.
+    this.#branchWorkspaces.set(childRunId, snapshot!.root);
+    this.#branchWorkspaceCleanups.set(childRunId, snapshot!.cleanup);
+    const active = this.#store.updateBranchStatus({
+      branchId,
+      status: "active",
+      parentRunId: runId,
+      event: {
+        type: "branch.created",
+        occurredAt: now,
+        payload: { branchId, childRunId, forkRevision: parent.revision }
+      },
+      fencingToken: this.#leases.requireFencingToken(runId)
+    });
+    this.#notify(runId, observer);
+    return this.#createBranchHandle(active);
+  }
+
+  async #executeBranchRun(
+    branch: BranchRecord,
+    _options: RunOptions = {}
+  ): Promise<RunResult> {
+    const child = this.#requireRun(branch.childRunId);
+    if (this.#activeExecutions.has(child.runId)) {
+      throw new RunControlError({
+        code: "RUN_BUSY",
+        runId: child.runId,
+        message: "Branch child run already has an active execution segment."
+      });
+    }
+    const controller = new AbortController();
+    const execution = this.#resumeRun(child, { runId: child.runId }, controller, undefined);
+    this.#trackExecution(child.runId, execution, controller);
+    try {
+      return await execution;
+    } catch (error) {
+      this.#deleteActiveExecution(child.runId, execution);
+      throw error;
+    }
+  }
+
+  #recoverBranchWorkspaces(dataDir: string): void {
+    const branchesBase = join(dataDir, "branches");
+    cleanupStagingWorkspaces(branchesBase);
+    try {
+      for (const branch of this.#store.listAllBranches()) {
+        const root = join(branchesBase, branch.branchId);
+        if (branch.status === "creating") {
+          if (branchWorkspaceExists(root)) {
+            this.#branchWorkspaces.set(branch.childRunId, root);
+            this.#branchWorkspaceCleanups.set(
+              branch.childRunId,
+              () => removeDirectoryTree(root)
+            );
+            this.#store.updateBranchStatus({
+              branchId: branch.branchId,
+              status: "active",
+              parentRunId: branch.parentRunId,
+              event: {
+                type: "branch.resumed",
+                occurredAt: this.#now(),
+                payload: { branchId: branch.branchId, childRunId: branch.childRunId }
+              }
+            });
+          } else {
+            this.#store.updateBranchStatus({
+              branchId: branch.branchId,
+              status: "failed",
+              parentRunId: branch.parentRunId,
+              event: {
+                type: "branch.failed",
+                occurredAt: this.#now(),
+                payload: { branchId: branch.branchId, reason: "workspace_snapshot_incomplete" }
+              }
+            });
+          }
+        } else if (branch.status === "active" && branchWorkspaceExists(root)) {
+          // Re-register the surviving workspace of a previously active branch so
+          // a resumed child keeps executing against its isolated snapshot, and
+          // re-attach the cleanup so a later discard/merge can remove it.
+          this.#branchWorkspaces.set(branch.childRunId, root);
+          this.#branchWorkspaceCleanups.set(
+            branch.childRunId,
+            () => removeDirectoryTree(root)
+          );
+        }
+      }
+    } catch {
+      // Best-effort recovery; never block startup on stale branch metadata.
     }
   }
 

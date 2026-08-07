@@ -4,11 +4,16 @@ import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 
 import {
+  BranchForkBaseSchema,
+  BranchRecordSchema,
   ModelCallRecordSchema,
   RunEventInputSchema,
   RunEventSchema,
   RunSnapshotSchema,
   ToolInvocationSchema,
+  type BranchForkBase,
+  type BranchRecord,
+  type InheritedFactProjection,
   type ModelCallIntent,
   type ModelCallRecord,
   type RunEvent,
@@ -23,7 +28,8 @@ import {
   v1CoreSchemaSql,
   v2ModelCallSchemaSql,
   v3PayloadProvenanceMigrationSql,
-  v4ContextCheckpointSchemaSql
+  v4ContextCheckpointSchemaSql,
+  v5BranchSchemaSql
 } from "./schema/index.js";
 
 type RunRow = {
@@ -88,6 +94,24 @@ type CheckpointRow = {
   source_digests_json: string;
   covered_invocations_json: string;
   created_at: string;
+};
+type BranchRow = {
+  branch_id: string;
+  parent_run_id: string;
+  fork_revision: number;
+  fork_event_sequence: number;
+  child_run_id: string;
+  status: string;
+  lineage_json: string;
+  created_at: string;
+};
+type ForkBaseRow = {
+  branch_id: string;
+  parent_run_id: string;
+  fork_revision: number;
+  fork_event_sequence: number;
+  inherited_refs_json: string;
+  inherited_facts_json: string;
 };
 
 export class RunStore {
@@ -306,6 +330,189 @@ export class RunStore {
     const row = this.#requireRunRow(input.runId);
     this.#assertFencing(row, input.fencingToken, input.event.occurredAt);
     this.#insertEvent(input.runId, this.#nextSequence(input.runId), input.event);
+  }
+
+  /**
+   * Deep-copies the parent's current snapshot into a fresh revision-0 child
+   * Run. Authority content (inputHistory, taskContract, currentPlan,
+   * stepProgress, evidence, budgets) is inherited as an immutable fork-point
+   * snapshot; transient state (pendingRequest, lastError, result) is cleared
+   * so the child can explore a new path from this point.
+   */
+  createRunFromSnapshot(parent: RunSnapshot, childRunId: string, now: string): RunSnapshot {
+    return RunSnapshotSchema.parse({
+      schemaVersion: parent.schemaVersion,
+      runId: childRunId,
+      revision: 0,
+      status: "running",
+      stopReason: null,
+      inputHistory: structuredClone(parent.inputHistory),
+      taskContract: parent.taskContract === null ? null : structuredClone(parent.taskContract),
+      currentPlan: parent.currentPlan === null ? null : structuredClone(parent.currentPlan),
+      stepProgress: structuredClone(parent.stepProgress),
+      pendingRequest: null,
+      budgets: structuredClone(parent.budgets),
+      budgetsUsed: structuredClone(parent.budgetsUsed),
+      result: null,
+      evidence: structuredClone(parent.evidence),
+      lastError: null,
+      createdAt: now,
+      updatedAt: now
+    });
+  }
+
+  /**
+   * Atomically creates the child Run, the Branch record, its Fork Base, and
+   * the branch.created audit event on the parent. The child is a fresh Run
+   * (revision 0) fully isolated by its own run_id; the Branch only holds the
+   * lineage / fork-point metadata and the read-only inheritance boundary.
+   */
+  createBranch(input: {
+    readonly branch: BranchRecord;
+    readonly forkBase: BranchForkBase;
+    readonly child: RunSnapshot;
+    readonly parentEvent: RunEventInput;
+    readonly parentFencingToken?: number;
+  }): { readonly branch: BranchRecord; readonly child: RunSnapshot } {
+    const branch = BranchRecordSchema.parse(input.branch);
+    const forkBase = BranchForkBaseSchema.parse(input.forkBase);
+    const child = RunSnapshotSchema.parse(input.child);
+    if (child.revision !== 0) throw new Error("A child Run must start at revision 0.");
+    if (branch.childRunId !== child.runId) throw new Error("Branch child_run_id does not match the child Run.");
+    if (branch.parentRunId !== forkBase.parentRunId) throw new Error("Branch and Fork Base parent mismatch.");
+    const transaction = this.#database.transaction(() => {
+      this.#database.prepare(`
+        INSERT INTO runs (run_id, revision, status, snapshot_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(child.runId, child.revision, child.status, JSON.stringify(child), child.createdAt, child.updatedAt);
+      this.#insertEvent(child.runId, 1, {
+        type: "run.created",
+        occurredAt: child.createdAt,
+        payload: { inputSequence: 1, forkedFrom: branch.parentRunId }
+      });
+      this.#database.prepare(`
+        INSERT INTO branches (
+          branch_id, parent_run_id, fork_revision, fork_event_sequence,
+          child_run_id, status, lineage_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        branch.branchId,
+        branch.parentRunId,
+        branch.forkRevision,
+        branch.forkEventSequence,
+        branch.childRunId,
+        branch.status,
+        JSON.stringify(branch.lineage),
+        branch.createdAt
+      );
+      this.#database.prepare(`
+        INSERT INTO branch_fork_base (
+          branch_id, parent_run_id, fork_revision, fork_event_sequence,
+          inherited_refs_json, inherited_facts_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        forkBase.branchId,
+        forkBase.parentRunId,
+        forkBase.forkRevision,
+        forkBase.forkEventSequence,
+        JSON.stringify(forkBase.inheritedRefs),
+        JSON.stringify(forkBase.inheritedFacts)
+      );
+      const parentRow = this.#requireRunRow(branch.parentRunId);
+      this.#assertFencing(parentRow, input.parentFencingToken, input.parentEvent.occurredAt);
+      this.#insertEvent(
+        branch.parentRunId,
+        this.#nextSequence(branch.parentRunId),
+        input.parentEvent
+      );
+    });
+    transaction();
+    return { branch, child };
+  }
+
+  listBranches(parentRunId: string): BranchRecord[] {
+    const rows = this.#database.prepare(`
+      SELECT * FROM branches WHERE parent_run_id = ? ORDER BY created_at, branch_id
+    `).all(parentRunId) as BranchRow[];
+    return rows.map((row) => this.#parseBranchRow(row));
+  }
+
+  listAllBranches(): BranchRecord[] {
+    const rows = this.#database.prepare("SELECT * FROM branches ORDER BY created_at, branch_id").all() as BranchRow[];
+    return rows.map((row) => this.#parseBranchRow(row));
+  }
+
+  getBranch(branchId: string): BranchRecord | null {
+    const row = this.#database.prepare("SELECT * FROM branches WHERE branch_id = ?").get(branchId) as BranchRow | undefined;
+    return row === undefined ? null : this.#parseBranchRow(row);
+  }
+
+  getBranchByChild(childRunId: string): BranchRecord | null {
+    const row = this.#database.prepare("SELECT * FROM branches WHERE child_run_id = ?").get(childRunId) as BranchRow | undefined;
+    return row === undefined ? null : this.#parseBranchRow(row);
+  }
+
+  getForkBase(branchId: string): BranchForkBase | null {
+    const row = this.#database.prepare("SELECT * FROM branch_fork_base WHERE branch_id = ?").get(branchId) as ForkBaseRow | undefined;
+    if (row === undefined) return null;
+    return {
+      branchId: row.branch_id,
+      parentRunId: row.parent_run_id,
+      forkRevision: row.fork_revision,
+      forkEventSequence: row.fork_event_sequence,
+      inheritedRefs: JSON.parse(row.inherited_refs_json) as Record<string, string>,
+      inheritedFacts: JSON.parse(row.inherited_facts_json) as Record<string, InheritedFactProjection>
+    };
+  }
+
+  /**
+   * Transitions a Branch to a terminal status (merged / discarded / failed)
+   * and records the audit event on the parent. Fenced like every Core write.
+   */
+  updateBranchStatus(input: {
+    readonly branchId: string;
+    readonly status: "merged" | "discarded" | "failed" | "active";
+    readonly parentRunId: string;
+    readonly event: RunEventInput;
+    readonly fencingToken?: number;
+  }): BranchRecord {
+    const transaction = this.#database.transaction(() => {
+      const current = this.#requireBranchRow(input.branchId);
+      if (current.status === "merged" || current.status === "discarded") {
+        throw new Error(`Branch is already ${current.status}: ${input.branchId}`);
+      }
+      this.#database.prepare(
+        "UPDATE branches SET status = ? WHERE branch_id = ?"
+      ).run(input.status, input.branchId);
+      const parentRow = this.#requireRunRow(input.parentRunId);
+      this.#assertFencing(parentRow, input.fencingToken, input.event.occurredAt);
+      this.#insertEvent(
+        input.parentRunId,
+        this.#nextSequence(input.parentRunId),
+        input.event
+      );
+    });
+    transaction();
+    return this.#requireBranchRow(input.branchId);
+  }
+
+  #requireBranchRow(branchId: string): BranchRecord {
+    const branch = this.getBranch(branchId);
+    if (branch === null) throw new Error(`Branch not found: ${branchId}`);
+    return branch;
+  }
+
+  #parseBranchRow(row: BranchRow): BranchRecord {
+    return {
+      branchId: row.branch_id,
+      parentRunId: row.parent_run_id,
+      forkRevision: row.fork_revision,
+      forkEventSequence: row.fork_event_sequence,
+      childRunId: row.child_run_id,
+      status: row.status as BranchRecord["status"],
+      lineage: JSON.parse(row.lineage_json),
+      createdAt: row.created_at
+    };
   }
 
   getLatestCheckpoint(runId: string): PersistedCheckpoint | null {
@@ -803,8 +1010,8 @@ export class RunStore {
 
   #migrate(): void {
     const version = this.#database.pragma("user_version", { simple: true }) as number;
-    if (version > 4) {
-      throw new Error(`Runtime database schema ${version} is newer than supported schema 4.`);
+    if (version > 5) {
+      throw new Error(`Runtime database schema ${version} is newer than supported schema 5.`);
     }
     const migrate = this.#database.transaction(() => {
       if (version < 1) {
@@ -822,6 +1029,10 @@ export class RunStore {
       if (version < 4) {
         this.#database.exec(v4ContextCheckpointSchemaSql);
         this.#database.pragma("user_version = 4");
+      }
+      if (version < 5) {
+        this.#database.exec(v5BranchSchemaSql);
+        this.#database.pragma("user_version = 5");
       }
     });
     migrate();

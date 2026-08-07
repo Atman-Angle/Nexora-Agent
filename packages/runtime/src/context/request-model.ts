@@ -7,6 +7,7 @@ import { transitionRunStatus } from "../state-machine.js";
 import type { RuntimeObserver } from "../runtime-types.js";
 import type { RunStore } from "../store/run-store.js";
 import { compactDecisionContext } from "./compaction-flow.js";
+import type { ForkContext } from "../contracts.js";
 import {
   assessContextBudget,
   parseProviderTokenUsage,
@@ -33,6 +34,7 @@ export type RequestModelServices = {
   readonly requireFencingToken: (runId: string) => number;
   readonly withLeaseHeartbeat: <T>(runId: string, operation: () => Promise<T>) => Promise<T>;
   readonly notify: (runId: string, observer?: RuntimeObserver) => void;
+  readonly forkContext?: ForkContext | null;
 };
 
 export type RequestModelResult =
@@ -101,7 +103,8 @@ export async function requestModel(
           createId: services.createId,
           requireFencingToken: services.requireFencingToken,
           withLeaseHeartbeat: services.withLeaseHeartbeat,
-          notify: services.notify
+          notify: services.notify,
+          ...(services.forkContext === undefined ? {} : { forkContext: services.forkContext })
         },
         runForLedger,
         effectiveContext as ModelDecisionContext,

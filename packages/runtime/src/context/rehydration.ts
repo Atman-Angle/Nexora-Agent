@@ -1,8 +1,14 @@
+import { createHash } from "node:crypto";
 import { Buffer } from "node:buffer";
 
 import { z } from "zod";
 
-import type { RunSnapshot, ToolInvocation } from "../contracts.js";
+import {
+  JsonValueSchema,
+  type InheritedFactProjection,
+  type RunSnapshot,
+  type ToolInvocation
+} from "../contracts.js";
 import type {
   JsonValue,
   RehydratedFact,
@@ -40,6 +46,71 @@ export function isValidSourceRefFormat(ref: string): boolean {
 }
 
 /**
+ * The read-only inheritance boundary of a branch: the parent facts (evidence,
+ * their invocation/artifact provenance, and the input history) that the child
+ * may reference. Everything here occurred at or before the fork point; the
+ * parent's post-fork output is never inherited.
+ */
+export function buildForkBaseInheritedRefs(args: {
+  readonly parent: RunSnapshot;
+  readonly store: RunStore;
+  readonly artifactDir: string;
+}): Readonly<Record<string, string>> {
+  const { parent, store, artifactDir } = args;
+  const authority = buildCompactionAuthority({ run: parent, store, artifactDir });
+  const refs: Record<string, string> = {};
+  for (const evidence of parent.evidence) {
+    refs[`evidence:${evidence.id}`] = evidence.digest;
+    if (evidence.invocationId !== null) {
+      const invocation = authority.invocations.find((item) => item.id === evidence.invocationId);
+      if (invocation !== undefined) {
+        refs[`invocation:${evidence.invocationId}`] = invocation.payloadDigest ?? invocation.inputDigest;
+      }
+    }
+    if (evidence.artifactRef !== null) refs[`artifact:${evidence.artifactRef}`] = evidence.artifactRef;
+  }
+  for (const entry of parent.inputHistory) {
+    refs[`input:${entry.sequence}`] = digestText(entry.text);
+  }
+  return refs;
+}
+
+function digestText(value: string): string {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+/**
+ * The frozen fact projection of every parent Evidence at the fork point,
+ * keyed by the Evidence id. The child copies the parent's Evidence records,
+ * but those reference Invocations under the parent's run_id; completion
+ * validation must resolve inherited evidence without reading the parent's
+ * mutable authority. This snapshot (captured once at fork time) is that
+ * read-only boundary.
+ */
+export function buildForkBaseInheritedFacts(args: {
+  readonly parent: RunSnapshot;
+  readonly store: RunStore;
+  readonly artifactDir: string;
+}): Readonly<Record<string, InheritedFactProjection>> {
+  const { parent, store, artifactDir } = args;
+  const authority = buildCompactionAuthority({ run: parent, store, artifactDir });
+  const facts: Record<string, InheritedFactProjection> = {};
+  for (const evidence of parent.evidence) {
+    if (evidence.invocationId === null) continue;
+    const invocation = authority.invocations.find((item) => item.id === evidence.invocationId);
+    if (invocation === undefined || invocation.status !== "succeeded") continue;
+    facts[evidence.id] = {
+      toolName: invocation.toolName,
+      subjectRef: evidence.subjectRef,
+      input: JsonValueSchema.parse(invocation.inputJson) as JsonValue,
+      facts: JsonValueSchema.parse(invocation.resultJson) as JsonValue,
+      invocationId: invocation.id
+    };
+  }
+  return facts;
+}
+
+/**
  * The set of sourceRefs the current decision context actually exposes to the
  * model, mapped to the digest each ref had when it was published this turn.
  * A model may only request a ref that is present in this manifest with a
@@ -52,6 +123,8 @@ export function buildAvailableContextRefs(args: {
   readonly checkpoint: PersistedCheckpoint | null;
   readonly store: RunStore;
   readonly artifactDir: string;
+  /** Fork Base inherited refs (parent facts at the fork point) the child may request. */
+  readonly inheritedRefs?: Readonly<Record<string, string>>;
 }): Map<string, string> {
   const { run, observations, checkpoint, store, artifactDir } = args;
   const authority = buildCompactionAuthority({ run, store, artifactDir });
@@ -88,6 +161,11 @@ export function buildAvailableContextRefs(args: {
     const resolved = resolveSourceRef(ref, authority);
     if (resolved !== null) manifest.set(ref, resolved.digest);
   }
+  if (args.inheritedRefs !== undefined) {
+    for (const [ref, digest] of Object.entries(args.inheritedRefs)) {
+      if (!manifest.has(ref)) manifest.set(ref, digest);
+    }
+  }
   return manifest;
 }
 
@@ -105,6 +183,11 @@ export function resolveRehydratedFact(args: {
   readonly artifactDir: string;
   readonly manifest: ReadonlyMap<string, string>;
   readonly origin: RehydrationOrigin;
+  /** Fork Base: parent facts at the fork point the child may read via the parent's authority. */
+  readonly inherited?: {
+    readonly parentRun: RunSnapshot;
+    readonly refs: Readonly<Record<string, string>>;
+  };
 }): RehydratedFact {
   const { ref, run, store, artifactDir, manifest, origin } = args;
   const authority = buildCompactionAuthority({ run, store, artifactDir });
@@ -112,19 +195,38 @@ export function resolveRehydratedFact(args: {
     return { ref, kind: "invocation", origin, digest: "", content: null, error: "INVALID_REF" };
   }
   const resolved = resolveSourceRef(ref, authority);
-  if (resolved === null) {
-    return { ref, kind: kindOfPrefix(ref), origin, digest: "", content: null, error: "REF_UNAVAILABLE" };
+  if (resolved !== null && manifest.get(ref) === resolved.digest) {
+    const content = readAuthorityContent(resolved, authority, artifactDir);
+    if (content !== null) {
+      return { ref, kind: kindOf(resolved.kind), origin, digest: resolved.digest, content, error: null };
+    }
   }
-  const kind = kindOf(resolved.kind);
-  const expected = manifest.get(ref);
-  if (expected === undefined || expected !== resolved.digest) {
-    return { ref, kind, origin, digest: resolved.digest, content: null, error: "REF_UNAVAILABLE" };
+  // Fall back to the inherited (read-only) parent facts at the fork point.
+  if (args.inherited !== undefined) {
+    const expected = args.inherited.refs[ref];
+    if (expected !== undefined) {
+      const parentAuthority = buildCompactionAuthority({
+        run: args.inherited.parentRun,
+        store,
+        artifactDir
+      });
+      const parentResolved = resolveSourceRef(ref, parentAuthority);
+      if (parentResolved !== null && parentResolved.digest === expected) {
+        const content = readAuthorityContent(parentResolved, parentAuthority, artifactDir);
+        if (content !== null) {
+          return {
+            ref,
+            kind: kindOf(parentResolved.kind),
+            origin,
+            digest: parentResolved.digest,
+            content,
+            error: null
+          };
+        }
+      }
+    }
   }
-  const content = readAuthorityContent(resolved, authority, artifactDir);
-  if (content === null) {
-    return { ref, kind, origin, digest: resolved.digest, content: null, error: "REF_UNAVAILABLE" };
-  }
-  return { ref, kind, origin, digest: resolved.digest, content, error: null };
+  return { ref, kind: kindOfPrefix(ref), origin, digest: "", content: null, error: "REF_UNAVAILABLE" };
 }
 
 export type RehydratedAdmission = {

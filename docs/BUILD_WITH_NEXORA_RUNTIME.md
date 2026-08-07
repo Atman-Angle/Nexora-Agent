@@ -247,6 +247,39 @@ try {
 
 稳定错误码覆盖配置/输入错误、Run 不存在、busy/conflict、Provider 不可用、Runtime 已关闭、取消、未知 Tool 结果和内部资源释放失败。已经创建的 Run 的执行结果仍先持久化，再由 Inspection/Result 投影。
 
+### 分支（Context Branching / Fork）
+
+从父 Run 的当前 revision 创建**隔离的探索分支**：子分支拥有独立的 Run（`child_run_id`）、独立的 workspace 目录快照、独立的 Checkpoint/Rehydration/执行历史，以及只读的 Fork Base 继承边界（fork 点之前的父 facts）。父 Run 的 Authority（revision/Plan/Evidence/Invocation/完成状态）永不被分支修改。
+
+```ts
+const branch = await runtime.fork(parentRunId);      // 也可能返回 null（快照不可靠）
+const view = await branch.inspect();                  // { branch, forkBase, child }
+await branch.run();                                   // 在隔离 workspace 上执行子 Run
+runtime.listBranches(parentRunId);                    // BranchRecord[]
+runtime.getBranch(branch.id);                         // BranchView | null
+
+// 显式、受控的合并：只接受白名单内容（inputs / Plan proposal / Artifact refs / 摘要）。
+const outcome = runtime.mergeBranch(branch.id, {
+  decisions: {
+    inputs: ["分支产生的输入提案"],
+    planProposal: true,
+    artifacts: ["sha256:..."],
+    summary: true
+  }
+});
+// outcome.rejected 恒为 { currentPlan: false, evidence: true, invocations: true, sideEffects: true }
+// 父分支只产生一个新 revision（fencing + 乐观并发），不覆盖 currentPlan、不合并 Evidence/Invocation/副作用。
+
+runtime.discardBranch(branch.id, "探索结束");         // 清理分支 workspace，父 Run 不变
+```
+
+边界语义：
+
+- **Fork Base 继承闭包**：子分支通过 `branch_fork_base.inheritedRefs` 读取 fork 点之前的父 facts（evidence/invocation/artifact/input），通过 `inheritedFacts` 解析完成校验所需的父 fact 投影；fork 点之后父产生的任何内容对子分支不可见。
+- **workspace 目录快照**：fork 时把父 workspace 复制到 `<dataDir>/branches/<branchId>`（staging → 原子重命名），拒绝 symlink 与硬链接 CoW；`creating → active` 状态 + 启动清理保证崩溃不留下半分支。
+- **合并白名单**：Evidence / Invocations / 完成状态 / 副作用永不合并；`planProposal: true` 只是把分支 Plan 作为父 Harness 重新规划的提案，不直接覆盖父 `currentPlan`。
+- **重启恢复**：分支与子 Run 持久化于 schema v5；重启后从同一 fork 状态恢复，workspace 重新登记到隔离快照。
+
 ### 当前 major 的兼容 API
 
 `start/resume/inspect` 当前仍保留，供已有调用方兼容使用：
@@ -430,4 +463,4 @@ Decision Context 中的 Tool Observation 使用确定性 Eviction：active Check
 
 Rehydration 是 Eviction/Compaction 之后的按需恢复层。模型可返回 Harness 控制动作 `{"type":"request_context","refs":["<source-ref>",...]}`，请求恢复本轮已公开的原始内容；`request_context` 不是 Core RuntimeAction，不进 `RuntimeActionSchema` / State Machine / `#handleAction`。Runtime 构建本轮 `availableContextRefs`（`toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` 的 refs ∪ `run.evidence` 的 refs → digest），下一轮把恢复结果注入 `context.rehydratedFacts`（`ref` / `kind` / `digest` / `content` / `error`）。错误语义统一：`INVALID_REF`（格式错误）、`REF_UNAVAILABLE`（未公开 / 跨 Run / 不存在 / digest 漂移，不泄露对象真实性）、`REHYDRATION_BUDGET_EXCEEDED`（准入预算拒绝）。准入预算独立于整体模型预算：`maxRefsPerRequest=8`、`maxRehydratedTokensPerTurn=4096`、`maxSingleFactTokens=2048`，按优先级 `harness_required`（unresolved / safety / 当前错误 / required Evidence / active Check 必需）→ `model_request` → `harness_helpful`（一般 reference 历史）准入，安全关键内容不被模型请求挤掉。请求通过 `context.rehydrate_requested` / `context.rehydrated` 事件对进行崩溃恢复（resume 时重建未消费请求），不新增权威表。
 
-Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v4 在原有 Authority 表旁保留 `model_calls`（phase 现支持 `decision` / `validation` / `compaction`），为 `tool_invocations` 增加 payload digest/Artifact provenance，并新增 `context_checkpoints` 表持久化结构化 Summary、plan_version、revision、canonical digest 和按 sourceRef 捕获的 Source Digest 映射；旧 schema 可原地迁移，无 Summary、Context Store、Branch State、Profile Store 或第二套 Runtime。
+Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v5 在原有 Authority 表旁保留 `model_calls`（phase 现支持 `decision` / `validation` / `compaction`），为 `tool_invocations` 增加 payload digest/Artifact provenance，新增 `context_checkpoints` 表持久化结构化 Summary，并新增 `branches` / `branch_fork_base` 表持久化 Context Branching 的 lineage、fork point 与只读继承边界（`inheritedRefs` + `inheritedFacts`）；旧 schema 可原地迁移，无 Summary、Context Store、Profile Store 或第二套 Runtime。
