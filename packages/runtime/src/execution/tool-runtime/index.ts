@@ -6,8 +6,8 @@ import { basename, dirname, join, relative } from "node:path";
 import { rgPath } from "@vscode/ripgrep";
 import { z } from "zod";
 
-import { ArtifactStore } from "../artifacts.js";
-import type { RuntimeTool } from "../runtime.js";
+import { ArtifactStore } from "../../store/artifacts.js";
+import type { RuntimeTool } from "../../runtime.js";
 import { ToolFailure, workspacePath, writableWorkspacePath } from "./workspace.js";
 
 const PathInput = z.object({ path: z.string().trim().min(1) }).strict();

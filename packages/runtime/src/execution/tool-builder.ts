@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { JsonValueSchema } from "./contracts.js";
-import type { RuntimeTool } from "./runtime-types.js";
+import { JsonValueSchema } from "../contracts.js";
+import type { RuntimeTool } from "../runtime-types.js";
 
 export type ToolBuilderContext = {
   readonly workspace: string;

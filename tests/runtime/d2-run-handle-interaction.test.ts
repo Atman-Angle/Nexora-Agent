@@ -18,7 +18,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/runtime/src/index.js";
-import { openRunStore } from "../../packages/runtime/src/run-store.js";
+import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { digestTaskContract } from "../../packages/runtime/src/validation.js";
 
 const roots: string[] = [];
@@ -351,7 +351,7 @@ function writeDecision(
       basedOnVersion: null,
       taskContract: {
         version: 1,
-        inputVersion: context.run.inputHistory.length,
+        inputVersion: context.run.inputCount,
         goal: "Write protected output",
         workspace,
         constraints: [],
@@ -431,7 +431,7 @@ function readProvider(workspace: string): RuntimeProvider {
           basedOnVersion: null,
           taskContract: {
             version: 1,
-            inputVersion: context.run.inputHistory.length,
+            inputVersion: context.run.inputCount,
             goal: "Read target",
             workspace,
             constraints: [],

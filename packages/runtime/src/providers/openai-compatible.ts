@@ -5,15 +5,24 @@ import type {
   RuntimeProvider
 } from "./model-client.js";
 import {
-  defineProviderAdapter
-} from "./provider-adapter.js";
-import { RuntimeError } from "./runtime-error.js";
+  defineProviderAdapter,
+  type ProviderRequestTokenMeter
+} from "./adapter.js";
+import { RuntimeError } from "../runtime-error.js";
 
 export type OpenAICompatibleProviderOptions = {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly model: string;
   readonly timeoutMs?: number;
+  readonly contextWindowTokens?: number;
+  readonly reservedOutputTokens?: {
+    readonly decision?: number;
+    readonly validation?: number;
+    readonly compaction?: number;
+  };
+  readonly softLimitRatio?: number;
+  readonly tokenMeter?: ProviderRequestTokenMeter;
   readonly fetch?: typeof globalThis.fetch;
 };
 
@@ -36,7 +45,15 @@ export function openAICompatibleProviderFromEnv(environment: Record<string, stri
   const timeoutRaw = environment.NEXORA_MODEL_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutRaw ? Number(timeoutRaw) : 60_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new ModelConfigError("NEXORA_MODEL_TIMEOUT_MS must be a positive integer.");
-  return createOpenAICompatibleProvider({ baseUrl, apiKey, model, timeoutMs });
+  const contextWindowRaw = environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS?.trim();
+  const contextWindowTokens = contextWindowRaw ? Number(contextWindowRaw) : undefined;
+  return createOpenAICompatibleProvider({
+    baseUrl,
+    apiKey,
+    model,
+    timeoutMs,
+    ...(contextWindowTokens === undefined ? {} : { contextWindowTokens })
+  });
 }
 
 export function createOpenAICompatibleProvider(options: OpenAICompatibleProviderOptions): RuntimeProvider {
@@ -44,12 +61,41 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let apiKey: string;
   let model: string;
   let timeoutMs: number;
+  let contextWindowTokens: number;
+  let decisionOutputTokens: number;
+  let validationOutputTokens: number;
+  let compactionOutputTokens: number;
+  let softLimitRatio: number;
   let fetchImplementation: typeof globalThis.fetch;
   try {
     baseUrl = z.string().url().parse(options.baseUrl).replace(/\/$/, "");
     apiKey = z.string().trim().min(1).parse(options.apiKey);
     model = z.string().trim().min(1).parse(options.model);
     timeoutMs = z.number().int().positive().parse(options.timeoutMs ?? 60_000);
+    contextWindowTokens = z.number().int().positive().parse(
+      options.contextWindowTokens ?? 128_000
+    );
+    decisionOutputTokens = z.number().int().nonnegative().parse(
+      options.reservedOutputTokens?.decision ?? 4_096
+    );
+    validationOutputTokens = z.number().int().nonnegative().parse(
+      options.reservedOutputTokens?.validation ?? 1_024
+    );
+    compactionOutputTokens = z.number().int().nonnegative().parse(
+      options.reservedOutputTokens?.compaction
+      ?? options.reservedOutputTokens?.decision
+      ?? 4_096
+    );
+    softLimitRatio = z.number().positive().max(1).parse(
+      options.softLimitRatio ?? 0.8
+    );
+    if (
+      decisionOutputTokens >= contextWindowTokens
+      || validationOutputTokens >= contextWindowTokens
+      || compactionOutputTokens >= contextWindowTokens
+    ) {
+      throw new Error("Reserved output tokens must be smaller than the context window.");
+    }
     fetchImplementation = options.fetch ?? globalThis.fetch;
     if (typeof fetchImplementation !== "function") {
       throw new Error("A Fetch implementation is required.");
@@ -62,6 +108,24 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   }
 
   return defineProviderAdapter({
+    modelProfile: {
+      provider: "openai-compatible",
+      model,
+      contextWindowTokens,
+      reservedOutputTokens: {
+        decision: decisionOutputTokens,
+        validation: validationOutputTokens,
+        compaction: compactionOutputTokens
+      },
+      softLimitRatio
+    },
+    projectRequest(request) {
+      if (request.phase !== "decision") return request;
+      return { ...request, input: projectDecisionRequest(request.input) };
+    },
+    ...(options.tokenMeter === undefined
+      ? {}
+      : { measureTokens: options.tokenMeter }),
     async complete(request, operation) {
       let lastError: unknown;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -93,19 +157,19 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       timeoutMs
     );
     try {
-      const input = request.phase === "decision"
-        ? projectDecisionRequest(request.input)
-        : request.input;
       const response = await fetchImplementation(`${baseUrl}/chat/completions`, {
         method: "POST",
         headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
         body: JSON.stringify({
           model,
           temperature: 0,
+          max_tokens: request.phase === "decision"
+            ? decisionOutputTokens
+            : validationOutputTokens,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: request.system },
-            { role: "user", content: input }
+            { role: "user", content: request.input }
           ]
         }),
         signal: controller.signal
@@ -117,6 +181,13 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         throw new ErrorType(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
       }
       const body = ProviderResponseSchema.parse(await response.json());
+      if (body.usage !== undefined) {
+        operation.reportTokenUsage?.({
+          inputTokens: body.usage.prompt_tokens,
+          outputTokens: body.usage.completion_tokens,
+          totalTokens: body.usage.total_tokens
+        });
+      }
       return body.choices[0]!.message.content;
     } catch (error) {
       if (
@@ -135,7 +206,16 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   }
 }
 
-const ProviderResponseSchema = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string().min(1) }).passthrough() }).passthrough()).min(1) }).passthrough();
+const ProviderResponseSchema = z.object({
+  choices: z.array(z.object({
+    message: z.object({ content: z.string().min(1) }).passthrough()
+  }).passthrough()).min(1),
+  usage: z.object({
+    prompt_tokens: z.number().int().nonnegative(),
+    completion_tokens: z.number().int().nonnegative(),
+    total_tokens: z.number().int().nonnegative()
+  }).optional()
+}).passthrough();
 
 function isRetryable(error: unknown): boolean {
   return error instanceof RetryableProviderError;
@@ -152,18 +232,21 @@ function projectDecisionRequest(input: string): string {
     const callableTools = context.tools.filter(
       (tool) => tool.execution.inputExample !== undefined
     );
-    const run = context.run as Partial<ModelDecisionContext["run"]>;
+    const run = context.run;
     return JSON.stringify({
       mode: "decide",
       context: {
         workspace: context.workspace,
+        projection: context.projection,
         run: {
-          inputs: run.inputHistory?.map((entry) => entry.text) ?? [],
-          taskContract: run.taskContract ?? null,
-          currentPlan: run.currentPlan ?? null,
-          stepProgress: run.stepProgress ?? [],
-          evidence: run.evidence ?? [],
-          lastError: run.lastError === undefined || run.lastError === null
+          inputCount: run.inputCount,
+          coveredInputCount: run.coveredInputCount,
+          inputs: run.inputHistory.map((entry) => entry.text),
+          taskContract: run.taskContract,
+          currentPlan: run.currentPlan,
+          stepProgress: run.stepProgress,
+          evidence: run.evidence,
+          lastError: run.lastError === null
             ? null
             : { code: run.lastError.code, message: run.lastError.message }
         },

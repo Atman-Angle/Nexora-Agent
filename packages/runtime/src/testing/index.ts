@@ -329,7 +329,7 @@ function materializeDecision(
 
   const includeTaskContract = context.run.currentPlan === null
     || context.run.taskContract === null
-    || context.run.taskContract.inputVersion < context.run.inputHistory.length;
+    || context.run.taskContract.inputVersion < context.run.inputCount;
   return {
     type: "set_plan",
     basedOnVersion: context.run.currentPlan?.version ?? null,
@@ -337,7 +337,7 @@ function materializeDecision(
       ? {
           taskContract: {
             version: (context.run.taskContract?.version ?? 0) + 1,
-            inputVersion: context.run.inputHistory.length,
+            inputVersion: context.run.inputCount,
             goal: descriptor.goal,
             workspace: context.workspace,
             constraints: [],

@@ -173,7 +173,7 @@ function readDecision(
       basedOnVersion: null,
       taskContract: {
         version: 1,
-        inputVersion: context.run.inputHistory.length,
+        inputVersion: context.run.inputCount,
         goal: "Read target",
         workspace,
         constraints: [],

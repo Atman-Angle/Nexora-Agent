@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ArtifactStore } from "../../packages/runtime/src/artifacts.js";
+import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
-import { openRunStore } from "../../packages/runtime/src/run-store.js";
+import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { transitionRunStatus } from "../../packages/runtime/src/state-machine.js";
 
 const roots: string[] = [];
@@ -24,7 +24,7 @@ function tempRoot(): string {
 }
 
 describe("E049 authoritative Run Store", () => {
-  it("creates only the three designed SQLite tables", () => {
+  it("creates the authoritative tables and the separate Model Call Ledger", () => {
     const root = tempRoot();
     const databasePath = join(root, "runtime-v1.1.db");
     const store = openRunStore({ databasePath });
@@ -33,7 +33,7 @@ describe("E049 authoritative Run Store", () => {
     const database = new Database(databasePath, { readonly: true });
     const tables = database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as Array<{ name: string }>;
     database.close();
-    expect(tables.map(({ name }) => name)).toEqual(["run_events", "runs", "tool_invocations"]);
+    expect(tables.map(({ name }) => name)).toEqual(["branch_fork_base", "branches", "context_checkpoints", "model_calls", "run_events", "runs", "tool_invocations"]);
   });
 
   it("persists one current snapshot and append-only events", () => {

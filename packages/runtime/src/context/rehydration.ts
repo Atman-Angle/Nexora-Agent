@@ -1,0 +1,414 @@
+import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
+
+import { z } from "zod";
+
+import {
+  JsonValueSchema,
+  type InheritedFactProjection,
+  type RunSnapshot,
+  type ToolInvocation
+} from "../contracts.js";
+import type {
+  JsonValue,
+  RehydratedFact,
+  RehydrationError,
+  RehydrationOrigin,
+  ToolObservation
+} from "../providers/model-client.js";
+import { ArtifactStore } from "../store/artifacts.js";
+import type { RunStore } from "../store/run-store.js";
+import { resolveSourceRef, type PersistedCheckpoint } from "./compaction.js";
+import { buildCompactionAuthority } from "./decision-context.js";
+
+export const RequestContextActionSchema = z.object({
+  type: z.literal("request_context"),
+  refs: z.array(z.string().trim().min(1).max(200)).min(1).max(8)
+}).strict();
+export type RequestContextAction = z.infer<typeof RequestContextActionSchema>;
+
+export const MAX_REHYDRATION_REFS_PER_REQUEST = 8;
+export const MAX_REHYDRATED_TOKENS_PER_TURN = 4_096;
+export const MAX_SINGLE_FACT_TOKENS = 2_048;
+
+export function parseRequestContextAction(raw: unknown): RequestContextAction | null {
+  const parsed = RequestContextActionSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
+/** True when the ref has a well-formed sourceRef shape (existence is checked separately). */
+export function isValidSourceRefFormat(ref: string): boolean {
+  return /^input:[1-9][0-9]*$/.test(ref)
+    || /^event:[1-9][0-9]*$/.test(ref)
+    || /^invocation:[a-zA-Z0-9._-]{1,100}$/.test(ref)
+    || /^evidence:[a-zA-Z0-9._-]{1,100}$/.test(ref)
+    || /^artifact:sha256:[0-9a-f]{64}$/.test(ref);
+}
+
+/**
+ * The read-only inheritance boundary of a branch: the parent facts (evidence,
+ * their invocation/artifact provenance, and the input history) that the child
+ * may reference. Everything here occurred at or before the fork point; the
+ * parent's post-fork output is never inherited.
+ */
+export function buildForkBaseInheritedRefs(args: {
+  readonly parent: RunSnapshot;
+  readonly store: RunStore;
+  readonly artifactDir: string;
+}): Readonly<Record<string, string>> {
+  const { parent, store, artifactDir } = args;
+  const authority = buildCompactionAuthority({ run: parent, store, artifactDir });
+  const refs: Record<string, string> = {};
+  for (const evidence of parent.evidence) {
+    refs[`evidence:${evidence.id}`] = evidence.digest;
+    if (evidence.invocationId !== null) {
+      const invocation = authority.invocations.find((item) => item.id === evidence.invocationId);
+      if (invocation !== undefined) {
+        refs[`invocation:${evidence.invocationId}`] = invocation.payloadDigest ?? invocation.inputDigest;
+      }
+    }
+    if (evidence.artifactRef !== null) refs[`artifact:${evidence.artifactRef}`] = evidence.artifactRef;
+  }
+  for (const entry of parent.inputHistory) {
+    refs[`input:${entry.sequence}`] = digestText(entry.text);
+  }
+  return refs;
+}
+
+function digestText(value: string): string {
+  return `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
+}
+
+/**
+ * The frozen fact projection of every parent Evidence at the fork point,
+ * keyed by the Evidence id. The child copies the parent's Evidence records,
+ * but those reference Invocations under the parent's run_id; completion
+ * validation must resolve inherited evidence without reading the parent's
+ * mutable authority. This snapshot (captured once at fork time) is that
+ * read-only boundary.
+ */
+export function buildForkBaseInheritedFacts(args: {
+  readonly parent: RunSnapshot;
+  readonly store: RunStore;
+  readonly artifactDir: string;
+}): Readonly<Record<string, InheritedFactProjection>> {
+  const { parent, store, artifactDir } = args;
+  const authority = buildCompactionAuthority({ run: parent, store, artifactDir });
+  const facts: Record<string, InheritedFactProjection> = {};
+  for (const evidence of parent.evidence) {
+    if (evidence.invocationId === null) continue;
+    const invocation = authority.invocations.find((item) => item.id === evidence.invocationId);
+    if (invocation === undefined || invocation.status !== "succeeded") continue;
+    facts[evidence.id] = {
+      toolName: invocation.toolName,
+      subjectRef: evidence.subjectRef,
+      input: JsonValueSchema.parse(invocation.inputJson) as JsonValue,
+      facts: JsonValueSchema.parse(invocation.resultJson) as JsonValue,
+      invocationId: invocation.id
+    };
+  }
+  return facts;
+}
+
+/**
+ * The set of sourceRefs the current decision context actually exposes to the
+ * model, mapped to the digest each ref had when it was published this turn.
+ * A model may only request a ref that is present in this manifest with a
+ * matching digest — otherwise it could guess Invocation/Artifact IDs and read
+ * history that was never shown to it.
+ */
+export function buildAvailableContextRefs(args: {
+  readonly run: RunSnapshot;
+  readonly observations: readonly ToolObservation[];
+  readonly checkpoint: PersistedCheckpoint | null;
+  readonly store: RunStore;
+  readonly artifactDir: string;
+  /** Fork Base inherited refs (parent facts at the fork point) the child may request. */
+  readonly inheritedRefs?: Readonly<Record<string, string>>;
+}): Map<string, string> {
+  const { run, observations, checkpoint, store, artifactDir } = args;
+  const authority = buildCompactionAuthority({ run, store, artifactDir });
+  const refs = new Set<string>();
+  for (const observation of observations) {
+    for (const ref of observation.sourceRefs) refs.add(ref);
+  }
+  // The projected run context exposes every Evidence object, so evidence refs
+  // (and their invocation / artifact provenance) are also "published this turn".
+  for (const evidence of run.evidence) {
+    refs.add(`evidence:${evidence.id}`);
+    if (evidence.invocationId !== null) refs.add(`invocation:${evidence.invocationId}`);
+    if (evidence.artifactRef !== null) refs.add(`artifact:${evidence.artifactRef}`);
+  }
+  if (checkpoint !== null) {
+    const summary = checkpoint.summary;
+    for (const ref of summary.goal.sourceRefs) refs.add(ref);
+    for (const section of [
+      summary.constraints,
+      summary.completedWork,
+      summary.keyDecisions,
+      summary.unresolvedIssues
+    ]) {
+      for (const statement of section) {
+        for (const ref of statement.sourceRefs) refs.add(ref);
+      }
+    }
+    for (const artifact of summary.relatedArtifacts) {
+      refs.add(`artifact:${artifact.artifactRef}`);
+    }
+  }
+  const manifest = new Map<string, string>();
+  for (const ref of refs) {
+    const resolved = resolveSourceRef(ref, authority);
+    if (resolved !== null) manifest.set(ref, resolved.digest);
+  }
+  if (args.inheritedRefs !== undefined) {
+    for (const [ref, digest] of Object.entries(args.inheritedRefs)) {
+      if (!manifest.has(ref)) manifest.set(ref, digest);
+    }
+  }
+  return manifest;
+}
+
+/**
+ * Restores one sourceRef from the Authority Store. The ref must be present in
+ * the current-turn manifest with a matching digest, otherwise it is refused.
+ * Error semantics: INVALID_REF for malformed refs; REF_UNAVAILABLE for
+ * unexposed / cross-run / missing / digest-drifted refs (the cause is not
+ * disclosed so the model cannot learn whether a cross-run object exists).
+ */
+export function resolveRehydratedFact(args: {
+  readonly ref: string;
+  readonly run: RunSnapshot;
+  readonly store: RunStore;
+  readonly artifactDir: string;
+  readonly manifest: ReadonlyMap<string, string>;
+  readonly origin: RehydrationOrigin;
+  /** Fork Base: parent facts at the fork point the child may read via the parent's authority. */
+  readonly inherited?: {
+    readonly parentRun: RunSnapshot;
+    readonly refs: Readonly<Record<string, string>>;
+  };
+}): RehydratedFact {
+  const { ref, run, store, artifactDir, manifest, origin } = args;
+  const authority = buildCompactionAuthority({ run, store, artifactDir });
+  if (!isValidSourceRefFormat(ref)) {
+    return { ref, kind: "invocation", origin, digest: "", content: null, error: "INVALID_REF" };
+  }
+  const resolved = resolveSourceRef(ref, authority);
+  if (resolved !== null && manifest.get(ref) === resolved.digest) {
+    const content = readAuthorityContent(resolved, authority, artifactDir);
+    if (content !== null) {
+      return { ref, kind: kindOf(resolved.kind), origin, digest: resolved.digest, content, error: null };
+    }
+  }
+  // Fall back to the inherited (read-only) parent facts at the fork point.
+  if (args.inherited !== undefined) {
+    const expected = args.inherited.refs[ref];
+    if (expected !== undefined) {
+      const parentAuthority = buildCompactionAuthority({
+        run: args.inherited.parentRun,
+        store,
+        artifactDir
+      });
+      const parentResolved = resolveSourceRef(ref, parentAuthority);
+      if (parentResolved !== null && parentResolved.digest === expected) {
+        const content = readAuthorityContent(parentResolved, parentAuthority, artifactDir);
+        if (content !== null) {
+          return {
+            ref,
+            kind: kindOf(parentResolved.kind),
+            origin,
+            digest: parentResolved.digest,
+            content,
+            error: null
+          };
+        }
+      }
+    }
+  }
+  return { ref, kind: kindOfPrefix(ref), origin, digest: "", content: null, error: "REF_UNAVAILABLE" };
+}
+
+export type RehydratedAdmission = {
+  readonly accepted: readonly RehydratedFact[];
+  readonly rejected: readonly RehydratedFact[];
+};
+
+/**
+ * Admits rehydrated facts into the context under a dedicated budget (max refs,
+ * max total tokens, max single-fact tokens) so a large restored artifact can
+ * never push the whole context past the hard limit after Eviction/Compaction
+ * have already run. Priority: harness_required > model_request > harness_helpful.
+ * Facts that are not admitted because of the budget are returned as feedback
+ * with error REHYDRATION_BUDGET_EXCEEDED so the model knows the request did
+ * not succeed.
+ */
+export function admitRehydratedFacts(
+  candidates: readonly RehydratedFact[],
+  limits: {
+    readonly maxRefs?: number;
+    readonly maxTokens?: number;
+    readonly maxSingleFactTokens?: number;
+  } = {}
+): RehydratedAdmission {
+  const maxRefs = limits.maxRefs ?? MAX_REHYDRATION_REFS_PER_REQUEST;
+  const maxTokens = limits.maxTokens ?? MAX_REHYDRATED_TOKENS_PER_TURN;
+  const maxSingle = limits.maxSingleFactTokens ?? MAX_SINGLE_FACT_TOKENS;
+  const priorityRank: Readonly<Record<RehydrationOrigin, number>> = {
+    harness_required: 0,
+    model_request: 1,
+    harness_helpful: 2
+  };
+  const sorted = [...candidates].sort((left, right) => {
+    const leftFailed = left.error !== null ? 1 : 0;
+    const rightFailed = right.error !== null ? 1 : 0;
+    if (leftFailed !== rightFailed) return leftFailed - rightFailed;
+    return priorityRank[left.origin] - priorityRank[right.origin];
+  });
+  const accepted: RehydratedFact[] = [];
+  const rejected: RehydratedFact[] = [];
+  let usedTokens = 0;
+  let acceptedErrorFree = 0;
+  for (const candidate of sorted) {
+    if (candidate.error !== null) {
+      // Failed refs are always reported back to the model; they consume no budget.
+      accepted.push(candidate);
+      continue;
+    }
+    const tokens = estimateFactTokens(candidate);
+    if (tokens > maxSingle || acceptedErrorFree >= maxRefs || usedTokens + tokens > maxTokens) {
+      // harness_helpful is best-effort: silently drop it when the budget is
+      // exhausted instead of surfacing noise. model_request and harness_required
+      // report REHYDRATION_BUDGET_EXCEEDED so the model knows the request or the
+      // safety-critical restoration did not succeed.
+      if (candidate.origin === "harness_helpful") continue;
+      rejected.push(budgetRejected(candidate));
+      continue;
+    }
+    accepted.push(candidate);
+    usedTokens += tokens;
+    acceptedErrorFree += 1;
+  }
+  return { accepted: [...accepted, ...rejected], rejected };
+}
+
+/**
+ * Candidates the Harness restores automatically this turn. required covers
+ * safety-critical content that must never be dropped (unresolved / safety
+ * failures of the active step, and evidence the active Check depends on);
+ * helpful covers reference-mode predecessor observations.
+ */
+export function autoRehydrateForActiveStep(args: {
+  readonly run: RunSnapshot;
+  readonly observations: readonly ToolObservation[];
+  readonly invocations: readonly ToolInvocation[];
+}): { readonly required: readonly string[]; readonly helpful: readonly string[] } {
+  const { run, observations, invocations } = args;
+  if (run.currentPlan === null) return { required: [], helpful: [] };
+  const activeStepId = run.stepProgress.find((progress) => progress.status === "active")?.stepId;
+  if (activeStepId === undefined) return { required: [], helpful: [] };
+  const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+  if (activeStep === undefined) return { required: [], helpful: [] };
+  const observationByInvocation = new Map(
+    observations.map((observation) => [observation.invocationId, observation])
+  );
+  const required = new Set<string>();
+  for (const invocation of invocations) {
+    if (invocation.stepId !== activeStepId) continue;
+    const observation = observationByInvocation.get(invocation.id);
+    if (
+      observation !== undefined
+      && (observation.retention.class === "unresolved_error"
+        || observation.retention.class === "safety_constraint")
+    ) {
+      required.add(`invocation:${invocation.id}`);
+    }
+  }
+  for (const check of activeStep.acceptanceChecks) {
+    if (check.kind !== "tool_result") continue;
+    const evidence = run.evidence.find(
+      (item) => item.stepId === activeStepId && item.checkId === check.id
+    );
+    if (evidence !== null && evidence !== undefined && evidence.invocationId !== null) {
+      const observation = observationByInvocation.get(evidence.invocationId);
+      if (
+        observation === undefined
+        || observation.payloadMode === "reference"
+        || observation.payloadMode === "fragment"
+      ) {
+        required.add(`invocation:${evidence.invocationId}`);
+      }
+    }
+  }
+  const helpful = new Set<string>();
+  for (const observation of observations) {
+    if (observation.payloadMode !== "reference") continue;
+    const ref = `invocation:${observation.invocationId}`;
+    if (!required.has(ref)) helpful.add(ref);
+  }
+  return { required: [...required], helpful: [...helpful] };
+}
+
+function kindOf(kind: "input" | "invocation" | "evidence" | "event" | "artifact"): RehydratedFact["kind"] {
+  return kind;
+}
+
+function kindOfPrefix(ref: string): RehydratedFact["kind"] {
+  if (ref.startsWith("input:")) return "input";
+  if (ref.startsWith("event:")) return "event";
+  if (ref.startsWith("evidence:")) return "evidence";
+  if (ref.startsWith("artifact:")) return "artifact";
+  return "invocation";
+}
+
+function readAuthorityContent(
+  resolved: NonNullable<ReturnType<typeof resolveSourceRef>>,
+  authority: ReturnType<typeof buildCompactionAuthority>,
+  artifactDir: string
+): JsonValue | null {
+  switch (resolved.kind) {
+    case "input": {
+      const entry = authority.run.inputHistory.find((item) => item.sequence === resolved.sequence);
+      return entry === undefined
+        ? null
+        : { sequence: entry.sequence, text: entry.text } as JsonValue;
+    }
+    case "invocation": {
+      const invocation = authority.invocations.find((item) => item.id === resolved.id);
+      if (invocation === undefined) return null;
+      return (invocation.status === "succeeded"
+        ? { status: invocation.status, result: invocation.resultJson }
+        : { status: invocation.status, error: invocation.errorJson }) as JsonValue;
+    }
+    case "evidence": {
+      const evidence = authority.evidence.get(resolved.id);
+      return evidence === undefined ? null : evidence as unknown as JsonValue;
+    }
+    case "event": {
+      const event = authority.events.find((item) => item.sequence === resolved.sequence);
+      return event === undefined
+        ? null
+        : { type: event.type, occurredAt: event.occurredAt, payload: event.payload } as JsonValue;
+    }
+    case "artifact": {
+      try {
+        const text = new ArtifactStore(artifactDir).getText(resolved.id);
+        try {
+          return JSON.parse(text) as JsonValue;
+        } catch {
+          return { text } as JsonValue;
+        }
+      } catch {
+        return null;
+      }
+    }
+  }
+}
+
+function budgetRejected(fact: RehydratedFact): RehydratedFact {
+  return { ...fact, content: null, error: "REHYDRATION_BUDGET_EXCEEDED" as RehydrationError };
+}
+
+function estimateFactTokens(fact: RehydratedFact): number {
+  return Math.ceil(Buffer.byteLength(JSON.stringify(fact), "utf8") / 4);
+}

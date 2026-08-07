@@ -47,9 +47,9 @@ describe("E077 Tool decision efficiency", () => {
     expect(provider.contexts[1]?.allowedActions).toEqual(["set_plan", "call_tool", "request_input"]);
     expect(provider.contexts[1]?.actionContract.map((action) => action.type))
       .toEqual(["set_plan", "call_tool", "request_input"]);
-    expect(provider.contexts[2]?.allowedActions).toEqual(["set_plan", "request_input", "propose_finish"]);
+    expect(provider.contexts[2]?.allowedActions).toEqual(["set_plan", "request_input", "propose_finish", "request_context"]);
     expect(provider.contexts[2]?.actionContract.map((action) => action.type))
-      .toEqual(["set_plan", "request_input", "propose_finish"]);
+      .toEqual(["set_plan", "request_input", "propose_finish", "request_context"]);
   });
 
   it("does not advertise call_tool when the active Step has no Tool result check", async () => {

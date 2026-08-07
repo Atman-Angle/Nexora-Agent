@@ -1,8 +1,8 @@
 import { z } from "zod";
 
-import { JsonValueSchema, type Evidence, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolInvocation } from "./contracts.js";
-import type { RuntimeProvider } from "./model-client.js";
-import type { RunStore } from "./run-store.js";
+import { JsonValueSchema, type BranchForkBase, type BranchRecord, type Evidence, type ForkContext, type ModelCallRecord, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolInvocation } from "./contracts.js";
+import type { ModelCallPhase, ModelDecisionContext, RuntimeProvider, SemanticValidationContext } from "./providers/model-client.js";
+import type { RunStore } from "./store/run-store.js";
 
 export const ToolResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("success"), subjectRef: z.string().trim().min(1), facts: JsonValueSchema }).strict(),
@@ -43,7 +43,12 @@ export type RecoveryDecision =
 export type ResumeInput = { readonly runId: string; readonly input?: string; readonly approvalDecision?: ApprovalDecision; readonly recoveryDecision?: RecoveryDecision };
 export type RuntimeObserver = (event: RunEvent) => void;
 export type RunResult = { readonly runId: string; readonly status: RunStatus; readonly stopReason: string | null; readonly summary: string | null; readonly resultArtifact: string | null; readonly evidence: readonly Evidence[]; readonly lastError: RunSnapshot["lastError"] };
-export type RunView = { readonly snapshot: RunSnapshot; readonly events: readonly RunEvent[]; readonly toolInvocations: readonly ToolInvocation[] };
+export type RunView = {
+  readonly snapshot: RunSnapshot;
+  readonly events: readonly RunEvent[];
+  readonly toolInvocations: readonly ToolInvocation[];
+  readonly modelCalls: readonly ModelCallRecord[];
+};
 export type RunOptions = { readonly budgets?: RuntimeBudgets };
 
 type DeepReadonly<T> =
@@ -221,6 +226,67 @@ export type RunHandle = {
   cancel(reason?: string): Promise<void>;
 };
 
+/** Options for creating an exploratory branch from a parent Run's current revision. */
+export type ForkOptions = {
+  // Reserved for future options (e.g. a custom snapshot base). Branch workspaces
+  // currently always live under `<dataDir>/branches/<branchId>` so crash recovery
+  // can find and resume them.
+};
+
+/** A branch plus its read-only inheritance boundary and the child Run inspection. */
+export type BranchView = {
+  readonly branch: BranchRecord;
+  readonly forkBase: BranchForkBase;
+  readonly child: RunInspection;
+};
+
+/**
+ * Strict merge whitelist. Only inputs, a Plan proposal (re-planned by the
+ * parent Harness), artifact references, and a non-authority summary may be
+ * merged. Evidence, Invocations, Approval, completion state and side effects
+ * are never merged.
+ */
+export type MergeDecisions = {
+  /** Branch inputs produced after the fork point, to be re-fed to the parent as proposals. */
+  readonly inputs?: readonly string[];
+  /** Treat the branch's current Plan as a proposal for the parent Harness to re-plan. */
+  readonly planProposal?: boolean;
+  /** Branch-produced artifact refs the parent may reference. */
+  readonly artifacts?: readonly string[];
+  /** Attach the branch summary as a non-authority hint. */
+  readonly summary?: boolean;
+};
+
+export type MergeOutcome = {
+  readonly branch: BranchRecord;
+  readonly parentRunId: string;
+  readonly parentRevision: number;
+  readonly accepted: {
+    readonly inputs: readonly string[];
+    readonly planProposal: boolean;
+    readonly artifacts: readonly string[];
+    readonly summary: boolean;
+  };
+  readonly rejected: {
+    readonly currentPlan: boolean;
+    readonly evidence: boolean;
+    readonly invocations: boolean;
+    readonly sideEffects: boolean;
+  };
+};
+
+export type BranchHandle = {
+  readonly id: string;
+  inspect(): Promise<BranchView>;
+  run(options?: RunOptions): Promise<RunResult>;
+  input(text: string): Promise<void>;
+  approve(options?: RequestOptions): Promise<void>;
+  deny(options?: DenialOptions): Promise<void>;
+  cancel(reason?: string): Promise<void>;
+  merge(options: { readonly decisions: MergeDecisions }): Promise<MergeOutcome>;
+  discard(reason?: string): Promise<BranchRecord>;
+};
+
 export type RuntimeServices = {
   readonly workspace: string;
   readonly provider: RuntimeProvider;
@@ -231,10 +297,28 @@ export type RuntimeServices = {
   readonly signal: AbortSignal;
   readonly fencingToken: (runId: string) => number;
   readonly notify: (runId: string, observer?: RuntimeObserver) => void;
+  /** When the run is a branch child, its read-only parent inheritance boundary. */
+  readonly forkContext?: ForkContext | null;
   readonly withHeartbeat: <T>(
     runId: string,
     operation: () => Promise<T>
   ) => Promise<T>;
+  readonly putArtifactText: (
+    content: string,
+    mediaType?: string
+  ) => { readonly digest: string; readonly byteLength: number };
+  readonly requestModel: (
+    run: RunSnapshot,
+    phase: ModelCallPhase,
+    context: ModelDecisionContext | SemanticValidationContext,
+    eventPayload: Record<string, unknown>,
+    observer?: RuntimeObserver,
+    countIteration?: boolean
+  ) => Promise<
+    | { readonly outcome: "succeeded"; readonly run: RunSnapshot; readonly output: unknown }
+    | { readonly outcome: "failed"; readonly run: RunSnapshot; readonly error: unknown }
+    | { readonly outcome: "budget_exceeded"; readonly run: RunSnapshot }
+  >;
   readonly commit: (
     previous: RunSnapshot,
     next: RunSnapshot,

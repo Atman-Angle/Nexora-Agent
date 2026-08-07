@@ -1,32 +1,42 @@
 import { createHash } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+
 import { z } from "zod";
 
-import type { Evidence, RunSnapshot, ToolInvocation } from "./contracts.js";
-import type { ModelDecisionContext, ToolObservation } from "./model-client.js";
+import type { Evidence, RunSnapshot } from "./contracts.js";
+import type { ModelDecisionContext } from "./providers/model-client.js";
 import type { RunResult, RuntimeTool } from "./runtime-types.js";
-
-export const MAX_TOOL_OBSERVATIONS = 8;
-export const MAX_TOOL_OBSERVATION_BYTES = 32 * 1024;
 
 export class ActionRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "ActionRejectedError"; }
 }
 
-export function allowedActions(run: RunSnapshot): ModelDecisionContext["allowedActions"] {
+export function allowedActions(
+  run: RunSnapshot,
+  hasAvailableRefs = false
+): ModelDecisionContext["allowedActions"] {
   if (run.currentPlan === null) return ["set_plan", "request_input"];
   const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
     && run.stepProgress.every((item) => item.status === "completed");
-  if (allStepsCompleted) return ["set_plan", "request_input", "propose_finish"];
-  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
-  const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
-  const hasCallableCheck = activeStep?.acceptanceChecks.some(
-    (check) => check.kind === "tool_result"
-  ) ?? false;
-  return hasCallableCheck
-    ? ["set_plan", "call_tool", "request_input"]
-    : ["set_plan", "request_input"];
+  const base: ModelDecisionContext["allowedActions"] = allStepsCompleted
+    ? ["set_plan", "request_input", "propose_finish"]
+    : (() => {
+        const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+        const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+        const hasCallableCheck = activeStep?.acceptanceChecks.some(
+          (check) => check.kind === "tool_result"
+        ) ?? false;
+        return hasCallableCheck
+          ? ["set_plan", "call_tool", "request_input"]
+          : ["set_plan", "request_input"];
+      })();
+  // request_context is a Harness control action, not a Core RuntimeAction. It
+  // is exposed whenever the model is still deciding and there is at least one
+  // sourceRef published this turn that could be rehydrated.
+  return hasAvailableRefs
+    ? [...base, "request_context"]
+    : base;
 }
 
 export function completeSatisfiedSteps(plan: NonNullable<RunSnapshot["currentPlan"]>, progress: RunSnapshot["stepProgress"], evidence: readonly Evidence[]): RunSnapshot["stepProgress"] {
@@ -50,23 +60,38 @@ export function assertCompletedStepsUnchanged(run: RunSnapshot, nextSteps: reado
 }
 
 export function digestJson(value: unknown): string { return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
-export function projectToolObservations(invocations: readonly ToolInvocation[]): ToolObservation[] {
-  const observations = invocations.filter((item): item is ToolInvocation & { status: "succeeded" | "failed"; completedAt: string } => (item.status === "succeeded" || item.status === "failed") && item.completedAt !== null).slice(-MAX_TOOL_OBSERVATIONS).map((item) => {
-    const result = item.status === "succeeded" ? item.resultJson : null; const error = item.status === "failed" ? item.errorJson : null;
-    return { invocationId: item.id, planVersion: item.planVersion, stepId: item.stepId, toolName: item.toolName, status: item.status, completedAt: item.completedAt, facts: result, error, truncated: false, digest: digestJson(item.status === "succeeded" ? result : error) } satisfies ToolObservation;
-  });
-  if (jsonBytes(observations) <= MAX_TOOL_OBSERVATION_BYTES || observations.length === 0) return observations;
-  const itemBudget = Math.floor((MAX_TOOL_OBSERVATION_BYTES - observations.length - 1) / observations.length);
-  return observations.map((observation) => boundObservation(observation, itemBudget));
+
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalJsonValue(value));
 }
-function boundObservation(observation: ToolObservation, maxBytes: number): ToolObservation {
-  if (jsonBytes(observation) <= maxBytes) return observation;
-  const value = observation.status === "succeeded" ? observation.facts : observation.error; const serialized = JSON.stringify(value); let lower = 0; let upper = serialized.length; let bounded = observationPreview(observation, "");
-  while (lower <= upper) { const middle = Math.floor((lower + upper) / 2); const candidate = observationPreview(observation, serialized.slice(0, middle)); if (jsonBytes(candidate) <= maxBytes) { bounded = candidate; lower = middle + 1; } else upper = middle - 1; }
-  return bounded;
+
+export function digestCanonicalJson(value: unknown): string {
+  return `sha256:${createHash("sha256").update(canonicalJson(value)).digest("hex")}`;
 }
-function observationPreview(observation: ToolObservation, preview: string): ToolObservation { return { ...observation, facts: observation.status === "succeeded" ? { preview } : null, error: observation.status === "failed" ? { preview } : null, truncated: true }; }
-function jsonBytes(value: unknown): number { return Buffer.byteLength(JSON.stringify(value), "utf8"); }
+
+function canonicalJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalJsonValue);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => stringCompare(left, right))
+      .map(([key, nested]) => [key, canonicalJsonValue(nested)])
+  );
+}
+
+/** Locale-independent total order used by canonical serialization and value sorting. */
+export function stringCompare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.freeze(value);
+  for (const nested of Object.values(value)) deepFreeze(nested);
+  return value;
+}
 
 export function validateToolContract(contract: RuntimeTool["contract"]): void {
   const name = contract.identity.name; requireToolText(name, "identity.name", name); requireToolText(contract.capability.purpose, "capability.purpose", name); requireToolTexts(contract.capability.nonGoals, "capability.nonGoals", name); requireToolTexts(contract.decision.useWhen, "decision.useWhen", name); requireToolTexts(contract.decision.avoidWhen, "decision.avoidWhen", name); requireToolText(contract.execution.effect.description, "execution.effect.description", name); requireToolTexts(contract.evidence.produces, "evidence.produces", name);

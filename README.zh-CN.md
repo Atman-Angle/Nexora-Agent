@@ -175,6 +175,9 @@ Nexora-Agent/
 
 - [使用 Nexora Runtime 构建应用](docs/BUILD_WITH_NEXORA_RUNTIME.md)
 - [Research Agent Harness 与效果](docs/applications/research-agent.md)
+- [架构与 Authority 边界](ARCHITECTURE.md)
+- [系统数据流](DATA_FLOW.md)
+- [测试策略](TESTS.md)
 
 ## 项目状态
 

@@ -40,6 +40,10 @@ export class ArtifactStore {
     return readFileSync(this.#pathForDigest(digest), "utf8");
   }
 
+  has(digest: string): boolean {
+    return existsSync(this.#pathForDigest(digest));
+  }
+
   #pathForDigest(digest: string): string {
     const match = /^sha256:([a-f0-9]{64})$/.exec(digest);
     if (match === null) throw new Error(`Invalid Artifact digest: ${digest}`);

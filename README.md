@@ -175,6 +175,9 @@ Nexora-Agent/
 
 - [Build with the Nexora Runtime](docs/BUILD_WITH_NEXORA_RUNTIME.md)
 - [Research Agent harness and results](docs/applications/research-agent.md)
+- [Architecture and authority boundaries](ARCHITECTURE.md)
+- [System data flow](DATA_FLOW.md)
+- [Testing strategy](TESTS.md)
 
 ## Project status
 

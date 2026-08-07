@@ -5,13 +5,16 @@ import {
   type RunSnapshot,
   type RuntimeAction,
   type ToolInvocation
-} from "./contracts.js";
+} from "../contracts.js";
 import {
   ActionRejectedError,
+  canonicalJson,
   completeSatisfiedSteps,
+  digestCanonicalJson,
   digestJson,
   errorMessage
-} from "./runtime-helpers.js";
+} from "../runtime-helpers.js";
+import { MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES } from "../context/projection.js";
 import {
   type RecoveryDecision,
   type RuntimeServices,
@@ -19,9 +22,9 @@ import {
   type RuntimeObserver,
   type RuntimeTool,
   type RuntimeToolResult
-} from "./runtime-types.js";
-import { RuntimeError, cancellationReason } from "./runtime-error.js";
-import { transitionRunStatus } from "./state-machine.js";
+} from "../runtime-types.js";
+import { RuntimeError, cancellationReason } from "../runtime-error.js";
+import { transitionRunStatus } from "../state-machine.js";
 
 type CallToolAction = Extract<RuntimeAction, { type: "call_tool" }>;
 
@@ -214,10 +217,23 @@ export async function executeToolInvocation(
   }
 
   const completedAt = services.now();
+  const payload = result.status === "success" ? result.facts : result.error;
+  const serializedPayload = canonicalJson(payload);
+  const payloadDigest = digestCanonicalJson(payload);
+  const payloadArtifact = Buffer.byteLength(serializedPayload, "utf8")
+    > MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES
+    ? services.putArtifactText(serializedPayload, "application/json")
+    : null;
+  if (payloadArtifact !== null && payloadArtifact.digest !== payloadDigest) {
+    throw new Error("Archived Tool payload digest does not match its canonical digest.");
+  }
   if (result.status === "failure") {
     const next = RunSnapshotSchema.parse({
       ...run,
-      lastError: { ...result.error, detailsArtifact: null },
+      lastError: {
+        ...result.error,
+        detailsArtifact: payloadArtifact?.digest ?? null
+      },
       updatedAt: completedAt
     });
     const completed = services.store.completeToolInvocationAndCommitRun({
@@ -226,19 +242,28 @@ export async function executeToolInvocation(
       completedAt,
       fencingToken: services.fencingToken(run.runId),
       errorJson: result.error,
+      payloadDigest,
+      ...(payloadArtifact === null
+        ? {}
+        : { payloadArtifactRef: payloadArtifact.digest }),
       previous: run,
       next,
       event: {
         type: "tool.failed",
         occurredAt: completedAt,
-        payload: { invocationId: invocation.id, error: result.error }
+        payload: {
+          invocationId: invocation.id,
+          error: result.error,
+          payloadDigest,
+          payloadArtifactRef: payloadArtifact?.digest ?? null
+        }
       }
     });
     services.notify(run.runId, observer);
     return completed.run;
   }
 
-  const outputDigest = digestJson(result.facts);
+  const outputDigest = payloadDigest;
   const newEvidence: Evidence[] = invocation.checkIds.map((checkId) => ({
     id: services.createId(),
     kind: "tool_result",
@@ -249,7 +274,7 @@ export async function executeToolInvocation(
     checkId,
     subjectRef: result.subjectRef,
     invocationId: invocation.id,
-    artifactRef: null,
+    artifactRef: payloadArtifact?.digest ?? null,
     digest: outputDigest
   }));
   const evidence = [...run.evidence, ...newEvidence];
@@ -274,6 +299,10 @@ export async function executeToolInvocation(
     completedAt,
     fencingToken: services.fencingToken(run.runId),
     resultJson: result.facts,
+    payloadDigest,
+    ...(payloadArtifact === null
+      ? {}
+      : { payloadArtifactRef: payloadArtifact.digest }),
     previous: run,
     next,
     event: {
@@ -281,7 +310,9 @@ export async function executeToolInvocation(
       occurredAt: completedAt,
       payload: {
         invocationId: invocation.id,
-        evidenceIds: newEvidence.map((item) => item.id)
+        evidenceIds: newEvidence.map((item) => item.id),
+        payloadDigest,
+        payloadArtifactRef: payloadArtifact?.digest ?? null
       }
     }
   });
@@ -484,6 +515,10 @@ function applyRecoveryDecision(
         outcome: decision.outcome,
         subjectRef: decision.subjectRef
       },
+      payloadDigest: digestCanonicalJson({
+        outcome: decision.outcome,
+        subjectRef: decision.subjectRef
+      }),
       previous: runInput,
       next: running,
       fencingToken: services.fencingToken(runInput.runId),
@@ -526,6 +561,7 @@ function applyRecoveryDecision(
     invocationId: invocation.id,
     status: "failed",
     resolution: { outcome: decision.outcome, reason },
+    payloadDigest: digestCanonicalJson({ outcome: decision.outcome, reason }),
     previous: runInput,
     next,
     fencingToken: services.fencingToken(runInput.runId),

@@ -20,7 +20,10 @@
   "files": [
     "dist/*.js",
     "dist/*.d.ts",
-    "dist/tool-runtime",
+    "dist/context",
+    "dist/execution",
+    "dist/providers",
+    "dist/store",
     "dist/testing"
   ],
   "scripts": {

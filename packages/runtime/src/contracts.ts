@@ -351,10 +351,128 @@ export const ToolInvocationSchema = z.object({
   startedAt: IsoDateTime,
   completedAt: IsoDateTime.nullable(),
   resultJson: JsonValueSchema.nullable(),
-  errorJson: JsonValueSchema.nullable()
+  errorJson: JsonValueSchema.nullable(),
+  payloadDigest: NonEmptyString.nullable(),
+  payloadArtifactRef: NonEmptyString.nullable()
 }).strict();
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>;
-export type ToolInvocationIntent = Omit<ToolInvocation, "status" | "completedAt" | "resultJson" | "errorJson">;
+export type ToolInvocationIntent = Omit<
+  ToolInvocation,
+  | "status"
+  | "completedAt"
+  | "resultJson"
+  | "errorJson"
+  | "payloadDigest"
+  | "payloadArtifactRef"
+>;
+
+export const ModelCallRecordSchema = z.object({
+  id: NonEmptyString,
+  runId: NonEmptyString,
+  sequence: z.number().int().positive(),
+  phase: z.enum(["decision", "validation", "compaction"]),
+  provider: NonEmptyString,
+  model: NonEmptyString,
+  projectionDigest: NonEmptyString.nullable(),
+  contextWindowTokens: z.number().int().positive(),
+  reservedOutputTokens: z.number().int().nonnegative(),
+  softInputLimitTokens: z.number().int().nonnegative(),
+  hardInputLimitTokens: z.number().int().nonnegative(),
+  measuredInputTokens: z.number().int().nonnegative(),
+  measurementMethod: z.enum(["exact", "estimated"]),
+  meter: NonEmptyString,
+  budgetDecision: z.enum(["within_budget", "soft_limit_exceeded", "hard_limit_exceeded"]),
+  status: z.enum(["started", "succeeded", "failed", "cancelled", "interrupted", "refused"]),
+  actualInputTokens: z.number().int().nonnegative().nullable(),
+  actualOutputTokens: z.number().int().nonnegative().nullable(),
+  actualTotalTokens: z.number().int().nonnegative().nullable(),
+  errorCode: NonEmptyString.nullable(),
+  startedAt: IsoDateTime,
+  completedAt: IsoDateTime.nullable()
+}).strict();
+export type ModelCallRecord = z.infer<typeof ModelCallRecordSchema>;
+export type ModelCallIntent = Omit<
+  ModelCallRecord,
+  | "sequence"
+  | "status"
+  | "actualInputTokens"
+  | "actualOutputTokens"
+  | "actualTotalTokens"
+  | "errorCode"
+  | "completedAt"
+>;
+
+export const BranchStatusSchema = z.enum(["creating", "active", "merged", "discarded", "failed"]);
+export type BranchStatus = z.infer<typeof BranchStatusSchema>;
+
+export const BranchLineageSchema = z.object({
+  parentRunId: NonEmptyString,
+  forkRevision: z.number().int().nonnegative(),
+  forkEventSequence: z.number().int().positive()
+}).strict();
+export type BranchLineage = z.infer<typeof BranchLineageSchema>;
+
+/**
+ * A persisted exploratory branch. The Branch is only metadata: the actual run
+ * execution lives in the child Run (child_run_id), which is fully isolated by
+ * its own run_id. The Branch owns the lineage / fork-point bookkeeping and the
+ * merge state; it never shares mutable Authority with the parent.
+ */
+export const BranchRecordSchema = z.object({
+  branchId: NonEmptyString,
+  parentRunId: NonEmptyString,
+  forkRevision: z.number().int().nonnegative(),
+  forkEventSequence: z.number().int().positive(),
+  childRunId: NonEmptyString,
+  status: BranchStatusSchema,
+  lineage: z.array(BranchLineageSchema).min(1),
+  createdAt: IsoDateTime
+}).strict();
+export type BranchRecord = z.infer<typeof BranchRecordSchema>;
+
+/**
+ * The frozen fact projection of a parent Evidence at the fork point. The child
+ * copies the parent's Evidence records, but those reference Invocations under
+ * the parent's run_id. Validation / completion must resolve inherited evidence
+ * to its fact payload without reading the parent's mutable authority — this
+ * projection (captured once at fork time) is that read-only boundary.
+ */
+export const InheritedFactProjectionSchema = z.object({
+  toolName: NonEmptyString,
+  subjectRef: NonEmptyString,
+  input: JsonValueSchema,
+  facts: JsonValueSchema,
+  invocationId: NonEmptyString.nullable()
+}).strict();
+export type InheritedFactProjection = z.infer<typeof InheritedFactProjectionSchema>;
+
+/**
+ * The read-only inheritance boundary of a branch. Rehydration / audit /
+ * validation may read (a) the child's own facts under child_run_id, and
+ * (b) only the parent facts explicitly listed in inheritedRefs / inheritedFacts
+ * that occurred at or before fork_event_sequence. Anything the parent produced
+ * after the fork point is invisible to the child.
+ */
+export const BranchForkBaseSchema = z.object({
+  branchId: NonEmptyString,
+  parentRunId: NonEmptyString,
+  forkRevision: z.number().int().nonnegative(),
+  forkEventSequence: z.number().int().positive(),
+  inheritedRefs: z.record(NonEmptyString, NonEmptyString),
+  inheritedFacts: z.record(NonEmptyString, InheritedFactProjectionSchema)
+}).strict();
+export type BranchForkBase = z.infer<typeof BranchForkBaseSchema>;
+
+/**
+ * A branch's read-only inheritance boundary, resolved at runtime: the parent
+ * run at the fork point plus the persisted Fork Base. The child may read the
+ * parent's facts listed in the Fork Base; nothing produced after the fork point
+ * is visible.
+ */
+export type ForkContext = {
+  readonly parentRunId: string;
+  readonly forkBase: BranchForkBase;
+};
 
 export const DEFAULT_RUNTIME_BUDGETS: RuntimeBudgets = {
   maxIterations: 50,

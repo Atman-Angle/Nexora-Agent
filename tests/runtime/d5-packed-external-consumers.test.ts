@@ -14,7 +14,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -609,7 +609,10 @@ function packRuntime(root: string): string {
 }
 
 function tarballContents(tarball: string): string[] {
-  return execFileSync("tar", ["-tf", tarball], {
+  // GNU tar on Windows cannot open drive-letter paths like C:\... ("Cannot
+  // connect to C: resolve failed"), so pass a relative path from the parent.
+  return execFileSync("tar", ["-tf", basename(tarball)], {
+    cwd: dirname(tarball),
     encoding: "utf8"
   }).trim().split(/\r?\n/);
 }

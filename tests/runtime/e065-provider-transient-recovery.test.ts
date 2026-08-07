@@ -6,14 +6,17 @@ import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { createRuntime, type RuntimeTool } from "../../packages/runtime/src/index.js";
-import { createOpenAICompatibleProvider } from "../../packages/runtime/src/openai-compatible-provider.js";
+import { createOpenAICompatibleProvider } from "../../packages/runtime/src/providers/openai-compatible.js";
 
 const context = {
   workspace: "D:\\fixture",
   run: {} as never,
+  projection: { schemaVersion: 1 as const, digest: "sha256:test" },
   allowedActions: [],
   actionContract: [],
   toolObservations: [],
+  contextCheckpoint: null,
+  rehydratedFacts: [],
   tools: []
 };
 const operation = { signal: new AbortController().signal };

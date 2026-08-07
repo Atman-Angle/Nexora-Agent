@@ -141,7 +141,7 @@ describe("E052 Provider observation closure", () => {
     }
   });
 
-  it("bounds observations to the newest eight and about 32 KiB without Invocation internals", async () => {
+  it("bounds relevant predecessor observations to eight and about 32 KiB without Invocation internals", async () => {
     const workspace = fixture("unchanged\n");
     const secretInputs = Array.from({ length: 10 }, (_, index) => `private-input-${index}`);
     const steps = secretInputs.map((_, index) => ({
@@ -185,13 +185,14 @@ describe("E052 Provider observation closure", () => {
     try {
       const result = await runtime.start({ input: "Create enough large Tool results to verify the Provider boundary." });
       const view = await runtime.inspect(result.runId);
-      const projected = observations(provider.contexts.at(-1)!);
+      const projected = observations(provider.contexts.at(-2)!);
       const serialized = JSON.stringify(projected);
 
       expect(result.status).toBe("waiting");
       expect(view.toolInvocations).toHaveLength(10);
       expect(projected).toHaveLength(8);
-      expect(projected.map((item) => item.invocationId)).toEqual(view.toolInvocations.slice(-8).map((item) => item.id));
+      expect(projected.map((item) => item.invocationId)).toEqual(view.toolInvocations.slice(1, 9).map((item) => item.id));
+      expect(observations(provider.contexts.at(-1)!)).toEqual([]);
       expect(projected.every((item) => item.truncated)).toBe(true);
       expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(32 * 1024);
       expect(serialized).not.toContain("inputJson");

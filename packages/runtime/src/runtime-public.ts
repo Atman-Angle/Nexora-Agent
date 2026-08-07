@@ -48,7 +48,9 @@ export function projectRunInspection(
     startedAt: invocation.startedAt,
     completedAt: invocation.completedAt,
     resultJson: invocation.resultJson,
-    errorJson: invocation.errorJson
+    errorJson: invocation.errorJson,
+    payloadDigest: invocation.payloadDigest,
+    payloadArtifactRef: invocation.payloadArtifactRef
   }));
   const status = snapshot.status !== "waiting"
     ? snapshot.status

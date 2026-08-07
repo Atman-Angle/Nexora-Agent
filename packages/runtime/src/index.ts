@@ -32,19 +32,39 @@ export {
   type RuntimeErrorCode,
   type RuntimeTool,
   type RuntimeToolResult,
-  type StartInput
+  type StartInput,
+  type BranchHandle,
+  type BranchView,
+  type ForkOptions,
+  type MergeDecisions,
+  type MergeOutcome
 } from "./runtime.js";
 
 export type {
+  BranchForkBase,
+  BranchRecord,
+  BranchStatus,
+  ForkContext,
+  InheritedFactProjection
+} from "./contracts.js";
+
+export type {
   ModelDecisionContext,
+  ModelCallPhase,
+  ProjectedRunContext,
+  ProviderModelProfile,
+  ProviderTokenMeasurement,
+  ProviderTokenMeter,
+  ProviderTokenUsage,
   RuntimeProvider,
   SemanticValidationContext,
   SemanticValidationVerdict,
   ToolObservation
-} from "./model-client.js";
+} from "./providers/model-client.js";
 
 export type {
   Evidence,
+  ModelCallRecord,
   RunEvent,
   RunSnapshot,
   RunStatus,
@@ -54,23 +74,24 @@ export type {
   TaskContract
 } from "./contracts.js";
 
-export { createBuiltInTools } from "./tool-runtime/index.js";
+export { createBuiltInTools } from "./execution/tool-runtime/index.js";
 export {
   ModelConfigError,
   createOpenAICompatibleProvider,
   openAICompatibleProviderFromEnv,
   type OpenAICompatibleProviderOptions
-} from "./openai-compatible-provider.js";
+} from "./providers/openai-compatible.js";
 
 export {
   defineProviderAdapter,
   type ProviderAdapterDefinition,
   type ProviderCompletionOperation,
-  type ProviderCompletionRequest
-} from "./provider-adapter.js";
+  type ProviderCompletionRequest,
+  type ProviderRequestTokenMeter
+} from "./providers/adapter.js";
 
 export {
   defineTool,
   type ToolBuilderContext,
   type ToolBuilderDefinition
-} from "./tool-builder.js";
+} from "./execution/tool-builder.js";

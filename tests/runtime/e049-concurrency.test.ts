@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { createRuntime, type ModelDecisionContext, type RuntimeProvider } from "../../packages/runtime/src/index.js";
-import { openRunStore } from "../../packages/runtime/src/run-store.js";
+import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { transitionRunStatus } from "../../packages/runtime/src/state-machine.js";
 
 const roots: string[] = [];
