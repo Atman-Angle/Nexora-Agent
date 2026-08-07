@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 
 import type { z } from "zod";
 
@@ -18,6 +19,7 @@ import {
   type RuntimeObserver,
   type RuntimeServices
 } from "./runtime-types.js";
+import { resolveProviderModelProfile } from "./context/budget.js";
 import { RuntimeError, cancellationReason } from "./runtime-error.js";
 import { transitionRunStatus } from "./state-machine.js";
 
@@ -29,6 +31,70 @@ export type CompletionValidation = {
 
 export function digestTaskContract(contract: TaskContract): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(contract)).digest("hex")}`;
+}
+
+type ValidationFact = {
+  readonly toolName: string;
+  readonly subjectRef: string;
+  readonly input: JsonValue;
+  readonly facts: JsonValue;
+};
+
+/**
+ * Per-fact byte cap for the SemanticValidationContext. Mirrors the projection
+ * module's bounded tool observations: an oversized fact is replaced by a
+ * deterministic excerpt instead of being sent verbatim, so a run that has
+ * accumulated many large Evidence facts cannot blow past the validation hard
+ * limit (the decision phase is trimmed by Eviction/Compaction, but the
+ * validation phase has no such loop and must bound its own context).
+ */
+const MAX_SEMANTIC_VALIDATION_FACT_BYTES = 4 * 1024;
+
+function boundJsonValue(value: JsonValue, maxBytes: number): JsonValue {
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized, "utf8") <= maxBytes) return value;
+  const start = serialized.slice(0, 768);
+  const end = serialized.length > 1_024 ? serialized.slice(-256) : "";
+  return {
+    kind: "deterministic_excerpt",
+    originalBytes: Buffer.byteLength(serialized, "utf8"),
+    start,
+    end
+  };
+}
+
+function estimateJsonBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
+}
+
+/**
+ * Bounds the facts passed to the semantic validator so the whole validation
+ * request stays within the validation hard input limit. Each fact is capped at
+ * MAX_SEMANTIC_VALIDATION_FACT_BYTES; if the total still exceeds the budget
+ * (a run with a great many large Evidence facts), the largest facts are dropped
+ * (keeping at least one) until the rest fit. The deterministic completion gate
+ * is independent of this projection, so correctness is preserved.
+ */
+function projectSemanticValidationFacts(
+  facts: readonly ValidationFact[],
+  hardInputLimitTokens: number
+): ValidationFact[] {
+  // Reserve an envelope for inputs + proposedSummary + the JSON wrapper.
+  const envelopeBytes = 8 * 1024;
+  const factsBytesBudget = Math.max(1_024, hardInputLimitTokens * 4 - envelopeBytes);
+  let projected = facts.map((fact) => ({
+    toolName: fact.toolName,
+    subjectRef: fact.subjectRef,
+    input: boundJsonValue(fact.input, MAX_SEMANTIC_VALIDATION_FACT_BYTES),
+    facts: boundJsonValue(fact.facts, MAX_SEMANTIC_VALIDATION_FACT_BYTES)
+  }));
+  while (projected.length > 1 && estimateJsonBytes(projected) > factsBytesBudget) {
+    const largestIndex = projected
+      .map((fact, index) => ({ index, bytes: estimateJsonBytes(fact) }))
+      .sort((left, right) => right.bytes - left.bytes)[0]!.index;
+    projected = projected.filter((_, index) => index !== largestIndex);
+  }
+  return projected;
 }
 
 export function validateCompletion(
@@ -169,13 +235,17 @@ export async function proposeFinish(
         `Cited Tool Evidence has no succeeded Invocation: ${evidence.id}`
       );
     });
+    const profile = resolveProviderModelProfile(services.provider);
     const modelCall = await services.requestModel(
       run,
       "validation",
       {
         inputs: run.inputHistory.map((entry) => entry.text),
         proposedSummary: action.summary,
-        facts
+        facts: projectSemanticValidationFacts(
+          facts,
+          profile.contextWindowTokens - profile.reservedOutputTokens.validation
+        )
       },
       { evidenceIds: deterministic.evidenceIds },
       observer
