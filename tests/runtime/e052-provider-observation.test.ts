@@ -192,7 +192,14 @@ describe("E052 Provider observation closure", () => {
       expect(view.toolInvocations).toHaveLength(10);
       expect(projected).toHaveLength(8);
       expect(projected.map((item) => item.invocationId)).toEqual(view.toolInvocations.slice(1, 9).map((item) => item.id));
-      expect(observations(provider.contexts.at(-1)!)).toEqual([]);
+      // The final decision (all Steps completed) still sees the completed
+      // observations as visible facts — bounded to eight, truncated, and free
+      // of Invocation internals — instead of starving the completion context.
+      const finalProjected = observations(provider.contexts.at(-1)!);
+      expect(finalProjected).toHaveLength(8);
+      expect(finalProjected.every((item) => item.truncated)).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(finalProjected), "utf8")).toBeLessThanOrEqual(32 * 1024);
+      for (const secret of secretInputs) expect(JSON.stringify(finalProjected)).not.toContain(secret);
       expect(projected.every((item) => item.truncated)).toBe(true);
       expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(32 * 1024);
       expect(serialized).not.toContain("inputJson");
@@ -238,17 +245,13 @@ function plan(workspace: string, orderedSteps: readonly Record<string, unknown>[
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Use real Tool results to complete the task",
-      workspace,
       constraints: [],
       acceptanceCriteria: ["Every required Tool result succeeds"]
     },
     orderedSteps
   };
 }
-
 function singleStepPlan(workspace: string, stepId: string, toolName: string) {
   return plan(workspace, [{
     id: stepId,
@@ -256,13 +259,11 @@ function singleStepPlan(workspace: string, stepId: string, toolName: string) {
     acceptanceChecks: [{ id: "failed-check", kind: "tool_result", required: true, toolName, expectedStatus: "success" }]
   }]);
 }
-
 type ProviderStub = {
   readonly baseUrl: string;
   readonly decisionContexts: ObservationContext[];
   readonly validationCalls: number;
 };
-
 async function observationProviderStub(workspace: string): Promise<ProviderStub> {
   const decisionContexts: ObservationContext[] = [];
   let validationCalls = 0;

@@ -12,8 +12,10 @@ import {
   JsonValueSchema,
   createInitialRunSnapshot,
   type BranchRecord,
+  type PlanTaskContract,
   type RunSnapshot,
-  type RuntimeAction
+  type RuntimeAction,
+  type TaskContract
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
 import {
@@ -49,6 +51,7 @@ import {
   allowedActions,
   assertCompletedStepsUnchanged,
   deepFreeze,
+  digestJson,
   errorMessage,
   actionRejectionDiagnostic,
   requireWorkspace,
@@ -1294,6 +1297,7 @@ export class RuntimeEngine {
       throw new ActionRejectedError(`${action.type} is not allowed in the current Run state.`);
     }
     if (action.type === "set_plan") return this.#setPlan(run, action, observer);
+    if (action.type === "execute_step") return this.#handleExecuteStep(run, action, signal, observer);
     if (action.type === "request_input") {
       const now = this.#now();
       const waiting = transitionRunStatus(run, "waiting", {
@@ -1314,24 +1318,143 @@ export class RuntimeEngine {
     return proposeFinish(this.#services(signal, run.runId), run, action, observer);
   }
 
+  /**
+   * Harness-level orchestration action: the model proposes, in one Decision,
+   * multiple Tool Actions that are already determinable within the active Step.
+   * The whole batch is pre-validated (so a malformed batch never partially
+   * executes), then executed serially through the existing callTool chain —
+   * each sub-action keeps full approval / Evidence / sourceRefs / persistence /
+   * recovery authority. Execution stops at the first Tool failure, the first
+   * action requiring approval, or once the Step completes; dropped actions are
+   * not executed and the next Decision re-decides on the latest facts.
+   */
+  async #handleExecuteStep(
+    run: RunSnapshot,
+    action: Extract<RuntimeAction, { type: "execute_step" }>,
+    signal: AbortSignal,
+    observer?: RuntimeObserver
+  ): Promise<RunSnapshot> {
+    signal.throwIfAborted();
+    const services = this.#services(signal, run.runId);
+    const plan = run.currentPlan;
+    if (plan === null) throw new ActionRejectedError("A Tool cannot run without a Plan.");
+    const active = run.stepProgress.find((item) => item.status === "active");
+    if (active === undefined || active.stepId !== action.stepId) {
+      throw new ActionRejectedError("execute_step does not target the active Step.");
+    }
+    const step = plan.orderedSteps.find((item) => item.id === action.stepId);
+    if (step === undefined) throw new ActionRejectedError("Active Step is missing from the Plan.");
+
+    // Pre-flight: validate every sub-action so a malformed batch is rejected as
+    // a whole (repair budget) before any sub-action executes.
+    const seenIdempotency = new Set<string>();
+    for (const sub of action.actions) {
+      if (sub.stepId !== action.stepId) {
+        throw new ActionRejectedError("execute_step sub-action does not target the active Step.");
+      }
+      const checks = sub.checkIds.map((id) => step.acceptanceChecks.find((check) => check.id === id));
+      if (checks.some((check) => check === undefined)) {
+        throw new ActionRejectedError("execute_step sub-action references an unknown Acceptance Check.");
+      }
+      if (checks.some((check) => check?.kind !== "tool_result" || check.toolName !== sub.toolName)) {
+        throw new ActionRejectedError("execute_step sub-action is not bound to a matching Tool Result Check.");
+      }
+      const tool = this.#tools.get(sub.toolName);
+      if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${sub.toolName}`);
+      const parsedInput = JsonValueSchema.parse(tool.contract.execution.inputSchema.parse(sub.input));
+      const key = `${run.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${digestJson(parsedInput)}`;
+      if (seenIdempotency.has(key)) {
+        throw new ActionRejectedError("execute_step contains duplicate Tool Invocations.");
+      }
+      seenIdempotency.add(key);
+      if (this.#store.listToolInvocations(run.runId).some((item) => item.idempotencyKey === key)) {
+        throw new ActionRejectedError("execute_step duplicates an existing persisted Invocation.");
+      }
+    }
+    if (run.budgetsUsed.toolCalls + action.actions.length > run.budgets.maxToolCalls) {
+      throw new ActionRejectedError("execute_step exceeds the remaining Tool-call budget.");
+    }
+
+    // Serial execution with fail-fast: at most one in-flight invocation at any
+    // time (keeps Recovery's exactly-one unresolved invocation invariant), and
+    // the batch stops at the first Tool failure, approval, or Step completion.
+    let current = run;
+    let executed = 0;
+    let stoppedReason: "completed" | "step_completed" | "approval_required" | "tool_failed" | "run_status_changed" = "completed";
+    for (const sub of action.actions) {
+      if (current.status !== "running") {
+        stoppedReason = current.status === "waiting" ? "approval_required" : "run_status_changed";
+        break;
+      }
+      if (current.lastError !== null) {
+        stoppedReason = "tool_failed";
+        break;
+      }
+      const nowActive = current.stepProgress.find((item) => item.status === "active")?.stepId;
+      if (nowActive !== action.stepId) {
+        stoppedReason = "step_completed";
+        break;
+      }
+      const executedBefore = current.budgetsUsed.toolCalls;
+      current = await callTool(services, current, sub, observer);
+      if (current.budgetsUsed.toolCalls > executedBefore) {
+        executed += 1;
+      }
+    }
+
+    // Re-derive the stop reason from the final Run state: the last sub-action
+    // may itself have required approval, failed, or completed the Step, with no
+    // further iteration to surface it. A step_completed stop is only reported
+    // when it actually dropped remaining actions; a batch that consumed every
+    // action is "completed" even if the Step finished as a side effect.
+    if (current.status !== "running") {
+      stoppedReason = current.status === "waiting" ? "approval_required" : "run_status_changed";
+    } else if (current.lastError !== null) {
+      stoppedReason = "tool_failed";
+    } else if (
+      executed < action.actions.length
+      && current.stepProgress.find((item) => item.status === "active")?.stepId !== action.stepId
+    ) {
+      stoppedReason = "step_completed";
+    }
+
+    this.#store.recordRunEvent({
+      runId: run.runId,
+      event: {
+        type: "execute_step.completed",
+        occurredAt: this.#now(),
+        payload: {
+          stepId: action.stepId,
+          executedActionCount: executed,
+          totalActions: action.actions.length,
+          stoppedReason
+        }
+      },
+      fencingToken: this.#leases.requireFencingToken(run.runId)
+    });
+    this.#notify(run.runId, observer);
+    return current;
+  }
+
   #setPlan(run: RunSnapshot, action: Extract<RuntimeAction, { type: "set_plan" }>, observer?: RuntimeObserver): RunSnapshot {
     const current = run.currentPlan;
     let contract = run.taskContract;
     if (current === null) {
       if (action.basedOnVersion !== null) throw new ActionRejectedError("The first Plan must be based on null.");
       if (action.taskContract === undefined) throw new ActionRejectedError("The first Plan requires a Task Contract.");
-      contract = TaskContractSchema.parse(action.taskContract);
+      contract = this.#deriveTaskContract(run, action.taskContract);
     } else {
       if (action.basedOnVersion !== current.version) throw new ActionRejectedError("Plan revision conflict.");
       const hasNewInput = contract !== null && contract.inputVersion < run.inputHistory.length;
       if (hasNewInput && action.taskContract === undefined) throw new ActionRejectedError("New user input requires an updated Task Contract.");
       if (!hasNewInput && action.taskContract !== undefined) throw new ActionRejectedError("Task Contract cannot change without new user input.");
-      if (action.taskContract !== undefined) contract = TaskContractSchema.parse(action.taskContract);
+      if (action.taskContract !== undefined) contract = this.#deriveTaskContract(run, action.taskContract);
+      if (action.taskContract === undefined && JSON.stringify(action.orderedSteps) === JSON.stringify(current.orderedSteps)) {
+        throw new ActionRejectedError("Plan is unchanged; execute the active Step instead.");
+      }
       assertCompletedStepsUnchanged(run, action.orderedSteps);
     }
     if (contract === null) throw new ActionRejectedError("Task Contract is missing.");
-    if (contract.workspace !== this.#workspaceFor(run.runId)) throw new ActionRejectedError("Task Contract workspace does not match Runtime workspace.");
-    if (contract.inputVersion !== run.inputHistory.length) throw new ActionRejectedError("Task Contract does not cover the complete input history.");
 
     const version = current === null ? 1 : current.version + 1;
     const plan = StructuredPlanSchema.parse({
@@ -1363,6 +1486,21 @@ export class RuntimeEngine {
       updatedAt: this.#now()
     });
     return this.#commit(run, next, "plan.set", { version, basedOnVersion: action.basedOnVersion }, observer);
+  }
+
+  /**
+   * Derives the complete persisted Task Contract from the model's semantic
+   * proposal by injecting the deterministic mechanical fields. Model decides
+   * intent; Runtime derives runtime facts. Never invents missing intent.
+   */
+  #deriveTaskContract(run: RunSnapshot, proposal: PlanTaskContract): TaskContract {
+    const inputVersion = run.inputHistory.length;
+    return TaskContractSchema.parse({
+      ...proposal,
+      workspace: this.#workspaceFor(run.runId),
+      version: inputVersion,
+      inputVersion
+    });
   }
 
   #rejectAction(run: RunSnapshot, error: z.ZodError | ActionRejectedError, rawAction: unknown, observer?: RuntimeObserver): RunSnapshot {

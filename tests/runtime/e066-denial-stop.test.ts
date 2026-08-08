@@ -23,10 +23,7 @@ describe("E066 deterministic denial stop", () => {
         type: "set_plan",
         basedOnVersion: null,
         taskContract: {
-          version: 1,
-          inputVersion: 1,
           goal: "Write output",
-          workspace,
           constraints: ["Ask before writing"],
           acceptanceCriteria: ["Output is written"]
         },

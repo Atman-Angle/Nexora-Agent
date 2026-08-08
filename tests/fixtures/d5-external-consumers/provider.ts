@@ -102,10 +102,7 @@ function plan(context: ModelDecisionContext, file: string) {
     type: "set_plan",
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: context.run.inputCount,
       goal: `Change ${file} from before to after and verify it`,
-      workspace: context.workspace,
       constraints: [`Only change ${file}`],
       acceptanceCriteria: [`${file} contains after`]
     },

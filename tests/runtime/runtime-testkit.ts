@@ -44,12 +44,9 @@ export class ScriptedRuntimeProvider implements RuntimeProvider {
   }
 }
 
-export function taskContract(workspace: string, inputVersion = 1) {
+export function taskContract() {
   return {
-    version: inputVersion,
-    inputVersion,
     goal: "Inspect the target and return verified evidence",
-    workspace,
     constraints: [],
     acceptanceCriteria: ["The target was read successfully"]
   };
@@ -73,7 +70,7 @@ export function setPlan(workspace: string, basedOnVersion: number | null = null)
   return {
     type: "set_plan" as const,
     basedOnVersion,
-    ...(basedOnVersion === null ? { taskContract: taskContract(workspace) } : {}),
+    ...(basedOnVersion === null ? { taskContract: taskContract() } : {}),
     orderedSteps: [readStep()]
   };
 }

@@ -60,7 +60,7 @@ export type ModelDecisionContext = {
     readonly schemaVersion: 1;
     readonly digest: string;
   };
-  readonly allowedActions: readonly ("set_plan" | "call_tool" | "request_input" | "propose_finish" | "request_context")[];
+  readonly allowedActions: readonly ("set_plan" | "call_tool" | "execute_step" | "request_input" | "propose_finish" | "request_context")[];
   readonly actionContract: readonly ModelAction[];
   readonly toolObservations: readonly ToolObservation[];
   readonly contextCheckpoint: ContextCheckpoint | null;
@@ -172,6 +172,23 @@ export const SemanticValidationVerdictSchema = z.object({
 export type SemanticValidationVerdict = z.infer<typeof SemanticValidationVerdictSchema>;
 
 export type ModelCallPhase = "decision" | "validation" | "compaction";
+
+/**
+ * Provider-neutral control for a model's internal reasoning/thinking.
+ * Concrete Provider Adapters translate this into vendor-specific request
+ * parameters (e.g. DashScope's `enable_thinking`); the Runtime core never
+ * observes vendor-specific reasoning fields.
+ *
+ * - `"off"`     — never enable internal reasoning.
+ * - `"on"`      — always enable it for decision calls.
+ * - `"dynamic"` — enable reasoning only when the model must establish a
+ *   first Plan (`context.run.currentPlan === null`); keep ordinary
+ *   execution and finish decisions off. Recommended default.
+ *
+ * Validation and compaction calls are always non-reasoning: they are short
+ * structured outputs where internal reasoning adds latency without value.
+ */
+export type ReasoningPolicy = "off" | "on" | "dynamic";
 
 export type ProviderModelProfile = {
   readonly provider: string;

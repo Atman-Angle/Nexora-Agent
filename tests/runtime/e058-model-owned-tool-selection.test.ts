@@ -26,7 +26,7 @@ describe("E058 model-owned Tool selection", () => {
     const root = workspace();
     const provider = new ScriptedRuntimeProvider([{
       type: "set_plan", basedOnVersion: null,
-      taskContract: { version: 1, inputVersion: 1, goal: "Read the target", workspace: root, constraints: ["Do not use shell.execute"], acceptanceCriteria: ["filesystem.read succeeds"] },
+      taskContract: { goal: "Read the target", constraints: ["Do not use shell.execute"], acceptanceCriteria: ["filesystem.read succeeds"] },
       orderedSteps: [{ id: "read", objective: "Read", acceptanceChecks: [{ id: "read", required: true, kind: "tool_result", toolName: "filesystem.read", expectedStatus: "success" }] }]
     }, { type: "request_input", question: "Stop after accepted Plan", reason: "test" }]);
     const runtime = createRuntime({ workspace: root, provider, tools: createBuiltInTools() });
@@ -43,7 +43,7 @@ describe("E058 model-owned Tool selection", () => {
     writeFileSync(join(root, "target.txt"), "marker\n", "utf8");
     const provider = new OriginalInputValidator([{
       type: "set_plan", basedOnVersion: null,
-      taskContract: { version: 1, inputVersion: 1, goal: "Search and read the marker", workspace: root, constraints: [], acceptanceCriteria: ["Report the file"] },
+      taskContract: { goal: "Search and read the marker", constraints: [], acceptanceCriteria: ["Report the file"] },
       orderedSteps: [{ id: "search", objective: "Search", acceptanceChecks: [{ id: "search", required: true, kind: "tool_result", toolName: "filesystem.search", expectedStatus: "success" }] }]
     }, { type: "call_tool", stepId: "search", checkIds: ["search"], toolName: "filesystem.search", input: { query: "marker", path: "." } },
     finishFromEvidence("Found target.txt"),

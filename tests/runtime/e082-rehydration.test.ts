@@ -322,17 +322,13 @@ function plan(workspace: string, orderedSteps: readonly ReturnType<typeof step>[
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Exercise context rehydration.",
-      workspace,
       constraints: [],
       acceptanceCriteria: ["Each required fact is produced."]
     },
     orderedSteps
   };
 }
-
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-e082-rehydration-"));
   roots.push(root);

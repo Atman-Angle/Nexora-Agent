@@ -24,10 +24,7 @@ describe("E076 repeated Tool Action safety", () => {
         type: "set_plan",
         basedOnVersion: null,
         taskContract: {
-          version: 1,
-          inputVersion: 1,
           goal: "Write the same protected value once",
-          workspace,
           constraints: ["Do not repeat the write"],
           acceptanceCriteria: ["Both planned checks have real Evidence"]
         },

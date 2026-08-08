@@ -336,10 +336,7 @@ function materializeDecision(
     ...(includeTaskContract
       ? {
           taskContract: {
-            version: (context.run.taskContract?.version ?? 0) + 1,
-            inputVersion: context.run.inputCount,
             goal: descriptor.goal,
-            workspace: context.workspace,
             constraints: [],
             acceptanceCriteria: descriptor.acceptanceCriteria
           }

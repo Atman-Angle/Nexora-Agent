@@ -48,13 +48,19 @@ export function projectRelevantToolObservations(
   const activeStepId = run.stepProgress.find(
     (progress) => progress.status === "active"
   )?.stepId;
-  if (activeStepId === undefined) return [];
-  const activeStep = run.currentPlan.orderedSteps.find(
-    (step) => step.id === activeStepId
-  );
-  if (activeStep === undefined) return [];
+  const allCompleted = run.stepProgress.length > 0
+    && run.stepProgress.every((progress) => progress.status === "completed");
+  // The completion decision (all Steps completed, no active Step) still needs
+  // the completed Steps' observations as visible facts: evidence visibility
+  // must not depend on an active Step existing. When every Step is completed,
+  // every completed Step's observation is projected as critical.
+  if (activeStepId === undefined && !allCompleted) return [];
+  const activeStep = activeStepId === undefined
+    ? undefined
+    : run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+  if (activeStepId !== undefined && activeStep === undefined) return [];
   const activeChecks = new Map(
-    activeStep.acceptanceChecks.map((check) => [check.id, check])
+    activeStep?.acceptanceChecks.map((check) => [check.id, check]) ?? []
   );
   const upstreamEvidenceIds = new Set(
     run.stepProgress
@@ -69,14 +75,16 @@ export function projectRelevantToolObservations(
   const upstream = invocations.filter(
     (invocation) => upstreamInvocationIds.has(invocation.id)
   );
-  const active = invocations.filter((invocation) => (
-    invocation.stepId === activeStepId
-    && invocation.checkIds.some((checkId) => {
-      const check = activeChecks.get(checkId);
-      return check !== undefined
-        && (check.kind !== "tool_result" || check.toolName === invocation.toolName);
-    })
-  ));
+  const active = activeStepId === undefined
+    ? []
+    : invocations.filter((invocation) => (
+        invocation.stepId === activeStepId
+        && invocation.checkIds.some((checkId) => {
+          const check = activeChecks.get(checkId);
+          return check !== undefined
+            && (check.kind !== "tool_result" || check.toolName === invocation.toolName);
+        })
+      ));
   const invocationOrder = new Map(
     invocations.map((invocation, index) => [invocation.id, index])
   );
@@ -106,9 +114,14 @@ export function projectRelevantToolObservations(
     selected.set(invocation.id, {
       invocation,
       retentionClass: "predecessor_evidence",
+      // Completion observations (no active Step) stay non-critical so Eviction
+      // can still manage the budget; visibility is guaranteed by projection,
+      // not by pinning observations the model could otherwise outlive.
       critical: (evidenceByInvocation.get(invocation.id) ?? [])
         .some((evidence) => activeProgressEvidence.has(evidence.id)),
-      reasons: ["completed_predecessor_evidence"],
+      reasons: allCompleted
+        ? ["completed_step_evidence"]
+        : ["completed_predecessor_evidence"],
       stepOrder: stepOrder.get(invocation.stepId) ?? -1,
       invocationOrder: invocationOrder.get(invocation.id) ?? -1,
       evidence: evidenceByInvocation.get(invocation.id) ?? []

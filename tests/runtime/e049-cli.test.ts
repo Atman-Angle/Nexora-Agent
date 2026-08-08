@@ -29,7 +29,7 @@ describe("E049 natural-language CLI", () => {
         content = {
           type: "set_plan",
           basedOnVersion: null,
-          taskContract: { version: 1, inputVersion: 1, goal: "Read the requested target", workspace, constraints: [], acceptanceCriteria: ["target.txt was read"] },
+          taskContract: { goal: "Read the requested target", constraints: [], acceptanceCriteria: ["target.txt was read"] },
           orderedSteps: [{ id: "read", objective: "Read target.txt", acceptanceChecks: [{ id: "read-target", kind: "tool_result", required: true, toolName: "filesystem.read", expectedStatus: "success" }] }]
         };
       } else if (calls === 2) {

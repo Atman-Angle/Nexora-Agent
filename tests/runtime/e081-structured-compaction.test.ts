@@ -516,23 +516,18 @@ function plan(workspace: string, orderedSteps: readonly ReturnType<typeof step>[
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Exercise structured compaction.",
-      workspace,
       constraints: [],
       acceptanceCriteria: ["Each required fact is produced."]
     },
     orderedSteps
   };
 }
-
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-e081-compaction-"));
   roots.push(root);
   return root;
 }
-
 function validSummary(overrides: { readonly goal?: string } = {}): CompactionSummary {
   return {
     schemaVersion: 1,
@@ -544,7 +539,6 @@ function validSummary(overrides: { readonly goal?: string } = {}): CompactionSum
     relatedArtifacts: []
   };
 }
-
 /**
  * Wraps a Provider so its Token Meter reports the decision context as over
  * the soft limit whenever observations are present, forcing compaction after

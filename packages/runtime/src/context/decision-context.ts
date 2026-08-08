@@ -160,7 +160,7 @@ export function buildDecisionContext(args: {
     && run.stepProgress.length === run.currentPlan.orderedSteps.length
     && run.stepProgress.every((item) => item.status === "completed");
   const baseContract = runtimeActionContract(
-    actions.filter((item): item is "set_plan" | "call_tool" | "request_input" | "propose_finish" => item !== "request_context"),
+    actions.filter((item): item is "set_plan" | "call_tool" | "execute_step" | "request_input" | "propose_finish" => item !== "request_context"),
     {
       workspace,
       inputVersion: run.inputHistory.length,
@@ -198,7 +198,7 @@ export function buildDecisionContext(args: {
       decision: tool.contract.decision,
       execution: {
         effect: tool.contract.execution.effect,
-        ...(actions.includes("call_tool") && callableTools.has(tool.contract.identity.name)
+        ...((actions.includes("call_tool") || actions.includes("execute_step")) && callableTools.has(tool.contract.identity.name)
           ? { inputExample: tool.contract.execution.inputExample }
           : {})
       },

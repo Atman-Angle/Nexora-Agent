@@ -95,11 +95,11 @@ function tool(value: unknown = "verified"): RuntimeTool {
   } as unknown as RuntimeTool;
 }
 
-function plan(workspace: string) {
+function plan(_workspace: string) {
   return {
     type: "set_plan",
     basedOnVersion: null,
-    taskContract: { version: 1, inputVersion: 1, goal: "Observe the target", workspace, constraints: [], acceptanceCriteria: ["The value is observed"] },
+    taskContract: { goal: "Observe the target", constraints: [], acceptanceCriteria: ["The value is observed"] },
     orderedSteps: [{ id: "observe", objective: "Observe the target", acceptanceChecks: [{ id: "observed", kind: "tool_result", required: true, toolName: "test.observe", expectedStatus: "success" }] }]
   };
 }

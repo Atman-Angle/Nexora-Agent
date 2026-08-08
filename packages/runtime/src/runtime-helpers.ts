@@ -28,7 +28,7 @@ export function allowedActions(
           (check) => check.kind === "tool_result"
         ) ?? false;
         return hasCallableCheck
-          ? ["set_plan", "call_tool", "request_input"]
+          ? ["set_plan", "call_tool", "execute_step", "request_input"]
           : ["set_plan", "request_input"];
       })();
   // request_context is a Harness control action, not a Core RuntimeAction. It
@@ -102,8 +102,34 @@ export function requireWorkspace(value: string): string { const workspace = reso
 export function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 export function actionRejectionDiagnostic(error: z.ZodError | ActionRejectedError, rawAction: unknown) {
   const actionType = typeof rawAction === "object" && rawAction !== null && "type" in rawAction && typeof (rawAction as { readonly type?: unknown }).type === "string" ? (rawAction as { readonly type: string }).type.slice(0, 100) : null;
-  if (error instanceof z.ZodError) return { kind: "schema" as const, actionType, issues: error.issues.slice(0, 4).map((issue) => ({ path: issue.path.length === 0 ? "$" : issue.path.join(".").slice(0, 200), code: issue.code, message: issue.message.slice(0, 500) })) };
+  if (error instanceof z.ZodError) return { kind: "schema" as const, actionType, issues: error.issues.slice(0, 4).map(planningRepairIssue) };
   return { kind: "state" as const, actionType, issues: [{ path: "$", code: "action_rejected", message: error.message.slice(0, 500) }] };
+}
+
+/**
+ * Renders one Zod issue for the model. Empty acceptanceChecks on a Plan Step
+ * gets a step-level, actionable repair hint ("Step N has no verifiable
+ * completion condition. Revise Step N only.") instead of the raw Zod text, so
+ * the model makes the minimal fix rather than rebuilding the whole Plan. The
+ * original path is preserved for audit; the raw action is archived separately.
+ */
+function planningRepairIssue(issue: z.ZodIssue): { path: string; code: string; message: string } {
+  const path = issue.path.length === 0 ? "$" : issue.path.join(".").slice(0, 200);
+  if (
+    issue.path.length === 3
+    && issue.path[0] === "orderedSteps"
+    && typeof issue.path[1] === "number"
+    && issue.path[2] === "acceptanceChecks"
+    && issue.code === z.ZodIssueCode.too_small
+  ) {
+    const stepNumber = issue.path[1] + 1;
+    return {
+      path,
+      code: "empty_acceptance_checks",
+      message: `Step ${stepNumber} has no verifiable completion condition. Revise Step ${stepNumber} only.`
+    };
+  }
+  return { path, code: issue.code, message: issue.message.slice(0, 500) };
 }
 export function serializeRejectedAction(rawAction: unknown): string { try { const serialized = JSON.stringify(rawAction); return serialized ?? JSON.stringify({ unsupportedValueType: typeof rawAction }); } catch (error) { return JSON.stringify({ serializationError: errorMessage(error), receivedType: typeof rawAction }); } }
 export function toRunResult(run: RunSnapshot): RunResult { return { runId: run.runId, status: run.status, stopReason: run.stopReason, summary: run.result?.summary ?? null, resultArtifact: run.result?.resultArtifact ?? null, evidence: run.evidence, lastError: run.lastError }; }

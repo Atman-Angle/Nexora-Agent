@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   EvidenceSchema,
+  PlanTaskContractSchema,
   RunSnapshotSchema,
   RuntimeActionSchema,
   StructuredPlanSchema,
@@ -9,15 +10,13 @@ import {
   createInitialRunSnapshot,
   runtimeActionContract
 } from "../../packages/runtime/src/contracts.js";
+import { actionRejectionDiagnostic } from "../../packages/runtime/src/runtime-helpers.js";
 
 const now = "2026-07-22T00:00:00.000Z";
 
 function taskContract() {
-  return TaskContractSchema.parse({
-    version: 1,
-    inputVersion: 1,
+  return PlanTaskContractSchema.parse({
     goal: "Fix the defect and prove the tests pass",
-    workspace: "D:\\fixture",
     constraints: ["Do not change dependencies"],
     acceptanceCriteria: ["Regression tests pass"]
   });
@@ -108,6 +107,55 @@ describe("E049 authoritative runtime contracts", () => {
     expect(() => RuntimeActionSchema.parse({ type: "update_plan", steps: [] })).toThrow();
     expect(() => RuntimeActionSchema.parse({ type: "complete_step", stepId: "inspect" })).toThrow();
     expect(() => RuntimeActionSchema.parse({ type: "request_approval", toolName: "filesystem.write" })).toThrow();
+  });
+
+  it("rejects mechanical Task Contract fields from the model-side proposal", () => {
+    expect(() => PlanTaskContractSchema.parse({
+      goal: "g", constraints: [], acceptanceCriteria: ["c"], workspace: "D:\\fixture"
+    })).toThrow();
+    expect(() => PlanTaskContractSchema.parse({
+      goal: "g", constraints: [], acceptanceCriteria: ["c"], version: 1, inputVersion: 1
+    })).toThrow();
+    // A set_plan action carrying the full internal Task Contract is rejected.
+    expect(() => RuntimeActionSchema.parse({
+      type: "set_plan",
+      basedOnVersion: null,
+      taskContract: TaskContractSchema.parse({
+        version: 1, inputVersion: 1, goal: "g", workspace: "D:\\fixture", constraints: [], acceptanceCriteria: ["c"]
+      }),
+      orderedSteps: plan().orderedSteps
+    })).toThrow();
+  });
+
+  it("renders an actionable step-level repair for empty acceptanceChecks", () => {
+    const input = {
+      type: "set_plan",
+      basedOnVersion: null,
+      taskContract: { goal: "g", constraints: [], acceptanceCriteria: ["c"] },
+      orderedSteps: [
+        { id: "ok", objective: "Fine", acceptanceChecks: [{ id: "c1", kind: "tool_result", required: true, toolName: "t", expectedStatus: "success" }] },
+        { id: "empty", objective: "Unverifiable", acceptanceChecks: [] },
+        { id: "also-empty", objective: "Also unverifiable", acceptanceChecks: [] }
+      ]
+    };
+    const diagnostics = (() => {
+      try {
+        RuntimeActionSchema.parse(input);
+        return [];
+      } catch (error) {
+        return actionRejectionDiagnostic(error as Parameters<typeof actionRejectionDiagnostic>[0], input).issues;
+      }
+    })();
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      path: "orderedSteps.1.acceptanceChecks",
+      code: "empty_acceptance_checks",
+      message: "Step 2 has no verifiable completion condition. Revise Step 2 only."
+    }));
+    expect(diagnostics).toContainEqual(expect.objectContaining({
+      path: "orderedSteps.2.acceptanceChecks",
+      code: "empty_acceptance_checks",
+      message: "Step 3 has no verifiable completion condition. Revise Step 3 only."
+    }));
   });
 
   it("projects the current Plan and exact finish Evidence into legal Action examples", () => {

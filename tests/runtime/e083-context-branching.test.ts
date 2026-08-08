@@ -482,21 +482,16 @@ function plan(workspace: string, orderedSteps: readonly ReturnType<typeof step>[
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Exercise context branching.",
-      workspace,
       constraints: [],
       acceptanceCriteria: ["Each required fact is produced."]
     },
     orderedSteps
   };
 }
-
 function stop(question = "Stop.", reason = "Inspect the state.") {
   return { type: "request_input" as const, question, reason };
 }
-
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-e083-branching-"));
   roots.push(root);

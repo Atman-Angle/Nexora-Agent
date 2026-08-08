@@ -295,15 +295,12 @@ function mutationFixture(): MutationFixture {
   return { workspace, path, beforeDigest: digest("before\n") };
 }
 
-function mutationPlan(fixture: MutationFixture) {
+function mutationPlan(_fixture: MutationFixture) {
   return {
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Change note.txt from before to after and validate it",
-      workspace: fixture.workspace,
       constraints: ["Only change note.txt"],
       acceptanceCriteria: ["note.txt contains after", "the validation command exits zero"]
     },

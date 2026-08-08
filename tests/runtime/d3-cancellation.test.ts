@@ -422,10 +422,7 @@ function plan(workspace: string, toolName: string) {
     type: "set_plan",
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Run controlled Tool",
-      workspace,
       constraints: [],
       acceptanceCriteria: ["Tool evidence"]
     },

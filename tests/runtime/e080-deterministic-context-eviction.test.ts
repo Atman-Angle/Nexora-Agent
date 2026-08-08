@@ -813,23 +813,18 @@ function plan(workspace: string, orderedSteps: readonly ReturnType<typeof step>[
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Exercise deterministic Context Eviction.",
-      workspace,
       constraints: ["Do not summarize facts."],
       acceptanceCriteria: ["Each required fact is produced in order."]
     },
     orderedSteps
   };
 }
-
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-e080-eviction-"));
   roots.push(root);
   return root;
 }
-
 function requestInputStub(): RuntimeProvider {
   return {
     async decide() {
@@ -850,10 +845,7 @@ function singleToolPlan(workspace: string, toolName: string) {
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Exercise deterministic Context Eviction.",
-      workspace,
       constraints: ["Do not summarize facts."],
       acceptanceCriteria: ["Each required fact is produced in order."]
     },
