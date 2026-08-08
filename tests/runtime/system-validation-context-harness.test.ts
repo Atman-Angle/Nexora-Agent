@@ -618,17 +618,13 @@ function plan(workspace: string, orderedSteps: readonly ReturnType<typeof step>[
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Exercise the Context Harness.",
-      workspace,
       constraints: ["Never complete a step without verified tool evidence."],
       acceptanceCriteria: ["Each required fact is produced."]
     },
     orderedSteps
   };
 }
-
 /**
  * Wraps a Provider so its Token Meter reports the decision context as over
  * the soft limit whenever observations are present, forcing Eviction and then

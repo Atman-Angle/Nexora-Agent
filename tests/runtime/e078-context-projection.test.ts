@@ -63,11 +63,11 @@ describe("E078 bounded decision context projection", () => {
   it("projects only inputs not yet covered by the current Task Contract", async () => {
     const workspace = fixture();
     const provider = new CapturingProvider((context, call) => {
-      if (call === 0) return setPlan(workspace, null, 1);
+      if (call === 0) return setPlan(null, 1);
       if (call === 1) {
         return { type: "request_input", question: "Add a constraint.", reason: "Need a constraint" };
       }
-      if (call === 2) return setPlan(workspace, 1, context.run.inputCount);
+      if (call === 2) return setPlan(1, context.run.inputCount);
       return { type: "request_input", question: "Pause again.", reason: "Projection captured" };
     });
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -131,6 +131,38 @@ describe("E078 bounded decision context projection", () => {
       await runtime.close();
     }
   });
+
+  it("keeps completed step observations visible for the completion decision", async () => {
+    const workspace = fixture();
+    const provider = new CapturingProvider((context, call) => {
+      if (call === 0) return toolPlan(workspace, null, ["one", "two", "three"]);
+      if (call === 1) return callTool("one");
+      if (call === 2) return callTool("two");
+      if (call === 3) return callTool("three");
+      return {
+        type: "propose_finish",
+        summary: "All three steps complete",
+        evidenceIds: context.run.evidence.map((item) => item.id)
+      };
+    });
+    const runtime = createRuntime({
+      workspace,
+      provider,
+      tools: [tool("one", true), tool("two", true), tool("three", true)]
+    });
+
+    try {
+      const result = await runtime.start({ input: "Complete all three steps." });
+      expect(result.status).toBe("succeeded");
+      // The completion decision (propose_finish) has no active Step, yet it must
+      // still see every completed Step's observation as visible facts.
+      const completion = provider.contexts[4]!;
+      expect(completion.run.stepProgress.every((item) => item.status === "completed")).toBe(true);
+      expect(completion.toolObservations.map((item) => item.stepId)).toEqual(["one", "two", "three"]);
+    } finally {
+      await runtime.close();
+    }
+  });
 });
 
 class CapturingProvider implements RuntimeProvider {
@@ -160,15 +192,12 @@ function fixture(): string {
   return workspace;
 }
 
-function setPlan(workspace: string, basedOnVersion: number | null, inputVersion: number) {
+function setPlan(basedOnVersion: number | null, inputVersion: number) {
   return {
     type: "set_plan" as const,
     basedOnVersion,
     taskContract: {
-      version: inputVersion,
-      inputVersion,
       goal: "Inspect the target under every user constraint",
-      workspace,
       constraints: inputVersion === 1 ? [] : ["Do not modify files."],
       acceptanceCriteria: ["User confirms the result"]
     },
@@ -196,10 +225,7 @@ function toolPlan(
     ...(basedOnVersion === null
       ? {
           taskContract: {
-            version: 1,
-            inputVersion: 1,
             goal: "Exercise observation relevance",
-            workspace,
             constraints: [],
             acceptanceCriteria: ["Relevant observations are projected"]
           }

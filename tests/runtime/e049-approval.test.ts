@@ -32,8 +32,8 @@ function writeStep() {
   };
 }
 
-function writeContract(workspace: string) {
-  return { version: 1, inputVersion: 1, goal: "Write note.txt", workspace, constraints: [], acceptanceCriteria: ["filesystem.write succeeds"] };
+function writeContract() {
+  return { goal: "Write note.txt", constraints: [], acceptanceCriteria: ["filesystem.write succeeds"] };
 }
 
 function writeTool(counter: { calls: number }): RuntimeTool {
@@ -56,7 +56,7 @@ describe("E049 Runtime-owned approval", () => {
     const workspace = tempRoot();
     const counter = { calls: 0 };
     const provider = new ScriptedRuntimeProvider([
-      { type: "set_plan", basedOnVersion: null, taskContract: writeContract(workspace), orderedSteps: [writeStep()] },
+      { type: "set_plan", basedOnVersion: null, taskContract: writeContract(), orderedSteps: [writeStep()] },
       { type: "call_tool", stepId: "write", checkIds: ["write-target"], toolName: "filesystem.write", input: { path: "note.txt", content: "after" } },
       finishFromEvidence("Written and verified")
     ]);
@@ -91,7 +91,7 @@ describe("E049 Runtime-owned approval", () => {
     const workspace = tempRoot();
     const counter = { calls: 0 };
     const provider = new ScriptedRuntimeProvider([
-      { type: "set_plan", basedOnVersion: null, taskContract: writeContract(workspace), orderedSteps: [writeStep()] },
+      { type: "set_plan", basedOnVersion: null, taskContract: writeContract(), orderedSteps: [writeStep()] },
       { type: "call_tool", stepId: "write", checkIds: ["write-target"], toolName: "filesystem.write", input: { path: "note.txt", content: "after" } },
       { type: "request_input", question: "The write was denied. Choose another approach?", reason: "approval denied" }
     ]);

@@ -113,10 +113,7 @@ describe("D1 developer Runtime golden path", () => {
             type: "set_plan",
             basedOnVersion: null,
             taskContract: {
-              version: 1,
-              inputVersion: 1,
               goal: "Write target",
-              workspace,
               constraints: [],
               acceptanceCriteria: ["write evidence"]
             },
@@ -235,10 +232,7 @@ describe("D1 developer Runtime golden path", () => {
             type: "set_plan",
             basedOnVersion: null,
             taskContract: {
-              version: 1,
-              inputVersion: 1,
               goal: "Read required and optional evidence",
-              workspace,
               constraints: [],
               acceptanceCriteria: ["required evidence"]
             },
@@ -608,10 +602,7 @@ function scriptedReadProvider(
           type: "set_plan",
           basedOnVersion: null,
           taskContract: {
-            version: 1,
-            inputVersion: 1,
             goal: "Inspect target",
-            workspace,
             constraints: [],
             acceptanceCriteria: ["read evidence"]
           },
@@ -669,10 +660,7 @@ const provider: RuntimeProvider = {
       type: "set_plan",
       basedOnVersion: null,
       taskContract: {
-        version: 1,
-        inputVersion: 1,
         goal: "Search target",
-        workspace,
         constraints: [],
         acceptanceCriteria: ["search evidence"]
       },

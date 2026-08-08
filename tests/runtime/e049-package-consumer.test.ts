@@ -25,7 +25,7 @@ const workspace = ${JSON.stringify(root)};
 const provider = {
   async decide(context) {
     call += 1;
-    if (call === 1) return { type: "set_plan", basedOnVersion: null, taskContract: { version: 1, inputVersion: 1, goal: "Search target", workspace, constraints: [], acceptanceCriteria: ["search"] }, orderedSteps: [{ id: "search", objective: "Search", acceptanceChecks: [{ id: "check", kind: "tool_result", required: true, toolName: "filesystem.search", expectedStatus: "success" }] }] };
+    if (call === 1) return { type: "set_plan", basedOnVersion: null, taskContract: { goal: "Search target", constraints: [], acceptanceCriteria: ["search"] }, orderedSteps: [{ id: "search", objective: "Search", acceptanceChecks: [{ id: "check", kind: "tool_result", required: true, toolName: "filesystem.search", expectedStatus: "success" }] }] };
     if (call === 2) return { type: "call_tool", stepId: "search", checkIds: ["check"], toolName: "filesystem.search", input: { query: "external consumer", path: "." } };
     return { type: "propose_finish", summary: "Verified", evidenceIds: context.run.evidence.map((item) => item.id) };
   },

@@ -7,13 +7,14 @@ import { z } from "zod";
 import {
   RunSnapshotSchema,
   StructuredPlanSchema,
+  TaskContractSchema,
   createInitialRunSnapshot,
   type RunSnapshot
 } from "../../packages/runtime/src/contracts.js";
 import { createRuntime, type RuntimeTool } from "../../packages/runtime/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { digestTaskContract } from "../../packages/runtime/src/validation.js";
-import { ScriptedRuntimeProvider, finishFromEvidence, taskContract } from "./runtime-testkit.js";
+import { ScriptedRuntimeProvider, finishFromEvidence } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -45,7 +46,14 @@ function seedInterruptedInvocation(root: string, idempotent: boolean): { run: Ru
   const databasePath = join(root, ".nexora", "runtime-v1.1.db");
   const store = openRunStore({ databasePath });
   const createdAt = "2026-07-22T00:00:00.000Z";
-  const contract = taskContract(root);
+  const contract = TaskContractSchema.parse({
+    version: 1,
+    inputVersion: 1,
+    goal: "Inspect the target and return verified evidence",
+    workspace: root,
+    constraints: [],
+    acceptanceCriteria: ["The target was read successfully"]
+  });
   const plan = StructuredPlanSchema.parse({
     version: 1,
     basedOnVersion: null,

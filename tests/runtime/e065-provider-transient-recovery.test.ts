@@ -162,10 +162,7 @@ describe("E065 Provider transient failure recovery", () => {
           type: "set_plan",
           basedOnVersion: null,
           taskContract: {
-            version: 1,
-            inputVersion: 1,
             goal: "Read the item once.",
-            workspace: payload.context.workspace,
             constraints: [],
             acceptanceCriteria: ["The persisted read result is cited."]
           },

@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   RunSnapshotSchema,
   StructuredPlanSchema,
+  TaskContractSchema,
   createInitialRunSnapshot
 } from "../../packages/runtime/src/contracts.js";
 import {
@@ -350,10 +351,7 @@ function writeDecision(
       type: "set_plan",
       basedOnVersion: null,
       taskContract: {
-        version: 1,
-        inputVersion: context.run.inputCount,
         goal: "Write protected output",
-        workspace,
         constraints: [],
         acceptanceCriteria: ["write evidence"]
       },
@@ -420,7 +418,7 @@ function writeTool(effects: { count: number }): RuntimeTool {
   };
 }
 
-function readProvider(workspace: string): RuntimeProvider {
+function readProvider(_workspace: string): RuntimeProvider {
   let call = 0;
   return {
     async decide(context) {
@@ -430,10 +428,7 @@ function readProvider(workspace: string): RuntimeProvider {
           type: "set_plan",
           basedOnVersion: null,
           taskContract: {
-            version: 1,
-            inputVersion: context.run.inputCount,
             goal: "Read target",
-            workspace,
             constraints: [],
             acceptanceCriteria: ["read evidence"]
           },
@@ -538,14 +533,14 @@ function seedInterruptedNonIdempotentInvocation(workspace: string): string {
     databasePath: join(workspace, ".nexora", "runtime-v1.1.db")
   });
   const now = "2026-07-28T00:00:00.000Z";
-  const contract = {
+  const contract = TaskContractSchema.parse({
     version: 1,
     inputVersion: 1,
     goal: "Apply external change",
     workspace,
     constraints: [],
     acceptanceCriteria: ["external result"]
-  };
+  });
   const plan = StructuredPlanSchema.parse({
     version: 1,
     basedOnVersion: null,

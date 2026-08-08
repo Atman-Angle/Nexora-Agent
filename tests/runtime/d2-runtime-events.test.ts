@@ -172,10 +172,7 @@ function readDecision(
       type: "set_plan",
       basedOnVersion: null,
       taskContract: {
-        version: 1,
-        inputVersion: context.run.inputCount,
         goal: "Read target",
-        workspace,
         constraints: [],
         acceptanceCriteria: ["read evidence"]
       },

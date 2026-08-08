@@ -48,10 +48,7 @@ describe("E050 Provider Action Contract convergence", () => {
       type: "set_plan",
       basedOnVersion: null,
       taskContract: {
-        version: 1,
-        inputVersion: 1,
         goal: "Inspect the target",
-        workspace,
         constraints: [],
         acceptanceCriteria: ["The target is inspected"]
       },
@@ -69,10 +66,7 @@ describe("E050 Provider Action Contract convergence", () => {
           type: "set_plan",
           basedOnVersion: null,
           taskContract: {
-            version: 1,
-            inputVersion: 1,
             goal: "Inspect the target",
-            workspace,
             constraints: [],
             acceptanceCriteria: ["The target is inspected"]
           },
@@ -178,12 +172,17 @@ describe("E050 Provider Action Contract convergence", () => {
     expect(revisionExample).toEqual(expect.objectContaining({
       type: "set_plan",
       basedOnVersion: 1,
+      // The model-facing example carries only the semantic Task Contract
+      // proposal; the mechanical fields are Runtime-derived and injected.
       taskContract: expect.objectContaining({
-        workspace,
-        inputVersion: 2,
-        version: 2
+        goal: "<goal>",
+        constraints: [],
+        acceptanceCriteria: ["<verifiable-criterion>"]
       })
     }));
+    expect(revisionExample).not.toHaveProperty("taskContract.workspace");
+    expect(revisionExample).not.toHaveProperty("taskContract.version");
+    expect(revisionExample).not.toHaveProperty("taskContract.inputVersion");
   });
 
   it("rejects a Tool input example that does not satisfy the Tool input Schema", () => {

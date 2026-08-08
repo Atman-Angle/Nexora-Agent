@@ -39,3 +39,29 @@ interface RuntimeProvider {
 - 这个文件夹**不依赖** Runtime 核心（`runtime.ts`、`run-store.ts`、`contracts.ts` 中的运行态实现）。只允许依赖 `contracts.ts` 的权威 schema 和 `runtime-error.ts`。
 - 不允许把业务逻辑（Projection、Eviction、Compaction）写在这里；它们属于 `../context/`。
 - 不允许把持久化逻辑写在这里；它们属于 `../store/`。
+
+## 模型配置与 Reasoning Policy
+
+`createOpenAICompatibleProvider` 支持显式配置：
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `model` | 必填 | 模型名 |
+| `temperature` | `0` | 采样温度，`0..2` |
+| `maxTokens` | `reservedOutputTokens`（decision `4096` / validation `1024` / compaction 回退 decision） | 每个 phase 的 `max_tokens` 由 `reservedOutputTokens` 派生 |
+| `timeoutMs` | `60000` | 单次请求超时 |
+| `reasoning` | `"dynamic"` | Provider-neutral 推理策略（见下） |
+| `thinkingToggleParam` | 不发送 | 厂商请求体里切换推理的参数名（DashScope 为 `enable_thinking`） |
+
+环境变量补充：`NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM`。
+
+### Reasoning Policy（`off | on | dynamic`）
+
+`ReasoningPolicy` 是 Provider-neutral 抽象（`model-client.ts`），Runtime 核心不感知任何厂商专有字段。具体 Provider 把它翻译成自己的参数：
+
+- `"dynamic"`（推荐默认）：仅在模型需要建立**首个 Plan**（`context.run.currentPlan === null`）时开启推理；普通 execute_step / call_tool / propose_finish 决策关闭。这是经真实 qwen3.7-flash A/B 验证的策略（见 `agent-evaluation/execute-step-ab/REPORT-thinking.md`）。
+- `"off"`：始终关闭。
+- `"on"`：决策调用始终开启。
+- validation / compaction 始终非推理（短结构化输出，推理只增延迟）。
+
+`thinkingToggleParam` 未声明时（例如对接会拒绝未知字段的 OpenAI 兼容端点）**不发送任何推理参数**——策略 inert，由 Provider 默认行为接管，这是不支持该能力时的安全行为。要激活 dynamic 策略需显式声明，例如 DashScope：`thinkingToggleParam: "enable_thinking"`（env：`NEXORA_MODEL_THINKING_PARAM=enable_thinking`）。

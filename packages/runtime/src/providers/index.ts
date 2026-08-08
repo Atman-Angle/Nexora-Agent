@@ -20,6 +20,7 @@ export type {
   ProviderTokenMeasurement,
   ProviderTokenMeter,
   ProviderTokenUsage,
+  ReasoningPolicy,
   RuntimeOperationContext,
   RuntimeProvider,
   SemanticValidationContext,

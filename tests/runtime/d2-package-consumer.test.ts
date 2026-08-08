@@ -104,10 +104,7 @@ const provider: RuntimeProvider = {
       type: "set_plan",
       basedOnVersion: null,
       taskContract: {
-        version: 1,
-        inputVersion: 1,
         goal: "Write D2 output",
-        workspace,
         constraints: [],
         acceptanceCriteria: ["write evidence"]
       },

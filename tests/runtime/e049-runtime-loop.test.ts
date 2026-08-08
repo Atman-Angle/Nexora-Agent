@@ -43,7 +43,7 @@ describe("E049 one persisted Runtime loop", () => {
       {
         type: "set_plan",
         basedOnVersion: null,
-        taskContract: taskContract(workspace, 2),
+        taskContract: taskContract(),
         orderedSteps: setPlan(workspace).orderedSteps
       },
       { type: "call_tool", stepId: "inspect", checkIds: ["read-target"], toolName: "filesystem.read", input: { path: "src/index.ts" } },

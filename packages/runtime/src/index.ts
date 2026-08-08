@@ -49,6 +49,7 @@ export type {
 } from "./contracts.js";
 
 export type {
+  CompactionContext,
   ModelDecisionContext,
   ModelCallPhase,
   ProjectedRunContext,
@@ -56,6 +57,7 @@ export type {
   ProviderTokenMeasurement,
   ProviderTokenMeter,
   ProviderTokenUsage,
+  ReasoningPolicy,
   RuntimeProvider,
   SemanticValidationContext,
   SemanticValidationVerdict,

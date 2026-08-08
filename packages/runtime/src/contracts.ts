@@ -30,13 +30,23 @@ export const InputEntrySchema = z.object({
   receivedAt: IsoDateTime
 }).strict();
 
-export const TaskContractSchema = z.object({
-  version: z.number().int().positive(),
-  inputVersion: z.number().int().positive(),
+/**
+ * The model-side Task Contract proposal: only semantic fields. The Runtime
+ * derives and injects the mechanical fields (workspace / version / inputVersion)
+ * when the Plan is accepted, so the model never has to copy runtime state.
+ */
+export const PlanTaskContractSchema = z.object({
   goal: NonEmptyString,
-  workspace: NonEmptyString,
   constraints: z.array(NonEmptyString),
   acceptanceCriteria: z.array(NonEmptyString)
+}).strict();
+export type PlanTaskContract = z.infer<typeof PlanTaskContractSchema>;
+
+export const TaskContractSchema = z.object({
+  ...PlanTaskContractSchema.shape,
+  version: z.number().int().positive(),
+  inputVersion: z.number().int().positive(),
+  workspace: NonEmptyString
 }).strict();
 export type TaskContract = z.infer<typeof TaskContractSchema>;
 
@@ -121,16 +131,24 @@ export type StructuredPlan = z.infer<typeof StructuredPlanSchema>;
 const SetPlanActionSchema = z.object({
   type: z.literal("set_plan"),
   basedOnVersion: z.number().int().positive().nullable(),
-  taskContract: TaskContractSchema.optional(),
+  taskContract: PlanTaskContractSchema.optional(),
   orderedSteps: OrderedStepsSchema
 }).strict();
 
-const CallToolActionSchema = z.object({
+export const CallToolActionSchema = z.object({
   type: z.literal("call_tool"),
   stepId: NonEmptyString,
   checkIds: z.array(NonEmptyString).min(1),
   toolName: NonEmptyString,
   input: JsonValueSchema
+}).strict();
+
+export const MAX_EXECUTE_STEP_ACTIONS = 8;
+
+const ExecuteStepActionSchema = z.object({
+  type: z.literal("execute_step"),
+  stepId: NonEmptyString,
+  actions: z.array(CallToolActionSchema).min(1).max(MAX_EXECUTE_STEP_ACTIONS)
 }).strict();
 
 const RequestInputActionSchema = z.object({
@@ -156,11 +174,20 @@ const ProposeFinishActionSchema = z.object({
 export const RuntimeActionSchema = z.discriminatedUnion("type", [
   SetPlanActionSchema,
   CallToolActionSchema,
+  ExecuteStepActionSchema,
   RequestInputActionSchema,
   ProposeFinishActionSchema
 ]).superRefine((action, context) => {
   if (action.type === "call_tool" && new Set(action.checkIds).size !== action.checkIds.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Tool action contains duplicate Check IDs." });
+  }
+  if (action.type === "execute_step") {
+    if (action.actions.some((sub) => sub.stepId !== action.stepId)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "execute_step sub-actions must target the wrapper stepId." });
+    }
+    if (action.actions.some((sub) => new Set(sub.checkIds).size !== sub.checkIds.length)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "execute_step sub-action contains duplicate Check IDs." });
+    }
   }
 });
 export type RuntimeAction = z.infer<typeof RuntimeActionSchema>;
@@ -171,10 +198,7 @@ const RuntimeActionExamples: Record<RuntimeActionType, RuntimeAction> = {
     type: "set_plan",
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "<goal>",
-      workspace: "<runtime-workspace>",
       constraints: [],
       acceptanceCriteria: ["<verifiable-criterion>"]
     },
@@ -196,6 +220,17 @@ const RuntimeActionExamples: Record<RuntimeActionType, RuntimeAction> = {
     checkIds: ["<matching-check-id>"],
     toolName: "<matching-registered-tool-name>",
     input: {}
+  }),
+  execute_step: RuntimeActionSchema.parse({
+    type: "execute_step",
+    stepId: "<active-step-id>",
+    actions: [{
+      type: "call_tool",
+      stepId: "<active-step-id>",
+      checkIds: ["<matching-check-id>"],
+      toolName: "<matching-registered-tool-name>",
+      input: {}
+    }]
   }),
   request_input: RuntimeActionSchema.parse({
     type: "request_input",
@@ -224,11 +259,7 @@ export function runtimeActionContract(
     const example = structuredClone(RuntimeActionExamples[type]);
     if (example.type === "set_plan" && example.taskContract !== undefined) {
       example.basedOnVersion = context.basedOnVersion;
-      if (context.includeTaskContract) {
-        example.taskContract.workspace = context.workspace;
-        example.taskContract.inputVersion = context.inputVersion;
-        example.taskContract.version = context.inputVersion;
-      } else {
+      if (!context.includeTaskContract) {
         delete example.taskContract;
       }
       if (context.currentPlan !== null) {

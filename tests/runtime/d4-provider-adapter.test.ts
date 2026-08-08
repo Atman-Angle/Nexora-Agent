@@ -240,15 +240,12 @@ function readTool(): RuntimeTool {
   };
 }
 
-function planAction(workspace: string): unknown {
+function planAction(_workspace: string): unknown {
   return {
     type: "set_plan",
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Read facts",
-      workspace,
       constraints: [],
       acceptanceCriteria: ["read evidence exists"]
     },

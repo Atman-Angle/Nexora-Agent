@@ -241,10 +241,7 @@ function plan(
     type: "set_plan" as const,
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: "Complete the Tool-backed task",
-      workspace,
       constraints: [],
       acceptanceCriteria: steps.map((step) => `${step.toolName} succeeds`)
     },

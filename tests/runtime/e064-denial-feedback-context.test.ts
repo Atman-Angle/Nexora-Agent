@@ -19,7 +19,7 @@ describe("E064 denial feedback context", () => {
       {
         type: "set_plan",
         basedOnVersion: null,
-        taskContract: { version: 1, inputVersion: 1, goal: "Write output", workspace, constraints: [], acceptanceCriteria: ["Output is written"] },
+        taskContract: { goal: "Write output", constraints: [], acceptanceCriteria: ["Output is written"] },
         orderedSteps: [{ id: "write", objective: "Write output", acceptanceChecks: [{ id: "written", kind: "tool_result", required: true, toolName: "test.write", expectedStatus: "success" }] }]
       },
       { type: "call_tool", stepId: "write", checkIds: ["written"], toolName: "test.write", input: {} },

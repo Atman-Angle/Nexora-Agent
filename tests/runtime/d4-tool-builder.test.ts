@@ -304,10 +304,7 @@ function plan(workspace: string, toolName: string): unknown {
     type: "set_plan",
     basedOnVersion: null,
     taskContract: {
-      version: 1,
-      inputVersion: 1,
       goal: `Use ${toolName}`,
-      workspace,
       constraints: [],
       acceptanceCriteria: ["Tool evidence exists"]
     },
