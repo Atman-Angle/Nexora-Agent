@@ -7,11 +7,7 @@ coverage/
 .local-tool-settings/
 .local-agent-cache/
 .cursor/
-AGENTS.md
 MANIFEST.json
-DEVELOPMENT.md
-LOOP.md
-SYSTEM_SOP.md
 agent-evaluation/
 reports/
 specs/
@@ -19,7 +15,6 @@ docs/audit/
 docs/history/
 docs/later/
 docs/private-design/
-docs/DECISIONS.md
 docs/F007_SAFETY_AUDIT.md
 apps/research-agent/canaries/
 scripts/
