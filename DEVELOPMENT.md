@@ -9,57 +9,53 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-harness
-current_feature: long-sequence-context-quality
+current_feature: decision-continuity-projection
 status: done_locally
 
 feature_contract:
-  feature: long-sequence-context-quality
-  title: Deterministic Long-sequence Context Quality Gate
-  mode: EXPLORE
+  feature: decision-continuity-projection
+  title: Decision Continuity Projection
+  mode: DIRECT
   goal: >
-    Prove whether the layered Context Harness preserves representative current
-    and historical facts through noisy long Runs, then make only the smallest
-    deterministic correction supported by the fixed evaluation dataset.
+    Ensure an active Context Checkpoint, exact rehydrated facts and current
+    Repair guidance survive every Context projection layer and reach the real
+    OpenAI-compatible decision request.
   scope:
-    - fixed deterministic scenarios for early constraints and later supersession
-    - repeated-failure pressure and representative Session Archive navigation
-    - false-recall, same-Run, restart and Branch-isolation quality evidence
-    - bounded model-visible metadata and measured deterministic projection overhead
-    - minimal Harness correction only when the baseline exposes a reproducible gap
+    - project active contextCheckpoint and rehydratedFacts onto the OpenAI-compatible wire
+    - preserve repair while deterministic Eviction rebuilds ModelDecisionContext
+    - prove both paths with direct deterministic request and contraction tests
   invariants:
     - Run/Input/Event/Invocation/Evidence/Artifact remain the only Authorities
     - TaskContract remains current semantic Authority for covered Inputs
-    - Checkpoint, auto-rehydration and Session Archive keep distinct responsibilities
-    - Session Archive remains a bounded, rebuildable navigation index
-    - request_context never modifies Run state or bypasses existing budgets
+    - Checkpoint and rehydratedFacts remain bounded derived Context, never Authority
+    - wire projection omits Runtime-only provenance but preserves decision-bearing facts
+    - Eviction changes only Tool Observation payload retention
   non_goals:
-    - vector or semantic retrieval
-    - cross-Run user memory or cross-Branch sharing
-    - raw Provider transcript retention or historical Plan reconstruction
-    - persistence migration, new model call, dependency or second Context Authority
+    - Memory Contract, Store, lifecycle, promotion, recall or Context injection
+    - automatic historical candidate discovery, vector search or embedding
+    - persistence migration, new model call, dependency or public Contract change
+    - real Provider credential use or final long-sequence Canary
   acceptance:
-    - fixed scenarios distinguish current TaskContract facts from historical Inputs
-    - noisy repeated failures cannot remove all representative navigation categories
-    - exact recall never admits unavailable or cross-scope facts
-    - restart and Branch isolation remain reproducible
-    - metadata remains bounded and projection overhead is recorded, not assumed
-    - targeted quality gate, system validation, full regression, typecheck, lint and builds pass
+    - captured OpenAI-compatible HTTP user message contains the active Checkpoint
+    - captured OpenAI-compatible HTTP user message contains exact rehydrated facts
+    - Runtime-only projection provenance remains absent from the wire
+    - every deterministic Eviction contraction preserves current Repair and hashes it
+    - targeted tests, Context quality gate, system validation, full regression,
+      typecheck, lint and builds pass with no relevant skips
   risk: L3
 
 latest_verification:
   deterministic:
     red_to_green: >
-      A fixed noisy history proved that repeated high-priority failures crowded
-      the latest Input and all other semantic categories out of the 16
-      Milestones; representative anchors now preserve each present category
-      before the existing priority fill.
-    context_quality_gate: 7-files-65-tests-passed
+      The captured OpenAI-compatible wire omitted contextCheckpoint and
+      rehydratedFacts, while the first Eviction rebuild dropped repair; E088
+      now proves all three survive the production projection path.
+    targeted: 3-files-21-tests-passed
+    context_quality_gate: 8-files-68-tests-passed
     system_validation: 10-tests-passed
-    full_regression: 56-files-249-tests-passed-no-skips
-    long_sequence_guard: 10000-inputs-10000-events-under-16-milestones-and-8KiB
-    same_run_refusal: passed
-    restart_recovery: passed
-    branch_isolation: passed
+    full_regression: 57-files-252-tests-passed-no-skips
+    wire_projection: checkpoint-and-exact-rehydrated-fact-present
+    eviction_repair: 2-of-2-contraction-rebuilds-preserved-and-digested
     typecheck: passed
     lint: passed
     runtime_package_build: passed
@@ -67,12 +63,10 @@ latest_verification:
     diff_check: passed
   external_environment_acceptance:
     status: not_run
-    reason: >
-      The deterministic quality gate is the current Feature Core; a real
-      Provider canary will be reported separately if configured and required.
+    reason: Real Provider credential use requires separate authorization.
 
-last_completed_feature: long-sequence-context-quality
-next_action: commit this Feature and stop; do not add semantic/vector retrieval without real recall failures
+last_completed_feature: decision-continuity-projection
+next_action: stop; activate multi-cycle-context-continuity only as a separate Feature
 ```
 
 ## Update Rules

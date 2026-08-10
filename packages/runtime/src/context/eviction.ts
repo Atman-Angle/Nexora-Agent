@@ -66,6 +66,7 @@ function rebuildDecisionContext(
     toolObservations,
     contextCheckpoint: context.contextCheckpoint,
     rehydratedFacts: context.rehydratedFacts,
+    ...(context.repair === undefined ? {} : { repair: context.repair }),
     ...(context.sessionArchive === undefined
       ? {}
       : { sessionArchive: context.sessionArchive }),

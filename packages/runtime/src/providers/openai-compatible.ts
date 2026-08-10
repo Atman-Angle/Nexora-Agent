@@ -325,6 +325,8 @@ function projectDecisionRequest(input: string): string {
           stepProgress: run.stepProgress,
           evidence: run.evidence
         },
+        contextCheckpoint: context.contextCheckpoint,
+        rehydratedFacts: context.rehydratedFacts,
         sessionArchive: context.sessionArchive ?? null,
         repair: context.repair ?? null,
         allowedActions: context.allowedActions,
