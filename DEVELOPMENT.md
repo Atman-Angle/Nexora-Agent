@@ -9,64 +9,70 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-harness
-current_feature: run-local-episodic-recall
+current_feature: long-sequence-context-quality
 status: done_locally
 
 feature_contract:
-  feature: run-local-episodic-recall
-  title: Run-local Session Archive and Exact Recall
-  mode: VERIFY
+  feature: long-sequence-context-quality
+  title: Deterministic Long-sequence Context Quality Gate
+  mode: EXPLORE
   goal: >
-    Let a long-running Run discover its persisted Input and Event history
-    through a bounded Session Archive and restore exact Authority facts through
-    the existing request_context path.
+    Prove whether the layered Context Harness preserves representative current
+    and historical facts through noisy long Runs, then make only the smallest
+    deterministic correction supported by the fixed evaluation dataset.
   scope:
-    - bounded model-visible Session Archive metadata derived from the current Run
-    - exact input:<sequence> and event:<sequence> recall under the existing budget
-    - request_context availability when only archived Session facts exist
-    - same-Run ownership, cross-Run refusal, restart and hard-limit regression coverage
+    - fixed deterministic scenarios for early constraints and later supersession
+    - repeated-failure pressure and representative Session Archive navigation
+    - false-recall, same-Run, restart and Branch-isolation quality evidence
+    - bounded model-visible metadata and measured deterministic projection overhead
+    - minimal Harness correction only when the baseline exposes a reproducible gap
   invariants:
     - Run/Input/Event/Invocation/Evidence/Artifact remain the only Authorities
-    - Session Archive is a bounded derived index and can be rebuilt from the Store
-    - request_context remains a Harness control action and cannot modify Run state
-    - State Machine, Approval, Recovery and Completion Authorities remain unchanged
+    - TaskContract remains current semantic Authority for covered Inputs
+    - Checkpoint, auto-rehydration and Session Archive keep distinct responsibilities
+    - Session Archive remains a bounded, rebuildable navigation index
+    - request_context never modifies Run state or bypasses existing budgets
   non_goals:
-    - raw Provider transcript retention
     - vector or semantic retrieval
     - cross-Run user memory or cross-Branch sharing
-    - persistence migration, new model call or second Context Authority
+    - raw Provider transcript retention or historical Plan reconstruction
+    - persistence migration, new model call, dependency or second Context Authority
   acceptance:
-    - a covered early Input and an old Event remain discoverable and exactly rehydratable
-    - Session Archive metadata stays bounded independent of Session content size
-    - cross-Run and malformed refs remain REF_UNAVAILABLE or INVALID_REF without leakage
-    - crash/restart rebuilds pending recall and no authoritative state changes
-    - system validation, full Runtime regression, typecheck, lint and build pass
+    - fixed scenarios distinguish current TaskContract facts from historical Inputs
+    - noisy repeated failures cannot remove all representative navigation categories
+    - exact recall never admits unavailable or cross-scope facts
+    - restart and Branch isolation remain reproducible
+    - metadata remains bounded and projection overhead is recorded, not assumed
+    - targeted quality gate, system validation, full regression, typecheck, lint and builds pass
   risk: L3
 
 latest_verification:
   deterministic:
     red_to_green: >
-      e082 proves persisted input:1 and event:1 cannot currently be requested
-      after the first Plan without the Archive; the same path now restores both
-      exact facts and preserves Run state.
-    targeted: 7-files-66-tests-passed
+      A fixed noisy history proved that repeated high-priority failures crowded
+      the latest Input and all other semantic categories out of the 16
+      Milestones; representative anchors now preserve each present category
+      before the existing priority fill.
+    context_quality_gate: 7-files-65-tests-passed
     system_validation: 10-tests-passed
-    full_regression: 55-files-245-tests-passed
-    same_run_isolation: passed
+    full_regression: 56-files-249-tests-passed-no-skips
+    long_sequence_guard: 10000-inputs-10000-events-under-16-milestones-and-8KiB
+    same_run_refusal: passed
     restart_recovery: passed
+    branch_isolation: passed
     typecheck: passed
     lint: passed
-    build: passed
     runtime_package_build: passed
+    root_build: passed
     diff_check: passed
   external_environment_acceptance:
     status: not_run
     reason: >
-      No external Provider canary was required to prove the deterministic
-      same-Run archive, Store resolution and recovery boundary.
+      The deterministic quality gate is the current Feature Core; a real
+      Provider canary will be reported separately if configured and required.
 
-last_completed_feature: run-local-episodic-recall
-next_action: review and commit; do not begin semantic/vector retrieval without a recall-quality dataset
+last_completed_feature: long-sequence-context-quality
+next_action: commit this Feature and stop; do not add semantic/vector retrieval without real recall failures
 ```
 
 ## Update Rules

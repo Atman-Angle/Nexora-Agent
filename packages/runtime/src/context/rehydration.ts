@@ -219,12 +219,31 @@ export function projectSessionArchive(args: {
   const firstInput = firstInputRef === null
     ? undefined
     : candidates.find((candidate) => candidate.milestone.ref === firstInputRef);
+  const ranked = candidates
+    .filter((candidate) => candidate !== firstInput)
+    .sort(compareMilestoneValueDescending);
+  const representatives = ([
+    "input",
+    "failure",
+    "approval",
+    "plan",
+    "checkpoint",
+    "branch"
+  ] as const).flatMap((category) => {
+    const candidate = ranked.find((item) => item.milestone.category === category);
+    return candidate === undefined ? [] : [candidate];
+  });
+  const representativeRefs = new Set(
+    representatives.map((candidate) => candidate.milestone.ref)
+  );
   const selected = [
     ...(firstInput === undefined ? [] : [firstInput]),
-    ...candidates
-      .filter((candidate) => candidate !== firstInput)
-      .sort(compareMilestoneValueDescending)
-      .slice(0, MAX_SESSION_ARCHIVE_MILESTONES - (firstInput === undefined ? 0 : 1))
+    ...representatives,
+    ...ranked
+      .filter((candidate) => !representativeRefs.has(candidate.milestone.ref))
+      .slice(0, MAX_SESSION_ARCHIVE_MILESTONES
+        - representatives.length
+        - (firstInput === undefined ? 0 : 1))
   ]
     .sort((left, right) => (
       left.occurredAt.localeCompare(right.occurredAt)
