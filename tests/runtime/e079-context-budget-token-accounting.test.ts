@@ -243,7 +243,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     const result = await runtime.start({ input: "Inspect a target." });
     const call = (await runtime.inspect(result.runId)).modelCalls[0];
 
-    expect(meteredInput).toContain('"projection"');
+    expect(meteredInput).not.toContain('"projection"');
     expect(requestBody).toMatchObject({ model: "provider-model", max_tokens: 500 });
     expect(call).toMatchObject({
       measuredInputTokens: 321,

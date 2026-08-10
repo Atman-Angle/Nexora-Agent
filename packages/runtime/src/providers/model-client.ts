@@ -65,6 +65,13 @@ export type ModelDecisionContext = {
   readonly toolObservations: readonly ToolObservation[];
   readonly contextCheckpoint: ContextCheckpoint | null;
   readonly rehydratedFacts: readonly RehydratedFact[];
+  /**
+   * The current actionable feedback from the Runtime. This is separate from
+   * the projected Run so a model can distinguish repair work from task facts.
+   * `run.lastError` remains in the provider-neutral context for compatibility
+   * with existing custom adapters; production wire projections may omit it.
+   */
+  readonly repair?: RepairContext | null;
   readonly tools: readonly {
     readonly identity: { readonly name: string };
     readonly capability: {
@@ -84,6 +91,16 @@ export type ModelDecisionContext = {
     };
     readonly evidence: { readonly produces: readonly string[] };
   }[];
+};
+
+export type RepairContext = {
+  readonly kind: "invalid_action" | "validation_failed" | "tool_failure" | "approval_denied" | "runtime_error";
+  readonly code: string;
+  readonly issues: readonly string[];
+  readonly retry: {
+    readonly used: number;
+    readonly remaining: number;
+  };
 };
 
 /**

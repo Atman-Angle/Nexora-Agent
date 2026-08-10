@@ -316,7 +316,6 @@ function projectDecisionRequest(input: string): string {
       mode: "decide",
       context: {
         workspace: context.workspace,
-        projection: context.projection,
         run: {
           inputCount: run.inputCount,
           coveredInputCount: run.coveredInputCount,
@@ -324,14 +323,12 @@ function projectDecisionRequest(input: string): string {
           taskContract: run.taskContract,
           currentPlan: run.currentPlan,
           stepProgress: run.stepProgress,
-          evidence: run.evidence,
-          lastError: run.lastError === null
-            ? null
-            : { code: run.lastError.code, message: run.lastError.message }
+          evidence: run.evidence
         },
+        repair: context.repair ?? null,
         allowedActions: context.allowedActions,
         actionContract: context.actionContract,
-        toolObservations: context.toolObservations,
+        toolObservations: projectDecisionToolObservations(context.toolObservations),
         toolCatalog: context.tools.map((tool) => ({
           name: tool.identity.name,
           purpose: tool.capability.purpose,
@@ -343,6 +340,26 @@ function projectDecisionRequest(input: string): string {
   } catch {
     return input;
   }
+}
+
+/**
+ * The Runtime retains projection provenance for eviction, rehydration and the
+ * model-call ledger. The decision model only needs the fact-bearing portion
+ * of each observation plus its published source references.
+ */
+function projectDecisionToolObservations(
+  observations: ModelDecisionContext["toolObservations"]
+): readonly Record<string, unknown>[] {
+  return observations.map((observation) => ({
+    stepId: observation.stepId,
+    toolName: observation.toolName,
+    status: observation.status,
+    facts: observation.facts,
+    error: observation.error,
+    payloadFragment: observation.payloadFragment,
+    payloadMode: observation.payloadMode,
+    sourceRefs: observation.sourceRefs
+  }));
 }
 
 function required(environment: Record<string, string | undefined>, name: string): string {

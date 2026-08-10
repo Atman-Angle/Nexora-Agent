@@ -12,6 +12,7 @@ import {
 import type {
   ModelAction,
   ModelDecisionContext,
+  RepairContext,
   RehydratedFact
 } from "../providers/model-client.js";
 import type { RuntimeTool } from "../runtime-types.js";
@@ -192,6 +193,7 @@ export function buildDecisionContext(args: {
       : observations.filter((item) => !covered.has(item.invocationId)),
     contextCheckpoint: checkpointView,
     rehydratedFacts,
+    repair: projectRepairContext(run),
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
       capability: tool.contract.capability,
@@ -217,9 +219,54 @@ export function buildDecisionContext(args: {
     toolObservations: projection.toolObservations,
     contextCheckpoint: projection.contextCheckpoint,
     rehydratedFacts: projection.rehydratedFacts,
+    repair: projection.repair,
     tools: projection.tools
   });
   return { context, injectedRehydratedRefs };
+}
+
+function projectRepairContext(run: RunSnapshot): RepairContext | null {
+  const error = run.lastError;
+  if (error === null) return null;
+  return {
+    kind: repairKind(error.code),
+    code: error.code,
+    issues: repairIssues(error.code, error.message),
+    retry: {
+      used: run.budgetsUsed.retries,
+      remaining: Math.max(0, run.budgets.maxRetries - run.budgetsUsed.retries)
+    }
+  };
+}
+
+function repairKind(code: string): RepairContext["kind"] {
+  if (code === "INVALID_MODEL_ACTION") return "invalid_action";
+  if (code === "VALIDATION_FAILED") return "validation_failed";
+  if (code === "APPROVAL_DENIED") return "approval_denied";
+  if (/TOOL|READ|SEARCH|PATCH|COMMAND|EXECUTE/.test(code)) return "tool_failure";
+  return "runtime_error";
+}
+
+function repairIssues(code: string, message: string): readonly string[] {
+  if (code !== "INVALID_MODEL_ACTION") return [message];
+  try {
+    const parsed = JSON.parse(message) as { readonly issues?: unknown };
+    if (Array.isArray(parsed.issues)) {
+      const issues = parsed.issues
+        .map((item) => (
+          item !== null
+          && typeof item === "object"
+          && typeof (item as { readonly message?: unknown }).message === "string"
+            ? (item as { readonly message: string }).message
+            : null
+        ))
+        .filter((item): item is string => item !== null);
+      if (issues.length > 0) return issues;
+    }
+  } catch {
+    // Keep the persisted message as bounded fallback feedback.
+  }
+  return [message];
 }
 
 /**

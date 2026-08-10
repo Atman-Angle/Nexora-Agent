@@ -73,11 +73,13 @@ describe("E052 Provider observation closure", () => {
       const readObservation = observations(stub.decisionContexts[2]!)
         .find((item) => item.toolName === "filesystem.read");
       expect(readObservation).toEqual(expect.objectContaining({
-        invocationId: view.toolInvocations[0]!.id,
         status: "succeeded",
-        truncated: false,
+        payloadMode: "full",
+        sourceRefs: expect.arrayContaining([`invocation:${view.toolInvocations[0]!.id}`]),
         facts: expect.objectContaining({ content: "before\n", digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) })
       }));
+      expect(readObservation).not.toHaveProperty("invocationId");
+      expect(readObservation).not.toHaveProperty("truncated");
       expect(stub.validationCalls).toBe(1);
     } finally {
       runtime.close();

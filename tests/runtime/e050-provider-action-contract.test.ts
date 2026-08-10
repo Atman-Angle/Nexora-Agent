@@ -34,9 +34,16 @@ type DecisionPayload = {
   readonly context: {
     readonly workspace?: string;
     readonly actionContract?: readonly { readonly type: string }[];
-    readonly run: { readonly lastError: { readonly message: string } | null };
+    readonly run: Record<string, unknown>;
+    readonly repair?: {
+      readonly kind: string;
+      readonly code: string;
+      readonly issues: readonly string[];
+      readonly retry: { readonly used: number; readonly remaining: number };
+    } | null;
     readonly toolCatalog: readonly { readonly name: string }[];
     readonly tools: readonly { readonly identity: { readonly name: string }; readonly execution: { readonly inputExample?: unknown } }[];
+    readonly toolObservations?: readonly Record<string, unknown>[];
   };
 };
 
@@ -106,6 +113,7 @@ describe("E050 Provider Action Contract convergence", () => {
     const decisionRequests = requests.map((request) => JSON.parse(request.messages.at(-1)!.content) as DecisionPayload)
       .filter((payload) => payload.mode === "decide");
     expect(decisionRequests[0]?.context.workspace).toBe(workspace);
+    expect(decisionRequests[0]?.context).not.toHaveProperty("projection");
     expect(decisionRequests[0]?.context.actionContract?.map((item) => item.type)).toEqual(["set_plan", "request_input"]);
     for (const example of decisionRequests[0]?.context.actionContract ?? []) {
       expect(RuntimeActionSchema.parse(example).type).toBe(example.type);
@@ -117,18 +125,12 @@ describe("E050 Provider Action Contract convergence", () => {
       execution: expect.objectContaining({ inputExample: { path: "target.txt" } })
     }));
     expect(decisionRequests[2]?.context.tools.find((tool) => tool.identity.name === "example.other")).toBeUndefined();
-    const secondDiagnostic = JSON.parse(decisionRequests[1]!.context.run.lastError!.message) as {
-      kind: string;
-      actionType: string | null;
-      issues: Array<{ path: string; code: string; message: string }>;
-    };
-    expect(secondDiagnostic).toEqual(expect.objectContaining({
-      kind: "schema",
-      actionType: "set_plan"
-    }));
-    expect(secondDiagnostic.issues).toContainEqual(expect.objectContaining({
-      path: "orderedSteps",
-      code: "invalid_type"
+    expect(decisionRequests[1]!.context.run).not.toHaveProperty("lastError");
+    expect(decisionRequests[1]!.context.repair).toEqual(expect.objectContaining({
+      kind: "invalid_action",
+      code: "INVALID_MODEL_ACTION",
+      issues: expect.arrayContaining([expect.stringContaining("Required")]),
+      retry: { used: 1, remaining: 9 }
     }));
     const revisionExample = decisionRequests[2]?.context.actionContract
       ?.find((item) => item.type === "set_plan") as Record<string, unknown> | undefined;
@@ -145,6 +147,86 @@ describe("E050 Provider Action Contract convergence", () => {
     expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toEqual(invalidAction);
     expect(view.events.map((event) => event.type)).toEqual(expect.arrayContaining(["action.rejected", "plan.set"]));
     expect(view.toolInvocations).toEqual([]);
+  });
+
+  it("omits Runtime-only Observation provenance from the OpenAI decision wire payload", async () => {
+    const workspace = tempRoot("nexora-e050-wire-projection-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          type: "set_plan",
+          basedOnVersion: null,
+          taskContract: {
+            goal: "Read the target",
+            constraints: [],
+            acceptanceCriteria: ["The target is read"]
+          },
+          orderedSteps: [{
+            id: "read",
+            objective: "Read the target",
+            acceptanceChecks: [{
+              id: "read-target",
+              kind: "tool_result",
+              required: true,
+              toolName: "example.read",
+              expectedStatus: "success"
+            }]
+          }]
+        };
+      }
+      if (decisions === 2) {
+        return {
+          type: "call_tool",
+          stepId: "read",
+          checkIds: ["read-target"],
+          toolName: "example.read",
+          input: { path: "target.txt" }
+        };
+      }
+      return { type: "request_input", question: "Stop.", reason: "Wire payload captured" };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: [exampleTool({ path: "target.txt" })]
+    });
+
+    await runtime.start({ input: "Read the target." });
+    runtime.close();
+
+    const payloads = requests
+      .map((request) => JSON.parse(request.messages.at(-1)!.content) as DecisionPayload)
+      .filter((payload) => payload.mode === "decide");
+    const context = payloads[2]!.context;
+    const observation = context.toolObservations?.[0];
+    expect(context).not.toHaveProperty("projection");
+    expect(observation).toEqual(expect.objectContaining({
+      stepId: "read",
+      toolName: "example.read",
+      status: "succeeded",
+      payloadMode: "full",
+      sourceRefs: expect.arrayContaining([expect.stringMatching(/^invocation:/)])
+    }));
+    for (const key of [
+      "invocationId",
+      "planVersion",
+      "completedAt",
+      "truncated",
+      "originalBytes",
+      "retention",
+      "digest"
+    ]) {
+      expect(observation).not.toHaveProperty(key);
+    }
   });
 
   it("projects the current Plan version and updated Task Contract after new user input", async () => {
