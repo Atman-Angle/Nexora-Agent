@@ -23,6 +23,9 @@ export type {
   ReasoningPolicy,
   RuntimeOperationContext,
   RuntimeProvider,
+  SessionArchive,
+  SessionArchiveMilestone,
+  SessionArchiveRange,
   SemanticValidationContext,
   SemanticValidationVerdict,
   ToolObservation

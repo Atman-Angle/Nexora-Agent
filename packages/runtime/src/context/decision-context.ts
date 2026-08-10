@@ -34,6 +34,7 @@ import {
   admitRehydratedFacts,
   autoRehydrateForActiveStep,
   buildAvailableContextRefs,
+  projectSessionArchive,
   resolveRehydratedFact
 } from "./rehydration.js";
 
@@ -66,6 +67,7 @@ export function buildDecisionContext(args: {
 }): DecisionContextResult {
   const { run, store, workspace, tools, artifactDir } = args;
   const invocations = store.listToolInvocations(run.runId);
+  const events = store.listEvents(run.runId);
   const observations = projectRelevantToolObservations(run, invocations);
   const checkpoint = findActiveCheckpoint({
     run,
@@ -193,6 +195,7 @@ export function buildDecisionContext(args: {
       : observations.filter((item) => !covered.has(item.invocationId)),
     contextCheckpoint: checkpointView,
     rehydratedFacts,
+    sessionArchive: projectSessionArchive({ run, events }),
     repair: projectRepairContext(run),
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
@@ -219,6 +222,7 @@ export function buildDecisionContext(args: {
     toolObservations: projection.toolObservations,
     contextCheckpoint: projection.contextCheckpoint,
     rehydratedFacts: projection.rehydratedFacts,
+    sessionArchive: projection.sessionArchive,
     repair: projection.repair,
     tools: projection.tools
   });

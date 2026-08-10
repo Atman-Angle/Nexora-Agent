@@ -68,6 +68,16 @@ describe("D4 Provider Adapter", () => {
       && request.system.length > 0
       && JSON.parse(request.input) !== null
     ))).toBe(true);
+    expect(requests[0]!.system).toContain("context.sessionArchive");
+    expect(JSON.parse(requests[0]!.input)).toEqual(expect.objectContaining({
+      mode: "decide",
+      context: expect.objectContaining({
+        sessionArchive: expect.objectContaining({
+          schemaVersion: 1,
+          inputs: expect.objectContaining({ firstSequence: 1, lastSequence: 1, count: 1 })
+        })
+      })
+    }));
     expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
     expect(disposed).toBe(1);
   });

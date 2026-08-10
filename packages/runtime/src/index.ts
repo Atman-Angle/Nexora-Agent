@@ -59,6 +59,9 @@ export type {
   ProviderTokenUsage,
   ReasoningPolicy,
   RuntimeProvider,
+  SessionArchive,
+  SessionArchiveMilestone,
+  SessionArchiveRange,
   SemanticValidationContext,
   SemanticValidationVerdict,
   ToolObservation

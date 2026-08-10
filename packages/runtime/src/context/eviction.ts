@@ -66,6 +66,9 @@ function rebuildDecisionContext(
     toolObservations,
     contextCheckpoint: context.contextCheckpoint,
     rehydratedFacts: context.rehydratedFacts,
+    ...(context.sessionArchive === undefined
+      ? {}
+      : { sessionArchive: context.sessionArchive }),
     tools: context.tools
   };
   return deepFreeze({

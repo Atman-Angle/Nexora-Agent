@@ -66,6 +66,13 @@ export type ModelDecisionContext = {
   readonly contextCheckpoint: ContextCheckpoint | null;
   readonly rehydratedFacts: readonly RehydratedFact[];
   /**
+   * A bounded index over exact Input and Event facts already persisted for
+   * this Run. The archive publishes addressable sequence ranges, not the
+   * history content itself; request_context resolves individual refs back to
+   * the Authority Store under the normal rehydration budget.
+   */
+  readonly sessionArchive?: SessionArchive;
+  /**
    * The current actionable feedback from the Runtime. This is separate from
    * the projected Run so a model can distinguish repair work from task facts.
    * `run.lastError` remains in the provider-neutral context for compatibility
@@ -91,6 +98,27 @@ export type ModelDecisionContext = {
     };
     readonly evidence: { readonly produces: readonly string[] };
   }[];
+};
+
+export type SessionArchiveRange = {
+  readonly firstSequence: number;
+  readonly lastSequence: number;
+  readonly count: number;
+  readonly refFormat: "input:<sequence>" | "event:<sequence>";
+};
+
+export type SessionArchiveMilestone = {
+  readonly ref: string;
+  readonly category: "input" | "plan" | "failure" | "approval" | "checkpoint" | "branch";
+  readonly label: string;
+};
+
+export type SessionArchive = {
+  readonly schemaVersion: 1;
+  readonly inputs: SessionArchiveRange | null;
+  readonly events: SessionArchiveRange | null;
+  readonly milestones: readonly SessionArchiveMilestone[];
+  readonly truncated: boolean;
 };
 
 export type RepairContext = {

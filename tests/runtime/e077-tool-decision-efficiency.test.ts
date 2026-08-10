@@ -44,9 +44,15 @@ describe("E077 Tool decision efficiency", () => {
 
     expect(result.status).toBe("succeeded");
     expect(provider.contexts[0]?.allowedActions).toEqual(["set_plan", "request_input"]);
-    expect(provider.contexts[1]?.allowedActions).toEqual(["set_plan", "call_tool", "execute_step", "request_input"]);
+    expect(provider.contexts[1]?.allowedActions).toEqual([
+      "set_plan",
+      "call_tool",
+      "execute_step",
+      "request_input",
+      "request_context"
+    ]);
     expect(provider.contexts[1]?.actionContract.map((action) => action.type))
-      .toEqual(["set_plan", "call_tool", "execute_step", "request_input"]);
+      .toEqual(["set_plan", "call_tool", "execute_step", "request_input", "request_context"]);
     expect(provider.contexts[2]?.allowedActions).toEqual(["set_plan", "request_input", "propose_finish", "request_context"]);
     expect(provider.contexts[2]?.actionContract.map((action) => action.type))
       .toEqual(["set_plan", "request_input", "propose_finish", "request_context"]);
@@ -82,9 +88,9 @@ describe("E077 Tool decision efficiency", () => {
     runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(provider.contexts[1]?.allowedActions).toEqual(["set_plan", "request_input"]);
+    expect(provider.contexts[1]?.allowedActions).toEqual(["set_plan", "request_input", "request_context"]);
     expect(provider.contexts[1]?.actionContract.map((action) => action.type))
-      .toEqual(["set_plan", "request_input"]);
+      .toEqual(["set_plan", "request_input", "request_context"]);
   });
 });
 

@@ -239,7 +239,13 @@ describe("E066 execute_step granularity", () => {
 
     expect(result.status).toBe("waiting");
     const contract = provider.contexts[1]?.actionContract ?? [];
-    expect(contract.map((action) => action.type)).toEqual(["set_plan", "call_tool", "execute_step", "request_input"]);
+    expect(contract.map((action) => action.type)).toEqual([
+      "set_plan",
+      "call_tool",
+      "execute_step",
+      "request_input",
+      "request_context"
+    ]);
     const example = contract.find((action) => action.type === "execute_step");
     expect(example).toBeDefined();
     const parsed = RuntimeActionSchema.parse(example);

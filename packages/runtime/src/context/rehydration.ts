@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   JsonValueSchema,
   type InheritedFactProjection,
+  type RunEvent,
   type RunSnapshot,
   type ToolInvocation
 } from "../contracts.js";
@@ -14,6 +15,8 @@ import type {
   RehydratedFact,
   RehydrationError,
   RehydrationOrigin,
+  SessionArchive,
+  SessionArchiveMilestone,
   ToolObservation
 } from "../providers/model-client.js";
 import { ArtifactStore } from "../store/artifacts.js";
@@ -30,6 +33,8 @@ export type RequestContextAction = z.infer<typeof RequestContextActionSchema>;
 export const MAX_REHYDRATION_REFS_PER_REQUEST = 8;
 export const MAX_REHYDRATED_TOKENS_PER_TURN = 4_096;
 export const MAX_SINGLE_FACT_TOKENS = 2_048;
+export const MAX_SESSION_ARCHIVE_MILESTONES = 16;
+export const MAX_SESSION_MILESTONE_LABEL_LENGTH = 180;
 
 export function parseRequestContextAction(raw: unknown): RequestContextAction | null {
   const parsed = RequestContextActionSchema.safeParse(raw);
@@ -161,12 +166,174 @@ export function buildAvailableContextRefs(args: {
     const resolved = resolveSourceRef(ref, authority);
     if (resolved !== null) manifest.set(ref, resolved.digest);
   }
+  // The bounded Session Archive publishes complete same-Run Input/Event
+  // ranges. Populate their exact digest entries directly instead of resolving
+  // each ref through a linear lookup, keeping archive publication O(n).
+  for (const entry of run.inputHistory) {
+    manifest.set(`input:${entry.sequence}`, digestText(entry.text));
+  }
+  for (const event of publishedSessionArchiveEvents(authority.events)) {
+    manifest.set(
+      `event:${event.sequence}`,
+      digestText(`${event.type}:${event.occurredAt}`)
+    );
+  }
   if (args.inheritedRefs !== undefined) {
     for (const [ref, digest] of Object.entries(args.inheritedRefs)) {
       if (!manifest.has(ref)) manifest.set(ref, digest);
     }
   }
   return manifest;
+}
+
+/**
+ * Projects fixed-size metadata for the persisted Session history. Content is
+ * never copied here: the ranges only publish which exact Input/Event refs may
+ * be requested from the current Run's Authority Store.
+ */
+export function projectSessionArchive(args: {
+  readonly run: RunSnapshot;
+  readonly events: readonly RunEvent[];
+}): SessionArchive {
+  const { run, events } = args;
+  const publishedEvents = publishedSessionArchiveEvents(events);
+  const candidates: MilestoneCandidate[] = [
+    ...run.inputHistory.map((entry) => ({
+      milestone: {
+        ref: `input:${entry.sequence}`,
+        category: "input" as const,
+        label: boundedLabel(`Input ${entry.sequence}: ${entry.text}`)
+      },
+      priority: 5,
+      stableOrder: entry.sequence,
+      occurredAt: entry.receivedAt
+    })),
+    ...publishedEvents.flatMap((event) => {
+      const projected = projectEventMilestone(event);
+      return projected === null ? [] : [projected];
+    })
+  ];
+  const firstInputRef = run.inputHistory[0] === undefined
+    ? null
+    : `input:${run.inputHistory[0].sequence}`;
+  const firstInput = firstInputRef === null
+    ? undefined
+    : candidates.find((candidate) => candidate.milestone.ref === firstInputRef);
+  const selected = [
+    ...(firstInput === undefined ? [] : [firstInput]),
+    ...candidates
+      .filter((candidate) => candidate !== firstInput)
+      .sort(compareMilestoneValueDescending)
+      .slice(0, MAX_SESSION_ARCHIVE_MILESTONES - (firstInput === undefined ? 0 : 1))
+  ]
+    .sort((left, right) => (
+      left.occurredAt.localeCompare(right.occurredAt)
+      || left.milestone.ref.localeCompare(right.milestone.ref)
+    ))
+    .map((candidate) => candidate.milestone);
+  return {
+    schemaVersion: 1,
+    inputs: sequenceRange(
+      run.inputHistory.map((entry) => entry.sequence),
+      "input:<sequence>"
+    ),
+    events: sequenceRange(
+      publishedEvents.map((event) => event.sequence),
+      "event:<sequence>"
+    ),
+    milestones: selected,
+    truncated: candidates.length > selected.length
+  };
+}
+
+type MilestoneCandidate = {
+  readonly milestone: SessionArchiveMilestone;
+  readonly priority: number;
+  readonly stableOrder: number;
+  readonly occurredAt: string;
+};
+
+function projectEventMilestone(event: RunEvent): MilestoneCandidate | null {
+  const classification = classifyMilestoneEvent(event.type);
+  if (classification === null) return null;
+  const details = milestoneDetails(event.payload);
+  return {
+    milestone: {
+      ref: `event:${event.sequence}`,
+      category: classification.category,
+      label: boundedLabel(`${event.type}${details === "" ? "" : `: ${details}`}`)
+    },
+    priority: classification.priority,
+    stableOrder: event.sequence,
+    occurredAt: event.occurredAt
+  };
+}
+
+function classifyMilestoneEvent(
+  type: string
+): { readonly category: SessionArchiveMilestone["category"]; readonly priority: number } | null {
+  if (type === "approval.denied") return { category: "approval", priority: 6 };
+  if (/failed|rejected|blocked|unknown/.test(type)) return { category: "failure", priority: 6 };
+  if (type === "plan.set") return { category: "plan", priority: 4 };
+  if (type === "context.checkpointed") return { category: "checkpoint", priority: 3 };
+  if (type.startsWith("branch.")) return { category: "branch", priority: 3 };
+  return null;
+}
+
+function milestoneDetails(payload: RunEvent["payload"]): string {
+  const fields = ["code", "reason", "message", "toolName", "version", "basedOnVersion"];
+  const details: string[] = [];
+  for (const field of fields) {
+    const value = payload[field];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      details.push(`${field}=${String(value)}`);
+    }
+  }
+  return details.join(", ");
+}
+
+function compareMilestoneValueDescending(left: MilestoneCandidate, right: MilestoneCandidate): number {
+  return right.priority - left.priority
+    || right.occurredAt.localeCompare(left.occurredAt)
+    || right.stableOrder - left.stableOrder
+    || right.milestone.ref.localeCompare(left.milestone.ref);
+}
+
+function isSessionArchiveBoundaryEvent(event: RunEvent): boolean {
+  return event.type !== "model.requested"
+    && event.type !== "context.rehydrate_requested"
+    && event.type !== "context.rehydrated";
+}
+
+function publishedSessionArchiveEvents(events: readonly RunEvent[]): readonly RunEvent[] {
+  // Close the addressable range at the latest semantic state transition.
+  // Trailing model/rehydration transport events would otherwise change an
+  // identical decision projection on every call. Events inside the closed
+  // range remain contiguous and exactly addressable for audit reconstruction.
+  const lastBoundary = [...events].reverse().find(isSessionArchiveBoundaryEvent);
+  return lastBoundary === undefined
+    ? []
+    : events.filter((event) => event.sequence <= lastBoundary.sequence);
+}
+
+function boundedLabel(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= MAX_SESSION_MILESTONE_LABEL_LENGTH
+    ? normalized
+    : `${normalized.slice(0, MAX_SESSION_MILESTONE_LABEL_LENGTH - 1)}…`;
+}
+
+function sequenceRange(
+  sequences: readonly number[],
+  refFormat: "input:<sequence>" | "event:<sequence>"
+): SessionArchive["inputs"] {
+  if (sequences.length === 0) return null;
+  return {
+    firstSequence: sequences[0]!,
+    lastSequence: sequences.at(-1)!,
+    count: sequences.length,
+    refFormat
+  };
 }
 
 /**

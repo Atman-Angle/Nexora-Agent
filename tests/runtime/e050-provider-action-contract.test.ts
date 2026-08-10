@@ -41,6 +41,11 @@ type DecisionPayload = {
       readonly issues: readonly string[];
       readonly retry: { readonly used: number; readonly remaining: number };
     } | null;
+    readonly sessionArchive?: {
+      readonly schemaVersion: number;
+      readonly inputs: { readonly firstSequence: number; readonly lastSequence: number; readonly count: number } | null;
+      readonly events: { readonly firstSequence: number; readonly lastSequence: number; readonly count: number } | null;
+    } | null;
     readonly toolCatalog: readonly { readonly name: string }[];
     readonly tools: readonly { readonly identity: { readonly name: string }; readonly execution: { readonly inputExample?: unknown } }[];
     readonly toolObservations?: readonly Record<string, unknown>[];
@@ -114,6 +119,11 @@ describe("E050 Provider Action Contract convergence", () => {
       .filter((payload) => payload.mode === "decide");
     expect(decisionRequests[0]?.context.workspace).toBe(workspace);
     expect(decisionRequests[0]?.context).not.toHaveProperty("projection");
+    expect(decisionRequests[0]?.context.sessionArchive).toEqual(expect.objectContaining({
+      schemaVersion: 1,
+      inputs: expect.objectContaining({ firstSequence: 1, lastSequence: 1, count: 1 }),
+      events: expect.objectContaining({ firstSequence: 1, count: expect.any(Number) })
+    }));
     expect(decisionRequests[0]?.context.actionContract?.map((item) => item.type)).toEqual(["set_plan", "request_input"]);
     for (const example of decisionRequests[0]?.context.actionContract ?? []) {
       expect(RuntimeActionSchema.parse(example).type).toBe(example.type);

@@ -18,7 +18,8 @@ import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import { ScriptedRuntimeProvider, finishFromEvidence } from "./runtime-testkit.js";
 
 /**
- * System-level validation of the Context Harness (Slices 1-6) as a whole.
+ * System-level validation of the Context Harness (Slices 1-6 plus run-local
+ * Session Archive recall) as a whole.
  *
  * Unlike the per-slice unit/contract tests (E078-E083), these scenarios drive
  * the REAL Runtime pipeline across many steps and assert the cross-cutting
@@ -48,6 +49,45 @@ afterEach(() => {
 });
 
 describe("Context Harness system validation", () => {
+  it("recalls an early covered Input and persisted Event through the bounded Session Archive", async () => {
+    const workspace = fixture();
+    const earlyConstraint = `Keep the original constraint ${"x".repeat(1_000)}`;
+    const provider = new ScriptedRuntimeProvider([
+      plan(workspace, [step(1)]),
+      { type: "request_context", refs: ["input:1", "event:1"] },
+      stop("Stop.", "Inspect exact Session recall.")
+    ]);
+    const runtime = createRuntime({ workspace, provider, tools: [largeTool()] });
+
+    const result = await runtime.start({ input: earlyConstraint });
+    const recalled = provider.contexts.find((context) => (
+      context.rehydratedFacts.some((fact) => fact.ref === "input:1" && fact.error === null)
+    ));
+
+    expect(result.status).toBe("waiting");
+    expect(provider.contexts[1]!.sessionArchive).toEqual(expect.objectContaining({
+      schemaVersion: 1,
+      inputs: expect.objectContaining({ firstSequence: 1, lastSequence: 1, count: 1 }),
+      milestones: expect.arrayContaining([expect.objectContaining({ ref: "input:1" })])
+    }));
+    expect(recalled?.rehydratedFacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ref: "input:1",
+        error: null,
+        content: { sequence: 1, text: earlyConstraint }
+      }),
+      expect.objectContaining({
+        ref: "event:1",
+        error: null,
+        content: expect.objectContaining({ type: "run.created" })
+      })
+    ]));
+    const view = await runtime.inspect(result.runId);
+    expect(view.snapshot.inputHistory[0]!.text).toBe(earlyConstraint);
+    expect(view.events.some((event) => event.type === "context.rehydrated")).toBe(true);
+    await runtime.close();
+  });
+
   it("short task completes with full context and no eviction/compaction/call overhead", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
