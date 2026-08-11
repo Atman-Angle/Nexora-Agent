@@ -23,7 +23,8 @@ export const PROVIDER_BENCHMARK_ID = "context-memory-provider-v1";
 export const PROVIDER_DATASET_VERSION = 1;
 export const PROVIDER_REPETITIONS = 3;
 export const PROVIDER_RUN_COUNT = 15;
-export const STRESS_CONTEXT_WINDOW_TOKENS = 12_000;
+export const STRESS_CONTEXT_WINDOW_TOKENS = 32_000;
+const PRE_PROVIDER_STRESS_MANIFEST = "sha256:cd6ea3c23fc804d699188a93f3cedac3048333fb1e02e241ea69a94ac26552e2";
 
 type ScenarioId = "HPE-01" | "HPE-02" | "HPE-03" | "HPE-04" | "HPE-05";
 
@@ -213,17 +214,18 @@ export async function runProviderBaseline(environment: Record<string, string | u
   const baselineCreatedAt = resumed?.createdAt ?? createdAt;
   const reports: ProviderRunReport[] = resumed === null ? [] : [...resumed.runs];
   const executionSources = uniqueSources([...(resumed?.executionSources ?? []), ...(resumed === null ? [] : [resumed.source]), gitSource()]);
+  const executionManifests = [...new Set([...(resumed?.executionManifests ?? []), ...(resumed === null ? [] : [resumed.manifestDigest]), manifestDigest])];
   const pricing = pricingFromEnv(environment);
   for (const definition of PROVIDER_SCENARIOS) {
     for (let repetition = 1; repetition <= PROVIDER_REPETITIONS; repetition += 1) {
       if (reports.some((report) => report.scenarioId === definition.id && report.repetition === repetition)) continue;
       const report = await runOne({ definition, repetition, root, environment, ...(pricing === undefined ? {} : { pricing }) });
       reports.push(report);
-      writeAggregate(root, baselineCreatedAt, manifestDigest, reports, executionSources);
+      writeAggregate(root, baselineCreatedAt, manifestDigest, reports, executionSources, executionManifests);
       process.stdout.write(`[${reports.length}/${PROVIDER_RUN_COUNT}] ${definition.id} #${repetition}: ${report.passed ? "passed" : "failed"}\n`);
     }
   }
-  const reportPath = writeAggregate(root, baselineCreatedAt, manifestDigest, reports, executionSources);
+  const reportPath = writeAggregate(root, baselineCreatedAt, manifestDigest, reports, executionSources, executionManifests);
   if (!evaluateProviderBaseline(reports).passed) process.exitCode = 1;
   return reportPath;
 }
@@ -386,9 +388,9 @@ function latencyMetrics(observations: readonly Observation[]) {
   return Object.fromEntries((["decision", "validation", "compaction"] as const).map((phase) => [phase, distributionOrNull(observations.filter((item) => item.phase === phase).map((item) => item.latencyMs))]));
 }
 
-function writeAggregate(root: string, createdAt: string, manifestDigest: string, runs: readonly ProviderRunReport[], executionSources: readonly ReturnType<typeof gitSource>[]): string {
+function writeAggregate(root: string, createdAt: string, manifestDigest: string, runs: readonly ProviderRunReport[], executionSources: readonly ReturnType<typeof gitSource>[], executionManifests: readonly string[]): string {
   const reportPath = join(root, "report.json");
-  const report = { schemaVersion: 1, benchmarkId: PROVIDER_BENCHMARK_ID, datasetVersion: PROVIDER_DATASET_VERSION, executionMode: "real_provider", createdAt, manifestDigest, source: gitSource(), executionSources, plannedRuns: PROVIDER_RUN_COUNT, completedRuns: runs.length, runs, ...evaluateProviderBaseline(runs) };
+  const report = { schemaVersion: 1, benchmarkId: PROVIDER_BENCHMARK_ID, datasetVersion: PROVIDER_DATASET_VERSION, executionMode: "real_provider", createdAt, manifestDigest, source: gitSource(), executionSources, executionManifests, manifestTransition: executionManifests.length > 1 ? { reason: "HPE-05 stress window was raised before its first Provider call because the original 12K window was smaller than the declared 16,384 decision output reserve.", completedRunsUnderPriorManifest: runs.filter((run) => run.scenarioId !== "HPE-05").length } : null, plannedRuns: PROVIDER_RUN_COUNT, completedRuns: runs.length, runs, ...evaluateProviderBaseline(runs) };
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return reportPath;
 }
@@ -454,12 +456,18 @@ function readExistingAggregate(root: string, manifestDigest: string): null | {
   readonly manifestDigest: string;
   readonly source: ReturnType<typeof gitSource>;
   readonly executionSources?: readonly ReturnType<typeof gitSource>[];
+  readonly executionManifests?: readonly string[];
   readonly runs: readonly ProviderRunReport[];
 } {
   const path = join(root, "report.json");
   if (!existsSync(path)) return null;
   const report = JSON.parse(readFileSync(path, "utf8")) as ReturnType<typeof readExistingAggregate>;
-  if (report === null || report.manifestDigest !== manifestDigest || !Array.isArray(report.runs)) {
+  if (report === null || !Array.isArray(report.runs)) {
+    throw new Error("Resume report is missing or has a different Provider benchmark manifest.");
+  }
+  const compatibleStressCorrection = report.manifestDigest === PRE_PROVIDER_STRESS_MANIFEST
+    && report.runs.every((run) => run.scenarioId !== "HPE-05");
+  if (report.manifestDigest !== manifestDigest && !compatibleStressCorrection) {
     throw new Error("Resume report is missing or has a different Provider benchmark manifest.");
   }
   return report;
