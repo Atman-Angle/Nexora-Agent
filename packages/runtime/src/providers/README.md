@@ -75,6 +75,8 @@ Provider 输出不会直接覆盖 Context。Runtime 会重新校验 Summary Sche
 
 环境入口还读取 `NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）和 `NEXORA_MODEL_THINKING_PARAM`。`openAICompatibleProviderFromEnv` 根据 `NEXORA_MODEL_NAME` 从同一 Adapter 的已验证 capability catalog 自动解析总窗口与最大输出能力，并要求显式提供 `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`、`NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS`、`NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS`。未知模型、非法预算、超过模型输出能力或手工设置 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS` 都在创建 Run 前失败。Runtime 从模型总窗口扣除当前 phase 输出预留，最终 wire input（包括固定 system prompt 与 Tool/Action Contract）必须落在剩余 hard input limit 内。
 
+同一 capability catalog 还可以保存由固定真实 usage 数据集验证的 estimated wire-meter 校准。`qwen3.7-flash` 的 E101 样本中，decision / validation 的最大 actual-to-UTF8/4 偏差分别为 1.66× / 1.08×，因此使用带余量的 1.8× / 1.2×；无 compaction 样本时保守继承 decision 的 1.8×。Ledger 记录完整 meter 名称并继续标记 `estimated`，Provider 返回的 actual usage 原样保留。`tokenMeter` 注入的精确 tokenizer 优先于 catalog 校准；未知模型继续使用 `nexora:utf8-bytes/4:v1`，不会猜测校准值。
+
 ### Reasoning Policy（`off | on | dynamic`）
 
 `ReasoningPolicy` 是 Provider-neutral 抽象（`model-client.ts`），Runtime 核心不感知任何厂商专有字段。具体 Provider 把它翻译成自己的参数：

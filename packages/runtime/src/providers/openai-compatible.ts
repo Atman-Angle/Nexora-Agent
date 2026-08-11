@@ -10,6 +10,7 @@ import {
   type ProviderCompletionRequest,
   type ProviderRequestTokenMeter
 } from "./adapter.js";
+import { estimateTextTokens } from "../context/budget.js";
 import { RuntimeError } from "../runtime-error.js";
 
 export type OpenAICompatibleProviderOptions = {
@@ -61,10 +62,20 @@ class RetryableProviderError extends Error {}
 const MODEL_CAPABILITIES: Readonly<Record<string, {
   readonly contextWindowTokens: number;
   readonly maxOutputTokens: number;
+  readonly estimatedInputMultiplier: Readonly<Record<ProviderCompletionRequest["phase"], number>>;
 }>> = Object.freeze({
   "qwen3.7-flash": Object.freeze({
     contextWindowTokens: 1_000_000,
-    maxOutputTokens: 131_072
+    maxOutputTokens: 131_072,
+    // E101 fixed Provider baseline (227 decision / 14 validation samples):
+    // max actual-to-UTF8/4 ratios were 1.66 and 1.08. The calibrated
+    // estimates retain roughly 8% / 11% headroom. Compaction had no E101
+    // sample, so it inherits the conservative decision multiplier.
+    estimatedInputMultiplier: Object.freeze({
+      decision: 1.8,
+      validation: 1.2,
+      compaction: 1.8
+    })
   })
 });
 
@@ -156,6 +167,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let validationOutputTokens: number;
   let compactionOutputTokens: number;
   let softLimitRatio: number;
+  let tokenMeter: ProviderRequestTokenMeter | undefined;
   let fetchImplementation: typeof globalThis.fetch;
   try {
     baseUrl = z.string().url().parse(options.baseUrl).replace(/\/$/, "");
@@ -184,6 +196,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     softLimitRatio = z.number().positive().max(1).parse(
       options.softLimitRatio ?? 0.8
     );
+    tokenMeter = options.tokenMeter ?? calibratedTokenMeter(model);
     if (
       decisionOutputTokens >= contextWindowTokens
       || validationOutputTokens >= contextWindowTokens
@@ -218,9 +231,9 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       if (request.phase !== "decision") return request;
       return { ...request, input: projectDecisionRequest(request.input) };
     },
-    ...(options.tokenMeter === undefined
+    ...(tokenMeter === undefined
       ? {}
-      : { measureTokens: options.tokenMeter }),
+      : { measureTokens: tokenMeter }),
     async complete(request, operation) {
       let lastError: unknown;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -444,9 +457,24 @@ function positiveInteger(value: number, name: string): number {
   return value;
 }
 
+function calibratedTokenMeter(model: string): ProviderRequestTokenMeter | undefined {
+  const calibration = MODEL_CAPABILITIES[model]?.estimatedInputMultiplier;
+  if (calibration === undefined) return undefined;
+  return (request) => {
+    const baseline = estimateTextTokens(`${request.system}\n${request.input}`);
+    const multiplier = calibration[request.phase];
+    return {
+      inputTokens: Math.ceil(baseline.inputTokens * multiplier),
+      method: "estimated",
+      meter: `nexora:${model}:utf8-bytes/4*x${multiplier}:e101-v1`
+    };
+  };
+}
+
 function resolveModelCapability(model: string): {
   readonly contextWindowTokens: number;
   readonly maxOutputTokens: number;
+  readonly estimatedInputMultiplier: Readonly<Record<ProviderCompletionRequest["phase"], number>>;
 } {
   const capability = MODEL_CAPABILITIES[model];
   if (capability !== undefined) return capability;

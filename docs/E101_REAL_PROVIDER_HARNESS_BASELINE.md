@@ -35,6 +35,8 @@
 - HPE-05 三次都有 8/8 read Evidence，但两次因反复提交不含具体 codes 的 summary 用尽 40 model calls，一次 Provider timeout；三次 Eviction 都为 0；
 - 32K stress arm 的 decision hard input limit 为 15,616。三次最大 Runtime estimate 为 6,979–7,136，Provider actual input 为 11,524–11,702，均未达到 Eviction 边界。这证明该数据集在当前投影下未真正施压到 Eviction，不能据此声称 stress governance 已验证。
 
+校准审计聚合 15 个固定报告中有 usage 的调用：227 个 decision 样本 actual/UTF8-4 estimate 最大 1.66×，14 个 validation 样本最大 1.08×。`provider-token-meter-calibration` 据此为 `qwen3.7-flash` 使用带安全余量的 decision 1.8×、validation 1.2×；compaction 没有 E101 样本，暂保守继承 1.8×并保留风险说明。原 HPE-05 estimate 校准后为约 12,563–12,845，超过 12,492 soft input limit，因此会进入治理路径；该值仍标记 estimated，不能代替 Provider usage 或精确 tokenizer。此结论来自既有固定证据，没有新增 Provider 调用。
+
 ## Provider usage、延迟与费用
 
 - 242 次真实模型调用；241 次返回 usage，coverage 99.59%；
@@ -56,6 +58,7 @@
 
 - `448e73b`：恢复事实持续到合法后续 Action，重复 ref 不触发第二次 Store 读取，非法 Action 和 validation repair 不再提前消费事实；
 - `7b67077`：新增 Run-owned `context_ref` Check/Evidence，Tool Evidence 不能替代明确要求的 Memory/History restoration；
-- 当前 `provider-decision-validation-convergence` Feature：已恢复的重复 ref 请求不再成为静默 no-op，而是进入有界 invalid-action repair；validation repair 明确要求保留 Evidence、消费当前可见事实并补齐 summary 的具体结果；
+- `8264960`：已恢复的重复 ref 请求不再成为静默 no-op，而是进入有界 invalid-action repair；validation repair 明确要求保留 Evidence、消费当前可见事实并补齐 summary 的具体结果；
+- 当前 `provider-token-meter-calibration` Feature：基于固定 E101 usage 为 qwen wire estimate 增加分 phase 校准，保留 estimated 标记、meter identity、精确 tokenizer 优先级与原始 actual usage；
 - 尚未形成新的真实 Provider 对比数据；E101 失败基线保持不变，后续只能在 versioned dataset 和新费用授权下复测；
-- Token estimator 校准和可证明触发 Eviction 的 Benchmark v2 仍是独立后续 Feature；validation summary 的真实 Provider 改善需要新的费用授权后复测。
+- 可证明触发 Eviction 的 Benchmark v2 仍是独立后续 Feature；token 校准与 validation summary 的真实 Provider 改善需要新的费用授权后复测。

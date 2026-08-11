@@ -9,43 +9,43 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: provider-decision-validation-convergence
+current_feature: provider-token-meter-calibration
 status: done_locally
 
 feature_contract:
-  feature: provider-decision-validation-convergence
-  title: Provider Decision and Validation Repair Convergence
-  mode: DIRECT
+  feature: provider-token-meter-calibration
+  title: Evidence-calibrated Provider Token Meter
+  mode: EXPLORE
   goal: >
-    Make a Provider converge after semantic validation rejects an incomplete summary, instead of
-    repeatedly requesting Context refs that are already restored until the model-call budget expires.
+    Calibrate estimated OpenAI-compatible wire token measurements for verified models so Context
+    governance reacts to Provider-scale input usage instead of systematically low UTF-8/4 estimates.
   scope:
-    - reject a request_context action whose complete ref set is already visible in rehydratedFacts
-    - route the rejection through the existing bounded invalid-action repair path
-    - instruct the Provider to correct the requested outcome directly after validation failure
-    - distinguish Evidence metadata refs from the underlying Invocation or Artifact payload
+    - derive qwen3.7-flash phase multipliers from the fixed E101 Provider usage ledger
+    - apply calibration to the final projected wire request before budget assessment
+    - keep the measurement marked estimated and record the calibrated meter identity
+    - preserve caller-provided token meters as the higher-confidence authority
   invariants:
-    - semantic validation remains the only judge of proposed summary correctness
-    - duplicate requests perform no Store read and create no second rehydration request
-    - repair remains bounded by the existing Run retry budget
-    - no new state source, Provider-specific branch or automatic result synthesis is introduced
+    - declared model context windows and output reserves remain unchanged
+    - actual Provider usage remains immutable ledger evidence and is never rewritten
+    - unknown models retain the documented compatibility fallback
+    - no tokenizer dependency, online mutable calibration state or second budget authority is introduced
   non_goals:
-    - changing validation criteria or bypassing failed validation
-    - automatically following Evidence refs to Invocation or Artifact payloads
-    - fixing token estimation or redesigning the stress dataset
+    - claiming exact tokenizer counts
+    - redesigning the benchmark v2 stress dataset
+    - changing Context ranking, Eviction, Compaction or rehydration policy
     - rerunning billed Provider evaluation
   acceptance:
-    - one exact request restores facts and a duplicate request becomes actionable repair feedback
-    - a corrected summary can pass using the same persisted Evidence without repeated Tool effects
-    - a non-converging Provider fails through the retry boundary before model-call exhaustion
-    - Provider contract, rehydration continuity and Context Harness regressions pass
+    - the known qwen meter covers every observed E101 phase deviation with explicit safety margin
+    - the former 32K HPE-05 decision profile crosses the soft governance boundary deterministically
+    - custom exact meters override calibration and unknown models keep UTF-8/4 fallback
+    - budget, Provider configuration, Canary and Context Harness regressions pass
   risk: L2
 
 latest_verification:
   deterministic:
-    e104_convergence: 2-of-2-passed
-    relevant_suite: 30-of-30-passed-no-skips
-    full_core_regression: 322-of-322-passed-no-skips
+    e105_calibration: 4-of-4-passed
+    relevant_suite: 45-of-45-passed-no-skips
+    full_core_regression: 326-of-326-passed-no-skips
     context_memory_benchmark: 12-of-12-scenarios-and-39-of-39-supporting-tests
     typecheck: passed
     lint: passed
@@ -55,8 +55,8 @@ latest_verification:
     external_provider_calls: 0
     provider_cost_usd: 0
 
-last_completed_feature: provider-decision-validation-convergence
-next_action: provider-token-meter-calibration
+last_completed_feature: provider-token-meter-calibration
+next_action: context-memory-benchmark-v2-stress
 ```
 
 ## Update Rules

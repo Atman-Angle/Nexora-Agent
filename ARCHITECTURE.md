@@ -74,7 +74,7 @@ Session Archive 是同一 Run 的有界历史索引，不是第二个 Memory Sto
 
 `historyCandidates` 是与当前任务相关的有界关系导航，不是全文、向量或 Memory 检索。Runtime 只从当前 Run Authority 与显式 Fork Base 确定性派生最多 8 条、合计不超过 4 KiB 的候选，关系包括同 Check、Step、Tool、精确 Input、路径、错误码，以及已关联的 Evidence、Artifact、Approval 和 Fork Base。每条只携带 `ref`、少量 `relatedRefs`、category、reasons、hint 与 occurredAt，不复制历史事实；模型必须通过 `request_context` 才能读取原始内容。候选 ref 进入同一 digest/作用域 manifest，sibling、其他 Run 和 parent post-fork 内容不可见。删除候选投影不会删除事实，也不新增表、索引、模型调用或 Authority。
 
-每次 decision/validation 调用前，Runtime 由 Provider 自己声明的模型容量、输出预留、软阈值和 Token Meter 评估投影。硬上限拒绝发生在 Provider 调用前，软上限允许调用但进入持久化 Model Call Ledger；Provider 返回 usage 时同时保留实测值。Ledger 只拥有模型调用与计费审计，不拥有任务事实、Plan、Evidence 或 Run Status。
+每次 decision/validation 调用前，Runtime 由 Provider 自己声明的模型容量、输出预留、软阈值和 Token Meter 评估最终 wire 投影。硬上限拒绝发生在 Provider 调用前，软上限驱动 Context 治理并进入持久化 Model Call Ledger；Provider 返回 usage 时同时保留实测值。已验证模型可以在同一 capability catalog 中声明基于固定 Provider usage 数据集的 estimated meter 校准，但必须保留 calibration meter identity、不能标记为 exact，也不能覆盖 Host 注入的精确 tokenizer；未知模型继续使用兼容 fallback。Ledger 中的 actual usage 不被校准值改写，只拥有模型调用与计费审计，不拥有任务事实、Plan、Evidence 或 Run Status。
 
 Structured Compaction 是 Eviction 之后的第二层收缩：当 Eviction 耗尽且 Decision 上下文仍超过 Token 预算时，Runtime 调用 Provider 生成结构化 Summary（目标/约束、已完成工作、关键决策、未解决问题、相关 Artifact），每条陈述必须携带可解析到 Input、Invocation、Evidence、Event 或 Artifact 的 sourceRefs。首次 Compaction 的 `previousCheckpoint` 为 `null`；重复 Compaction 只向 Provider 发布 latest Checkpoint 的 `{ digest, summary }`，且该 Checkpoint 已先针对当前 Authority 完整重验。Checkpoint ID、Source Digest map 与 covered Invocation list 不进入 Provider Contract。Provider 必须返回一份完整替代 Summary，而不是增量或嵌套 Summary；Checkpoint ID/digest 不能作为 SourceRef，陈述仍必须追溯到原始 Authority ref。
 

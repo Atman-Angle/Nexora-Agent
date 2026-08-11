@@ -72,7 +72,7 @@ flowchart TD
 | Task Contract | 首次 `set_plan` 候选 | 仅新输入时版本化 | Plan digest、Provider、验证 | Run snapshot；Zod 校验 |
 | Structured Plan | Model 提议，Runtime 生成 identity | CAS 修订，完成步骤不可改 | Action 授权、Step、完成门 | Run snapshot 唯一当前版本 |
 | Provider Action Contract | Runtime 从 Zod Schema、Run 状态和 Tool 定义投影 | 每轮随 Plan/Input/active Step 重建 | Provider 决策 | 进程内只读数据；不是第二权威 |
-| Context Budget | Provider Model Profile + Provider-aware Token Meter | 每次 decision/validation 调用前重算 | Runtime 硬拒绝或允许 Provider 调用 | 决策写入 `model_calls`；不写回 Context/Run task facts |
+| Context Budget | Provider Model Profile + Provider-aware Token Meter；已验证模型可有 evidence-calibrated estimated meter | 每次 decision/validation 调用前对最终 wire 重算；精确 tokenizer 优先 | Runtime 触发收缩、硬拒绝或允许 Provider 调用 | meter identity 与决策写入 `model_calls`；actual usage 不被改写，不写回 Context/Run task facts |
 | Model Call Ledger | Runtime 在 Provider 调用前创建 logical call | success/failure/cancel/interrupted/refused 与实际 usage 终结 | `runtime.inspect(runId).modelCalls`、成本/诊断 | `model_calls`；只拥有调用审计，不参与 Plan/Evidence/完成判断 |
 | Tool Capability Contract | Tool定义时必填五层结构 | Runtime构造时校验文本、example和Schema边界 | Model读取选择投影；Runtime读取Execution/Evidence内部字段 | 进程内静态metadata，不持久化 |
 | Tool inputExample | `contract.execution`定义 | 不修改；Runtime构造时过JSON + inputSchema | 仅active Step可调用Tool的Provider context | 不单独持久化 |
