@@ -3,18 +3,29 @@ import { join, resolve } from "node:path";
 
 import Database from "better-sqlite3";
 
-import { digestCanonicalJson } from "../runtime-helpers.js";
+import { digestCanonicalJson, stringCompare } from "../runtime-helpers.js";
 import {
+  MemoryExpirationInputSchema,
   MemoryListOptionsSchema,
   MemoryIdSchema,
+  MemoryPromotionInputSchema,
   MemoryRecordSchema,
+  MemoryRevalidationInputSchema,
   MemoryScopeSchema,
   MemoryStatusUpdateSchema,
+  MemorySupersedeInputSchema,
   type CreateMemoryInput,
+  type MemoryExpirationInput,
   type MemoryListOptions,
+  type MemoryPromotion,
+  type MemoryPromotionInput,
+  type MemoryPromotionResult,
   type MemoryRecord,
+  type MemoryRevalidationInput,
   type MemoryScope,
-  type MemoryStatusUpdate
+  type MemoryStatusUpdate,
+  type MemorySupersedeInput,
+  type MemorySupersedeResult
 } from "./contracts.js";
 
 const MEMORY_DATABASE_FILENAME = "memory-v1.db";
@@ -29,6 +40,28 @@ export class MemoryConflictError extends Error {
   constructor(memoryId: string) {
     super(`Memory ${memoryId} already exists with different content in this scope.`);
     this.name = "MemoryConflictError";
+  }
+}
+
+export type MemoryLifecycleErrorCode =
+  | "MEMORY_NOT_FOUND"
+  | "MEMORY_NOT_CANDIDATE"
+  | "MEMORY_NOT_VERIFIED"
+  | "MEMORY_CANDIDATE_EXPIRED"
+  | "MEMORY_PREDECESSOR_NOT_ACTIVE"
+  | "MEMORY_UNCHANGED_REPLACEMENT"
+  | "MEMORY_DUPLICATE_ACTIVE"
+  | "MEMORY_NOT_REVALIDATABLE"
+  | "MEMORY_INVALID_TRANSITION"
+  | "MEMORY_CONCURRENT_UPDATE";
+
+export class MemoryLifecycleError extends Error {
+  readonly code: MemoryLifecycleErrorCode;
+
+  constructor(code: MemoryLifecycleErrorCode, message: string) {
+    super(message);
+    this.name = "MemoryLifecycleError";
+    this.code = code;
   }
 }
 
@@ -54,6 +87,19 @@ export class MemoryStore {
 
   create(input: CreateMemoryInput): MemoryRecord {
     const record = MemoryRecordSchema.parse(input);
+    if (
+      record.status === "superseded"
+      || record.status === "expired"
+      || record.promotion !== undefined
+      || record.supersedesMemoryIds !== undefined
+      || record.supersededByMemoryId !== undefined
+      || record.supersession !== undefined
+    ) {
+      throw new MemoryLifecycleError(
+        "MEMORY_INVALID_TRANSITION",
+        "Lifecycle-derived Memory must be created through promote, supersede or expire."
+      );
+    }
     const createDigest = digestCanonicalJson(record);
     const scope = scopeColumns(record.scope);
     const inserted = this.#database.prepare(`
@@ -127,35 +173,197 @@ export class MemoryStore {
     const update = MemoryStatusUpdateSchema.parse(input);
     const existing = this.get(update.scope, update.memoryId);
     if (existing === null) return null;
-    if (Date.parse(update.updatedAt) < Date.parse(existing.updatedAt)) {
-      throw new Error("Memory status updatedAt must not move backwards.");
+    if (
+      existing.status === "superseded"
+      || existing.status === "expired"
+      || (existing.status === "invalidated" && update.status !== "invalidated")
+    ) {
+      throw new MemoryLifecycleError(
+        "MEMORY_INVALID_TRANSITION",
+        `Memory ${existing.memoryId} cannot leave ${existing.status}.`
+      );
     }
+    assertForwardTime(existing, update.updatedAt);
+    if (existing.status === update.status) return existing;
     const next = MemoryRecordSchema.parse({
       ...existing,
       status: update.status,
       updatedAt: update.updatedAt
     });
-    const scope = scopeColumns(update.scope);
-    const result = this.#database.prepare(`
-      UPDATE memory_records
-      SET status = ?, updated_at = ?, record_json = ?
-      WHERE user_id = ? AND project_id = ? AND workspace_id = ?
-        AND branch_id = ? AND memory_id = ? AND record_json = ?
-    `).run(
-      next.status,
-      next.updatedAt,
-      JSON.stringify(next),
-      scope.userId,
-      scope.projectId,
-      scope.workspaceId,
-      scope.branchId,
-      next.memoryId,
-      JSON.stringify(existing)
-    );
-    if (result.changes !== 1) {
-      throw new Error(`Memory ${next.memoryId} changed concurrently; reload before updating status.`);
-    }
-    return next;
+    return this.#replaceRecord(existing, next);
+  }
+
+  promote(input: MemoryPromotionInput): MemoryPromotionResult {
+    const parsed = MemoryPromotionInputSchema.parse(input);
+    const transaction = this.#database.transaction((): MemoryPromotionResult => {
+      const candidate = this.#requireRecord(parsed.scope, parsed.memoryId);
+      const repeated = this.#repeatedPromotion(candidate, parsed);
+      if (repeated !== null) return repeated;
+      if (candidate.status !== "candidate") {
+        throw new MemoryLifecycleError(
+          "MEMORY_NOT_CANDIDATE",
+          `Memory ${candidate.memoryId} is not a candidate.`
+        );
+      }
+      assertPromotionAllowed(candidate, parsed.promotion);
+
+      const duplicate = this.#findActiveDuplicate(candidate, new Set(), parsed.promotion.promotedAt);
+      if (duplicate !== null) {
+        const deduplicated = MemoryRecordSchema.parse({
+          ...candidate,
+          status: "superseded",
+          promotion: parsed.promotion,
+          supersededByMemoryId: duplicate.memoryId,
+          supersession: {
+            reason: "Exact duplicate of active Memory.",
+            occurredAt: parsed.promotion.promotedAt
+          },
+          updatedAt: parsed.promotion.promotedAt
+        });
+        return {
+          outcome: "deduplicated",
+          record: duplicate,
+          duplicate: this.#replaceRecord(candidate, deduplicated)
+        };
+      }
+
+      const promoted = MemoryRecordSchema.parse({
+        ...candidate,
+        status: "active",
+        promotion: parsed.promotion,
+        updatedAt: parsed.promotion.promotedAt
+      });
+      return { outcome: "promoted", record: this.#replaceRecord(candidate, promoted) };
+    });
+    return transaction();
+  }
+
+  supersede(input: MemorySupersedeInput): MemorySupersedeResult {
+    const parsed = MemorySupersedeInputSchema.parse(input);
+    const predecessorIds = [...parsed.predecessorMemoryIds].sort(stringCompare);
+    const transaction = this.#database.transaction((): MemorySupersedeResult => {
+      const replacement = this.#requireRecord(parsed.scope, parsed.replacementMemoryId);
+      const repeated = this.#repeatedSupersession(replacement, parsed, predecessorIds);
+      if (repeated !== null) return repeated;
+      if (replacement.status !== "candidate") {
+        throw new MemoryLifecycleError(
+          "MEMORY_NOT_CANDIDATE",
+          `Replacement Memory ${replacement.memoryId} is not a candidate.`
+        );
+      }
+      assertPromotionAllowed(replacement, parsed.promotion);
+      if (predecessorIds.includes(replacement.memoryId)) {
+        throw new MemoryLifecycleError(
+          "MEMORY_INVALID_TRANSITION",
+          "Replacement Memory cannot also be a predecessor."
+        );
+      }
+
+      const predecessors = predecessorIds.map((memoryId) => {
+        const predecessor = this.#requireRecord(parsed.scope, memoryId);
+        if (predecessor.status !== "active") {
+          throw new MemoryLifecycleError(
+            "MEMORY_PREDECESSOR_NOT_ACTIVE",
+            `Memory ${memoryId} is not an active predecessor.`
+          );
+        }
+        assertForwardTime(predecessor, parsed.promotion.promotedAt);
+        if (contentDigest(predecessor) === contentDigest(replacement)) {
+          throw new MemoryLifecycleError(
+            "MEMORY_UNCHANGED_REPLACEMENT",
+            `Replacement Memory duplicates predecessor ${memoryId}.`
+          );
+        }
+        return predecessor;
+      });
+      const duplicate = this.#findActiveDuplicate(
+        replacement,
+        new Set(predecessorIds),
+        parsed.promotion.promotedAt
+      );
+      if (duplicate !== null) {
+        throw new MemoryLifecycleError(
+          "MEMORY_DUPLICATE_ACTIVE",
+          `Replacement Memory duplicates active Memory ${duplicate.memoryId}.`
+        );
+      }
+
+      const supersession = {
+        reason: parsed.reason,
+        occurredAt: parsed.promotion.promotedAt
+      };
+      const nextPredecessors = predecessors.map((predecessor) => MemoryRecordSchema.parse({
+        ...predecessor,
+        status: "superseded",
+        supersededByMemoryId: replacement.memoryId,
+        supersession,
+        updatedAt: parsed.promotion.promotedAt
+      }));
+      const nextReplacement = MemoryRecordSchema.parse({
+        ...replacement,
+        status: "active",
+        promotion: parsed.promotion,
+        supersedesMemoryIds: predecessorIds,
+        supersession,
+        updatedAt: parsed.promotion.promotedAt
+      });
+
+      const committedPredecessors = nextPredecessors.map((next, index) => (
+        this.#replaceRecord(predecessors[index]!, next)
+      ));
+      const committedReplacement = this.#replaceRecord(replacement, nextReplacement);
+      return { replacement: committedReplacement, predecessors: committedPredecessors };
+    });
+    return transaction();
+  }
+
+  revalidate(input: MemoryRevalidationInput): MemoryRecord {
+    const parsed = MemoryRevalidationInputSchema.parse(input);
+    const transaction = this.#database.transaction(() => {
+      const record = this.#requireRecord(parsed.scope, parsed.memoryId);
+      if (record.status !== "candidate" && record.status !== "active") {
+        throw new MemoryLifecycleError(
+          "MEMORY_NOT_REVALIDATABLE",
+          `Memory ${record.memoryId} cannot be revalidated from ${record.status}.`
+        );
+      }
+      assertForwardTime(record, parsed.updatedAt);
+      if (record.expiresAt !== undefined && Date.parse(record.expiresAt) <= Date.parse(parsed.updatedAt)) {
+        throw new MemoryLifecycleError(
+          "MEMORY_NOT_REVALIDATABLE",
+          `Memory ${record.memoryId} is already due for expiration.`
+        );
+      }
+      const next = MemoryRecordSchema.parse({
+        ...record,
+        verification: parsed.verification,
+        updatedAt: parsed.updatedAt
+      });
+      return digestCanonicalJson(next) === digestCanonicalJson(record)
+        ? record
+        : this.#replaceRecord(record, next);
+    });
+    return transaction();
+  }
+
+  expire(input: MemoryExpirationInput): MemoryRecord[] {
+    const parsed = MemoryExpirationInputSchema.parse(input);
+    const transaction = this.#database.transaction(() => {
+      const due = this.#listLifecycleRecords(parsed.scope)
+        .filter((record) => (
+          (record.status === "candidate" || record.status === "active")
+          && record.expiresAt !== undefined
+          && Date.parse(record.expiresAt) <= Date.parse(parsed.asOf)
+          && Date.parse(record.updatedAt) <= Date.parse(parsed.asOf)
+        ))
+        .sort((left, right) => stringCompare(left.memoryId, right.memoryId));
+      return due.map((record) => this.#replaceRecord(record, MemoryRecordSchema.parse({
+        ...record,
+        status: "expired",
+        updatedAt: parsed.asOf
+      })));
+    });
+    return transaction();
   }
 
   delete(scopeInput: MemoryScope, memoryId: string): boolean {
@@ -187,6 +395,114 @@ export class MemoryStore {
       scope.branchId,
       memoryId
     ) as MemoryRow | undefined;
+  }
+
+  #requireRecord(scope: MemoryScope, memoryId: string): MemoryRecord {
+    const record = this.get(scope, memoryId);
+    if (record === null) {
+      throw new MemoryLifecycleError("MEMORY_NOT_FOUND", "Memory was not found in this scope.");
+    }
+    return record;
+  }
+
+  #replaceRecord(existing: MemoryRecord, nextInput: MemoryRecord): MemoryRecord {
+    const next = MemoryRecordSchema.parse(nextInput);
+    const scope = scopeColumns(existing.scope);
+    const result = this.#database.prepare(`
+      UPDATE memory_records
+      SET status = ?, updated_at = ?, record_json = ?
+      WHERE user_id = ? AND project_id = ? AND workspace_id = ?
+        AND branch_id = ? AND memory_id = ? AND record_json = ?
+    `).run(
+      next.status,
+      next.updatedAt,
+      JSON.stringify(next),
+      scope.userId,
+      scope.projectId,
+      scope.workspaceId,
+      scope.branchId,
+      existing.memoryId,
+      JSON.stringify(existing)
+    );
+    if (result.changes !== 1) {
+      throw new MemoryLifecycleError(
+        "MEMORY_CONCURRENT_UPDATE",
+        `Memory ${existing.memoryId} changed concurrently; reload before updating.`
+      );
+    }
+    return next;
+  }
+
+  #listLifecycleRecords(scopeInput: MemoryScope): MemoryRecord[] {
+    const scope = scopeColumns(scopeInput);
+    const rows = this.#database.prepare(`
+      SELECT record_json, create_digest
+      FROM memory_records
+      WHERE user_id = ? AND project_id = ? AND workspace_id = ? AND branch_id = ?
+    `).all(scope.userId, scope.projectId, scope.workspaceId, scope.branchId) as MemoryRow[];
+    return rows.map(parseRecord);
+  }
+
+  #findActiveDuplicate(
+    record: MemoryRecord,
+    excludedMemoryIds: ReadonlySet<string>,
+    asOf: string
+  ): MemoryRecord | null {
+    const digest = contentDigest(record);
+    return this.#listLifecycleRecords(record.scope)
+      .filter((candidate) => (
+        candidate.status === "active"
+        && candidate.memoryId !== record.memoryId
+        && !excludedMemoryIds.has(candidate.memoryId)
+        && (candidate.expiresAt === undefined || Date.parse(candidate.expiresAt) > Date.parse(asOf))
+        && contentDigest(candidate) === digest
+      ))
+      .sort((left, right) => stringCompare(left.memoryId, right.memoryId))[0] ?? null;
+  }
+
+  #repeatedPromotion(
+    record: MemoryRecord,
+    input: MemoryPromotionInput
+  ): MemoryPromotionResult | null {
+    if (
+      record.status === "active"
+      && sameValue(record.promotion, input.promotion)
+      && record.supersedesMemoryIds === undefined
+    ) {
+      return { outcome: "promoted", record };
+    }
+    if (
+      record.status === "superseded"
+      && record.supersededByMemoryId !== undefined
+      && sameValue(record.promotion, input.promotion)
+      && record.supersession?.reason === "Exact duplicate of active Memory."
+    ) {
+      const active = this.#requireRecord(record.scope, record.supersededByMemoryId);
+      return { outcome: "deduplicated", record: active, duplicate: record };
+    }
+    return null;
+  }
+
+  #repeatedSupersession(
+    replacement: MemoryRecord,
+    input: MemorySupersedeInput,
+    predecessorIds: readonly string[]
+  ): MemorySupersedeResult | null {
+    if (
+      replacement.status !== "active"
+      || !sameValue(replacement.promotion, input.promotion)
+      || !sameValue(replacement.supersedesMemoryIds, predecessorIds)
+      || replacement.supersession?.reason !== input.reason
+    ) {
+      return null;
+    }
+    const predecessors = predecessorIds.map((memoryId) => this.#requireRecord(input.scope, memoryId));
+    if (predecessors.some((record) => (
+      record.status !== "superseded" || record.supersededByMemoryId !== replacement.memoryId
+    ))) {
+      return null;
+    }
+    return { replacement, predecessors };
   }
 
   #migrate(): void {
@@ -249,4 +565,42 @@ function scopeColumns(scope: MemoryScope): {
 
 function parseRecord(row: MemoryRow): MemoryRecord {
   return MemoryRecordSchema.parse(JSON.parse(row.record_json));
+}
+
+function assertForwardTime(record: MemoryRecord, updatedAt: string): void {
+  if (Date.parse(updatedAt) < Date.parse(record.updatedAt)) {
+    throw new MemoryLifecycleError(
+      "MEMORY_INVALID_TRANSITION",
+      `Memory ${record.memoryId} updatedAt must not move backwards.`
+    );
+  }
+}
+
+function assertPromotionAllowed(record: MemoryRecord, promotion: MemoryPromotion): void {
+  assertForwardTime(record, promotion.promotedAt);
+  if (record.expiresAt !== undefined && Date.parse(record.expiresAt) <= Date.parse(promotion.promotedAt)) {
+    throw new MemoryLifecycleError(
+      "MEMORY_CANDIDATE_EXPIRED",
+      `Memory ${record.memoryId} is already due for expiration.`
+    );
+  }
+  if (promotion.mode === "verified" && record.verification.state !== "verified") {
+    throw new MemoryLifecycleError(
+      "MEMORY_NOT_VERIFIED",
+      `Memory ${record.memoryId} has not been verified.`
+    );
+  }
+}
+
+function contentDigest(record: MemoryRecord): string {
+  return digestCanonicalJson({
+    memoryType: record.memoryType,
+    statement: record.statement,
+    sensitivity: record.sensitivity
+  });
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return digestCanonicalJson(left) === digestCanonicalJson(right);
 }

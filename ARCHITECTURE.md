@@ -86,7 +86,9 @@ Provider-neutral Context 到生产 Wire 还有最后一层有界投影。OpenAI-
 
 Memory 是 Runtime 的通用连续性子系统，但不是 Execution Core 的 Run Authority。Host 通过公开 Contract 提供稳定的 user/project/workspace/可选 branch identity 与 `stateDir`；Runtime 在独立 `<stateDir>/memory-v1.db` 中保存严格 `MemoryRecord`、来源 `{sourceRunId, ref, digest}`、verification、status 和 sensitivity。相同 scope 内相同 ID/内容的创建可安全重试，不同内容冲突必须拒绝；所有读取、状态修改和删除都要求完整精确 scope，错误 scope 返回不存在而不泄露记录。
 
-Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。当前 Feature 只提供 Store 与生命周期原语；Context 尚不检索或注入 Memory。后续只能通过独立 Feature 把少量、可解释、可删除的 Memory 候选投影给 Context，当前 Run Authority 始终优先。
+Memory 生命周期只有一条内容变更路径：模型或其他不可信来源先形成 `candidate`；Host 再以带 actor/time 的 explicit promotion，或在 Memory 已携带 persisted verification 后以 verified promotion 转为 `active`。Promotion 对同 scope 的 type/statement/sensitivity 做精确确定性去重；重复候选保留为 `superseded` 并指向既有 active Memory。内容不原地更新：新 candidate 替换一个 active predecessor 表示 update，替换多个表示 merge；同一事务把 replacement 激活、把全部 predecessor 标为 superseded，并保存双向 lineage。到期 candidate/active 通过显式 `expire` 转为 `expired`，重新验证只更新 eligible candidate/active 的 verification。生命周期操作支持相同请求安全重试，不能用通用 `setStatus` 绕过 promotion 或 supersession。
+
+Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。Context 尚不检索或注入 Memory。后续只能通过独立 Feature 把少量、可解释、可删除的 active Memory 候选投影给 Context，当前 Run Authority 始终优先。
 
 ### Action Runtime
 

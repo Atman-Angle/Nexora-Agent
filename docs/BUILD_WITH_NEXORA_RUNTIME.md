@@ -77,7 +77,7 @@ import { openMemoryStore } from "@nexora/runtime";
 
 const memory = openMemoryStore({ stateDir: "D:\\agent-state" });
 try {
-  memory.create({
+  const candidate = memory.create({
     memoryId: "preferred-retrieval-v1",
     memoryType: "preference",
     statement: "Prefer deterministic retrieval before semantic search.",
@@ -92,17 +92,30 @@ try {
       digest: `sha256:${"a".repeat(64)}`
     },
     verification: { state: "unverified" },
-    status: "active",
+    status: "candidate",
     sensitivity: "normal",
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
+  });
+  memory.promote({
+    scope: candidate.scope,
+    memoryId: candidate.memoryId,
+    promotion: {
+      mode: "explicit",
+      promotedBy: "user-42",
+      promotedAt: new Date().toISOString()
+    }
   });
 } finally {
   memory.close();
 }
 ```
 
-`create/get/list/setStatus/delete` 都通过公开 Schema，并按 user/project/workspace/可选 branch 的完整 scope 隔离。同 scope/ID/内容的 `create` 是幂等重试；相同 ID 的不同内容会抛出 `MemoryConflictError`。当前版本不会自动从 Run 提取 Memory，也不会把 Memory 注入 Context；这两项属于后续独立 Feature。
+`create/get/list/setStatus/delete` 都通过公开 Schema，并按 user/project/workspace/可选 branch 的完整 scope 隔离。同 scope/ID/内容的 `create` 是幂等重试；相同 ID 的不同内容会抛出 `MemoryConflictError`。
+
+不可信内容应以 `candidate` 创建。`promote` 接受带 actor/time 的 `explicit` 决定，或要求 Memory 已 verified 的 `verified` 决定；同 scope 的 type/statement/sensitivity 完全相同时只保留一个 active Memory。内容更新不能原地修改：先创建 replacement candidate，再调用 `supersede`，一个 predecessor 表示 update，多个表示 merge。Store 在一个事务中保存 replacement 的 `supersedesMemoryIds` 和 predecessor 的 `supersededByMemoryId`。`revalidate` 和 `expire` 分别处理重新验证与到期，通用 `setStatus` 只允许 `archived | invalidated`，不能绕过生命周期。
+
+当前版本不会自动从 Run 提取 Memory，也不会把 Memory 注入 Context；这两项属于后续独立 Feature。
 
 ## Runtime API
 

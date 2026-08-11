@@ -28,6 +28,7 @@
 ## B. 最小实现顺序
 
 1. 先修纯 Contract/状态转换，再修 Store 事务，最后接 Runtime wiring；不要从 CLI 添加旁路。
+   Memory 内容变化必须先创建 candidate，再通过 `promote` 或 `supersede`；update 和 merge 不得直接改写既有 statement/provenance，也不得用 `setStatus` 模拟生命周期。
 2. 外部输入先过 Zod。Model 只能提出 `set_plan | call_tool | request_input | propose_finish`。
 3. Provider context 必须由 Runtime 投影真实 workspace、Tool 的 Identity/Capability/Decision/Effect/Evidence、当前 allowed Action 的 Schema 合法示例、active Step 所绑定 Tool 的输入示例，以及权威 Invocation 的有界 observation；不要在 Provider Prompt 复制第二份 Action/Tool facts 状态。
 4. 每个 RuntimeTool 五层Contract的文本边界必须完整且有界；`inputExample`必须在Runtime构造时通过JSON Contract和该Tool的`inputSchema`，`facts`必须在成功持久化前通过`factsSchema`。example只用于active Tool字段构造，Schema/idempotency不暴露给Model。

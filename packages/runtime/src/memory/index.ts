@@ -1,27 +1,43 @@
 export {
   MemoryDigestSchema,
+  MemoryExpirationInputSchema,
   MemoryIdSchema,
   MemoryListOptionsSchema,
   MemoryRecordSchema,
+  MemoryPromotionInputSchema,
+  MemoryPromotionSchema,
+  MemoryRevalidationInputSchema,
   MemoryScopeSchema,
   MemorySensitivitySchema,
   MemorySourceSchema,
   MemoryStatusSchema,
   MemoryStatusUpdateSchema,
+  MemorySupersedeInputSchema,
+  MemorySupersessionSchema,
   MemoryVerificationSchema,
   type CreateMemoryInput,
+  type MemoryExpirationInput,
   type MemoryListOptions,
   type MemoryRecord,
+  type MemoryPromotion,
+  type MemoryPromotionInput,
+  type MemoryPromotionResult,
+  type MemoryRevalidationInput,
   type MemoryScope,
   type MemorySensitivity,
   type MemorySource,
   type MemoryStatus,
   type MemoryStatusUpdate,
+  type MemorySupersedeInput,
+  type MemorySupersedeResult,
+  type MemorySupersession,
   type MemoryVerification
 } from "./contracts.js";
 
 export {
   MemoryConflictError,
+  MemoryLifecycleError,
   MemoryStore,
-  openMemoryStore
+  openMemoryStore,
+  type MemoryLifecycleErrorCode
 } from "./store.js";
