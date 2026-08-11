@@ -231,8 +231,9 @@ export class RuntimeEngine {
           || typeof options.memory.store !== "object"
           || typeof options.memory.store.get !== "function"
           || typeof options.memory.store.list !== "function"
+          || typeof options.memory.store.isRecallEnabled !== "function"
         ) {
-          throw new Error("Runtime Memory Store must implement get() and list().");
+          throw new Error("Runtime Memory Store must implement get(), list() and isRecallEnabled().");
         }
         this.#memory = {
           store: options.memory.store,

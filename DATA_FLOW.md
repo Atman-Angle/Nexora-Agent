@@ -190,6 +190,8 @@ E092 把 Memory 内容演进收敛为单一事务流：`candidate → explicit/v
 
 E093 增加单向只读投影：`Host-injected MemoryStore + exact scope → list active → deterministic task relevance → memoryCandidates`。投影只携带 ref/type/reason/hint/source/verification/lifecycle/sensitivity/record digest，最多 6 条且同时受 768 estimated tokens 与 4 KiB 限制，不携带 statement。`request_context(memory:<id>) → exact-scope get → active/expiry/sensitivity/digest recheck → rehydratedFacts(kind=memory)`；删除、错误 scope、生命周期或 digest 漂移统一 `REF_UNAVAILABLE`。Memory 不反写 Run Authority，Runtime close 也不关闭 Host 的 Memory Store。
 
+E094 增加用户控制流：`Host user action → MemoryControls Schema → exact-scope MemoryStore transaction → record/policy mutation + append-only control event`。Correct 复用 candidate→Supersession；Invalidate/Delete/Clear 和 Recall enable/disable 不创建旁路状态。Audit 只保存 operationId/action/actor/reason/time/Memory IDs/count/policy/digest，不复制 statement；相同 operationId/command 返回原 event，不同 command 拒绝并回滚。`memory_scope_controls.enabled=false → Context memoryCandidates=[]`，Rehydration 同时拒绝旧候选；重新启用后只恢复仍 eligible 的记录。Audit export 与所有操作都使用完整 user/project/workspace/branch scope。
+
 ## 6. 当前代码落点与冻结边界
 
 ```text

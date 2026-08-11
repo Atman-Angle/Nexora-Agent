@@ -179,10 +179,10 @@ describe("E091 Runtime Memory contract and Store", () => {
     const root = fixture();
     const databasePath = join(root, "memory-v1.db");
     const database = new Database(databasePath);
-    database.pragma("user_version = 2");
+    database.pragma("user_version = 3");
     database.close();
 
-    expect(() => openMemoryStore({ stateDir: root })).toThrow(/newer than supported schema 1/i);
+    expect(() => openMemoryStore({ stateDir: root })).toThrow(/newer than supported schema 2/i);
     expect(() => rmSync(databasePath)).not.toThrow();
   });
 });

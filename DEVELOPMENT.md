@@ -9,65 +9,67 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: bounded-memory-recall
+current_feature: memory-user-controls
 status: done_locally
 
 feature_contract:
-  feature: bounded-memory-recall
-  title: Bounded Memory Recall
+  feature: memory-user-controls
+  title: Auditable Memory User Controls
   mode: VERIFY
   goal: >
-    Let a Runtime discover a small, relevant set of active scoped Memories and
-    restore an exact Memory only after request_context, without weakening current Run Authority.
+    Give Hosts one auditable, exact-scope control surface for users to inspect,
+    correct, invalidate, delete, disable, clear and export their Memory state.
   scope:
-    - add deterministic lexical recall over an explicitly injected Memory Store and exact scope
-    - publish bounded Memory navigation metadata in ModelDecisionContext
-    - restore exact MemoryRecord content only through request_context(memory:<id>)
-    - preserve Memory candidates through eviction and production Provider wire projection
+    - expose MemoryControls over the existing Memory Store and lifecycle
+    - persist idempotent mutation audit events without statement content
+    - persist exact-scope recall enable/disable policy and enforce it in Context recall
+    - support exact-scope inspection, correction, invalidation, deletion, clear and audit export
   invariants:
-    - current TaskContract, Plan, Progress and Evidence remain authoritative and unchanged
-    - only exact-scope active, unexpired and normal-sensitivity Memory is discoverable
-    - candidates never copy the Memory statement and exact content requires request_context
-    - rehydration rechecks scope, lifecycle, expiry and record digest and otherwise returns REF_UNAVAILABLE
-    - Runtime does not own or close the Host-provided Memory Store
+    - every user mutation requires actor, reason, time and an idempotent operationId
+    - correction reuses candidate plus supersession and never edits statement/provenance in place
+    - delete and clear audit tombstones never retain Memory statement content
+    - every policy, record and audit read/write uses complete exact scope
+    - disabled scopes publish no memoryCandidates and cannot rehydrate guessed Memory refs
   non_goals:
-    - automatic extraction, promotion, conflict resolution or deletion propagation
-    - embeddings, vector retrieval, full-text indexes or additional model calls
-    - automatic statement injection, sensitive Memory recall or cross-scope fallback
-    - changing runtime-v1.1.db, RunStore or Execution Core Authority
+    - UI screens, authentication, authorization roles or remote APIs
+    - cross-scope bulk administration or implicit parent/child scope inheritance
+    - retention schedules, deletion propagation outside memory-v1.db or secure erase guarantees
+    - changing runtime-v1.1.db, RunStore, Context candidate format or Execution Core Authority
   acceptance:
-    - relevant English and Chinese tasks produce deterministic explainable candidates
-    - zero deterministic relevance produces no candidate
-    - candidate count, estimated tokens and serialized bytes stay within hard limits
-    - wrong-scope, non-active, expired and sensitive Memory never becomes visible
-    - request_context restores the exact record; deletion, status or digest drift is unavailable
-    - restart, eviction and production wire preserve the supported flow
-    - targeted tests, Context/Memory regression, typecheck, lint and builds pass with no relevant skips
+    - inspect explains source, lifecycle and current recall eligibility without cross-scope leakage
+    - correction atomically activates a replacement and preserves supersession lineage plus audit
+    - invalidate/delete/clear and scope recall policy are idempotent and survive restart
+    - disabled scope has zero Context candidates; re-enable restores eligible recall
+    - audit export is exact-scope, ordered and contains no deleted statement content
+    - invalid input, wrong scope and reused operationId with different content reject without partial writes
+    - targeted tests, Memory/Context regression, typecheck, lint and builds pass with no relevant skips
   risk: L2
 
 latest_verification:
   deterministic:
-    red_to_green: public Context and Runtime lacked Memory candidates, injection and exact restoration
-    targeted: E093-1-file-6-tests-passed
-    memory_regression: E091-E093-3-files-22-tests-passed
+    red_to_green: Store CRUD lacked actor-reason-operation audit, scope policy and Host user-control contract
+    targeted: E094-1-file-7-tests-passed
+    memory_regression: E091-E094-4-files-29-tests-passed
     context_quality_gate: 12-files-80-tests-passed
-    relevance: deterministic-English-Chinese-zero-relevance-and-hard-bounds-passed
-    isolation: exact-scope-active-expiry-sensitivity-and-no-statement-passed
-    rehydration: exact-record-digest-drift-ref-unavailable-and-restart-passed
-    production_projection: HTTP-wire-eviction-and-projection-digest-passed
-    full_regression: 64-files-287-tests-passed-no-skips-no-unhandled-errors
+    inspection: exact-scope-source-lifecycle-eligibility-and-nondisclosure-passed
+    correction: candidate-supersession-atomic-lineage-and-idempotency-passed
+    deletion: invalidate-delete-clear-tombstone-no-statement-and-scope-isolation-passed
+    policy: disable-restart-zero-candidates-reenable-recall-passed
+    migration: memory-schema-v1-to-v2-passed
+    audit: ordered-exact-scope-export-restart-and-command-conflict-passed
+    full_regression: 65-files-294-tests-passed-no-skips-no-unhandled-errors
     typecheck: passed
     lint: passed
     runtime_package_build: passed
     root_build: passed
-    built_public_api: RuntimeMemoryOptions-MemoryCandidate-and-memoryCandidates-exported
+    built_public_api: MemoryControls-command-event-inspection-and-factory-exported
     diff_check: passed
   external_environment_acceptance:
-    status: deferred
-    reason: Real Provider recall quality is the later real-provider-continuity-canary release gate.
+    status: not_applicable
+    reason: This Feature is a local Host API and SQLite control surface with no external service.
 
-last_completed_feature: bounded-memory-recall
-next_action: stop; activate memory-user-controls only as a separate Feature
+last_completed_feature: memory-user-controls
+next_action: stop; activate memory-security-privacy only as a separate Feature
 ```
 
 ## Update Rules

@@ -1,5 +1,7 @@
 export {
   MemoryDigestSchema,
+  MemoryControlEventSchema,
+  MemoryControlInputSchema,
   MemoryExpirationInputSchema,
   MemoryIdSchema,
   MemoryListOptionsSchema,
@@ -16,6 +18,9 @@ export {
   MemorySupersessionSchema,
   MemoryVerificationSchema,
   type CreateMemoryInput,
+  type MemoryControlEvent,
+  type MemoryControlInput,
+  type MemoryControlResult,
   type MemoryExpirationInput,
   type MemoryListOptions,
   type MemoryRecord,
@@ -36,11 +41,19 @@ export {
 
 export {
   MemoryConflictError,
+  MemoryControlConflictError,
   MemoryLifecycleError,
   MemoryStore,
   openMemoryStore,
   type MemoryLifecycleErrorCode
 } from "./store.js";
+
+export {
+  MemoryControls,
+  createMemoryControls,
+  type MemoryInspection,
+  type MemoryRecallEligibilityReason
+} from "./controls.js";
 
 export {
   MAX_MEMORY_CANDIDATES,

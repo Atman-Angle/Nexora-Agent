@@ -114,7 +114,7 @@ export function buildDecisionContext(args: {
           }
         })
   });
-  const memoryCandidates = args.memory === undefined
+  const memoryCandidates = args.memory === undefined || !args.memory.store.isRecallEnabled(args.memory.scope)
     ? []
     : projectMemoryCandidates({
         run,

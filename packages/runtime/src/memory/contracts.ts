@@ -289,6 +289,52 @@ export const MemoryExpirationInputSchema = z.object({
   asOf: TimestampSchema
 }).strict();
 
+const MemoryControlBaseSchema = z.object({
+  scope: MemoryScopeSchema,
+  operationId: StableIdentitySchema,
+  actor: StableIdentitySchema,
+  reason: z.string().min(1).max(500).refine((value) => value === value.trim(), "Reason must be trimmed."),
+  occurredAt: TimestampSchema
+});
+
+export const MemoryControlInputSchema = z.discriminatedUnion("action", [
+  MemoryControlBaseSchema.extend({
+    action: z.literal("correct"),
+    predecessorMemoryId: MemoryIdSchema,
+    replacement: MemoryRecordSchema
+  }).strict(),
+  MemoryControlBaseSchema.extend({ action: z.literal("invalidate"), memoryId: MemoryIdSchema }).strict(),
+  MemoryControlBaseSchema.extend({ action: z.literal("delete"), memoryId: MemoryIdSchema }).strict(),
+  MemoryControlBaseSchema.extend({ action: z.literal("set_scope_recall"), enabled: z.boolean() }).strict(),
+  MemoryControlBaseSchema.extend({ action: z.literal("clear_scope") }).strict()
+]).superRefine((input, context) => {
+  if (input.action === "correct") {
+    if (digestScope(input.scope) !== digestScope(input.replacement.scope)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["replacement", "scope"], message: "Replacement scope must exactly match control scope." });
+    }
+    if (input.replacement.status !== "candidate") {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["replacement", "status"], message: "Correction replacement must be a candidate." });
+    }
+  }
+});
+
+export const MemoryControlEventSchema = z.object({
+  operationId: StableIdentitySchema,
+  scope: MemoryScopeSchema,
+  action: z.enum(["correct", "invalidate", "delete", "set_scope_recall", "clear_scope"]),
+  actor: StableIdentitySchema,
+  reason: z.string().min(1).max(500),
+  occurredAt: TimestampSchema,
+  memoryIds: z.array(MemoryIdSchema).max(500),
+  affectedCount: z.number().int().nonnegative(),
+  recallEnabled: z.boolean().optional(),
+  commandDigest: MemoryDigestSchema
+}).strict();
+
+function digestScope(scope: MemoryScope): string {
+  return JSON.stringify([scope.userId, scope.projectId, scope.workspaceId, scope.branchId ?? ""]);
+}
+
 export type MemoryScope = z.infer<typeof MemoryScopeSchema>;
 export type MemorySource = z.infer<typeof MemorySourceSchema>;
 export type MemoryVerification = z.infer<typeof MemoryVerificationSchema>;
@@ -304,6 +350,12 @@ export type MemoryPromotionInput = z.infer<typeof MemoryPromotionInputSchema>;
 export type MemorySupersedeInput = z.infer<typeof MemorySupersedeInputSchema>;
 export type MemoryRevalidationInput = z.infer<typeof MemoryRevalidationInputSchema>;
 export type MemoryExpirationInput = z.infer<typeof MemoryExpirationInputSchema>;
+export type MemoryControlInput = z.infer<typeof MemoryControlInputSchema>;
+export type MemoryControlEvent = z.infer<typeof MemoryControlEventSchema>;
+export type MemoryControlResult = {
+  readonly event: MemoryControlEvent;
+  readonly records: readonly MemoryRecord[];
+};
 export type MemoryPromotionResult =
   | { readonly outcome: "promoted"; readonly record: MemoryRecord }
   | {

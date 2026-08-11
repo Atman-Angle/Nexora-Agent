@@ -31,7 +31,7 @@ Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第�
 | Runtime Memory Contract 与独立 Store | 本地完成 | 严格 scope/provenance/verification/status/sensitivity；独立 memory-v1.db；CRUD、重启、隔离、幂等与 schema 拒绝；E091 | 自动提取与用户控制仍未实现 |
 | Memory 晋升、去重、Supersession | 本地完成 | candidate→active 显式/验证晋升、精确去重、单/多前驱原子替换、双向 lineage、过期与重新验证；E092 | 尚未建立语义冲突判断或自动提取策略 |
 | Memory 召回与 Context 注入 | 本地完成 | exact-scope active/expiry/sensitivity 过滤；最多 6 条、768 tokens/4 KiB；request_context 精确恢复与 drift 拒绝；restart/wire/eviction；E093 | 真实 Provider 选择效果与安全隐私发布门仍待后续 Feature |
-| 用户控制 | 缺失 | 无 | 缺查看来源、修正、失效、删除、禁用、清域和导出 |
+| 用户控制 | 本地完成 | exact-scope inspect/explain、candidate+supersession correction、invalidate/delete/clear、scope recall policy、无正文 audit export、restart/idempotency；E094 | UI、认证授权与远程 API 属于 Host/发布门 |
 | Memory 安全与隐私 | 部分本地证据 | exact user/project/workspace/branch scope、normal-only recall、猜测/漂移统一拒绝；E091/E093 | 缺 Prompt Injection、删除传播、禁用/清域与完整发布门测试 |
 | 真实 Provider 最终验收 | 缺失于当前版本 | Scripted/Stub Provider 只能证明确定性边界 | 缺当前提交上的长任务 Canary、效果、Token、延迟和费用记录 |
 
@@ -47,7 +47,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 4. `runtime-memory-contract-store`：状态为 `done_locally`。Runtime 提供严格 MemoryRecord、稳定作用域身份、`{sourceRunId, ref, digest}` provenance、显式 create/get/list/status/delete 与独立 `memory-v1.db`；Host 只提供 scope identity 和 stateDir，不修改 Core Run Authority。
 5. `memory-promotion-supersession`：状态为 `done_locally`。支持显式及验证后晋升、精确去重、单/多前驱原子 Supersession、过期和重新验证；模型产物默认先成为 candidate，不自动 active。
 6. `bounded-memory-recall`：状态为 `done_locally`。Host 显式注入 Store/exact scope；确定性召回最多 6 条、768 estimated tokens/4 KiB 的 active normal 候选，statement 只经 `request_context(memory:<id>)` 重验后恢复；当前 Run Authority 永远优先。
-7. `memory-user-controls`：查看、解释、修正、失效、删除、禁用、清除作用域和导出审计记录。
+7. `memory-user-controls`：状态为 `done_locally`。`MemoryControls` 提供 exact-scope 查看/解释、修正、失效、删除、禁用、清域与无正文审计导出；mutation 带 operationId/actor/reason/time 并与 audit 原子提交，禁用策略由 Context/Rehydration 执行。
 8. `memory-security-privacy`：完成 user/project/workspace 隔离、敏感级别、SourceRef 防猜测、Prompt Injection、Approval/Security Gate 与删除传播测试。
 9. `memory-performance-rebuild`：记录 Context/Memory p50、p95、max、数据规模、模型调用和费用；证明索引丢失可从 Authority/Memory Record 重建。
 10. `real-provider-continuity-canary`：用真实 Provider 运行固定长任务与 Memory 数据集，记录成功率、错误召回、Token、调用数、延迟、费用和可复现失败样本，满足后才可从 `done_locally` 升为 `done`。

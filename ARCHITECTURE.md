@@ -90,6 +90,8 @@ Memory 生命周期只有一条内容变更路径：模型或其他不可信来�
 
 Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。Host 可在 `createRuntime.memory` 显式注入共享 Memory Store 与 exact scope；Runtime 不拥有或关闭该 Store。Context 只确定性扫描 exact-scope 的 active、未过期、normal Memory，投影最多 6 条、768 estimated tokens / 4 KiB 的 `memoryCandidates`。候选不复制 statement；模型必须用候选的 `memory:<id>` 调用 `request_context`，下一轮重新校验 scope、lifecycle、expiry、sensitivity 与 record digest 后才恢复完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 与 Evidence 始终优先。
 
+`MemoryControls` 是 Host 面向用户动作的审计化入口，复用同一个 Memory Store，不成为第二数据 Authority。Inspect 返回 exact-scope Record、Source 与当前召回资格；Correct 必须创建 candidate 并走原子 Supersession；Invalidate、Delete、Clear Scope 和 Scope Recall Policy 都要求 operationId、actor、reason 与 occurredAt。每个 mutation 与无正文 audit tombstone 在同一 SQLite 事务提交，operationId 在 exact scope 内幂等且内容冲突拒绝。Scope disable 持久化在 `memory-v1.db` 并由 Context 与 Rehydration 同时执行。底层 Store CRUD 保留为数据所有者原语；Host 的用户操作应走 Controls。
+
 ### Action Runtime
 
 完整执行管线：

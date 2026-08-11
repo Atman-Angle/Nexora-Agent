@@ -6,6 +6,8 @@ import Database from "better-sqlite3";
 import { digestCanonicalJson, stringCompare } from "../runtime-helpers.js";
 import {
   MemoryExpirationInputSchema,
+  MemoryControlEventSchema,
+  MemoryControlInputSchema,
   MemoryListOptionsSchema,
   MemoryIdSchema,
   MemoryPromotionInputSchema,
@@ -16,6 +18,9 @@ import {
   MemorySupersedeInputSchema,
   type CreateMemoryInput,
   type MemoryExpirationInput,
+  type MemoryControlEvent,
+  type MemoryControlInput,
+  type MemoryControlResult,
   type MemoryListOptions,
   type MemoryPromotion,
   type MemoryPromotionInput,
@@ -29,17 +34,26 @@ import {
 } from "./contracts.js";
 
 const MEMORY_DATABASE_FILENAME = "memory-v1.db";
-const MEMORY_SCHEMA_VERSION = 1;
+const MEMORY_SCHEMA_VERSION = 2;
 
 type MemoryRow = {
   record_json: string;
   create_digest: string;
 };
 
+type MemoryControlEventRow = { event_json: string };
+
 export class MemoryConflictError extends Error {
   constructor(memoryId: string) {
     super(`Memory ${memoryId} already exists with different content in this scope.`);
     this.name = "MemoryConflictError";
+  }
+}
+
+export class MemoryControlConflictError extends Error {
+  constructor(operationId: string) {
+    super(`Memory control operation ${operationId} was already used with different content in this scope.`);
+    this.name = "MemoryControlConflictError";
   }
 }
 
@@ -377,6 +391,127 @@ export class MemoryStore {
     return result.changes === 1;
   }
 
+  isRecallEnabled(scopeInput: MemoryScope): boolean {
+    const scope = scopeColumns(MemoryScopeSchema.parse(scopeInput));
+    const row = this.#database.prepare(`
+      SELECT enabled FROM memory_scope_controls
+      WHERE user_id = ? AND project_id = ? AND workspace_id = ? AND branch_id = ?
+    `).get(scope.userId, scope.projectId, scope.workspaceId, scope.branchId) as { enabled: number } | undefined;
+    return row === undefined || row.enabled === 1;
+  }
+
+  applyControl(input: MemoryControlInput): MemoryControlResult {
+    const parsed = MemoryControlInputSchema.parse(input);
+    const commandDigest = digestCanonicalJson(parsed);
+    const transaction = this.#database.transaction((): MemoryControlResult => {
+      const existing = this.#getControlEvent(parsed.scope, parsed.operationId);
+      if (existing !== null) {
+        if (existing.commandDigest !== commandDigest) throw new MemoryControlConflictError(parsed.operationId);
+        return {
+          event: existing,
+          records: existing.memoryIds.flatMap((memoryId) => {
+            const record = this.get(parsed.scope, memoryId);
+            return record === null ? [] : [record];
+          })
+        };
+      }
+
+      let records: MemoryRecord[] = [];
+      let memoryIds: string[] = [];
+      let affectedCount = 0;
+      let recallEnabled: boolean | undefined;
+      if (parsed.action === "correct") {
+        this.create(parsed.replacement);
+        const result = this.supersede({
+          scope: parsed.scope,
+          replacementMemoryId: parsed.replacement.memoryId,
+          predecessorMemoryIds: [parsed.predecessorMemoryId],
+          promotion: { mode: "explicit", promotedBy: parsed.actor, promotedAt: parsed.occurredAt },
+          reason: parsed.reason
+        });
+        records = [result.replacement, ...result.predecessors];
+        memoryIds = records.map((record) => record.memoryId);
+        affectedCount = records.length;
+      } else if (parsed.action === "invalidate") {
+        const record = this.setStatus({
+          scope: parsed.scope,
+          memoryId: parsed.memoryId,
+          status: "invalidated",
+          updatedAt: parsed.occurredAt
+        });
+        if (record === null) throw new MemoryLifecycleError("MEMORY_NOT_FOUND", "Memory was not found in this scope.");
+        records = [record];
+        memoryIds = [record.memoryId];
+        affectedCount = 1;
+      } else if (parsed.action === "delete") {
+        const record = this.get(parsed.scope, parsed.memoryId);
+        if (record === null) throw new MemoryLifecycleError("MEMORY_NOT_FOUND", "Memory was not found in this scope.");
+        assertForwardTime(record, parsed.occurredAt);
+        if (!this.delete(parsed.scope, parsed.memoryId)) throw new MemoryLifecycleError("MEMORY_CONCURRENT_UPDATE", "Memory changed concurrently; retry the control operation.");
+        memoryIds = [record.memoryId];
+        affectedCount = 1;
+      } else if (parsed.action === "set_scope_recall") {
+        const scope = scopeColumns(parsed.scope);
+        const current = this.#database.prepare(`
+          SELECT updated_at FROM memory_scope_controls
+          WHERE user_id = ? AND project_id = ? AND workspace_id = ? AND branch_id = ?
+        `).get(scope.userId, scope.projectId, scope.workspaceId, scope.branchId) as { updated_at: string } | undefined;
+        if (current !== undefined && Date.parse(parsed.occurredAt) < Date.parse(current.updated_at)) {
+          throw new MemoryLifecycleError("MEMORY_INVALID_TRANSITION", "Scope recall policy time must not move backwards.");
+        }
+        this.#database.prepare(`
+          INSERT INTO memory_scope_controls (
+            user_id, project_id, workspace_id, branch_id, enabled, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(user_id, project_id, workspace_id, branch_id)
+          DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at
+        `).run(scope.userId, scope.projectId, scope.workspaceId, scope.branchId, parsed.enabled ? 1 : 0, parsed.occurredAt);
+        recallEnabled = parsed.enabled;
+        affectedCount = 1;
+      } else {
+        const scope = scopeColumns(parsed.scope);
+        for (const record of this.#listLifecycleRecords(parsed.scope)) assertForwardTime(record, parsed.occurredAt);
+        const result = this.#database.prepare(`
+          DELETE FROM memory_records
+          WHERE user_id = ? AND project_id = ? AND workspace_id = ? AND branch_id = ?
+        `).run(scope.userId, scope.projectId, scope.workspaceId, scope.branchId);
+        affectedCount = result.changes;
+      }
+
+      const event = MemoryControlEventSchema.parse({
+        operationId: parsed.operationId,
+        scope: parsed.scope,
+        action: parsed.action,
+        actor: parsed.actor,
+        reason: parsed.reason,
+        occurredAt: parsed.occurredAt,
+        memoryIds,
+        affectedCount,
+        ...(recallEnabled === undefined ? {} : { recallEnabled }),
+        commandDigest
+      });
+      const scope = scopeColumns(parsed.scope);
+      this.#database.prepare(`
+        INSERT INTO memory_control_events (
+          user_id, project_id, workspace_id, branch_id, operation_id, occurred_at, event_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(scope.userId, scope.projectId, scope.workspaceId, scope.branchId, event.operationId, event.occurredAt, JSON.stringify(event));
+      return { event, records };
+    });
+    return transaction();
+  }
+
+  listControlEvents(scopeInput: MemoryScope, limit = 500): MemoryControlEvent[] {
+    const scope = scopeColumns(MemoryScopeSchema.parse(scopeInput));
+    if (!Number.isInteger(limit) || limit < 1 || limit > 10_000) throw new Error("Memory audit limit must be an integer from 1 to 10000.");
+    const rows = this.#database.prepare(`
+      SELECT event_json FROM memory_control_events
+      WHERE user_id = ? AND project_id = ? AND workspace_id = ? AND branch_id = ?
+      ORDER BY occurred_at ASC, operation_id ASC LIMIT ?
+    `).all(scope.userId, scope.projectId, scope.workspaceId, scope.branchId, limit) as MemoryControlEventRow[];
+    return rows.map((row) => MemoryControlEventSchema.parse(JSON.parse(row.event_json)));
+  }
+
   close(): void {
     this.#database.close();
   }
@@ -395,6 +530,16 @@ export class MemoryStore {
       scope.branchId,
       memoryId
     ) as MemoryRow | undefined;
+  }
+
+  #getControlEvent(scopeInput: MemoryScope, operationId: string): MemoryControlEvent | null {
+    const scope = scopeColumns(scopeInput);
+    const row = this.#database.prepare(`
+      SELECT event_json FROM memory_control_events
+      WHERE user_id = ? AND project_id = ? AND workspace_id = ?
+        AND branch_id = ? AND operation_id = ?
+    `).get(scope.userId, scope.projectId, scope.workspaceId, scope.branchId, operationId) as MemoryControlEventRow | undefined;
+    return row === undefined ? null : MemoryControlEventSchema.parse(JSON.parse(row.event_json));
   }
 
   #requireRecord(scope: MemoryScope, memoryId: string): MemoryRecord {
@@ -537,6 +682,29 @@ export class MemoryStore {
           ON memory_records (
             user_id, project_id, workspace_id, branch_id,
             memory_type, updated_at DESC, memory_id ASC
+          );
+        CREATE TABLE IF NOT EXISTS memory_scope_controls (
+          user_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          branch_id TEXT NOT NULL,
+          enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (user_id, project_id, workspace_id, branch_id)
+        );
+        CREATE TABLE IF NOT EXISTS memory_control_events (
+          user_id TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL,
+          branch_id TEXT NOT NULL,
+          operation_id TEXT NOT NULL,
+          occurred_at TEXT NOT NULL,
+          event_json TEXT NOT NULL,
+          PRIMARY KEY (user_id, project_id, workspace_id, branch_id, operation_id)
+        );
+        CREATE INDEX IF NOT EXISTS memory_control_events_scope_time
+          ON memory_control_events (
+            user_id, project_id, workspace_id, branch_id, occurred_at ASC, operation_id ASC
           );
       `);
       this.#database.pragma(`user_version = ${MEMORY_SCHEMA_VERSION}`);

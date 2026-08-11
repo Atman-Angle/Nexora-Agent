@@ -131,6 +131,29 @@ const runtime = createRuntime({
 
 Decision Context 的 `memoryCandidates` 最多 6 条，并同时受 768 estimated tokens / 4 KiB 硬上限约束；只来自 exact scope 内 active、未过期、normal sensitivity 的记录。候选包含 ref、type、reasons、source、verification、lifecycle 和 record digest，但不包含 statement。Provider 必须返回 `request_context` 请求原样 `memory:<id>` ref，Runtime 才在下一轮重验 scope/lifecycle/expiry/sensitivity/digest 并以 `rehydratedFacts(kind="memory")` 交付完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 和 Evidence 永远优先。
 
+面向用户的动作应使用 `MemoryControls`，不要把底层 CRUD 直接暴露成产品控制：
+
+```ts
+import { createMemoryControls } from "@nexora/runtime";
+
+const controls = createMemoryControls(memory);
+const view = controls.inspect({ scope, memoryId, asOf: new Date().toISOString() });
+
+controls.setScopeRecall({
+  action: "set_scope_recall",
+  scope,
+  operationId: "settings-2026-08-11",
+  actor: "user-1",
+  reason: "Pause long-term Memory for this project.",
+  occurredAt: new Date().toISOString(),
+  enabled: false
+});
+
+const audit = controls.exportAudit({ scope });
+```
+
+`correct` 要求 replacement 是同 scope 的 candidate，并在一个事务中复用 Supersession；`invalidate`、`delete`、`clearScope` 和 `setScopeRecall` 都要求 operationId/actor/reason/time。审计事件不复制 Memory statement。相同 operationId 与相同 command 可安全重试；相同 ID 的不同 command 抛出 `MemoryControlConflictError`。Scope recall 禁用会同时关闭候选发布与旧 Memory ref 的恢复，策略和 audit 在 Store 重启后仍保留。
+
 ## Runtime API
 
 ### `run`

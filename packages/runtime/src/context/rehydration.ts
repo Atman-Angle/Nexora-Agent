@@ -409,6 +409,7 @@ export function resolveRehydratedFact(args: {
     const available = record !== null
       && args.expectedMemoryDigest !== undefined
       && args.expectedMemoryDigest === digest
+      && args.memory?.store.isRecallEnabled(args.memory.scope) === true
       && record.status === "active"
       && record.sensitivity === "normal"
       && (record.expiresAt === undefined || Date.parse(record.expiresAt) > Date.parse(args.asOf ?? new Date().toISOString()))
