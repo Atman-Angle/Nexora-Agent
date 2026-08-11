@@ -36,3 +36,7 @@ Run：`ca7d788a-ae7b-479d-8091-b4d92aeeb88c`
 ## 诚实结论
 
 E097 首次真实样本失败，并按 one-shot 规则永久保留，不能用修复后的确定性测试覆盖。当前代码中的缺陷已修复，但真实 Provider 修复后结果仍未验证，因此本 Feature 只能标记 `verification_blocked`。下一步应在明确授权后创建新的版本化 Canary 数据集/Run，并保留 E097 作为失败基线。
+
+## 后续预算审计更正
+
+E098 直接读取不可变 Runtime Ledger 后确认：该 one-shot 的有效 `contextWindowTokens` 实际为 10,000，并非本报告固定场景段所写的 12,000；因此 `10,000 - 4,096 = 5,904`。原始报告和数据库保持不变，完整来源、语义与剩余风险见 `E098_DECISION_CONTEXT_BUDGET_AUDIT_REPORT.md`。

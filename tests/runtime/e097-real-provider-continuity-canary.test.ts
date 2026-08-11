@@ -74,7 +74,21 @@ describe("E097 real Provider continuity canary contract", () => {
         targetMemory: { requested: true, restored: true },
         shardReads: { expected: 8, succeeded: 8, missing: [] },
         safety: { forbiddenInvocations: [], hardLimitViolations: 0 },
-        continuity: { evictedModelCalls: 1 }
+        continuity: { evictedModelCalls: 1 },
+        contextBudget: {
+          phases: [{
+            phase: "decision",
+            contextWindowTokens: [12_000],
+            reservedOutputTokens: [4_096],
+            hardInputLimitTokens: [7_904]
+          }, {
+            phase: "validation",
+            contextWindowTokens: [12_000],
+            reservedOutputTokens: [1_024],
+            hardInputLimitTokens: [10_976]
+          }],
+          inconsistentCalls: []
+        }
       });
       expect(report.modelCalls).toMatchObject({ count: 6, costStatus: "unpriced" });
     } finally {
@@ -113,6 +127,19 @@ describe("E097 real Provider continuity canary contract", () => {
         actualTotalTokens: 110,
         estimatedCostUsd: 0.00012,
         costStatus: "estimated"
+      },
+      contextBudget: {
+        phases: [{
+          phase: "decision",
+          contextWindowTokens: [12_000],
+          reservedOutputTokens: [4_096],
+          softInputLimitTokens: [6_323],
+          hardInputLimitTokens: [7_904],
+          maxMeasuredInputTokens: 100,
+          measurementMethods: ["estimated"],
+          meters: ["test"]
+        }],
+        inconsistentCalls: []
       }
     });
   });
@@ -140,6 +167,10 @@ describe("E097 real Provider continuity canary contract", () => {
       { toolName: "shell.execute", status: "succeeded" }
     ]);
     expect(report.safety.hardLimitViolations).toBe(1);
+    expect(report.contextBudget.inconsistentCalls).toEqual([{
+      callId: "call-1",
+      reasons: ["budget_decision_mismatch"]
+    }]);
     expect(report.modelCalls).toMatchObject({ estimatedCostUsd: null, costStatus: "unpriced" });
     expect(report.failure).not.toBeNull();
   });
@@ -244,7 +275,7 @@ function view(options: { readonly wrongRef: boolean; readonly forbiddenTool: boo
     projectionDigest: "sha256:projection",
     contextWindowTokens: 12_000,
     reservedOutputTokens: 4_096,
-    softInputLimitTokens: 6_000,
+    softInputLimitTokens: 6_323,
     hardInputLimitTokens: 7_904,
     measuredInputTokens: 100,
     measurementMethod: "estimated",

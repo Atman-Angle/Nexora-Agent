@@ -239,6 +239,25 @@ describe("E084 Model / Provider configuration", () => {
     }));
   });
 
+  it("uses the explicit environment context window as the effective model capability", () => {
+    const provider = openAICompatibleProviderFromEnv({
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
+      NEXORA_MODEL_API_KEY: "test-key",
+      NEXORA_MODEL_NAME: "test-model",
+      NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: "32000"
+    });
+
+    expect(provider.modelProfile).toEqual(expect.objectContaining({
+      contextWindowTokens: 32_000,
+      reservedOutputTokens: {
+        decision: 4_096,
+        validation: 1_024,
+        compaction: 4_096
+      }
+    }));
+  });
+
   it("rejects an unknown reasoning value from environment", () => {
     expect(() => openAICompatibleProviderFromEnv({
       NEXORA_MODEL_PROVIDER: "openai-compatible",

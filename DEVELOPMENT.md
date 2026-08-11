@@ -9,64 +9,56 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: real-provider-continuity-canary
-status: verification_blocked
+current_feature: decision-context-budget-capability-audit
+status: done_locally
 
 feature_contract:
-  feature: real-provider-continuity-canary
-  title: Real Provider Context and Memory Continuity Canary
-  mode: VERIFY
+  feature: decision-context-budget-capability-audit
+  title: Decision Context Budget and Provider Capability Alignment
+  mode: EXPLORE
   goal: >
-    Prove the complete Context and Memory Harness works with the configured real Provider
-    on a fixed long read-only task, with measurable quality, safety, tokens, latency and cost status.
+    Trace and align decision Context budgeting with the effective Provider model profile,
+    final wire request, phase output reserve and persisted Runtime evidence.
   scope:
-    - run one fixed eight-shard task through the production OpenAI-compatible Provider Adapter
-    - seed relevant, distracting, sensitive and cross-project Memory records
-    - require exact target Memory request/rehydration and eight persisted read Evidence
-    - record success, wrong recall, tokens, model calls, latency, cost status and failure samples
+    - audit the 5,904-token hard limit from Provider configuration through Runtime refusal
+    - distinguish total window, wire input, phase output reserve, fixed prompt and Tool contracts
+    - add Canary budget decomposition and Ledger consistency evidence
+    - cover explicit windows, phase reserves, fixed wire overhead, missing capabilities and true overflow
   invariants:
-    - Canary is one-shot and never repairs results with extra user input or a second Run
-    - only read Tools are permitted; write or execute requests fail the Canary without approval
-    - Runtime Ledger, Events, Invocations and Evidence are the measurement Authority
-    - reports never contain API keys, authorization headers or Provider response internals
+    - ProviderModelProfile remains the single budget Authority
+    - Context ranking, rehydration, Eviction, Compaction and hard refusal remain enabled
+    - no State Machine, Plan, Invocation, Store, Approval, Evidence or Completion Authority changes
+    - original E097 report and Runtime database remain immutable evidence
   non_goals:
-    - tuning prompts or retrying until a passing sample is obtained
-    - production deployment, vendor billing reconciliation or universal model comparison
-    - changing Memory ranking, Context budgets, Core Authority or Tool permissions
-    - claiming multi-run statistical confidence from a one-run release Canary
+    - model-name capability registry, vector infrastructure or Provider discovery service
+    - changing public Provider configuration format or requiring a previously optional setting
+    - increasing a window or deleting budget protection to make the failed Canary pass
+    - rerunning the E097 one-shot or claiming post-fix real Provider acceptance
   acceptance:
-    - production Provider requests and restores the one relevant exact-scope Memory and no wrong Memory
-    - Run succeeds as VALIDATED with successful filesystem.read Evidence for all eight shards
-    - at least one decision uses deterministic Eviction and no call violates the hard Context limit
-    - report records actual usage coverage, token totals, per-phase latency and priced/unpriced cost status
-    - any unsafe Tool, missing read, wrong recall, wait, failure or blocked state is retained as a failed sample
-    - deterministic contract tests and relevant/full regression plus static/build checks pass
-  risk: L3
+    - immutable Ledger proves the complete 5,904 calculation path
+    - Runtime and Adapter are proven to meter the same final wire input and output reserve
+    - Canary reports effective per-phase budget values and fails inconsistent Ledger arithmetic
+    - targeted Context/Provider tests, related regression and static/build checks pass
+  risk: L2
 
 latest_verification:
   deterministic:
-    red_to_green: harness-helpful-rehydrated-facts-were-not-provider-budget-evictable
-    deterministic_canary_contract: E097-1-file-3-tests-passed
-    real_provider_canary: failed-one-shot-run-ca7d788a-context-budget-exceeded
-    real_provider_partial_success: target-memory-restored-wrong-recall-0-8-of-8-reads-no-unsafe-tools
-    real_provider_usage: 6-calls-5-with-usage-16215-input-11775-output-27990-total
-    real_provider_latency_ms: decision-p50-27019.22-p95-35943.07-max-35943.07-run-96546.21
-    real_provider_cost: unpriced-no-token-rates-configured
-    post_failure_fix: evict-rebuildable-harness-helpful-facts-before-tool-observations
-    context_memory_regression: 12-files-76-tests-passed
-    context_quality_gate: 12-files-80-tests-passed
-    full_regression: 68-files-303-tests-passed-no-skips-no-unhandled-errors
-    typecheck: passed
+    root_cause: E097-ledger-used-10000-window-minus-4096-decision-reserve-equals-5904
+    evidence_correction: current-12000-canary-default-and-E097-doc-did-not-match-effective-one-shot-profile
+    authority_alignment: final-wire-meter-and-max-tokens-share-one-ProviderModelProfile
+    targeted: 3-files-24-tests-passed
+    context_provider_regression: 17-files-103-tests-passed-no-skips
+    typecheck: passed-after-runtime-build-ordering
     lint: passed
     runtime_package_build: passed
-    root_build: passed
+    root_build: passed-after-runtime-build-ordering
     diff_check: passed
   external_environment_acceptance:
-    status: failed
-    reason: First real one-shot exposed a fixed Context budget defect; post-fix real Provider rerun is intentionally unavailable in E097.
+    status: unverified
+    reason: No Provider capability endpoint or exact qwen tokenizer contract is available; E097 remains the immutable real sample.
 
-last_completed_feature: memory-performance-rebuild
-next_action: stop; authorize a new versioned post-fix Canary instead of rerunning E097
+last_completed_feature: decision-context-budget-capability-audit
+next_action: stop; separately decide whether missing model capability must fail closed
 ```
 
 ## Update Rules

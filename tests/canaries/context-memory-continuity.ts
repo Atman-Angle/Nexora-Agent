@@ -162,6 +162,7 @@ export function evaluateContinuityCanary(input: {
   const checkpoints = eventsOfType(input.view.events, "context.checkpointed").length;
   const actionRejections = input.view.events.filter((event) => event.type === "action.rejected").length;
   const tokens = tokenMetrics(input.view.modelCalls, input.pricing);
+  const contextBudget = contextBudgetMetrics(input.view.modelCalls);
   const providerLatency = latencyMetrics(input.observations);
   const targetRequested = requestedMemoryRefs.includes(TARGET_MEMORY_REF);
   const passed = input.result.status === "succeeded"
@@ -172,6 +173,7 @@ export function evaluateContinuityCanary(input: {
     && missingShardReads.length === 0
     && forbiddenInvocations.length === 0
     && hardLimitViolations.length === 0
+    && contextBudget.inconsistentCalls.length === 0
     && evictedModelCalls > 0;
 
   return {
@@ -210,12 +212,53 @@ export function evaluateContinuityCanary(input: {
       actionRejections
     },
     modelCalls: tokens,
+    contextBudget,
     providerLatency,
     failure: passed ? null : {
       error: input.result.lastError,
       summary: input.result.summary
     }
   };
+}
+
+function contextBudgetMetrics(modelCalls: readonly ModelCallRecord[]) {
+  const phases = ["decision", "validation", "compaction"] as const;
+  const inconsistentCalls = modelCalls.flatMap((call) => {
+    const expectedHard = call.contextWindowTokens - call.reservedOutputTokens;
+    const expectedDecision = call.measuredInputTokens > call.hardInputLimitTokens
+      ? "hard_limit_exceeded"
+      : call.measuredInputTokens > call.softInputLimitTokens
+        ? "soft_limit_exceeded"
+        : "within_budget";
+    const reasons = [
+      ...(call.hardInputLimitTokens === expectedHard ? [] : ["hard_limit_mismatch"]),
+      ...(call.budgetDecision === expectedDecision ? [] : ["budget_decision_mismatch"])
+    ];
+    return reasons.length === 0 ? [] : [{ callId: call.id, reasons }];
+  });
+  return {
+    /** Effective values persisted by Runtime, not model-name assumptions. */
+    phases: phases.flatMap((phase) => {
+      const calls = modelCalls.filter((call) => call.phase === phase);
+      if (calls.length === 0) return [];
+      return [{
+        phase,
+        calls: calls.length,
+        contextWindowTokens: uniqueNumbers(calls.map((call) => call.contextWindowTokens)),
+        reservedOutputTokens: uniqueNumbers(calls.map((call) => call.reservedOutputTokens)),
+        softInputLimitTokens: uniqueNumbers(calls.map((call) => call.softInputLimitTokens)),
+        hardInputLimitTokens: uniqueNumbers(calls.map((call) => call.hardInputLimitTokens)),
+        maxMeasuredInputTokens: Math.max(...calls.map((call) => call.measuredInputTokens)),
+        measurementMethods: [...new Set(calls.map((call) => call.measurementMethod))].sort(),
+        meters: [...new Set(calls.map((call) => call.meter))].sort()
+      }];
+    }),
+    inconsistentCalls
+  };
+}
+
+function uniqueNumbers(values: readonly number[]): number[] {
+  return [...new Set(values)].sort((left, right) => left - right);
 }
 
 function observeProvider(

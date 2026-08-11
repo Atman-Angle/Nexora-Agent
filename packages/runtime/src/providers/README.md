@@ -71,6 +71,8 @@ Provider 输出不会直接覆盖 Context。Runtime 会重新校验 Summary Sche
 
 环境变量补充：`NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM`。
 
+`NEXORA_MODEL_CONTEXT_WINDOW_TOKENS` 应填写当前部署模型经 Provider 文档或实际合同确认的总上下文窗口。缺失时 OpenAI-compatible Adapter 为兼容旧调用使用 128,000；该 fallback 不是按模型名发现的真实能力，也不能作为任意兼容端点的能力声明。Runtime 会从该总窗口扣除当前 phase 的输出预留，最终 wire input（包括固定 system prompt 与 Tool/Action Contract）必须落在剩余 hard input limit 内。
+
 ### Reasoning Policy（`off | on | dynamic`）
 
 `ReasoningPolicy` 是 Provider-neutral 抽象（`model-client.ts`），Runtime 核心不感知任何厂商专有字段。具体 Provider 把它翻译成自己的参数：
