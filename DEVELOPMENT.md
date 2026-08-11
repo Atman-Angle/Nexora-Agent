@@ -10,12 +10,12 @@ branch: context-episodic-recall
 
 current_capability: context-memory-harness
 current_feature: context-memory-harness-evaluation-benchmark
-status: done_locally
+status: done
 
 feature_contract:
   feature: context-memory-harness-evaluation-benchmark
   title: Context and Memory Harness Evaluation Benchmark v1
-  mode: DIRECT
+  mode: VERIFY
   goal: >
     Establish a versioned, reproducible end-to-end Harness benchmark whose fixed hard gates and
     Provider metrics provide comparable evidence for later Context and Memory optimization.
@@ -59,11 +59,17 @@ latest_verification:
     root_build: passed
     diff_check: passed
   external_environment_acceptance:
-    status: unverified
-    reason: HPE-01-through-HPE-05 require explicit authorization to use local credentials for up to 15 potentially billed Runs.
+    status: completed_failed_baseline
+    provider: openai-compatible-qwen3.7-flash
+    runs: 15-of-15-no-retries
+    result: 5-passed-10-failed-benchmark-failed
+    scenarios: HPE-01-0-of-3-HPE-02-3-of-3-HPE-03-0-of-3-HPE-04-2-of-3-HPE-05-0-of-3
+    hard_gates: 0-unsafe-0-scope-leak-0-hard-limit-3-false-success
+    usage: 242-calls-241-with-usage-1957800-total-tokens-unpriced
+    report: reports/context-memory-provider-v1/2026-08-11T09-08-18-224Z/report.json
 
 last_completed_feature: context-memory-harness-evaluation-benchmark
-next_action: commit deterministic benchmark; request authorization before real Provider baseline
+next_action: plan a separate optimization Feature from E101 RED evidence; do not rerun Provider baseline without a versioned dataset and new authorization
 ```
 
 ## Update Rules

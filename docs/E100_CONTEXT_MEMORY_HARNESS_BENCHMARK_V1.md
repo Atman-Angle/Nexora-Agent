@@ -2,7 +2,7 @@
 
 日期：2026-08-11
 
-状态：deterministic baseline passed；real Provider baseline pending authorization
+状态：deterministic baseline passed；real Provider baseline completed and failed
 
 ## 目的
 
@@ -86,7 +86,8 @@ Canonical clean-source 运行时间：2026-08-11T08:53:37.712Z；source commit `
 
 ## 当前限制与下一步
 
-- 尚未运行 HPE-01–05；需要明确授权使用本地 Provider 凭据，且最多执行 15 个可能计费的 Run；
+- HPE-01–05 已按固定协议完成 15/15 Run，5/15 通过，整版失败；完整证据和失败归因见 `E101_REAL_PROVIDER_HARNESS_BASELINE.md`；
 - qwen tokenizer 仍未接入，发送前 measurement 为 estimated，Provider usage 是实际偏差证据；
 - 性能耗时受机器负载影响，必须同时比较 manifest digest、代码 revision 和环境；
+- HPE-05 的 32K arm 未触发 Eviction，下一版 stress dataset 必须先用确定性 evidence 校准，不能把本次结果解释为治理能力通过；
 - Benchmark 评估 Harness，不评估通用知识、写作风格或所有 Tool 类型。
