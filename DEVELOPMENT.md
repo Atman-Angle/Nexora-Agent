@@ -9,48 +9,49 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: explicit-provider-model-budget-profile
+current_feature: context-memory-harness-evaluation-benchmark
 status: done_locally
 
 feature_contract:
-  feature: explicit-provider-model-budget-profile
-  title: Explicit Provider Model Budget Profile
+  feature: context-memory-harness-evaluation-benchmark
+  title: Context and Memory Harness Evaluation Benchmark v1
   mode: DIRECT
   goal: >
-    Resolve real Provider context capacity from the selected model and require per-phase output budgets to be validated,
-    while recording Canary overrides and Provider usage deviation without a second Authority.
+    Establish a versioned, reproducible end-to-end Harness benchmark whose fixed hard gates and
+    Provider metrics provide comparable evidence for later Context and Memory optimization.
   scope:
-    - resolve a verified context window and maximum output capability from NEXORA_MODEL_NAME
-    - reject unknown models, manual production window overrides and invalid output budgets before Run creation
-    - record declared Profile, Canary context-window override and effective Profile
-    - derive per-call measured-versus-actual usage deviations from the existing Model Call Ledger
+    - define a fixed capability matrix, scenario manifest, evidence contracts and pass thresholds
+    - run deterministic Runtime/Store/Tool/Memory E2E scenarios through real public execution paths
+    - generate machine-readable revisioned reports with dimensions, durations and fail-closed gates
+    - define a separate real Provider protocol for quality, tokens, latency, cost and failure samples
   invariants:
-    - ProviderModelProfile and Model Call Ledger remain the only budget and usage Authorities
-    - Context ranking, rehydration, Eviction, Compaction and hard refusal remain unchanged
-    - no State Machine, Plan, Invocation, Store, Approval, Evidence or Completion Authority changes
-    - absent Provider usage remains unknown rather than being recorded as zero
+    - benchmark reads Runtime Ledger, Store, Invocation and Evidence instead of creating result Authority
+    - safety, Authority, recovery and hard-budget failures cannot be averaged away by a score
+    - deterministic and real Provider evidence remain separate and cannot overwrite each other
+    - dataset or threshold semantics are versioned and reports never contain Provider credentials
   non_goals:
-    - remote Provider capability discovery or automatic catalog updates
-    - database migration, adaptive budget tuning or a second Profile cache
-    - requiring production env configuration in custom/test RuntimeProvider implementations
-    - real Provider Canary rerun, price discovery or release deployment
+    - optimizing Context ranking, prompts, Memory recall or Runtime behavior in the benchmark Feature
+    - claiming model-quality statistics from deterministic scripted Provider runs
+    - production deployment, universal model comparison or automatic benchmark tuning
+    - silently using local Provider credentials or incurring external cost
   acceptance:
-    - unknown models and invalid env Profiles fail before Provider execution and Run creation
-    - qwen3.7-flash automatically resolves to its verified 1M context capability
-    - explicit phase outputs reach the existing ProviderModelProfile and wire max_tokens path
-    - Canary distinguishes declared, override and effective Profiles and detects mismatch
-    - usage deviations preserve unavailable, under-reserve and over-limit facts per logical call
-    - targeted Provider/CLI/Canary tests, related L2 regression and static/build checks pass
-  risk: L2
+    - manifest covers continuity, retrieval, budget, authority, safety, recovery and efficiency
+    - missing, failed, skipped or todo scenario evidence fails the benchmark
+    - deterministic baseline executes every fixed scenario and records a comparable JSON report
+    - real Provider protocol specifies fixed data, repetitions, hard gates and regression candidates
+    - runner contract tests, benchmark supporting suite and static/build checks pass
+  risk: L3
 
 latest_verification:
   deterministic:
-    model_capability_resolution: qwen3.7-flash-resolves-to-1000000-context-131072-max-output
-    local_env_profile: decision-16384-validation-8192-compaction-8192-no-network-call
-    canary_override_provenance: declared-override-effective-profiles-separated-and-checked
-    usage_deviation: per-call-measured-actual-output-reserve-and-window-deviation-recorded
-    targeted: 5-files-34-tests-passed
-    provider_cli_context_regression: 19-files-113-tests-passed-no-skips
+    benchmark_id: context-memory-harness-v1-dataset-v1
+    manifest: 12-fixed-hard-gate-scenarios-7-dimensions
+    contract: E100-1-file-3-tests-passed
+    deterministic_baseline: 12-of-12-scenarios-39-of-39-supporting-tests-no-skips
+    dimension_scores: continuity-6/6-retrieval-5/5-budget-4/4-authority-5/5-safety-4/4-recovery-2/2-efficiency-2/2
+    baseline_duration_ms: 25401.19-dirty-feature-worktree
+    external_provider_calls: 0
+    provider_cost_usd: 0
     typecheck: passed
     lint: passed
     runtime_package_build: passed
@@ -58,10 +59,10 @@ latest_verification:
     diff_check: passed
   external_environment_acceptance:
     status: unverified
-    reason: qwen3.7-flash capability is based on the provided Provider evidence; exact tokenizer behavior and real endpoint acceptance were not exercised.
+    reason: HPE-01-through-HPE-05 require explicit authorization to use local credentials for up to 15 potentially billed Runs.
 
-last_completed_feature: explicit-provider-model-budget-profile
-next_action: stop after independent commit
+last_completed_feature: context-memory-harness-evaluation-benchmark
+next_action: commit deterministic benchmark; request authorization before real Provider baseline
 ```
 
 ## Update Rules

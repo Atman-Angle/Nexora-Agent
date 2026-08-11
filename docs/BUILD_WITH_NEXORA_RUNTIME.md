@@ -166,7 +166,7 @@ Runtime 只负责应用 Host 提供的 exact scope；用户认证、租户授权
 
 `memory-v1.db` 中的 scope/status/type/time 索引是派生性能结构。每次 `openMemoryStore` 都会幂等确认这些索引，即使数据库的 schema version 已经是当前版本；缺失索引会直接从 `memory_records` 和 `memory_control_events` 重建，不修改 Memory Record。部署恢复演练可以在备份副本上删除派生索引、重新打开 Store，并核对 Record、候选、索引列表与查询计划。不要删除 Authority 表来测试索引恢复。
 
-真实 Context+Memory Canary 使用 `pnpm run canary:context-memory`。它读取现有 `NEXORA_MODEL_*` 配置，默认把测试窗口固定为 12,000 tokens，在 `agent-evaluation/runs/context-memory-continuity-v1/` 保存无密钥报告，并且只允许 read Tool 成功。可选设置 `NEXORA_CANARY_INPUT_USD_PER_MILLION_TOKENS` 与 `NEXORA_CANARY_OUTPUT_USD_PER_MILLION_TOKENS` 生成费用估算；未配置时报告必须写 `costStatus=unpriced`，不能用 0 冒充真实费用。Canary 是 one-shot：失败后只 inspect，不在同一版本追加提示或重跑。
+真实 Context+Memory Canary 使用 `pnpm run canary:context-memory`。它读取现有 `NEXORA_MODEL_*` 的真实模型能力；只有显式设置 `NEXORA_CANARY_CONTEXT_WINDOW_TOKENS` 才施加单独记录的 stress override，不再默认把 qwen3.7-flash 压成 12K。在 `agent-evaluation/runs/context-memory-continuity-v1/` 保存的报告无密钥，并且只允许 read Tool 成功。可选设置 `NEXORA_CANARY_INPUT_USD_PER_MILLION_TOKENS` 与 `NEXORA_CANARY_OUTPUT_USD_PER_MILLION_TOKENS` 生成费用估算；未配置时报告必须写 `costStatus=unpriced`，不能用 0 冒充真实费用。Canary 是 one-shot：失败后只 inspect，不在同一版本追加提示或重跑。
 
 ## Runtime API
 
