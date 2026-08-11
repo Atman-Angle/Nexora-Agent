@@ -96,9 +96,16 @@ export type VitestJsonReport = {
 };
 
 export function evaluateHarnessBenchmark(report: VitestJsonReport) {
+  return evaluateHarnessBenchmarkScenarios(report, HARNESS_BENCHMARK_SCENARIOS);
+}
+
+export function evaluateHarnessBenchmarkScenarios(
+  report: VitestJsonReport,
+  definitions: readonly BenchmarkScenario[]
+) {
   const assertions = report.testResults.flatMap((result) => result.assertionResults);
   const byName = new Map(assertions.map((assertion) => [assertion.fullName, assertion]));
-  const scenarios = HARNESS_BENCHMARK_SCENARIOS.map((definition) => {
+  const scenarios = definitions.map((definition) => {
     const assertion = byName.get(definition.fullName);
     return {
       ...definition,
@@ -143,13 +150,27 @@ export function evaluateHarnessBenchmark(report: VitestJsonReport) {
 }
 
 export async function runHarnessBenchmark(outputRoot?: string): Promise<string> {
+  return await runHarnessBenchmarkDefinition({
+    benchmarkId: HARNESS_BENCHMARK_ID,
+    datasetVersion: 1,
+    scenarios: HARNESS_BENCHMARK_SCENARIOS,
+    ...(outputRoot === undefined ? {} : { outputRoot })
+  });
+}
+
+export async function runHarnessBenchmarkDefinition(input: {
+  readonly benchmarkId: string;
+  readonly datasetVersion: number;
+  readonly scenarios: readonly BenchmarkScenario[];
+  readonly outputRoot?: string;
+}): Promise<string> {
   const createdAt = new Date().toISOString();
-  const directory = resolve(outputRoot ?? join(
-    process.cwd(), "reports", HARNESS_BENCHMARK_ID, createdAt.replaceAll(":", "-").replace(".", "-")
+  const directory = resolve(input.outputRoot ?? join(
+    process.cwd(), "reports", input.benchmarkId, createdAt.replaceAll(":", "-").replace(".", "-")
   ));
   mkdirSync(directory, { recursive: true });
   const vitestOutput = join(directory, "vitest.json");
-  const files = [...new Set(HARNESS_BENCHMARK_SCENARIOS.map((item) => item.testFile))];
+  const files = [...new Set(input.scenarios.map((item) => item.testFile))];
   const vitest = createRequire(import.meta.url).resolve("vitest/vitest.mjs");
   const started = performance.now();
   const child = spawnSync(process.execPath, [
@@ -157,14 +178,14 @@ export async function runHarnessBenchmark(outputRoot?: string): Promise<string> 
   ], { cwd: process.cwd(), stdio: "inherit", windowsHide: true });
   if (!Number.isInteger(child.status)) throw child.error ?? new Error("Benchmark test process did not exit.");
   const raw = JSON.parse(readFileSync(vitestOutput, "utf8")) as VitestJsonReport;
-  const evaluated = evaluateHarnessBenchmark(raw);
+  const evaluated = evaluateHarnessBenchmarkScenarios(raw, input.scenarios);
   const manifestDigest = `sha256:${createHash("sha256")
-    .update(JSON.stringify(HARNESS_BENCHMARK_SCENARIOS))
+    .update(JSON.stringify(input.scenarios))
     .digest("hex")}`;
   const finalReport = {
     schemaVersion: 1,
-    benchmarkId: HARNESS_BENCHMARK_ID,
-    datasetVersion: 1,
+    benchmarkId: input.benchmarkId,
+    datasetVersion: input.datasetVersion,
     executionMode: "deterministic_runtime_e2e",
     createdAt,
     source: gitSource(),

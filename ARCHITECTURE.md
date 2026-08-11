@@ -98,6 +98,8 @@ Memory 的 SQLite scope/status/type/time 索引和 control-event time 索引都�
 
 Provider-aware Context Eviction 同时覆盖可重建的 `rehydratedFacts(origin=harness_helpful)`。该类 Fact 的优先级低于 Tool Observation，应先移除；`harness_required` 与模型显式 `request_context` 恢复的 Fact 不在此路径删除。这样自动 helpful 原文不会在小窗口下形成不可收缩的第二预算池，原始 Invocation/Evidence/Artifact 仍留在 Authority Store 并可再次精确恢复。
 
+Context + Memory Harness 的确定性 Benchmark 按 dataset version 固定场景与 Evidence Contract。v1 保留原有 12 个通用能力场景；v2 只追加一个 32K qwen calibrated-wire stress 场景，通过真实 OpenAI-compatible Adapter 和本地 HTTP stub 验证 soft-limit 治理、Eviction、Memory 恢复、Tool Evidence 与 Completion Gate 的完整链。Benchmark runner 和 scripted response 只产生测试证据，不进入生产 Runtime，也不成为 Context、Memory、Run 或 Provider Authority；本地结果不能替代真实 Provider 质量评测。
+
 ### Action Runtime
 
 完整执行管线：

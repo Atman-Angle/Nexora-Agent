@@ -9,44 +9,44 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: provider-token-meter-calibration
+current_feature: context-memory-benchmark-v2-stress
 status: done_locally
 
 feature_contract:
-  feature: provider-token-meter-calibration
-  title: Evidence-calibrated Provider Token Meter
-  mode: EXPLORE
+  feature: context-memory-benchmark-v2-stress
+  title: Calibrated 32K Context and Memory Stress Benchmark v2
+  mode: DIRECT
   goal: >
-    Calibrate estimated OpenAI-compatible wire token measurements for verified models so Context
-    governance reacts to Provider-scale input usage instead of systematically low UTF-8/4 estimates.
+    Add a versioned deterministic benchmark scenario proving that the real OpenAI-compatible qwen
+    wire path triggers Context governance under the fixed 32K HPE-05 profile and still completes safely.
   scope:
-    - derive qwen3.7-flash phase multipliers from the fixed E101 Provider usage ledger
-    - apply calibration to the final projected wire request before budget assessment
-    - keep the measurement marked estimated and record the calibrated meter identity
-    - preserve caller-provided token meters as the higher-confidence authority
+    - preserve the v1 scenario manifest and reports unchanged
+    - add a v2 benchmark ID and dataset version with one calibrated stress scenario
+    - drive the real OpenAI-compatible Adapter through a deterministic local HTTP stub
+    - require persisted Eviction, complete shard Evidence, bounded budget and validated completion
   invariants:
-    - declared model context windows and output reserves remain unchanged
-    - actual Provider usage remains immutable ledger evidence and is never rewritten
-    - unknown models retain the documented compatibility fallback
-    - no tokenizer dependency, online mutable calibration state or second budget authority is introduced
+    - benchmark state and scripted Provider output never become Runtime Authority
+    - the production Context Builder, Adapter, meter, Eviction and Completion paths are exercised unchanged
+    - no external Provider call, credential or cost is required for deterministic v2
+    - the historical E101 real Provider baseline remains immutable evidence
   non_goals:
-    - claiming exact tokenizer counts
-    - redesigning the benchmark v2 stress dataset
-    - changing Context ranking, Eviction, Compaction or rehydration policy
+    - rerunning or replacing the 15-run real Provider baseline
+    - tuning Runtime policy to satisfy the benchmark
+    - changing Provider calibration, Context ranking or Completion semantics
     - rerunning billed Provider evaluation
   acceptance:
-    - the known qwen meter covers every observed E101 phase deviation with explicit safety margin
-    - the former 32K HPE-05 decision profile crosses the soft governance boundary deterministically
-    - custom exact meters override calibration and unknown models keep UTF-8/4 fallback
-    - budget, Provider configuration, Canary and Context Harness regressions pass
+    - v1 remains 12 scenarios and v2 contains exactly one additional stress scenario
+    - the stress run records at least one evicted decision and zero hard-limit violations
+    - all eight shard reads and required Memory restoration retain persisted Evidence
+    - v2 evaluator fails closed for missing, failed or skipped stress evidence
   risk: L2
 
 latest_verification:
   deterministic:
-    e105_calibration: 4-of-4-passed
-    relevant_suite: 45-of-45-passed-no-skips
-    full_core_regression: 326-of-326-passed-no-skips
-    context_memory_benchmark: 12-of-12-scenarios-and-39-of-39-supporting-tests
+    e106_benchmark_v2: 2-of-2-passed
+    relevant_suite: 37-of-37-passed-no-skips
+    full_core_regression: 328-of-328-passed-no-skips
+    context_memory_benchmark_v2: 13-of-13-scenarios-and-41-of-41-supporting-tests
     typecheck: passed
     lint: passed
     root_build: passed
@@ -55,8 +55,8 @@ latest_verification:
     external_provider_calls: 0
     provider_cost_usd: 0
 
-last_completed_feature: provider-token-meter-calibration
-next_action: context-memory-benchmark-v2-stress
+last_completed_feature: context-memory-benchmark-v2-stress
+next_action: await explicit authorization before a versioned real Provider revalidation of the E101 fixes
 ```
 
 ## Update Rules

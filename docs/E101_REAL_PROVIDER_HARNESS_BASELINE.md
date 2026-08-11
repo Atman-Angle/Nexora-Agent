@@ -61,4 +61,5 @@
 - `8264960`：已恢复的重复 ref 请求不再成为静默 no-op，而是进入有界 invalid-action repair；validation repair 明确要求保留 Evidence、消费当前可见事实并补齐 summary 的具体结果；
 - 当前 `provider-token-meter-calibration` Feature：基于固定 E101 usage 为 qwen wire estimate 增加分 phase 校准，保留 estimated 标记、meter identity、精确 tokenizer 优先级与原始 actual usage；
 - 尚未形成新的真实 Provider 对比数据；E101 失败基线保持不变，后续只能在 versioned dataset 和新费用授权下复测；
-- 可证明触发 Eviction 的 Benchmark v2 仍是独立后续 Feature；token 校准与 validation summary 的真实 Provider 改善需要新的费用授权后复测。
+- `context-memory-harness-v2` 已在独立确定性 Feature 中加入 HBE-13：同一 qwen 32K effective Profile、真实 OpenAI-compatible wire 投影和校准 meter 在本地 HTTP stub 下触发至少一次 Eviction，并保持 Memory 恢复、8/8 shard Evidence、0 hard violation 与 `VALIDATED`；详见 `E106_CONTEXT_MEMORY_HARNESS_BENCHMARK_V2.md`；
+- 该 v2 结果证明生产治理链可被校准后的固定负载触发，不改写本页 15 次真实 Provider 失败基线，也不证明 qwen 在修复后的召回、动作收敛或 summary 质量；这些改善仍需新的费用授权后按 versioned Provider dataset 复测。
