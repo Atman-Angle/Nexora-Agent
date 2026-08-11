@@ -65,6 +65,71 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     }
   });
 
+  it("normalizes non-authoritative planning arguments and splits calls at active Task boundaries", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "a.txt"), "A", "utf8");
+    writeFileSync(join(root, "b.txt"), "B", "utf8");
+    const provider = queuedProvider([
+      {
+        intent: {
+          kind: "plan_tasks",
+          taskContract: {
+            goal: "Read both files.",
+            constraints: [],
+            acceptanceCriteria: ["Both reads have Evidence."]
+          },
+          tasks: [
+            {
+              objective: "Read a.txt.",
+              completionRequirements: [{
+                kind: "capability_result",
+                capability: "filesystem.read",
+                args: { path: "a.txt" }
+              }]
+            },
+            {
+              objective: "Read b.txt.",
+              completionRequirements: [{
+                kind: "capability_result",
+                capability: "filesystem.read",
+                arguments: { path: "b.txt" }
+              }]
+            }
+          ]
+        }
+      },
+      decision({
+        kind: "use_capabilities",
+        calls: [
+          { capability: "filesystem.read", arguments: { path: "a.txt" } },
+          { capability: "filesystem.read", arguments: { path: "b.txt" } }
+        ]
+      }),
+      decision({
+        kind: "use_capabilities",
+        calls: [{ capability: "filesystem.read", arguments: { path: "b.txt" } }]
+      }),
+      decision({ kind: "finish", summary: "Verified A and B." })
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read a.txt and b.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(view.toolInvocations.map((item) => item.inputJson)).toEqual([
+      { path: "a.txt" },
+      { path: "b.txt" }
+    ]);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+  });
+
   it("restores Context before planning, normalizes a duplicate request and creates the omitted exact-ref Check", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "history.txt"), "HISTORY-MARKER", "utf8");
@@ -174,6 +239,30 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.snapshot.result).toBeNull();
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
   });
+
+  it("uses the latest persisted task input when failure occurs before a Task Contract exists", async () => {
+    const root = fixtureRoot();
+    const provider = queuedProvider([
+      decision({ kind: "request_input", question: "What is the current task?", reason: "fixture" }),
+      { type: "set_plan", basedOnVersion: null, orderedSteps: [] }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: []
+    });
+
+    const waiting = await runtime.start({
+      input: "Historical setup input.",
+      budgets: { maxIterations: 3, maxModelCalls: 3, maxToolCalls: 1, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const result = await runtime.resume({ runId: waiting.runId, input: "Read the current proof file." });
+    await runtime.close();
+
+    expect(result.status).toBe("failed");
+    expect(result.failureHandoff?.originalGoal).toBe("Read the current proof file.");
+  });
 });
 
 function fixtureRoot(): string {
@@ -203,7 +292,7 @@ function decision(intent: ProviderDecision["intent"]): ProviderDecision {
 }
 
 function queuedProvider(
-  decisions: readonly ProviderDecision[],
+  decisions: readonly unknown[],
   validations: readonly Awaited<ReturnType<RuntimeProvider["validate"]>>[] = [{ passed: true, issues: [] }]
 ): RuntimeProvider & { readonly contexts: ModelDecisionContext[] } {
   const queue = [...decisions];

@@ -19,7 +19,7 @@ describe("E101 real Provider Harness benchmark contract", () => {
     expect(PROVIDER_REPETITIONS).toBe(3);
     expect(PROVIDER_RUN_COUNT).toBe(15);
     expect(PROVIDER_SCENARIOS.filter((item) => item.stressContextWindowTokens !== null)).toEqual([
-      expect.objectContaining({ id: "HPE-05", stressContextWindowTokens: 32_000 })
+      expect.objectContaining({ id: "HPE-05", stressContextWindowTokens: 24_000 })
     ]);
   });
 

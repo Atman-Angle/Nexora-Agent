@@ -163,26 +163,38 @@ function compileCapabilityCalls(
   const step = plan.orderedSteps.find((item) => item.id === activeStepId);
   if (step === undefined) throw new ActionRejectedError("use_capabilities requires an active Step.");
 
-  const satisfied = new Set(run.evidence.filter((evidence) => (
-    evidence.planVersion <= plan.version && evidence.stepId === step.id
-  )).map((evidence) => evidence.checkId));
-  const reserved = new Set<string>();
-  const actions = calls.map((call) => {
+  const activeIndex = plan.orderedSteps.findIndex((candidate) => candidate.id === step.id);
+  const requirements = plan.orderedSteps.slice(activeIndex).flatMap((candidateStep) => (
+    candidateStep.acceptanceChecks
+      .filter((check): check is Extract<AcceptanceCheck, { kind: "tool_result" }> => (
+        check.kind === "tool_result"
+        && !run.evidence.some((evidence) => (
+          evidence.planVersion <= plan.version
+          && evidence.stepId === candidateStep.id
+          && evidence.checkId === check.id
+        ))
+      ))
+      .map((check) => ({ step: candidateStep, check }))
+  ));
+  if (calls.length > requirements.length) {
+    throw new ActionRejectedError("Capability batch contains more calls than unfinished requirements.");
+  }
+  for (const [index, call] of calls.entries()) {
     if (call.arguments === undefined) {
       throw new ActionRejectedError(`Capability arguments are required: ${call.capability}`);
     }
-    const check = step.acceptanceChecks.find((candidate) => (
-      candidate.kind === "tool_result"
-      && candidate.toolName === call.capability
-      && !satisfied.has(candidate.id)
-      && !reserved.has(candidate.id)
-    ));
-    if (check === undefined) {
+    const requirement = requirements[index];
+    if (requirement === undefined || requirement.check.toolName !== call.capability) {
       throw new ActionRejectedError(
-        `No unsatisfied active completion requirement matches capability: ${call.capability}`
+        `Capability call does not match the ordered unfinished requirement: ${call.capability}`
       );
     }
-    reserved.add(check.id);
+  }
+  // A validated batch may span later semantic Tasks. Execute only the active
+  // Task prefix; subsequent turns expose the next Task without a second queue.
+  const activeCalls = calls.slice(0, requirements.filter((item) => item.step.id === step.id).length);
+  const actions = activeCalls.map((call, index) => {
+    const check = requirements[index]!.check;
     return {
       type: "call_tool" as const,
       stepId: step.id,

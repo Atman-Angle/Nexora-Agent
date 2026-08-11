@@ -21,7 +21,7 @@ export function deriveFailureHandoff(run: RunSnapshot): FailureHandoff | null {
       .filter((check) => !satisfiedChecks.has(`${step.id}\0${check.id}`))
       .map((check) => `${step.objective}: ${describeCheck(check)}`));
   return Object.freeze({
-    originalGoal: run.taskContract?.goal ?? run.inputHistory[0]?.text ?? "Unknown goal",
+    originalGoal: run.taskContract?.goal ?? run.inputHistory.at(-1)?.text ?? "Unknown goal",
     completedWork: Object.freeze(completedWork),
     confirmedFacts: Object.freeze(run.evidence.map((evidence) => (
       `${evidence.kind}: ${evidence.subjectRef}`

@@ -9,8 +9,13 @@ const NonEmptyString = z.string().trim().min(1);
 
 const CapabilityResultRequirementSchema = z.object({
   kind: z.literal("capability_result"),
-  capability: NonEmptyString
-}).strict();
+  capability: NonEmptyString,
+  // Planning never executes these values. Accept and erase the two common
+  // Provider spellings so redundant business parameters do not become
+  // protocol-repair tax; use_capabilities remains the only executable input.
+  arguments: JsonValueSchema.optional(),
+  args: JsonValueSchema.optional()
+}).strict().transform(({ kind, capability }) => ({ kind, capability }));
 
 const StateAssertionRequirementSchema = z.object({
   kind: z.literal("state_assertion"),
@@ -43,7 +48,7 @@ const ContextRefRequirementSchema = z.object({
   ref: NonEmptyString
 }).strict();
 
-export const SemanticCompletionRequirementSchema = z.discriminatedUnion("kind", [
+export const SemanticCompletionRequirementSchema = z.union([
   CapabilityResultRequirementSchema,
   StateAssertionRequirementSchema,
   ArtifactSchemaRequirementSchema,
