@@ -9,62 +9,64 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: memory-performance-rebuild
-status: done_locally
+current_feature: real-provider-continuity-canary
+status: verification_blocked
 
 feature_contract:
-  feature: memory-performance-rebuild
-  title: Memory Performance Baseline and Derived-Index Rebuild
+  feature: real-provider-continuity-canary
+  title: Real Provider Context and Memory Continuity Canary
   mode: VERIFY
   goal: >
-    Establish a reproducible bounded performance baseline for Memory-backed Context,
-    and prove SQLite derived indexes can be rebuilt from authoritative Memory tables.
+    Prove the complete Context and Memory Harness works with the configured real Provider
+    on a fixed long read-only task, with measurable quality, safety, tokens, latency and cost status.
   scope:
-    - benchmark exact-scope Memory list and complete Context build over a fixed persisted dataset
-    - record p50, p95, max, dataset size, Context bytes, model calls and Provider cost
-    - recreate missing SQLite performance indexes during normal Memory Store reopen
-    - prove records and deterministic recall remain unchanged across index loss and rebuild
+    - run one fixed eight-shard task through the production OpenAI-compatible Provider Adapter
+    - seed relevant, distracting, sensitive and cross-project Memory records
+    - require exact target Memory request/rehydration and eight persisted read Evidence
+    - record success, wrong recall, tokens, model calls, latency, cost status and failure samples
   invariants:
-    - Memory records and control events remain the only Memory data Authority
-    - indexes contain no independent facts and may be deleted without data loss
-    - rebuild does not change schema version, public recall Contract or Run Authority
-    - performance measurement uses zero model calls and therefore zero Provider cost
+    - Canary is one-shot and never repairs results with extra user input or a second Run
+    - only read Tools are permitted; write or execute requests fail the Canary without approval
+    - Runtime Ledger, Events, Invocations and Evidence are the measurement Authority
+    - reports never contain API keys, authorization headers or Provider response internals
   non_goals:
-    - vector or semantic retrieval, a second index service or a new cache Authority
-    - real Provider latency, quality, token usage or billing measurement
-    - automatic Memory extraction, conflict classification or ranking changes
-    - changing Memory records, Context budgets, Approval or Completion behavior
+    - tuning prompts or retrying until a passing sample is obtained
+    - production deployment, vendor billing reconciliation or universal model comparison
+    - changing Memory ranking, Context budgets, Core Authority or Tool permissions
+    - claiming multi-run statistical confidence from a one-run release Canary
   acceptance:
-    - fixed dataset records Memory query and complete Context build p50, p95 and max
-    - report includes record/scope/sample/database/Context sizes plus model calls and cost
-    - deleting every declared derived index and reopening restores all indexes from existing tables
-    - exact records, bounded candidates and query-plan index use survive the rebuild
-    - targeted recovery/performance tests, Memory/Context regression and static/build checks pass
-  risk: L2
+    - production Provider requests and restores the one relevant exact-scope Memory and no wrong Memory
+    - Run succeeds as VALIDATED with successful filesystem.read Evidence for all eight shards
+    - at least one decision uses deterministic Eviction and no call violates the hard Context limit
+    - report records actual usage coverage, token totals, per-phase latency and priced/unpriced cost status
+    - any unsafe Tool, missing read, wrong recall, wait, failure or blocked state is retained as a failed sample
+    - deterministic contract tests and relevant/full regression plus static/build checks pass
+  risk: L3
 
 latest_verification:
   deterministic:
-    red_to_green: current-schema Memory Store skipped every missing derived index
-    targeted_recovery_performance: E096-1-file-2-tests-passed
-    dataset: 10-scopes-5000-records-20-samples-after-store-reopen
-    memory_query_ms: p50-8.95-p95-18.10-max-24.31
-    complete_context_build_ms: p50-22.45-p95-31.82-max-34.28
-    bounded_output: context-max-4153-bytes-model-calls-0-provider-cost-usd-0
-    rebuild: all-3-derived-indexes-restored-records-and-candidates-identical-query-plan-indexed
-    memory_regression: E091-E096-6-files-35-tests-passed
+    red_to_green: harness-helpful-rehydrated-facts-were-not-provider-budget-evictable
+    deterministic_canary_contract: E097-1-file-3-tests-passed
+    real_provider_canary: failed-one-shot-run-ca7d788a-context-budget-exceeded
+    real_provider_partial_success: target-memory-restored-wrong-recall-0-8-of-8-reads-no-unsafe-tools
+    real_provider_usage: 6-calls-5-with-usage-16215-input-11775-output-27990-total
+    real_provider_latency_ms: decision-p50-27019.22-p95-35943.07-max-35943.07-run-96546.21
+    real_provider_cost: unpriced-no-token-rates-configured
+    post_failure_fix: evict-rebuildable-harness-helpful-facts-before-tool-observations
+    context_memory_regression: 12-files-76-tests-passed
     context_quality_gate: 12-files-80-tests-passed
-    full_regression: 67-files-300-tests-passed-no-skips-no-unhandled-errors
+    full_regression: 68-files-303-tests-passed-no-skips-no-unhandled-errors
     typecheck: passed
     lint: passed
     runtime_package_build: passed
     root_build: passed
     diff_check: passed
   external_environment_acceptance:
-    status: deferred
-    reason: Real Provider quality, token, latency and cost belong to the next Canary Feature.
+    status: failed
+    reason: First real one-shot exposed a fixed Context budget defect; post-fix real Provider rerun is intentionally unavailable in E097.
 
 last_completed_feature: memory-performance-rebuild
-next_action: stop; activate real-provider-continuity-canary only as a separate Feature
+next_action: stop; authorize a new versioned post-fix Canary instead of rerunning E097
 ```
 
 ## Update Rules

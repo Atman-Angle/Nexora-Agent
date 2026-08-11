@@ -196,6 +196,8 @@ E095 固化 Memory 安全流：`MemoryRecord statement → deterministic candida
 
 E096 固化性能与恢复流：`persisted Memory Authority tables → exact-scope indexed list(max 500) → deterministic candidate projection(max 6 / 768 tokens / 4 KiB) → bounded Context`。固定 5,000 Record 数据集分别测量 Memory query 与完整 Context build 的 p50/p95/max，并记录 scope、样本、数据库和 Context 字节；该路径不调用 Provider，所以模型调用和费用均为 0。`drop derived indexes → reopen MemoryStore → CREATE INDEX IF NOT EXISTS from Authority tables → identical Records/Candidates`，查询计划重新使用 scope/status/time 索引。
 
+E097 固定真实 Provider Canary：`relevant/distractor/sensitive/cross-project Memory + 8 shards → production Adapter → Runtime Ledger/Event/Invocation/Evidence → redacted report`。首个 qwen3.7-flash one-shot 正确请求并恢复目标 Memory、错误召回 0、完成 8/8 read、无越权 Tool，但在后续 decision 以 `9559 > 5904` 被 Runtime 硬拒绝。逆向定位为两个 `harness_helpful` Invocation 原文（约 16 KiB）不参与 Eviction；修复后收缩顺序为 `drop rebuildable harness_helpful facts → full/fragment/reference/drop Observations`。首次真实失败保留且不重跑，因此修复只有确定性完整链证据，真实 Provider 验收仍为 blocked。
+
 ## 6. 当前代码落点与冻结边界
 
 ```text

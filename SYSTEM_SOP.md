@@ -101,6 +101,8 @@ E058后不再要求Runtime在set_plan理解自然语言。应验证：模型从C
 
 E058真实canary Run `3f651a7f-7dd0-41f1-83b8-541756b9b2ca` 展示自然语言正向链：原始输入要求字面量搜索且未指定Tool → 模型Plan绑定`filesystem.search`/`filesystem.read` → canonical query保持`[abc].*` → search返回`literal.txt:1` → read取得正文 → 两项Evidence被finish引用 → semantic validation对照原始输入 → `succeeded/VALIDATED`。全程0 retry、无write/execute Invocation。
 
+E097 Context+Memory one-shot 必须使用固定 8-shard 只读数据集，并以 Runtime Ledger/Event/Invocation/Evidence 计算目标 Memory 请求/恢复、错误召回、逐文件 read、hard-limit、Token、延迟和费用状态。首次真实 Run `ca7d788a-ae7b-479d-8091-b4d92aeeb88c` 在 8/8 read 后因不可收缩的 `harness_helpful` Fact 超预算失败；该样本不得改写或重跑。修复后先移除 helpful Fact 的确定性回归通过，但若要升级真实 Provider 状态，必须显式创建新的版本化 Canary，而不是覆盖 E097 结果。
+
 E059正向输出检查：成功转换后必须从同一snapshot投影`RunResult.summary`，CLI直接序列化；不得另行inspect、总结Evidence或润色。真实Run `55147bd3-4983-400c-b9df-9d75e1fa89b7`的CLI summary与持久化Result逐字一致，且只执行一次read。
 
 E060正向验证检查：先由`validateCompletion`完成Plan/Evidence确定性门，再确认semantic payload只有`inputs/proposedSummary/facts`，verdict只有`passed/issues`。真实Run `f4687e39-d46b-4836-bba5-bcce5c908a8e`经list/read后一次validation通过，0 retry/0 rejection；不因discovery策略或digest元数据产生语义失败。

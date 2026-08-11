@@ -96,6 +96,8 @@ Memory 的安全信任边界是“精确但不可信的数据”。`memoryCandid
 
 Memory 的 SQLite scope/status/type/time 索引和 control-event time 索引都是可丢弃的派生性能结构，不保存独立事实。`MemoryStore` 每次打开都会在既有 Authority 表上幂等确认这些索引；即使 schema version 已是当前版本，缺失索引也会从 `memory_records` 与 `memory_control_events` 重建。重建不迁移 Record、不改变 schema version，也不创建第二数据 Authority。
 
+Provider-aware Context Eviction 同时覆盖可重建的 `rehydratedFacts(origin=harness_helpful)`。该类 Fact 的优先级低于 Tool Observation，应先移除；`harness_required` 与模型显式 `request_context` 恢复的 Fact 不在此路径删除。这样自动 helpful 原文不会在小窗口下形成不可收缩的第二预算池，原始 Invocation/Evidence/Artifact 仍留在 Authority Store 并可再次精确恢复。
+
 ### Action Runtime
 
 完整执行管线：
