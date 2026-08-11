@@ -49,16 +49,16 @@ pnpm run benchmark:context-memory
 
 ## 首份确定性基线
 
-运行时间：2026-08-11T08:50:03.656Z。
+Canonical clean-source 运行时间：2026-08-11T08:53:37.712Z；source commit `9b427c1`，`dirty=false`，manifest digest `sha256:fbc02f2d2a5bf1a1a5f8637af43c03c21a22e5d240844a2e760a6bb45aee3267`。
 
 - 12/12 固定场景通过，scenario pass rate 100%；
 - continuity 6/6、retrieval 5/5、budget 4/4、authority 5/5、safety 4/4、recovery 2/2、efficiency 2/2；
 - supporting suite 39/39，通过且无 failed/pending/todo；
-- 总运行耗时约 25.4 秒；
+- 总运行耗时约 24.68 秒；
 - external Provider calls 0，Provider cost USD 0；
 - 该 100% 只代表确定性 Harness Core 合同全部满足，不是模型质量分数。
 
-首次运行发生在 Benchmark Feature 尚未提交的 dirty worktree，报告同时记录了 base commit 和 manifest digest。提交后应再运行一次，形成 clean-source 基线；两次结果应保持同一 manifest digest。
+提交前的 dirty-worktree 预跑同样为 12/12、39/39，耗时约 25.4 秒；提交后的 canonical 报告 manifest digest 未变化，证明两次执行使用同一固定场景定义。
 
 ## Real Provider Eval v1 设计
 

@@ -49,7 +49,8 @@ latest_verification:
     contract: E100-1-file-3-tests-passed
     deterministic_baseline: 12-of-12-scenarios-39-of-39-supporting-tests-no-skips
     dimension_scores: continuity-6/6-retrieval-5/5-budget-4/4-authority-5/5-safety-4/4-recovery-2/2-efficiency-2/2
-    baseline_duration_ms: 25401.19-dirty-feature-worktree
+    canonical_baseline: commit-9b427c1-dirty-false-manifest-fbc02f2d
+    baseline_duration_ms: 24684.06-clean-source
     external_provider_calls: 0
     provider_cost_usd: 0
     typecheck: passed
