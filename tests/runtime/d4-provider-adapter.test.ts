@@ -72,6 +72,9 @@ describe("D4 Provider Adapter", () => {
     ))).toBe(true);
     expect(requests[0]!.system).toContain("sessionArchive");
     expect(requests[0]!.system).toContain("Provider Contract v2");
+    expect(requests[0]!.system).toContain("If an active Task has callable requirements, use use_capabilities");
+    expect(requests[0]!.system).toContain("When the user explicitly names a published ref, restore_context is the first intent");
+    expect(requests[0]!.system).not.toContain("Group independent known calls");
     expect(JSON.parse(requests[0]!.input)).toEqual(expect.objectContaining({
       mode: "decide",
       context: expect.objectContaining({
