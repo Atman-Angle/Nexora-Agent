@@ -9,56 +9,59 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: decision-context-budget-capability-audit
+current_feature: explicit-provider-model-budget-profile
 status: done_locally
 
 feature_contract:
-  feature: decision-context-budget-capability-audit
-  title: Decision Context Budget and Provider Capability Alignment
-  mode: EXPLORE
+  feature: explicit-provider-model-budget-profile
+  title: Explicit Provider Model Budget Profile
+  mode: DIRECT
   goal: >
-    Trace and align decision Context budgeting with the effective Provider model profile,
-    final wire request, phase output reserve and persisted Runtime evidence.
+    Resolve real Provider context capacity from the selected model and require per-phase output budgets to be validated,
+    while recording Canary overrides and Provider usage deviation without a second Authority.
   scope:
-    - audit the 5,904-token hard limit from Provider configuration through Runtime refusal
-    - distinguish total window, wire input, phase output reserve, fixed prompt and Tool contracts
-    - add Canary budget decomposition and Ledger consistency evidence
-    - cover explicit windows, phase reserves, fixed wire overhead, missing capabilities and true overflow
+    - resolve a verified context window and maximum output capability from NEXORA_MODEL_NAME
+    - reject unknown models, manual production window overrides and invalid output budgets before Run creation
+    - record declared Profile, Canary context-window override and effective Profile
+    - derive per-call measured-versus-actual usage deviations from the existing Model Call Ledger
   invariants:
-    - ProviderModelProfile remains the single budget Authority
-    - Context ranking, rehydration, Eviction, Compaction and hard refusal remain enabled
+    - ProviderModelProfile and Model Call Ledger remain the only budget and usage Authorities
+    - Context ranking, rehydration, Eviction, Compaction and hard refusal remain unchanged
     - no State Machine, Plan, Invocation, Store, Approval, Evidence or Completion Authority changes
-    - original E097 report and Runtime database remain immutable evidence
+    - absent Provider usage remains unknown rather than being recorded as zero
   non_goals:
-    - model-name capability registry, vector infrastructure or Provider discovery service
-    - changing public Provider configuration format or requiring a previously optional setting
-    - increasing a window or deleting budget protection to make the failed Canary pass
-    - rerunning the E097 one-shot or claiming post-fix real Provider acceptance
+    - remote Provider capability discovery or automatic catalog updates
+    - database migration, adaptive budget tuning or a second Profile cache
+    - requiring production env configuration in custom/test RuntimeProvider implementations
+    - real Provider Canary rerun, price discovery or release deployment
   acceptance:
-    - immutable Ledger proves the complete 5,904 calculation path
-    - Runtime and Adapter are proven to meter the same final wire input and output reserve
-    - Canary reports effective per-phase budget values and fails inconsistent Ledger arithmetic
-    - targeted Context/Provider tests, related regression and static/build checks pass
+    - unknown models and invalid env Profiles fail before Provider execution and Run creation
+    - qwen3.7-flash automatically resolves to its verified 1M context capability
+    - explicit phase outputs reach the existing ProviderModelProfile and wire max_tokens path
+    - Canary distinguishes declared, override and effective Profiles and detects mismatch
+    - usage deviations preserve unavailable, under-reserve and over-limit facts per logical call
+    - targeted Provider/CLI/Canary tests, related L2 regression and static/build checks pass
   risk: L2
 
 latest_verification:
   deterministic:
-    root_cause: E097-ledger-used-10000-window-minus-4096-decision-reserve-equals-5904
-    evidence_correction: current-12000-canary-default-and-E097-doc-did-not-match-effective-one-shot-profile
-    authority_alignment: final-wire-meter-and-max-tokens-share-one-ProviderModelProfile
-    targeted: 3-files-24-tests-passed
-    context_provider_regression: 17-files-103-tests-passed-no-skips
-    typecheck: passed-after-runtime-build-ordering
+    model_capability_resolution: qwen3.7-flash-resolves-to-1000000-context-131072-max-output
+    local_env_profile: decision-16384-validation-8192-compaction-8192-no-network-call
+    canary_override_provenance: declared-override-effective-profiles-separated-and-checked
+    usage_deviation: per-call-measured-actual-output-reserve-and-window-deviation-recorded
+    targeted: 5-files-34-tests-passed
+    provider_cli_context_regression: 19-files-113-tests-passed-no-skips
+    typecheck: passed
     lint: passed
     runtime_package_build: passed
-    root_build: passed-after-runtime-build-ordering
+    root_build: passed
     diff_check: passed
   external_environment_acceptance:
     status: unverified
-    reason: No Provider capability endpoint or exact qwen tokenizer contract is available; E097 remains the immutable real sample.
+    reason: qwen3.7-flash capability is based on the provided Provider evidence; exact tokenizer behavior and real endpoint acceptance were not exercised.
 
-last_completed_feature: decision-context-budget-capability-audit
-next_action: stop; separately decide whether missing model capability must fail closed
+last_completed_feature: explicit-provider-model-budget-profile
+next_action: stop after independent commit
 ```
 
 ## Update Rules

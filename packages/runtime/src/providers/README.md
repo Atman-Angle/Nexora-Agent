@@ -69,9 +69,7 @@ Provider 输出不会直接覆盖 Context。Runtime 会重新校验 Summary Sche
 | `reasoning` | `"dynamic"` | Provider-neutral 推理策略（见下） |
 | `thinkingToggleParam` | 不发送 | 厂商请求体里切换推理的参数名（DashScope 为 `enable_thinking`） |
 
-环境变量补充：`NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM`。
-
-`NEXORA_MODEL_CONTEXT_WINDOW_TOKENS` 应填写当前部署模型经 Provider 文档或实际合同确认的总上下文窗口。缺失时 OpenAI-compatible Adapter 为兼容旧调用使用 128,000；该 fallback 不是按模型名发现的真实能力，也不能作为任意兼容端点的能力声明。Runtime 会从该总窗口扣除当前 phase 的输出预留，最终 wire input（包括固定 system prompt 与 Tool/Action Contract）必须落在剩余 hard input limit 内。
+环境入口还读取 `NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）和 `NEXORA_MODEL_THINKING_PARAM`。`openAICompatibleProviderFromEnv` 根据 `NEXORA_MODEL_NAME` 从同一 Adapter 的已验证 capability catalog 自动解析总窗口与最大输出能力，并要求显式提供 `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`、`NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS`、`NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS`。未知模型、非法预算、超过模型输出能力或手工设置 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS` 都在创建 Run 前失败。Runtime 从模型总窗口扣除当前 phase 输出预留，最终 wire input（包括固定 system prompt 与 Tool/Action Contract）必须落在剩余 hard input limit 内。
 
 ### Reasoning Policy（`off | on | dynamic`）
 

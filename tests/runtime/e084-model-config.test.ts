@@ -222,10 +222,11 @@ describe("E084 Model / Provider configuration", () => {
     const seen = captureBodies();
     vi.stubGlobal("fetch", seen.fetch);
     const provider = openAICompatibleProviderFromEnv({
+      ...explicitBudgetEnvironment(),
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
       NEXORA_MODEL_API_KEY: "test-key",
-      NEXORA_MODEL_NAME: "test-model",
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
       NEXORA_MODEL_TEMPERATURE: "0.5",
       NEXORA_MODEL_REASONING: "dynamic",
       NEXORA_MODEL_THINKING_PARAM: "enable_thinking"
@@ -239,31 +240,82 @@ describe("E084 Model / Provider configuration", () => {
     }));
   });
 
-  it("uses the explicit environment context window as the effective model capability", () => {
-    const provider = openAICompatibleProviderFromEnv({
+  it("resolves model capabilities and sends explicit phase output budgets", async () => {
+    const seen = captureBodies();
+    vi.stubGlobal("fetch", seen.fetch);
+    const environment = {
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
       NEXORA_MODEL_API_KEY: "test-key",
-      NEXORA_MODEL_NAME: "test-model",
-      NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: "32000"
-    });
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "2048",
+      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "512",
+      NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "1024"
+    };
+    const provider = openAICompatibleProviderFromEnv(environment);
 
     expect(provider.modelProfile).toEqual(expect.objectContaining({
-      contextWindowTokens: 32_000,
+      contextWindowTokens: 1_000_000,
       reservedOutputTokens: {
-        decision: 4_096,
-        validation: 1_024,
-        compaction: 4_096
+        decision: 2_048,
+        validation: 512,
+        compaction: 1_024
       }
     }));
+    const operation = { signal: new AbortController().signal };
+    await provider.decide(decisionContext(null), operation);
+    await provider.validate(validationContext(), operation);
+    await provider.compact!(compactionContext(), operation);
+    expect(seen.bodies.map((body) => body.max_tokens)).toEqual([2_048, 512, 1_024]);
+
+    const stressProvider = openAICompatibleProviderFromEnv(environment, {
+      contextWindowTokensOverride: 12_000
+    });
+    expect(stressProvider.modelProfile).toMatchObject({ contextWindowTokens: 12_000 });
+  });
+
+  it("requires a complete explicit model budget profile from the environment", () => {
+    const connection = {
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
+      NEXORA_MODEL_API_KEY: "test-key",
+      NEXORA_MODEL_NAME: "test-model"
+    };
+
+    expect(() => openAICompatibleProviderFromEnv(connection)).toThrow(
+      "Model capabilities are unknown for test-model"
+    );
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      NEXORA_MODEL_NAME: "qwen3.7-flash"
+    })).toThrow("NEXORA_MODEL_DECISION_OUTPUT_TOKENS is required.");
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "0"
+    })).toThrow("NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS must be a positive integer.");
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "131073"
+    })).toThrow("must not exceed the 131072-token output capability of qwen3.7-flash");
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: "12000"
+    })).toThrow("context capacity is resolved from NEXORA_MODEL_NAME");
   });
 
   it("rejects an unknown reasoning value from environment", () => {
     expect(() => openAICompatibleProviderFromEnv({
+      ...explicitBudgetEnvironment(),
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
       NEXORA_MODEL_API_KEY: "test-key",
-      NEXORA_MODEL_NAME: "test-model",
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
       NEXORA_MODEL_REASONING: "sometimes"
     })).toThrowError(expect.objectContaining({
       name: "ModelConfigError",
@@ -471,4 +523,12 @@ function temporaryWorkspace(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-e084-config-"));
   roots.push(root);
   return root;
+}
+
+function explicitBudgetEnvironment(): Record<string, string> {
+  return {
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
+    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
+    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
+  };
 }

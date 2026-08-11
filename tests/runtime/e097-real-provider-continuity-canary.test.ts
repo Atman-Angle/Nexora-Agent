@@ -66,7 +66,18 @@ describe("E097 real Provider continuity canary contract", () => {
       validate: scripted.validate.bind(scripted)
     };
     try {
-      const report = await runContinuityCanary({ provider, outputRoot });
+      const report = await runContinuityCanary({
+        provider,
+        outputRoot,
+        budgetOverride: {
+          declaredProfile: {
+            ...provider.modelProfile!,
+            contextWindowTokens: 128_000
+          },
+          environmentVariable: "NEXORA_CANARY_CONTEXT_WINDOW_TOKENS",
+          contextWindowTokens: 12_000
+        }
+      });
       expect(report, JSON.stringify({ report, repairs: scripted.contexts.map((context) => context.repair) }, null, 2)).toMatchObject({
         passed: true,
         status: "succeeded",
@@ -88,9 +99,52 @@ describe("E097 real Provider continuity canary contract", () => {
             hardInputLimitTokens: [10_976]
           }],
           inconsistentCalls: []
+        },
+        budgetConfiguration: {
+          source: "canary_override",
+          declaredProfile: { contextWindowTokens: 128_000 },
+          override: {
+            environmentVariable: "NEXORA_CANARY_CONTEXT_WINDOW_TOKENS",
+            contextWindowTokens: 12_000
+          },
+          effectiveProfile: { contextWindowTokens: 12_000 },
+          issues: []
         }
       });
       expect(report.modelCalls).toMatchObject({ count: 6, costStatus: "unpriced" });
+    } finally {
+      rmSync(outputRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the declared Provider profile by default instead of silently forcing a stress window", async () => {
+    const outputRoot = mkdtempSync(join(tmpdir(), "nexora-e097-profile-"));
+    const scripted = new ScriptedRuntimeProvider([{
+      type: "request_input",
+      question: "Stop after profile capture.",
+      reason: "Profile capture only."
+    }]);
+    const provider: RuntimeProvider = {
+      modelProfile: {
+        provider: "scripted-canary",
+        model: "qwen3.7-flash",
+        contextWindowTokens: 1_000_000,
+        reservedOutputTokens: { decision: 16_384, validation: 8_192, compaction: 8_192 },
+        softLimitRatio: 0.8
+      },
+      decide: scripted.decide.bind(scripted),
+      validate: scripted.validate.bind(scripted)
+    };
+    try {
+      const report = await runContinuityCanary({ provider, outputRoot });
+      expect(report.budgetConfiguration).toMatchObject({
+        source: "provider_profile",
+        declaredProfile: { contextWindowTokens: 1_000_000 },
+        override: null,
+        effectiveProfile: { contextWindowTokens: 1_000_000 },
+        issues: []
+      });
+      expect(report.continuity.evictionRequired).toBe(false);
     } finally {
       rmSync(outputRoot, { recursive: true, force: true });
     }
@@ -125,6 +179,20 @@ describe("E097 real Provider continuity canary contract", () => {
         actualInputTokens: 100,
         actualOutputTokens: 10,
         actualTotalTokens: 110,
+        usageDeviation: [{
+          callId: "call-1",
+          measuredInputTokens: 100,
+          actualInputTokens: 100,
+          inputDeltaTokens: 0,
+          inputDeltaRatio: 0,
+          reservedOutputTokens: 4_096,
+          actualOutputTokens: 10,
+          outputReserveDeltaTokens: -4_086,
+          exceedsOutputReserve: false,
+          contextWindowTokens: 12_000,
+          actualTotalTokens: 110,
+          exceedsContextWindow: false
+        }],
         estimatedCostUsd: 0.00012,
         costStatus: "estimated"
       },
@@ -173,6 +241,39 @@ describe("E097 real Provider continuity canary contract", () => {
     }]);
     expect(report.modelCalls).toMatchObject({ estimatedCostUsd: null, costStatus: "unpriced" });
     expect(report.failure).not.toBeNull();
+  });
+
+  it("records Provider usage that exceeds the requested output reserve without rewriting it", () => {
+    const base = view({ wrongRef: false, forbiddenTool: false, hardLimit: false });
+    const overflowView = {
+      ...base,
+      modelCalls: [{
+        ...base.modelCalls[0]!,
+        actualOutputTokens: 5_000,
+        actualTotalTokens: 5_100
+      }]
+    } as unknown as RunView;
+    const report = evaluateContinuityCanary({
+      result: result("succeeded", "VALIDATED"),
+      view: overflowView,
+      observations: [{
+        phase: "decision",
+        latencyMs: 1,
+        actionType: "request_context",
+        requestedRefs: [TARGET_MEMORY_REF],
+        memoryCandidateRefs: [TARGET_MEMORY_REF],
+        restoredMemoryRefs: [TARGET_MEMORY_REF]
+      }],
+      durationMs: 1
+    });
+
+    expect(report.modelCalls.usageDeviation[0]).toMatchObject({
+      reservedOutputTokens: 4_096,
+      actualOutputTokens: 5_000,
+      outputReserveDeltaTokens: 904,
+      exceedsOutputReserve: true,
+      exceedsContextWindow: false
+    });
   });
 });
 

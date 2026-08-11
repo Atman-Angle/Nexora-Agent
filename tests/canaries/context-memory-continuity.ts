@@ -12,6 +12,7 @@ import {
   openMemoryStore,
   type ModelCallRecord,
   type ModelDecisionContext,
+  type ProviderModelProfile,
   type RunEvent,
   type RunResult,
   type RunView,
@@ -41,6 +42,12 @@ type Pricing = {
   readonly outputUsdPerMillionTokens: number;
 };
 
+type CanaryBudgetOverride = {
+  readonly declaredProfile: ProviderModelProfile;
+  readonly environmentVariable: "NEXORA_CANARY_CONTEXT_WINDOW_TOKENS";
+  readonly contextWindowTokens: number;
+};
+
 export type ContinuityCanaryReport = ReturnType<typeof evaluateContinuityCanary> & {
   readonly schemaVersion: 1;
   readonly scenarioId: typeof CONTINUITY_CANARY_ID;
@@ -49,12 +56,15 @@ export type ContinuityCanaryReport = ReturnType<typeof evaluateContinuityCanary>
   readonly provider: string;
   readonly model: string;
   readonly artifactDirectory: string;
+  readonly budgetConfiguration: ReturnType<typeof describeBudgetConfiguration>;
 };
 
 export async function runContinuityCanary(options: {
   readonly provider: RuntimeProvider;
   readonly outputRoot?: string;
   readonly pricing?: Pricing;
+  readonly budgetOverride?: CanaryBudgetOverride;
+  readonly requireEviction?: boolean;
 }): Promise<ContinuityCanaryReport> {
   const createdAt = new Date().toISOString();
   const outputRoot = resolve(options.outputRoot ?? join(
@@ -110,8 +120,14 @@ export async function runContinuityCanary(options: {
     view,
     observations,
     durationMs,
+    requireEviction: options.requireEviction ?? (options.budgetOverride !== undefined),
     ...(options.pricing === undefined ? {} : { pricing: options.pricing })
   });
+  const budgetConfiguration = describeBudgetConfiguration(
+    options.provider.modelProfile,
+    options.budgetOverride
+  );
+  const passed = evaluated.passed && budgetConfiguration.issues.length === 0;
   const report: ContinuityCanaryReport = {
     schemaVersion: 1,
     scenarioId: CONTINUITY_CANARY_ID,
@@ -120,7 +136,10 @@ export async function runContinuityCanary(options: {
     provider: provider.modelProfile?.provider ?? "unknown",
     model: provider.modelProfile?.model ?? "unknown",
     artifactDirectory,
-    ...evaluated
+    ...evaluated,
+    passed,
+    successRate: passed ? 1 : 0,
+    budgetConfiguration
   };
   writeFileSync(join(artifactDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return report;
@@ -132,6 +151,7 @@ export function evaluateContinuityCanary(input: {
   readonly observations: readonly ProviderObservation[];
   readonly durationMs: number;
   readonly pricing?: Pricing;
+  readonly requireEviction?: boolean;
 }) {
   const requestedMemoryRefs = input.observations.flatMap((observation) => (
     observation.requestedRefs.filter((ref) => ref.startsWith("memory:"))
@@ -174,7 +194,7 @@ export function evaluateContinuityCanary(input: {
     && forbiddenInvocations.length === 0
     && hardLimitViolations.length === 0
     && contextBudget.inconsistentCalls.length === 0
-    && evictedModelCalls > 0;
+    && (!(input.requireEviction ?? true) || evictedModelCalls > 0);
 
   return {
     passed,
@@ -205,6 +225,7 @@ export function evaluateContinuityCanary(input: {
       hardLimitViolations: hardLimitViolations.length
     },
     continuity: {
+      evictionRequired: input.requireEviction ?? true,
       evictedModelCalls,
       checkpoints,
       rehydrationRequests,
@@ -254,6 +275,35 @@ function contextBudgetMetrics(modelCalls: readonly ModelCallRecord[]) {
       }];
     }),
     inconsistentCalls
+  };
+}
+
+function describeBudgetConfiguration(
+  effectiveProfile: ProviderModelProfile | undefined,
+  override: CanaryBudgetOverride | undefined
+) {
+  const issues: string[] = [];
+  if (effectiveProfile === undefined) issues.push("effective_profile_missing");
+  if (override !== undefined && effectiveProfile !== undefined) {
+    const expected = {
+      ...override.declaredProfile,
+      contextWindowTokens: override.contextWindowTokens
+    };
+    if (JSON.stringify(effectiveProfile) !== JSON.stringify(expected)) {
+      issues.push("override_effective_profile_mismatch");
+    }
+  }
+  return {
+    source: override === undefined ? "provider_profile" as const : "canary_override" as const,
+    declaredProfile: override?.declaredProfile ?? effectiveProfile ?? null,
+    override: override === undefined
+      ? null
+      : {
+          environmentVariable: override.environmentVariable,
+          contextWindowTokens: override.contextWindowTokens
+        },
+    effectiveProfile: effectiveProfile ?? null,
+    issues
   };
 }
 
@@ -339,6 +389,33 @@ function tokenMetrics(modelCalls: readonly ModelCallRecord[], pricing?: Pricing)
     actualInputTokens: inputTokens,
     actualOutputTokens: outputTokens,
     actualTotalTokens: totalTokens,
+    usageDeviation: modelCalls.map((call) => ({
+      callId: call.id,
+      phase: call.phase,
+      status: call.status,
+      measurementMethod: call.measurementMethod,
+      measuredInputTokens: call.measuredInputTokens,
+      actualInputTokens: call.actualInputTokens,
+      inputDeltaTokens: call.actualInputTokens === null
+        ? null
+        : call.actualInputTokens - call.measuredInputTokens,
+      inputDeltaRatio: call.actualInputTokens === null || call.measuredInputTokens === 0
+        ? null
+        : (call.actualInputTokens - call.measuredInputTokens) / call.measuredInputTokens,
+      reservedOutputTokens: call.reservedOutputTokens,
+      actualOutputTokens: call.actualOutputTokens,
+      outputReserveDeltaTokens: call.actualOutputTokens === null
+        ? null
+        : call.actualOutputTokens - call.reservedOutputTokens,
+      exceedsOutputReserve: call.actualOutputTokens === null
+        ? null
+        : call.actualOutputTokens > call.reservedOutputTokens,
+      contextWindowTokens: call.contextWindowTokens,
+      actualTotalTokens: call.actualTotalTokens,
+      exceedsContextWindow: call.actualTotalTokens === null
+        ? null
+        : call.actualTotalTokens > call.contextWindowTokens
+    })),
     estimatedCostUsd,
     costStatus: pricing === undefined
       ? "unpriced"
@@ -457,12 +534,31 @@ function pricingFromEnv(environment: Record<string, string | undefined>): Pricin
 }
 
 async function main(): Promise<void> {
-  const providerEnvironment = {
-    ...process.env,
-    NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: process.env.NEXORA_CANARY_CONTEXT_WINDOW_TOKENS ?? "12000"
-  };
+  const declaredProvider = openAICompatibleProviderFromEnv(process.env);
+  const overrideRaw = process.env.NEXORA_CANARY_CONTEXT_WINDOW_TOKENS?.trim();
+  const overrideTokens = overrideRaw === undefined || overrideRaw.length === 0
+    ? undefined
+    : Number(overrideRaw);
+  if (overrideTokens !== undefined && (!Number.isInteger(overrideTokens) || overrideTokens <= 0)) {
+    throw new Error("NEXORA_CANARY_CONTEXT_WINDOW_TOKENS must be a positive integer when provided.");
+  }
+  const provider = overrideTokens === undefined
+    ? declaredProvider
+    : openAICompatibleProviderFromEnv(process.env, {
+        contextWindowTokensOverride: overrideTokens
+      });
   const report = await runContinuityCanary({
-    provider: openAICompatibleProviderFromEnv(providerEnvironment),
+    provider,
+    requireEviction: overrideTokens !== undefined,
+    ...(overrideTokens === undefined
+      ? {}
+      : {
+          budgetOverride: {
+            declaredProfile: declaredProvider.modelProfile!,
+            environmentVariable: "NEXORA_CANARY_CONTEXT_WINDOW_TOKENS" as const,
+            contextWindowTokens: overrideTokens
+          }
+        }),
     ...(() => {
       const pricing = pricingFromEnv(process.env);
       return pricing === undefined ? {} : { pricing };

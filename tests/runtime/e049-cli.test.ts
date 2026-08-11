@@ -48,7 +48,10 @@ describe("E049 natural-language CLI", () => {
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
       NEXORA_MODEL_API_KEY: "test-key",
-      NEXORA_MODEL_NAME: "test-model"
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
+      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
+      NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
     });
     server.close();
 
@@ -70,7 +73,10 @@ describe("E049 natural-language CLI", () => {
       NEXORA_MODEL_PROVIDER: "",
       NEXORA_MODEL_BASE_URL: "",
       NEXORA_MODEL_API_KEY: "",
-      NEXORA_MODEL_NAME: ""
+      NEXORA_MODEL_NAME: "",
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "",
+      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "",
+      NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: ""
     });
     expect(result.code).toBe(64);
     expect(result.stderr).toContain("MODEL_CONFIG_ERROR");

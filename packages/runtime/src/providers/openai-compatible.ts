@@ -44,6 +44,11 @@ export type OpenAICompatibleProviderOptions = {
   readonly fetch?: typeof globalThis.fetch;
 };
 
+export type OpenAICompatibleProviderEnvironmentOptions = {
+  /** Test/Canary-only effective window; production capability still resolves from model. */
+  readonly contextWindowTokensOverride?: number;
+};
+
 export class ModelConfigError extends RuntimeError {
   constructor(message: string) {
     super({ code: "INVALID_CONFIGURATION", message });
@@ -53,13 +58,27 @@ export class ModelConfigError extends RuntimeError {
 
 class RetryableProviderError extends Error {}
 
-export function openAICompatibleProviderFromEnv(environment: Record<string, string | undefined> = process.env): RuntimeProvider {
+const MODEL_CAPABILITIES: Readonly<Record<string, {
+  readonly contextWindowTokens: number;
+  readonly maxOutputTokens: number;
+}>> = Object.freeze({
+  "qwen3.7-flash": Object.freeze({
+    contextWindowTokens: 1_000_000,
+    maxOutputTokens: 131_072
+  })
+});
+
+export function openAICompatibleProviderFromEnv(
+  environment: Record<string, string | undefined> = process.env,
+  environmentOptions: OpenAICompatibleProviderEnvironmentOptions = {}
+): RuntimeProvider {
   if (environment.NEXORA_MODEL_PROVIDER?.trim() !== "openai-compatible") {
     throw new ModelConfigError('NEXORA_MODEL_PROVIDER must be "openai-compatible".');
   }
   const baseUrl = required(environment, "NEXORA_MODEL_BASE_URL");
   const apiKey = required(environment, "NEXORA_MODEL_API_KEY");
   const model = required(environment, "NEXORA_MODEL_NAME");
+  const modelCapability = resolveModelCapability(model);
   const timeoutRaw = environment.NEXORA_MODEL_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutRaw ? Number(timeoutRaw) : 60_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new ModelConfigError("NEXORA_MODEL_TIMEOUT_MS must be a positive integer.");
@@ -73,8 +92,40 @@ export function openAICompatibleProviderFromEnv(environment: Record<string, stri
     throw new ModelConfigError('NEXORA_MODEL_REASONING must be "off", "on" or "dynamic".');
   }
   const thinkingToggleParam = environment.NEXORA_MODEL_THINKING_PARAM?.trim() || undefined;
-  const contextWindowRaw = environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS?.trim();
-  const contextWindowTokens = contextWindowRaw ? Number(contextWindowRaw) : undefined;
+  if (environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS?.trim()) {
+    throw new ModelConfigError(
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS is not supported; context capacity is resolved from NEXORA_MODEL_NAME."
+    );
+  }
+  const contextWindowTokens = environmentOptions.contextWindowTokensOverride === undefined
+    ? modelCapability.contextWindowTokens
+    : positiveInteger(
+        environmentOptions.contextWindowTokensOverride,
+        "contextWindowTokensOverride"
+      );
+  const decisionOutputTokens = requiredPositiveInteger(
+    environment,
+    "NEXORA_MODEL_DECISION_OUTPUT_TOKENS"
+  );
+  const validationOutputTokens = requiredPositiveInteger(
+    environment,
+    "NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS"
+  );
+  const compactionOutputTokens = requiredPositiveInteger(
+    environment,
+    "NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS"
+  );
+  for (const [phase, tokens] of Object.entries({
+    decision: decisionOutputTokens,
+    validation: validationOutputTokens,
+    compaction: compactionOutputTokens
+  })) {
+    if (tokens > modelCapability.maxOutputTokens) {
+      throw new ModelConfigError(
+        `NEXORA_MODEL_${phase.toUpperCase()}_OUTPUT_TOKENS must not exceed the ${modelCapability.maxOutputTokens}-token output capability of ${model}.`
+      );
+    }
+  }
   return createOpenAICompatibleProvider({
     baseUrl,
     apiKey,
@@ -83,7 +134,12 @@ export function openAICompatibleProviderFromEnv(environment: Record<string, stri
     temperature,
     ...(reasoningRaw === undefined ? {} : { reasoning: reasoningRaw as ReasoningPolicy }),
     ...(thinkingToggleParam === undefined ? {} : { thinkingToggleParam }),
-    ...(contextWindowTokens === undefined ? {} : { contextWindowTokens })
+    contextWindowTokens,
+    reservedOutputTokens: {
+      decision: decisionOutputTokens,
+      validation: validationOutputTokens,
+      compaction: compactionOutputTokens
+    }
   });
 }
 
@@ -371,4 +427,30 @@ function required(environment: Record<string, string | undefined>, name: string)
   const value = environment[name]?.trim();
   if (!value) throw new ModelConfigError(`${name} is required.`);
   return value;
+}
+
+function requiredPositiveInteger(
+  environment: Record<string, string | undefined>,
+  name: string
+): number {
+  const raw = required(environment, name);
+  return positiveInteger(Number(raw), name);
+}
+
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new ModelConfigError(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+function resolveModelCapability(model: string): {
+  readonly contextWindowTokens: number;
+  readonly maxOutputTokens: number;
+} {
+  const capability = MODEL_CAPABILITIES[model];
+  if (capability !== undefined) return capability;
+  throw new ModelConfigError(
+    `Model capabilities are unknown for ${model}; add a verified Provider capability before using the environment entry.`
+  );
 }

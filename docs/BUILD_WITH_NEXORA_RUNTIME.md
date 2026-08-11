@@ -61,12 +61,18 @@ try {
 - `NEXORA_MODEL_BASE_URL`；
 - `NEXORA_MODEL_API_KEY`；
 - `NEXORA_MODEL_NAME`；
+- `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`；
+- `NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS`；
+- `NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS`；
 - 可选 `NEXORA_MODEL_TIMEOUT_MS`；
-- 可选 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`（默认 `128000`）。
+
+三个输出预算必须是正整数、小于模型总上下文，并且不超过模型最大输出能力。总上下文窗口由 Adapter 根据 `NEXORA_MODEL_NAME` 的已验证能力自动匹配，不接受生产环境手工覆盖；未知模型会在创建 Run 前失败，不能猜测窗口。
+
+例如 qwen3.7-flash 的 1M 总窗口不应被写成 Canary 压力测试使用的 12K。模型声明的 128K 最大输出是能力上限，不代表每个 Runtime phase 都需要预留 128K；应按实际决策/校验/压缩需要设置较小的请求输出预算，并为思考模式采用更低的最大输入边界。
 
 仓库 CLI 的 start/resume 会自动加载启动目录 `.env`；但 `@nexora/runtime` 不读取文件或修改环境。包调用方必须显式提供进程环境，或直接调用 `createOpenAICompatibleProvider(...)` 传入配置。
 
-也可调用 `createOpenAICompatibleProvider(options)` 显式传入连接配置、自定义 `fetch`、`contextWindowTokens`、各 phase 的 `reservedOutputTokens`、`softLimitRatio`，以及能读取最终序列化 Provider Request 的 `tokenMeter`。未提供精确 Tokenizer 时，Adapter 使用标记为 `estimated` 的 UTF-8 字节估算，不会伪装成精确计量。
+也可调用 `createOpenAICompatibleProvider(options)` 显式传入连接配置、自定义 `fetch`、`contextWindowTokens`、各 phase 的 `reservedOutputTokens`、`softLimitRatio`，以及能读取最终序列化 Provider Request 的 `tokenMeter`。该高级程序化入口用于自定义 Provider、测试夹具和显式 Canary 压力窗口；真实环境入口以模型能力目录为准。未提供精确 Tokenizer 时，Adapter 使用标记为 `estimated` 的 UTF-8 字节估算，不会伪装成精确计量。
 
 ## Memory Store
 

@@ -68,3 +68,5 @@ Canary 报告新增按 phase 的有效窗口、输出预留、soft/hard input li
 2. 默认 meter 是可审计的估算器，不是 qwen tokenizer。高风险生产配置应由 Adapter 注入精确 tokenizer meter，或保留足够保守的能力配置。
 3. 某些 Provider 把 reasoning token 计入 completion usage 的方式不同，甚至可能不严格遵守 `max_tokens`；应以厂商合同和真实 usage 校验显式输出预留。
 4. 当前没有流式 Adapter；以后增加 streaming 时必须在发送前沿用同一 profile/hard limit，并在中断输出时记录实际 usage，不得新增预算 Authority。
+
+后续 E099 已替代第 1 项兼容风险：真实环境入口现在按模型名解析已验证能力，qwen3.7-flash 自动使用 1M 总窗口；未知模型 fail closed，12K 仅保留为显式 Canary stress override。
