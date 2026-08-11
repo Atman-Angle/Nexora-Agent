@@ -102,3 +102,28 @@ export {
   type ToolBuilderContext,
   type ToolBuilderDefinition
 } from "./execution/tool-builder.js";
+
+export {
+  MemoryConflictError,
+  MemoryDigestSchema,
+  MemoryIdSchema,
+  MemoryListOptionsSchema,
+  MemoryRecordSchema,
+  MemoryScopeSchema,
+  MemorySensitivitySchema,
+  MemorySourceSchema,
+  MemoryStatusSchema,
+  MemoryStatusUpdateSchema,
+  MemoryStore,
+  MemoryVerificationSchema,
+  openMemoryStore,
+  type CreateMemoryInput,
+  type MemoryListOptions,
+  type MemoryRecord,
+  type MemoryScope,
+  type MemorySensitivity,
+  type MemorySource,
+  type MemoryStatus,
+  type MemoryStatusUpdate,
+  type MemoryVerification
+} from "./memory/index.js";

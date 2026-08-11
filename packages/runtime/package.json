@@ -22,6 +22,7 @@
     "dist/*.d.ts",
     "dist/context",
     "dist/execution",
+    "dist/memory",
     "dist/providers",
     "dist/store",
     "dist/testing"

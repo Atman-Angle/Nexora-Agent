@@ -8,20 +8,20 @@
 Host Application / CLI / Service
               ↓
        Runtime Gateway
-          ↓
-Execution Kernel
-    ├── Context Intelligence
-    ├── Model Gateway
-    ├── Action Runtime
-    ├── Evidence & Verification
-    └── Invocation Recovery
+          ├── Execution Kernel
+          │   ├── Context Intelligence
+          │   ├── Model Gateway
+          │   ├── Action Runtime
+          │   ├── Evidence & Verification
+          │   └── Invocation Recovery
+          └── Memory
           ↓
 State / Event / Artifact / Workspace
 ```
 
-## 2. 六个核心域
+## 2. 七个核心域
 
-六个核心域是能力边界，不要求一域对应一个 package。当前 1.1 将已实现能力收敛在单一 `@nexora/runtime` 包内；未实现能力不得用空目录、Stub 或第二套状态提前占位。
+七个核心域是能力边界，不要求一域对应一个 package。当前已实现能力收敛在单一 `@nexora/runtime` 包内；未实现能力不得用空目录、Stub 或第二套状态提前占位。
 
 ### Core Contracts
 
@@ -81,6 +81,12 @@ Structured Compaction 是 Eviction 之后的第二层收缩：当 Eviction 耗�
 新 Summary 写入前必须通过 Schema、引用存在性、Run 归属、Source Digest 与 section 一致性校验。后续复用 Checkpoint 时，Runtime 还会重新计算 canonical Summary digest，重新解析并验证全部原始 SourceRef，精确比较重新派生的 Source Digest map 和 covered Invocation multiset；任一项不一致就使缓存失效。`unresolvedIssues` 中的 failed/unknown Invocation 如果已有同 Plan、同 Step 且覆盖同一 Check 的后续成功 Invocation，就不再是 unresolved，不能被下一轮 Summary 继续携带。验证通过后，Store 在一个事务中删除旧行并写入唯一新行；失败或拒绝的 Summary 不替换现有有效缓存，决策沿用安全回退路径。Checkpoint 始终是 Prompt 派生缓存，不拥有 TaskContract、Plan、Invocation、Evidence、Run Status 或 Completion Authority；删除全部 Checkpoint 后 Runtime 必须从 Authority 确定性重建 Decision Projection。
 
 Provider-neutral Context 到生产 Wire 还有最后一层有界投影。OpenAI-compatible Adapter 必须把 `contextCheckpoint`、`rehydratedFacts`、`historyCandidates` 和当前 `repair` 交给 Decision 模型，同时继续移除 `projection` digest 元数据和 Tool Observation 的 Runtime-only provenance。Eviction 只允许改变 `toolObservations` 的 payload retention；重建 Context 时必须原样保留 Checkpoint、Rehydrated Facts、History Candidates、Session Archive 和 Repair，并把这些实际可见字段纳入新的 projection digest。该投影不保存 Provider transcript，也不产生第二套 Context 状态。
+
+### Memory
+
+Memory 是 Runtime 的通用连续性子系统，但不是 Execution Core 的 Run Authority。Host 通过公开 Contract 提供稳定的 user/project/workspace/可选 branch identity 与 `stateDir`；Runtime 在独立 `<stateDir>/memory-v1.db` 中保存严格 `MemoryRecord`、来源 `{sourceRunId, ref, digest}`、verification、status 和 sensitivity。相同 scope 内相同 ID/内容的创建可安全重试，不同内容冲突必须拒绝；所有读取、状态修改和删除都要求完整精确 scope，错误 scope 返回不存在而不泄露记录。
+
+Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。当前 Feature 只提供 Store 与生命周期原语；Context 尚不检索或注入 Memory。后续只能通过独立 Feature 把少量、可解释、可删除的 Memory 候选投影给 Context，当前 Run Authority 始终优先。
 
 ### Action Runtime
 
@@ -218,17 +224,16 @@ nexora/
 │   └── runtime/
 │       └── src/
 │           ├── runtime.ts
-│           ├── runtime-execution.ts
+│           ├── context/
+│           ├── execution/
+│           ├── memory/
+│           ├── store/
 │           ├── validation.ts
 │           ├── runtime-types.ts
 │           ├── runtime-helpers.ts
 │           ├── contracts.ts
-│           ├── run-store.ts
 │           ├── state-machine.ts
-│           ├── model-client.ts
-│           ├── openai-compatible-provider.ts
-│           ├── artifacts.ts
-│           └── tool-runtime/
+│           └── providers/
 ├── tests/
 │   └── runtime/
 ├── docs/

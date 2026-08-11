@@ -21,7 +21,7 @@
    - Effect：`#callTool` → `RuntimeTool.execute`
    - 持久化：`RunStore` 原子方法
    - 完成：`validateCompletion` → `RuntimeProvider.validate` → `transitionRunStatus`
-4. 明确本次数据 authority：Plan、Run Status、Tool Result、Evidence 分别由谁创建和持久化。若需要第二个 authority，停止并重新设计。
+4. 明确本次数据 authority：Plan、Run Status、Tool Result、Evidence 分别由谁创建和持久化。跨 Run Memory 只能进入独立 Memory Store，不能伪装为或反写这些 Run Authority；若同一事实出现第二个执行 authority，停止并重新设计。
 5. 列出可复用点、删除/合并候选、首个真实断点和最小修改文件。没有第二个真实调用方时不新增抽象。
 6. 写 RED 测试，先运行并确认它因目标缺口失败，而不是 Fixture、配置或测试本身失败。
 

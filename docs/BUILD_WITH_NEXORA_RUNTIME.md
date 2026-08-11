@@ -68,6 +68,42 @@ try {
 
 也可调用 `createOpenAICompatibleProvider(options)` 显式传入连接配置、自定义 `fetch`、`contextWindowTokens`、各 phase 的 `reservedOutputTokens`、`softLimitRatio`，以及能读取最终序列化 Provider Request 的 `tokenMeter`。未提供精确 Tokenizer 时，Adapter 使用标记为 `estimated` 的 UTF-8 字节估算，不会伪装成精确计量。
 
+## Memory Store
+
+`@nexora/runtime` 提供与 Run Store 分离的通用 Memory Contract。Host 必须显式提供稳定 scope identity 和存储目录；打开 Store 只创建 `<stateDir>/memory-v1.db`，不会创建或迁移 `runtime-v1.1.db`：
+
+```ts
+import { openMemoryStore } from "@nexora/runtime";
+
+const memory = openMemoryStore({ stateDir: "D:\\agent-state" });
+try {
+  memory.create({
+    memoryId: "preferred-retrieval-v1",
+    memoryType: "preference",
+    statement: "Prefer deterministic retrieval before semantic search.",
+    scope: {
+      userId: "user-42",
+      projectId: "nexora",
+      workspaceId: "D:/Nexora"
+    },
+    source: {
+      sourceRunId: "run-123",
+      ref: "input:7",
+      digest: `sha256:${"a".repeat(64)}`
+    },
+    verification: { state: "unverified" },
+    status: "active",
+    sensitivity: "normal",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+} finally {
+  memory.close();
+}
+```
+
+`create/get/list/setStatus/delete` 都通过公开 Schema，并按 user/project/workspace/可选 branch 的完整 scope 隔离。同 scope/ID/内容的 `create` 是幂等重试；相同 ID 的不同内容会抛出 `MemoryConflictError`。当前版本不会自动从 Run 提取 Memory，也不会把 Memory 注入 Context；这两项属于后续独立 Feature。
+
 ## Runtime API
 
 ### `run`

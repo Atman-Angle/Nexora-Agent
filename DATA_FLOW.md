@@ -182,7 +182,9 @@ E062–E064 的交互语义在 D2 收敛为 `CLI/Host → runtime.run/openRun �
 
 D3 取消语义收敛为 `Host cancel/Runtime close → active AbortSignal coordination → Invocation 明确结果或 unknown Recovery boundary → State Machine cancelled/blocked → persisted Event/Result`。signal、Promise 和 subscription 均不拥有 Run 状态或完成判断；started non-idempotent Effect 结果未知时必须保留 blocked/Recovery。
 
-D4 不增加新数据流：`defineProviderAdapter(single completion) → existing RuntimeProvider.decide/validate`，`defineTool(definition) → existing RuntimeTool → runtime-execution.callTool`，`createRuntimeHarness → production createRuntime → real temporary runtime-v1.1.db`。Adapter 的 request、Builder context 和 Scripted Provider descriptor 都是有界进程内输入，不持久化 Run 状态、不提交内部 Action、不生成 Evidence 或完成结论；Schema、Approval、Invocation、Evidence、Recovery、Validation 和 State Machine 仍沿用上述唯一链路。Testing Kit 只读取公共 Event/Error/Result Contract，close 后删除测试 workspace，不存在 Memory Store 或 Snapshot authority。
+D4 不增加新数据流：`defineProviderAdapter(single completion) → existing RuntimeProvider.decide/validate`，`defineTool(definition) → existing RuntimeTool → runtime-execution.callTool`，`createRuntimeHarness → production createRuntime → real temporary runtime-v1.1.db`。Adapter 的 request、Builder context 和 Scripted Provider descriptor 都是有界进程内输入，不持久化 Run 状态、不提交内部 Action、不生成 Evidence 或完成结论；Schema、Approval、Invocation、Evidence、Recovery、Validation 和 State Machine 仍沿用上述唯一链路。Testing Kit 只读取公共 Event/Error/Result Contract，close 后删除测试 workspace；它不自动打开 Memory Store，也不提供 Snapshot authority。
+
+E091 建立一条与 Run 执行完全分离的数据流：`Host stateDir + exact scope identity → openMemoryStore → MemoryRecord Schema → <stateDir>/memory-v1.db`。Memory Store 自己拥有 Memory Record 的 create/status/delete 生命周期，来源必须保留 `{sourceRunId, ref, digest}`；它不打开或迁移 `runtime-v1.1.db`，也不反写 Run、Plan、Invocation、Evidence 或 State Machine。相同 scope/ID 的相同 create digest 返回现有记录，不同内容拒绝；get/list/status/delete 的 SQL 谓词始终包含 user/project/workspace/branch 全部 scope。当前 Context 数据流尚不消费 Memory，后续召回必须经过新的有界投影 Feature。
 
 ## 6. 当前代码落点与冻结边界
 
@@ -204,6 +206,9 @@ Provider Profile、Token Meter fallback、软/硬预算计算
 
 Run Status 合法迁移
 → packages/runtime/src/state-machine.ts
+
+独立 Memory Contract、scope、provenance 与 SQLite 生命周期
+→ packages/runtime/src/memory/
 ```
 
 `runtime-types.ts` 只定义类型和 Schema，`runtime-helpers.ts` 只保存无状态纯函数；二者都不拥有持久化 Authority。当前结构不再按文件行数拆分。性能修改必须先建立 SQL、Context 或模型调用的可重复基线，并证明瓶颈位于对应边界。

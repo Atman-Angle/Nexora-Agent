@@ -12,7 +12,7 @@ Nexora 的 Context + Memory Harness 是长时序任务连续性系统，而不�
 2. 当前 TaskContract；
 3. 当前 Structured Plan、Step Progress 和 Run Evidence；
 4. 有 SourceRef 的 Checkpoint 与精确 Rehydration；
-5. 明确标记、可解释、可删除的 Host-owned Memory。
+5. 明确标记、可解释、可删除的 Runtime Memory。
 
 Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第二套 Run、Plan、Evidence、Approval 或 Completion Authority。
 
@@ -28,7 +28,7 @@ Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第�
 | Session Archive | 已实现 | 有界 range、最多 16 个代表性 Milestone、8 KiB 守卫；E087 | 仍只是导航，不应承担正常轮次的主要发现责任 |
 | Restart 与 Branch 隔离 | 本地完成 | 同一长序列 3 次 reopen、2 个 sibling Branch、跨 Branch 统一拒绝、Parent Authority 不变；E082/E083/E089 | 真实 Host 进程级长任务仍需 Canary |
 | 确定性自动候选发现 | 本地完成 | 最多 8 条/4 KiB；Check/Step/Tool/Input/path/error code、Evidence/Artifact、Approval、Fork Base；候选 ref 可精确恢复；E090 | 真实模型选择候选的效果仍需 Canary |
-| Memory Contract 与 Host-owned Store | 缺失 | 无 | 缺 scope identity、source provenance、lifecycle、sensitivity、CRUD 和隔离 |
+| Runtime Memory Contract 与独立 Store | 本地完成 | 严格 scope/provenance/verification/status/sensitivity；独立 memory-v1.db；CRUD、重启、隔离、幂等与 schema 拒绝；E091 | 尚未接入 Context recall，也未实现晋升与冲突生命周期 |
 | Memory 晋升、去重、Supersession | 缺失 | 无 | 缺显式/验证后晋升与冲突生命周期 |
 | Memory 召回与 Context 注入 | 缺失 | 无 | 缺有界候选、reason、Token 上限、冲突优先级和注入标记 |
 | 用户控制 | 缺失 | 无 | 缺查看来源、修正、失效、删除、禁用、清域和导出 |
@@ -44,7 +44,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 1. `decision-continuity-projection`：把 Checkpoint、精确恢复事实和 Repair 送达生产 Provider Wire；状态为 `done_locally`，真实 Provider 为外部验收。
 2. `multi-cycle-context-continuity`：状态为 `done_locally`。固定评测已覆盖 102 决策、5 Compaction、3 reopen、2 sibling Branch、4 个 TaskContract/Plan 版本、20 次实际失败和五类精确 SourceRef 恢复；完整构建性能场景覆盖 1,000 Input + 1,000 Event。
 3. `deterministic-history-candidates`：状态为 `done_locally`。公开 `historyCandidates` 以最多 8 条/4 KiB 的确定性关系导航当前 Run 与显式 Fork Base，内容仍只从 Authority 精确恢复；10,001 Invocation 固定场景无需索引或模型调用。
-4. `host-owned-memory-contract-store`：在 Host 数据平面建立严格 MemoryRecord、稳定作用域身份、`{sourceRunId, ref, digest}` provenance、显式 create/get/list/status/delete、重启与隔离；不修改 Core Run Authority。
+4. `runtime-memory-contract-store`：状态为 `done_locally`。Runtime 提供严格 MemoryRecord、稳定作用域身份、`{sourceRunId, ref, digest}` provenance、显式 create/get/list/status/delete 与独立 `memory-v1.db`；Host 只提供 scope identity 和 stateDir，不修改 Core Run Authority。
 5. `memory-promotion-supersession`：支持显式及验证后晋升、去重、合并、更新、Supersede、过期和重新验证；模型产物默认不自动可信。
 6. `bounded-memory-recall`：在新 Run 或 TaskContract 改变时召回少量 Memory，附 scope、source、reason、lifecycle 与硬数量/Token 上限；当前 Run Authority 永远优先。
 7. `memory-user-controls`：查看、解释、修正、失效、删除、禁用、清除作用域和导出审计记录。
@@ -54,7 +54,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 
 ## Memory 数据边界
 
-首个 Memory Store 应由 Host Application 拥有，并与 `runtime-v1.1.db` 分离。Memory Record 自身是 Host 数据面的可审计记录，但不能直接写 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval 或 Completion。每条记录至少需要：
+首个 Memory Store 是 `@nexora/runtime` 的通用子系统，并与 `context/`、`execution/` 平级；Host Application 提供稳定 scope identity、stateDir 和使用策略。它使用独立 `memory-v1.db`，不进入 `runtime-v1.1.db`。Memory Record 自身是可审计记录，但不能直接写 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval 或 Completion。每条记录至少需要：
 
 - `memoryId`、`memoryType`、`statement`；
 - 稳定的 user/project/workspace/branch scope identity；
