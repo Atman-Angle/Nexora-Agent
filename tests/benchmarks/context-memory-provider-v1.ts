@@ -25,8 +25,9 @@ export const PROVIDER_REPETITIONS = 3;
 export const PROVIDER_RUN_COUNT = 15;
 // Contract v2 removes enough Provider protocol payload that the former 32K
 // fixture no longer reaches its required Eviction gate. Keep the window above
-// the declared 16,384 decision reserve while restoring genuine wire pressure.
-export const STRESS_CONTEXT_WINDOW_TOKENS = 24_000;
+// the declared 16,384 decision reserve while leaving enough hard-input headroom
+// after Eviction for the final large observation.
+export const STRESS_CONTEXT_WINDOW_TOKENS = 22_000;
 const PRE_PROVIDER_STRESS_MANIFEST = "sha256:cd6ea3c23fc804d699188a93f3cedac3048333fb1e02e241ea69a94ac26552e2";
 
 type ScenarioId = "HPE-01" | "HPE-02" | "HPE-03" | "HPE-04" | "HPE-05";

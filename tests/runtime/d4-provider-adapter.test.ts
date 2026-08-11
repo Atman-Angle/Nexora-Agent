@@ -73,7 +73,9 @@ describe("D4 Provider Adapter", () => {
     expect(requests[0]!.system).toContain("sessionArchive");
     expect(requests[0]!.system).toContain("Provider Contract v2");
     expect(requests[0]!.system).toContain("If an active Task has callable requirements, use use_capabilities");
-    expect(requests[0]!.system).toContain("When the user explicitly names a published ref, restore_context is the first intent");
+    expect(requests[0]!.system).toContain("Published refs are exact strings; never ask the user to provide a ref already shown in context");
+    expect(requests[0]!.system).toContain("not already present as a successful rehydratedFact");
+    expect(requests[0]!.system).toContain("Never request user input for facts already present in toolObservations");
     expect(requests[0]!.system).not.toContain("Group independent known calls");
     expect(JSON.parse(requests[0]!.input)).toEqual(expect.objectContaining({
       mode: "decide",
