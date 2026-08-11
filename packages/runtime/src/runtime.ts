@@ -1173,14 +1173,6 @@ export class RuntimeEngine {
         observer,
         true
       );
-      if (pendingRequest !== undefined && modelCall.outcome === "succeeded") {
-        this.#completeRehydrationRequest(
-          run.runId,
-          pendingRequest.requestId,
-          pendingRequest.refs,
-          observer
-        );
-      }
       run = modelCall.run;
       if (modelCall.outcome === "budget_exceeded") break;
       if (modelCall.outcome === "failed") {
@@ -1218,6 +1210,15 @@ export class RuntimeEngine {
       try {
         action = RuntimeActionSchema.parse(rawAction);
         run = await this.#handleAction(run, action, signal, observer);
+        const consumedRehydration = action.type !== "propose_finish" || run.status === "succeeded";
+        if (pendingRequest !== undefined && consumedRehydration) {
+          this.#completeRehydrationRequest(
+            run.runId,
+            pendingRequest.requestId,
+            pendingRequest.refs,
+            observer
+          );
+        }
       } catch (error) {
         if (
           error instanceof RuntimeError
@@ -1252,6 +1253,13 @@ export class RuntimeEngine {
     observer?: RuntimeObserver
   ): Promise<RunSnapshot> {
     signal.throwIfAborted();
+    const pending = this.#rehydrationRequests.get(run.runId);
+    if (pending !== undefined && action.refs.every((ref) => pending.refs.includes(ref))) {
+      // The exact facts are already present in this decision context. Keep the
+      // pending request alive without another event or a second Store read so
+      // the next decision can repair a duplicate request idempotently.
+      return run;
+    }
     // Every requested ref is queued; the next decision turn resolves each one
     // against that turn's manifest (ref already published + digest matches) and
     // reports the outcome back in rehydratedFacts. Refs that were never
@@ -1259,20 +1267,33 @@ export class RuntimeEngine {
     // without disclosing whether the object exists.
     const requestId = this.#createId();
     const publishedMemoryDigests = this.#publishedMemoryDigests.get(run.runId) ?? {};
-    const memoryDigests = Object.fromEntries(action.refs.flatMap((ref) => (
+    const refs = [...new Set([...(pending?.refs ?? []), ...action.refs])];
+    const memoryDigests = {
+      ...(pending?.memoryDigests ?? {}),
+      ...Object.fromEntries(action.refs.flatMap((ref) => (
       publishedMemoryDigests[ref] === undefined ? [] : [[ref, publishedMemoryDigests[ref]]]
-    )));
+      )))
+    };
     this.#store.recordRunEvent({
       runId: run.runId,
       event: {
         type: "context.rehydrate_requested",
         occurredAt: this.#now(),
-        payload: { requestId, refs: action.refs, memoryDigests }
+        payload: { requestId, refs, memoryDigests }
       },
       fencingToken: this.#leases.requireFencingToken(run.runId)
     });
     this.#notify(run.runId, observer);
-    this.#rehydrationRequests.set(run.runId, { requestId, refs: action.refs, memoryDigests });
+    if (pending !== undefined) {
+      this.#completeRehydrationRequest(
+        run.runId,
+        pending.requestId,
+        pending.refs,
+        observer,
+        false
+      );
+    }
+    this.#rehydrationRequests.set(run.runId, { requestId, refs, memoryDigests });
     return run;
   }
 
@@ -1280,7 +1301,8 @@ export class RuntimeEngine {
     runId: string,
     requestId: string,
     refs: readonly string[],
-    observer?: RuntimeObserver
+    observer?: RuntimeObserver,
+    clearPending = true
   ): void {
     this.#store.recordRunEvent({
       runId,
@@ -1291,15 +1313,16 @@ export class RuntimeEngine {
       },
       fencingToken: this.#leases.requireFencingToken(runId)
     });
-    this.#rehydrationRequests.delete(runId);
+    if (clearPending) this.#rehydrationRequests.delete(runId);
     this.#notify(runId, observer);
   }
 
   /**
    * Rebuilds transient rehydration requests from the audit event stream on
    * resume: a context.rehydrate_requested event without a matching
-   * context.rehydrated event was never consumed, so its accepted refs are
-   * queued for the next decision turn. No authority table is involved.
+   * context.rehydrated event was not yet consumed by an accepted follow-up
+   * action, so its accepted refs are queued for the next decision turn. No
+   * authority table is involved.
    */
   #rebuildRehydrationRequests(runId: string): void {
     const events = this.#store.listEvents(runId);

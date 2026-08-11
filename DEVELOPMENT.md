@@ -9,67 +9,51 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: context-memory-harness-evaluation-benchmark
-status: done
+current_feature: rehydration-action-continuity
+status: done_locally
 
 feature_contract:
-  feature: context-memory-harness-evaluation-benchmark
-  title: Context and Memory Harness Evaluation Benchmark v1
-  mode: VERIFY
+  feature: rehydration-action-continuity
+  title: Rehydrated Fact Action Continuity
+  mode: DIRECT
   goal: >
-    Establish a versioned, reproducible end-to-end Harness benchmark whose fixed hard gates and
-    Provider metrics provide comparable evidence for later Context and Memory optimization.
+    Keep an exact rehydrated fact available until the Provider produces an accepted follow-up action,
+    without duplicate Store work or losing repair context after an invalid action or failed validation.
   scope:
-    - define a fixed capability matrix, scenario manifest, evidence contracts and pass thresholds
-    - run deterministic Runtime/Store/Tool/Memory E2E scenarios through real public execution paths
-    - generate machine-readable revisioned reports with dimensions, durations and fail-closed gates
-    - define a separate real Provider protocol for quality, tokens, latency, cost and failure samples
+    - consume a pending rehydration request only after an accepted non-finish action or successful finish
+    - keep the same exact fact across duplicate request_context, invalid Action and validation repair turns
+    - merge newly requested refs without orphaning the previous persisted request
+    - tell Provider adapters that request_context is a top-level control action, never a Tool name
   invariants:
-    - benchmark reads Runtime Ledger, Store, Invocation and Evidence instead of creating result Authority
-    - safety, Authority, recovery and hard-budget failures cannot be averaged away by a score
-    - deterministic and real Provider evidence remain separate and cannot overwrite each other
-    - dataset or threshold semantics are versioned and reports never contain Provider credentials
+    - Run Store remains the Authority for original facts and rehydration audit Events
+    - request_context remains a Harness control action outside the Core State Machine
+    - repeated requests do not create duplicate rehydration Events or Tool Effects
+    - invalid actions and failed validation cannot consume facts needed for repair
   non_goals:
-    - optimizing Context ranking, prompts, Memory recall or Runtime behavior in the benchmark Feature
-    - claiming model-quality statistics from deterministic scripted Provider runs
-    - production deployment, universal model comparison or automatic benchmark tuning
-    - silently using local Provider credentials or incurring external cost
+    - adding context_ref Acceptance Checks or changing Completion Evidence in this Feature
+    - changing Context ranking, Memory recall, Store Authority or Compaction policy
+    - rerunning billed Provider evaluation
   acceptance:
-    - manifest covers continuity, retrieval, budget, authority, safety, recovery and efficiency
-    - missing, failed, skipped or todo scenario evidence fails the benchmark
-    - deterministic baseline executes every fixed scenario and records a comparable JSON report
-    - real Provider protocol specifies fixed data, repetitions, hard gates and regression candidates
-    - runner contract tests, benchmark supporting suite and static/build checks pass
-  risk: L3
+    - exact input or invocation facts remain visible after duplicate request and invalid action
+    - successful Tool work consumes the pending request exactly once
+    - validation failure retains the restored fact until a validated finish succeeds
+    - rehydration and Context Harness regressions, static checks and builds pass
+  risk: L2
 
 latest_verification:
   deterministic:
-    benchmark_id: context-memory-harness-v1-dataset-v1
-    manifest: 12-fixed-hard-gate-scenarios-7-dimensions
-    contract: E100-1-file-3-tests-passed
-    deterministic_baseline: 12-of-12-scenarios-39-of-39-supporting-tests-no-skips
-    dimension_scores: continuity-6/6-retrieval-5/5-budget-4/4-authority-5/5-safety-4/4-recovery-2/2-efficiency-2/2
-    canonical_baseline: commit-9b427c1-dirty-false-manifest-fbc02f2d
-    baseline_duration_ms: 24684.06-clean-source
-    external_provider_calls: 0
-    provider_cost_usd: 0
+    e102_contract: 2-of-2-passed
+    rehydration_and_system_suite: 29-of-29-passed-no-skips
     typecheck: passed
     lint: passed
-    runtime_package_build: passed
     root_build: passed
+    runtime_package_build: passed
     diff_check: passed
-  external_environment_acceptance:
-    status: completed_failed_baseline
-    provider: openai-compatible-qwen3.7-flash
-    runs: 15-of-15-no-retries
-    result: 5-passed-10-failed-benchmark-failed
-    scenarios: HPE-01-0-of-3-HPE-02-3-of-3-HPE-03-0-of-3-HPE-04-2-of-3-HPE-05-0-of-3
-    hard_gates: 0-unsafe-0-scope-leak-0-hard-limit-3-false-success
-    usage: 242-calls-241-with-usage-1957800-total-tokens-unpriced
-    report: reports/context-memory-provider-v1/2026-08-11T09-08-18-224Z/report.json
+    external_provider_calls: 0
+    provider_cost_usd: 0
 
-last_completed_feature: context-memory-harness-evaluation-benchmark
-next_action: plan a separate optimization Feature from E101 RED evidence; do not rerun Provider baseline without a versioned dataset and new authorization
+last_completed_feature: rehydration-action-continuity
+next_action: begin the authorized Run-owned context_ref Acceptance Evidence Feature
 ```
 
 ## Update Rules
