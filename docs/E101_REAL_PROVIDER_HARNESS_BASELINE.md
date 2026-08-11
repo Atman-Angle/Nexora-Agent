@@ -63,3 +63,5 @@
 - 尚未形成新的真实 Provider 对比数据；E101 失败基线保持不变，后续只能在 versioned dataset 和新费用授权下复测；
 - `context-memory-harness-v2` 已在独立确定性 Feature 中加入 HBE-13：同一 qwen 32K effective Profile、真实 OpenAI-compatible wire 投影和校准 meter 在本地 HTTP stub 下触发至少一次 Eviction，并保持 Memory 恢复、8/8 shard Evidence、0 hard violation 与 `VALIDATED`；详见 `E106_CONTEXT_MEMORY_HARNESS_BENCHMARK_V2.md`；
 - 该 v2 结果证明生产治理链可被校准后的固定负载触发，不改写本页 15 次真实 Provider 失败基线，也不证明 qwen 在修复后的召回、动作收敛或 summary 质量；这些改善仍需新的费用授权后按 versioned Provider dataset 复测。
+
+2026-08-11 已在 clean commit `a37e62f` 上完成同一 manifest 的 15-Run 真实 Provider 对比复测：Memory recall gate 通过、hard-gate failure 为 0、Benchmark pass 从 5/15 提升到 8/15，但整版仍因 HPE-04 仅 1/3 和 HPE-05 0/3 而失败。新结果不覆盖本页历史基线；完整证据、差异与剩余根因见 `E107_REAL_PROVIDER_HARNESS_REVALIDATION.md`。
