@@ -9,73 +9,62 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: memory-security-privacy
+current_feature: memory-performance-rebuild
 status: done_locally
 
 feature_contract:
-  feature: memory-security-privacy
-  title: Memory Security and Privacy Boundaries
+  feature: memory-performance-rebuild
+  title: Memory Performance Baseline and Derived-Index Rebuild
   mode: VERIFY
   goal: >
-    Make Memory safe to expose to a decision model as untrusted scoped data,
-    while preserving Core Approval, current-task authority and deletion boundaries.
+    Establish a reproducible bounded performance baseline for Memory-backed Context,
+    and prove SQLite derived indexes can be rebuilt from authoritative Memory tables.
   scope:
-    - mark Memory candidates and restored Memory facts as untrusted data
-    - add production Provider policy that Memory content is never an instruction or authority override
-    - close deterministic scope, sensitivity, guessed-ref and post-delete restoration paths
-    - prove Memory content cannot bypass Tool Approval or Core state transitions
+    - benchmark exact-scope Memory list and complete Context build over a fixed persisted dataset
+    - record p50, p95, max, dataset size, Context bytes, model calls and Provider cost
+    - recreate missing SQLite performance indexes during normal Memory Store reopen
+    - prove records and deterministic recall remain unchanged across index loss and rebuild
   invariants:
-    - Memory is persisted user data, never system/developer/user instruction to the Provider
-    - latest Input, TaskContract, Plan, Progress and Evidence always outrank Memory
-    - only exact-scope active unexpired normal Memory can be published or restored
-    - unpublished, guessed, deleted, disabled, sensitive or drifted refs share REF_UNAVAILABLE
-    - Memory never grants Tool permission, Approval, Evidence, completion or Run status
+    - Memory records and control events remain the only Memory data Authority
+    - indexes contain no independent facts and may be deleted without data loss
+    - rebuild does not change schema version, public recall Contract or Run Authority
+    - performance measurement uses zero model calls and therefore zero Provider cost
   non_goals:
-    - Host authentication/authorization, tenant provisioning or remote API policy
-    - cryptographic encryption-at-rest, key management or filesystem secure erase guarantees
-    - heuristic prompt-injection classifiers, model-based filters or content censorship
-    - changing Approval, State Machine, RunStore or Execution Core Authority
+    - vector or semantic retrieval, a second index service or a new cache Authority
+    - real Provider latency, quality, token usage or billing measurement
+    - automatic Memory extraction, conflict classification or ranking changes
+    - changing Memory records, Context budgets, Approval or Completion behavior
   acceptance:
-    - production Wire labels candidate and restored Memory as untrusted data and carries explicit policy
-    - instruction-like Memory never appears in candidate metadata and cannot replace current task authority
-    - cross-scope, branch, guessed and sensitive refs are unavailable without existence disclosure
-    - deletion after publication revokes the pending ref and removes statement from live Record/Audit projections
-    - malicious Memory followed by a write Tool action still stops at the normal Approval Gate
-    - restart and scope disable preserve all security decisions
-    - targeted attack tests, Memory/Context regression, typecheck, lint and builds pass with no relevant skips
-  risk: L3
+    - fixed dataset records Memory query and complete Context build p50, p95 and max
+    - report includes record/scope/sample/database/Context sizes plus model calls and cost
+    - deleting every declared derived index and reopening restores all indexes from existing tables
+    - exact records, bounded candidates and query-plan index use survive the rebuild
+    - targeted recovery/performance tests, Memory/Context regression and static/build checks pass
+  risk: L2
 
 latest_verification:
   deterministic:
-    red_to_green: exact Memory facts lacked an explicit untrusted-data contract and injection policy
-    targeted_attack_suite: E095-1-file-4-tests-passed
-    memory_regression: E091-E095-5-files-33-tests-passed
+    red_to_green: current-schema Memory Store skipped every missing derived index
+    targeted_recovery_performance: E096-1-file-2-tests-passed
+    dataset: 10-scopes-5000-records-20-samples-after-store-reopen
+    memory_query_ms: p50-8.95-p95-18.10-max-24.31
+    complete_context_build_ms: p50-22.45-p95-31.82-max-34.28
+    bounded_output: context-max-4153-bytes-model-calls-0-provider-cost-usd-0
+    rebuild: all-3-derived-indexes-restored-records-and-candidates-identical-query-plan-indexed
+    memory_regression: E091-E096-6-files-35-tests-passed
     context_quality_gate: 12-files-80-tests-passed
-    prompt_injection: production-wire-trust-policy-current-task-authority-passed
-    scope_privacy: cross-project-branch-sensitive-and-guessed-ref-unavailable-passed
-    deletion: published-ref-revoked-and-no-statement-in-live-audit-projection-passed
-    approval: malicious-memory-write-stopped-before-tool-effect-passed
-    ref_encoding: special-and-unicode-memory-id-no-alias-passed
-    restart_disable: covered-by-E094-memory-regression
-    full_regression: 66-files-298-tests-passed-no-skips-no-unhandled-errors
+    full_regression: 67-files-300-tests-passed-no-skips-no-unhandled-errors
     typecheck: passed
     lint: passed
     runtime_package_build: passed
     root_build: passed
-    built_public_api: trust-markers-exported-in-MemoryCandidate-and-RehydratedFact
     diff_check: passed
-  release_gates:
-    security_status: release_gate
-    open:
-      - Host authentication, tenant authorization and exact-scope binding
-      - encryption-at-rest, backup deletion, key management and filesystem secure erase
-      - real-Provider prompt-injection red-team and measurable attack success threshold
   external_environment_acceptance:
     status: deferred
-    reason: Deployment security and real-model red-team require Host infrastructure and Provider execution.
+    reason: Real Provider quality, token, latency and cost belong to the next Canary Feature.
 
-last_completed_feature: memory-security-privacy
-next_action: stop; activate memory-performance-rebuild only as a separate Feature
+last_completed_feature: memory-performance-rebuild
+next_action: stop; activate real-provider-continuity-canary only as a separate Feature
 ```
 
 ## Update Rules

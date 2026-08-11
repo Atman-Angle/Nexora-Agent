@@ -158,6 +158,8 @@ Memory 对 Provider 的信任等级固定为 `untrusted_memory_data`。候选与
 
 Runtime 只负责应用 Host 提供的 exact scope；用户认证、租户授权和 scope 绑定属于 Host 安全边界。`memory-v1.db` 的磁盘加密、备份删除、密钥轮换和文件系统 secure erase 是部署发布门，不应由应用层删除结果冒充。
 
+`memory-v1.db` 中的 scope/status/type/time 索引是派生性能结构。每次 `openMemoryStore` 都会幂等确认这些索引，即使数据库的 schema version 已经是当前版本；缺失索引会直接从 `memory_records` 和 `memory_control_events` 重建，不修改 Memory Record。部署恢复演练可以在备份副本上删除派生索引、重新打开 Store，并核对 Record、候选、索引列表与查询计划。不要删除 Authority 表来测试索引恢复。
+
 ## Runtime API
 
 ### `run`

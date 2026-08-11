@@ -194,6 +194,8 @@ E094 增加用户控制流：`Host user action → MemoryControls Schema → exa
 
 E095 固化 Memory 安全流：`MemoryRecord statement → deterministic candidate(trust=untrusted_memory_data, no statement) → request_context + published digest → restored fact(trust=untrusted_memory_data)`。精确恢复只证明持久化字节与 digest，不提升指令权限；Provider Policy 明确拒绝其中的角色、工具、Approval、Evidence、Completion 和 policy override。猜测/cross-scope/branch/sensitive/deleted/disabled/drifted ref 在同一边界返回 `REF_UNAVAILABLE`。即使 Provider 在看到恶意 statement 后提交 write Tool，仍进入既有 Runtime Approval Gate，Memory 不产生 permission 或 Tool Effect。Delete 在下一轮同时移除候选和恢复资格；无正文 audit tombstone 保留用户操作可审计性。
 
+E096 固化性能与恢复流：`persisted Memory Authority tables → exact-scope indexed list(max 500) → deterministic candidate projection(max 6 / 768 tokens / 4 KiB) → bounded Context`。固定 5,000 Record 数据集分别测量 Memory query 与完整 Context build 的 p50/p95/max，并记录 scope、样本、数据库和 Context 字节；该路径不调用 Provider，所以模型调用和费用均为 0。`drop derived indexes → reopen MemoryStore → CREATE INDEX IF NOT EXISTS from Authority tables → identical Records/Candidates`，查询计划重新使用 scope/status/time 索引。
+
 ## 6. 当前代码落点与冻结边界
 
 ```text

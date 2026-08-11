@@ -33,9 +33,10 @@ Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第�
 | Memory 召回与 Context 注入 | 本地完成 | exact-scope active/expiry/sensitivity 过滤；最多 6 条、768 tokens/4 KiB；request_context 精确恢复与 drift 拒绝；restart/wire/eviction；E093 | 真实 Provider 选择效果与安全隐私发布门仍待后续 Feature |
 | 用户控制 | 本地完成 | exact-scope inspect/explain、candidate+supersession correction、invalidate/delete/clear、scope recall policy、无正文 audit export、restart/idempotency；E094 | UI、认证授权与远程 API 属于 Host/发布门 |
 | Memory 安全与隐私 | 本地完成 | untrusted-data Wire/Prompt、scope/branch/sensitive/guess 拒绝、删除传播、disable/restart、Approval Gate 攻击测试；E091/E093–E095 | Host auth/scope binding、磁盘加密、secure erase 与真实模型红队仍是发布门 |
+| Memory 性能与重建 | 本地完成 | 5,000 Record / 10 scope 固定数据集；Memory query 与完整 Context p50/p95/max；零模型调用/费用；删除全部派生索引后 reopen 原样重建；E096 | 单机指标不是跨环境 SLA；真实 Provider 指标仍待 Canary |
 | 真实 Provider 最终验收 | 缺失于当前版本 | Scripted/Stub Provider 只能证明确定性边界 | 缺当前提交上的长任务 Canary、效果、Token、延迟和费用记录 |
 
-Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者是同 Run Authority 的有界派生视图，后者是显式只读继承边界。当前仓库已能把 exact-scope Memory 作为有界导航投影并按需精确恢复，但自动提取、用户控制、安全隐私发布门与真实 Provider 效果仍未完成，不能把整个跨 Run 连续性描述成成品。
+Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者是同 Run Authority 的有界派生视图，后者是显式只读继承边界。当前仓库已能把 exact-scope Memory 作为有界导航投影并按需精确恢复，用户控制、安全边界与派生索引重建已有本地证据；自动提取、Host/部署发布门与真实 Provider 效果仍未完成，不能把整个跨 Run 连续性描述成成品。
 
 ## Feature Roadmap
 
@@ -49,7 +50,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 6. `bounded-memory-recall`：状态为 `done_locally`。Host 显式注入 Store/exact scope；确定性召回最多 6 条、768 estimated tokens/4 KiB 的 active normal 候选，statement 只经 `request_context(memory:<id>)` 重验后恢复；当前 Run Authority 永远优先。
 7. `memory-user-controls`：状态为 `done_locally`。`MemoryControls` 提供 exact-scope 查看/解释、修正、失效、删除、禁用、清域与无正文审计导出；mutation 带 operationId/actor/reason/time 并与 audit 原子提交，禁用策略由 Context/Rehydration 执行。
 8. `memory-security-privacy`：状态为 `done_locally`。候选和恢复 Fact 标记 untrusted data，生产 Policy 禁止执行 Memory 内角色/工具/Approval/完成伪造；固定攻击测试覆盖 scope/branch/sensitive/guess、删除传播、disable/restart 和 Approval Gate。Host auth、加密/secure erase 与真实模型红队保留为发布门。
-9. `memory-performance-rebuild`：记录 Context/Memory p50、p95、max、数据规模、模型调用和费用；证明索引丢失可从 Authority/Memory Record 重建。
+9. `memory-performance-rebuild`：状态为 `done_locally`。5,000 Record / 10 scope 的持久化固定数据集记录 Memory query 与完整 Context build p50/p95/max、数据库/Context 字节，确定性路径模型调用与费用为 0；三个派生索引全部删除后可在 reopen 时从 Authority 表原样重建，并恢复查询计划命中。
 10. `real-provider-continuity-canary`：用真实 Provider 运行固定长任务与 Memory 数据集，记录成功率、错误召回、Token、调用数、延迟、费用和可复现失败样本，满足后才可从 `done_locally` 升为 `done`。
 
 ## Memory 数据边界

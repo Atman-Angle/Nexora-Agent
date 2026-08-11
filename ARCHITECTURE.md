@@ -94,6 +94,8 @@ Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，�
 
 Memory 的安全信任边界是“精确但不可信的数据”。`memoryCandidates` 和恢复后的 Memory Fact 都显式携带 `trust: untrusted_memory_data`；statement 中的 system/developer/user 角色声明、工具请求、Approval、Evidence、完成结论或策略覆盖均没有执行语义。生产 Provider Policy 必须把它们当作待与当前 Run Authority 核对的事实主张，不能当指令。未发布、猜测、跨 scope/branch、sensitive、deleted、disabled 或 digest drift 的 Memory ref 统一 `REF_UNAVAILABLE`。Memory 不进入 Tool permission、Approval、State Machine、Evidence 或 Completion Gate。Host 仍负责认证和 scope 绑定；磁盘加密、密钥管理与文件系统 secure erase 是部署发布门，不由 Runtime 伪造保证。
 
+Memory 的 SQLite scope/status/type/time 索引和 control-event time 索引都是可丢弃的派生性能结构，不保存独立事实。`MemoryStore` 每次打开都会在既有 Authority 表上幂等确认这些索引；即使 schema version 已是当前版本，缺失索引也会从 `memory_records` 与 `memory_control_events` 重建。重建不迁移 Record、不改变 schema version，也不创建第二数据 Authority。
+
 ### Action Runtime
 
 完整执行管线：

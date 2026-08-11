@@ -35,6 +35,22 @@ import {
 
 const MEMORY_DATABASE_FILENAME = "memory-v1.db";
 const MEMORY_SCHEMA_VERSION = 2;
+const MEMORY_DERIVED_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS memory_records_scope_status_updated
+    ON memory_records (
+      user_id, project_id, workspace_id, branch_id,
+      status, updated_at DESC, memory_id ASC
+    );
+  CREATE INDEX IF NOT EXISTS memory_records_scope_type_updated
+    ON memory_records (
+      user_id, project_id, workspace_id, branch_id,
+      memory_type, updated_at DESC, memory_id ASC
+    );
+  CREATE INDEX IF NOT EXISTS memory_control_events_scope_time
+    ON memory_control_events (
+      user_id, project_id, workspace_id, branch_id, occurred_at ASC, operation_id ASC
+    );
+`;
 
 type MemoryRow = {
   record_json: string;
@@ -657,9 +673,9 @@ export class MemoryStore {
         `Memory database schema ${version} is newer than supported schema ${MEMORY_SCHEMA_VERSION}.`
       );
     }
-    if (version === MEMORY_SCHEMA_VERSION) return;
-    const migrate = this.#database.transaction(() => {
-      this.#database.exec(`
+    if (version < MEMORY_SCHEMA_VERSION) {
+      const migrate = this.#database.transaction(() => {
+        this.#database.exec(`
         CREATE TABLE IF NOT EXISTS memory_records (
           user_id TEXT NOT NULL,
           project_id TEXT NOT NULL,
@@ -673,16 +689,6 @@ export class MemoryStore {
           create_digest TEXT NOT NULL,
           PRIMARY KEY (user_id, project_id, workspace_id, branch_id, memory_id)
         );
-        CREATE INDEX IF NOT EXISTS memory_records_scope_status_updated
-          ON memory_records (
-            user_id, project_id, workspace_id, branch_id,
-            status, updated_at DESC, memory_id ASC
-          );
-        CREATE INDEX IF NOT EXISTS memory_records_scope_type_updated
-          ON memory_records (
-            user_id, project_id, workspace_id, branch_id,
-            memory_type, updated_at DESC, memory_id ASC
-          );
         CREATE TABLE IF NOT EXISTS memory_scope_controls (
           user_id TEXT NOT NULL,
           project_id TEXT NOT NULL,
@@ -702,14 +708,15 @@ export class MemoryStore {
           event_json TEXT NOT NULL,
           PRIMARY KEY (user_id, project_id, workspace_id, branch_id, operation_id)
         );
-        CREATE INDEX IF NOT EXISTS memory_control_events_scope_time
-          ON memory_control_events (
-            user_id, project_id, workspace_id, branch_id, occurred_at ASC, operation_id ASC
-          );
-      `);
-      this.#database.pragma(`user_version = ${MEMORY_SCHEMA_VERSION}`);
+        `);
+        this.#database.pragma(`user_version = ${MEMORY_SCHEMA_VERSION}`);
+      });
+      migrate();
+    }
+    const ensureDerivedIndexes = this.#database.transaction(() => {
+      this.#database.exec(MEMORY_DERIVED_INDEXES_SQL);
     });
-    migrate();
+    ensureDerivedIndexes();
   }
 }
 
