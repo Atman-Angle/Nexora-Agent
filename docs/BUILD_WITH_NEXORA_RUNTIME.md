@@ -115,7 +115,21 @@ try {
 
 不可信内容应以 `candidate` 创建。`promote` 接受带 actor/time 的 `explicit` 决定，或要求 Memory 已 verified 的 `verified` 决定；同 scope 的 type/statement/sensitivity 完全相同时只保留一个 active Memory。内容更新不能原地修改：先创建 replacement candidate，再调用 `supersede`，一个 predecessor 表示 update，多个表示 merge。Store 在一个事务中保存 replacement 的 `supersedesMemoryIds` 和 predecessor 的 `supersededByMemoryId`。`revalidate` 和 `expire` 分别处理重新验证与到期，通用 `setStatus` 只允许 `archived | invalidated`，不能绕过生命周期。
 
-当前版本不会自动从 Run 提取 Memory，也不会把 Memory 注入 Context；这两项属于后续独立 Feature。
+Runtime 不会自动从 Run 提取 Memory。要启用有界召回，Host 显式把共享 Store 和 exact scope 注入 Runtime；Runtime 不负责关闭该 Store：
+
+```ts
+const runtime = createRuntime({
+  workspace,
+  provider,
+  tools,
+  memory: {
+    store: memory,
+    scope: { userId: "user-1", projectId: "project-1", workspaceId: "workspace-1" }
+  }
+});
+```
+
+Decision Context 的 `memoryCandidates` 最多 6 条，并同时受 768 estimated tokens / 4 KiB 硬上限约束；只来自 exact scope 内 active、未过期、normal sensitivity 的记录。候选包含 ref、type、reasons、source、verification、lifecycle 和 record digest，但不包含 statement。Provider 必须返回 `request_context` 请求原样 `memory:<id>` ref，Runtime 才在下一轮重验 scope/lifecycle/expiry/sensitivity/digest 并以 `rehydratedFacts(kind="memory")` 交付完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 和 Evidence 永远优先。
 
 ## Runtime API
 

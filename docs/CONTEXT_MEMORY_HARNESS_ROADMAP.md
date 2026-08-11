@@ -28,14 +28,14 @@ Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第�
 | Session Archive | 已实现 | 有界 range、最多 16 个代表性 Milestone、8 KiB 守卫；E087 | 仍只是导航，不应承担正常轮次的主要发现责任 |
 | Restart 与 Branch 隔离 | 本地完成 | 同一长序列 3 次 reopen、2 个 sibling Branch、跨 Branch 统一拒绝、Parent Authority 不变；E082/E083/E089 | 真实 Host 进程级长任务仍需 Canary |
 | 确定性自动候选发现 | 本地完成 | 最多 8 条/4 KiB；Check/Step/Tool/Input/path/error code、Evidence/Artifact、Approval、Fork Base；候选 ref 可精确恢复；E090 | 真实模型选择候选的效果仍需 Canary |
-| Runtime Memory Contract 与独立 Store | 本地完成 | 严格 scope/provenance/verification/status/sensitivity；独立 memory-v1.db；CRUD、重启、隔离、幂等与 schema 拒绝；E091 | 尚未接入 Context recall，也未实现晋升与冲突生命周期 |
+| Runtime Memory Contract 与独立 Store | 本地完成 | 严格 scope/provenance/verification/status/sensitivity；独立 memory-v1.db；CRUD、重启、隔离、幂等与 schema 拒绝；E091 | 自动提取与用户控制仍未实现 |
 | Memory 晋升、去重、Supersession | 本地完成 | candidate→active 显式/验证晋升、精确去重、单/多前驱原子替换、双向 lineage、过期与重新验证；E092 | 尚未建立语义冲突判断或自动提取策略 |
-| Memory 召回与 Context 注入 | 缺失 | 无 | 缺有界候选、reason、Token 上限、冲突优先级和注入标记 |
+| Memory 召回与 Context 注入 | 本地完成 | exact-scope active/expiry/sensitivity 过滤；最多 6 条、768 tokens/4 KiB；request_context 精确恢复与 drift 拒绝；restart/wire/eviction；E093 | 真实 Provider 选择效果与安全隐私发布门仍待后续 Feature |
 | 用户控制 | 缺失 | 无 | 缺查看来源、修正、失效、删除、禁用、清域和导出 |
-| Memory 安全与隐私 | 缺失 | 无 Memory 数据面 | 缺 user/project/workspace scope、sensitivity、污染和删除后不可召回测试 |
+| Memory 安全与隐私 | 部分本地证据 | exact user/project/workspace/branch scope、normal-only recall、猜测/漂移统一拒绝；E091/E093 | 缺 Prompt Injection、删除传播、禁用/清域与完整发布门测试 |
 | 真实 Provider 最终验收 | 缺失于当前版本 | Scripted/Stub Provider 只能证明确定性边界 | 缺当前提交上的长任务 Canary、效果、Token、延迟和费用记录 |
 
-Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者是同 Run Authority 的有界派生视图，后者是显式只读继承边界。当前仓库已有通用 Memory Store 与生命周期，但 Context 尚未召回或注入 Memory，不能把它描述成跨 Run 连续性已经完成。
+Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者是同 Run Authority 的有界派生视图，后者是显式只读继承边界。当前仓库已能把 exact-scope Memory 作为有界导航投影并按需精确恢复，但自动提取、用户控制、安全隐私发布门与真实 Provider 效果仍未完成，不能把整个跨 Run 连续性描述成成品。
 
 ## Feature Roadmap
 
@@ -46,7 +46,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 3. `deterministic-history-candidates`：状态为 `done_locally`。公开 `historyCandidates` 以最多 8 条/4 KiB 的确定性关系导航当前 Run 与显式 Fork Base，内容仍只从 Authority 精确恢复；10,001 Invocation 固定场景无需索引或模型调用。
 4. `runtime-memory-contract-store`：状态为 `done_locally`。Runtime 提供严格 MemoryRecord、稳定作用域身份、`{sourceRunId, ref, digest}` provenance、显式 create/get/list/status/delete 与独立 `memory-v1.db`；Host 只提供 scope identity 和 stateDir，不修改 Core Run Authority。
 5. `memory-promotion-supersession`：状态为 `done_locally`。支持显式及验证后晋升、精确去重、单/多前驱原子 Supersession、过期和重新验证；模型产物默认先成为 candidate，不自动 active。
-6. `bounded-memory-recall`：在新 Run 或 TaskContract 改变时召回少量 Memory，附 scope、source、reason、lifecycle 与硬数量/Token 上限；当前 Run Authority 永远优先。
+6. `bounded-memory-recall`：状态为 `done_locally`。Host 显式注入 Store/exact scope；确定性召回最多 6 条、768 estimated tokens/4 KiB 的 active normal 候选，statement 只经 `request_context(memory:<id>)` 重验后恢复；当前 Run Authority 永远优先。
 7. `memory-user-controls`：查看、解释、修正、失效、删除、禁用、清除作用域和导出审计记录。
 8. `memory-security-privacy`：完成 user/project/workspace 隔离、敏感级别、SourceRef 防猜测、Prompt Injection、Approval/Security Gate 与删除传播测试。
 9. `memory-performance-rebuild`：记录 Context/Memory p50、p95、max、数据规模、模型调用和费用；证明索引丢失可从 Authority/Memory Record 重建。

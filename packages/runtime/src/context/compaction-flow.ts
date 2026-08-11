@@ -4,7 +4,7 @@ import {
   type RunSnapshot
 } from "../contracts.js";
 import { digestJson } from "../runtime-helpers.js";
-import type { RuntimeObserver } from "../runtime-types.js";
+import type { RuntimeMemoryOptions, RuntimeObserver } from "../runtime-types.js";
 import type { RunStore } from "../store/run-store.js";
 import {
   digestCompactionSummary,
@@ -39,6 +39,7 @@ export type CompactionServices = {
   readonly withLeaseHeartbeat: <T>(runId: string, operation: () => Promise<T>) => Promise<T>;
   readonly notify: (runId: string, observer?: RuntimeObserver) => void;
   readonly forkContext?: ForkContext | null;
+  readonly memory?: RuntimeMemoryOptions;
 };
 
 export type CompactionResult =
@@ -249,6 +250,7 @@ export async function compactDecisionContext(
     workspace: services.workspace,
     tools: services.tools,
     artifactDir: services.artifactDir,
+    ...(services.memory === undefined ? {} : { memory: services.memory, now: services.now() }),
     ...(services.forkContext === undefined ? {} : { forkContext: services.forkContext })
   }).context;
   const rebuiltAssessment = await assessContextBudget(

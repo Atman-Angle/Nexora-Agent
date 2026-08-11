@@ -18,6 +18,7 @@ const context = {
   contextCheckpoint: null,
   rehydratedFacts: [],
   historyCandidates: [],
+  memoryCandidates: [],
   tools: []
 };
 const operation = { signal: new AbortController().signal };

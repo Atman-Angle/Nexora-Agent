@@ -328,6 +328,7 @@ function projectDecisionRequest(input: string): string {
         contextCheckpoint: context.contextCheckpoint,
         rehydratedFacts: context.rehydratedFacts,
         historyCandidates: context.historyCandidates,
+        memoryCandidates: context.memoryCandidates,
         sessionArchive: context.sessionArchive ?? null,
         repair: context.repair ?? null,
         allowedActions: context.allowedActions,

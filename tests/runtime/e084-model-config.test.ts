@@ -339,6 +339,7 @@ function decisionContext(currentPlan: unknown): ModelDecisionContext {
     contextCheckpoint: null,
     rehydratedFacts: [],
     historyCandidates: [],
+    memoryCandidates: [],
     tools: []
   };
 }

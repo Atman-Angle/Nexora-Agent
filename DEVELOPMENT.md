@@ -9,69 +9,65 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: memory-promotion-supersession
+current_feature: bounded-memory-recall
 status: done_locally
 
 feature_contract:
-  feature: memory-promotion-supersession
-  title: Memory Promotion and Supersession
+  feature: bounded-memory-recall
+  title: Bounded Memory Recall
   mode: VERIFY
   goal: >
-    Turn untrusted Memory candidates into auditable active Memory through one
-    explicit lifecycle, preserving immutable provenance and replacement history.
+    Let a Runtime discover a small, relevant set of active scoped Memories and
+    restore an exact Memory only after request_context, without weakening current Run Authority.
   scope:
-    - extend Memory status with candidate, superseded and expired lifecycle states
-    - promote candidates explicitly or only after persisted verification
-    - deterministically deduplicate exact scoped type/statement/sensitivity matches
-    - atomically supersede one active Memory for update or multiple active Memories for merge
-    - preserve predecessor records and bidirectional replacement lineage
-    - expire due candidate/active records and explicitly revalidate eligible records
+    - add deterministic lexical recall over an explicitly injected Memory Store and exact scope
+    - publish bounded Memory navigation metadata in ModelDecisionContext
+    - restore exact MemoryRecord content only through request_context(memory:<id>)
+    - preserve Memory candidates through eviction and production Provider wire projection
   invariants:
-    - model-produced text is candidate data and never becomes active without promote or supersede
-    - statement, source provenance, scope and memoryId are immutable after create
-    - update and merge use the same atomic supersession path instead of in-place content mutation
-    - predecessor Memory remains auditable and can never be active after successful replacement
-    - every read and lifecycle write retains exact user/project/workspace/branch scope isolation
-    - Memory never modifies Run Authority and Context still does not consume Memory
+    - current TaskContract, Plan, Progress and Evidence remain authoritative and unchanged
+    - only exact-scope active, unexpired and normal-sensitivity Memory is discoverable
+    - candidates never copy the Memory statement and exact content requires request_context
+    - rehydration rechecks scope, lifecycle, expiry and record digest and otherwise returns REF_UNAVAILABLE
+    - Runtime does not own or close the Host-provided Memory Store
   non_goals:
-    - automatic extraction from Provider output or automatic promotion policy
-    - fuzzy/semantic conflict resolution, embeddings, full-text search or vector retrieval
-    - Context recall/injection, user-facing controls or deletion propagation
-    - restoring superseded/expired/invalidated records to active
+    - automatic extraction, promotion, conflict resolution or deletion propagation
+    - embeddings, vector retrieval, full-text indexes or additional model calls
+    - automatic statement injection, sensitive Memory recall or cross-scope fallback
     - changing runtime-v1.1.db, RunStore or Execution Core Authority
   acceptance:
-    - explicit promotion activates an unverified candidate with actor/time provenance
-    - verified promotion rejects unverified candidates and activates verified candidates
-    - exact duplicate promotion leaves one active Memory and marks the duplicate candidate superseded
-    - superseding one or many active records commits replacement and every lineage link atomically
-    - missing, wrong-scope, non-active predecessor or unchanged replacement rejects with no partial writes
-    - due candidates/active records become expired and revalidation updates only eligible records
-    - every lifecycle and lineage survives close/reopen
-    - targeted tests, Runtime regression, typecheck, lint and builds pass with no relevant skips
+    - relevant English and Chinese tasks produce deterministic explainable candidates
+    - zero deterministic relevance produces no candidate
+    - candidate count, estimated tokens and serialized bytes stay within hard limits
+    - wrong-scope, non-active, expired and sensitive Memory never becomes visible
+    - request_context restores the exact record; deletion, status or digest drift is unavailable
+    - restart, eviction and production wire preserve the supported flow
+    - targeted tests, Context/Memory regression, typecheck, lint and builds pass with no relevant skips
   risk: L2
 
 latest_verification:
   deterministic:
-    red_to_green: 8 scenarios failed because the old Contract rejected candidate status
-    targeted: 1-file-8-tests-passed
-    memory_regression: 2-files-16-tests-passed
-    lifecycle: explicit-and-verified-promotion-dedupe-expire-revalidate-passed
-    supersession: single-and-multi-predecessor-atomic-lineage-passed
-    recovery: repeated-promotion-and-restart-supersession-idempotency-passed
-    negative: missing-wrong-scope-non-active-unchanged-and-manual-bypass-passed
-    full_regression: 63-files-281-tests-passed-no-skips
+    red_to_green: public Context and Runtime lacked Memory candidates, injection and exact restoration
+    targeted: E093-1-file-6-tests-passed
+    memory_regression: E091-E093-3-files-22-tests-passed
+    context_quality_gate: 12-files-80-tests-passed
+    relevance: deterministic-English-Chinese-zero-relevance-and-hard-bounds-passed
+    isolation: exact-scope-active-expiry-sensitivity-and-no-statement-passed
+    rehydration: exact-record-digest-drift-ref-unavailable-and-restart-passed
+    production_projection: HTTP-wire-eviction-and-projection-digest-passed
+    full_regression: 64-files-287-tests-passed-no-skips-no-unhandled-errors
     typecheck: passed
     lint: passed
     runtime_package_build: passed
     root_build: passed
-    built_public_api: candidate-promote-active-and-error-export-passed
+    built_public_api: RuntimeMemoryOptions-MemoryCandidate-and-memoryCandidates-exported
     diff_check: passed
   external_environment_acceptance:
-    status: not_applicable
-    reason: This Feature has no Provider, retrieval or external service path.
+    status: deferred
+    reason: Real Provider recall quality is the later real-provider-continuity-canary release gate.
 
-last_completed_feature: memory-promotion-supersession
-next_action: stop; activate bounded-memory-recall only as a separate Feature
+last_completed_feature: bounded-memory-recall
+next_action: stop; activate memory-user-controls only as a separate Feature
 ```
 
 ## Update Rules

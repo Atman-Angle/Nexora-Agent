@@ -71,6 +71,8 @@ export type ModelDecisionContext = {
    * fact content; request_context is still required to restore an exact ref.
    */
   readonly historyCandidates: readonly HistoryCandidate[];
+  /** Scoped active Memory navigation; exact content requires request_context. */
+  readonly memoryCandidates: readonly MemoryCandidate[];
   /**
    * A bounded index over exact Input and Event facts already persisted for
    * this Run. The archive publishes addressable sequence ranges, not the
@@ -125,6 +127,29 @@ export type HistoryCandidate = {
   readonly reasons: readonly HistoryCandidateReason[];
   readonly hint: string;
   readonly occurredAt: string;
+};
+
+export type MemoryCandidateReason = "exact_phrase" | "term_overlap" | "memory_type" | "verified";
+
+export type MemoryCandidate = {
+  readonly ref: `memory:${string}`;
+  readonly memoryType: string;
+  readonly reasons: readonly MemoryCandidateReason[];
+  readonly hint: string;
+  readonly source: {
+    readonly sourceRunId: string;
+    readonly ref: string;
+    readonly digest: string;
+  };
+  readonly verification: {
+    readonly state: "unverified" | "verified";
+    readonly verifiedAt?: string;
+    readonly evidenceRefs: readonly string[];
+  };
+  readonly lifecycle: { readonly status: "active"; readonly updatedAt: string };
+  readonly sensitivity: "normal";
+  /** Digest of the complete MemoryRecord at candidate publication time. */
+  readonly digest: string;
 };
 
 export type SessionArchiveRange = {
@@ -182,7 +207,7 @@ export type RehydrationOrigin = "harness_required" | "model_request" | "harness_
  */
 export type RehydratedFact = {
   readonly ref: string;
-  readonly kind: "invocation" | "evidence" | "artifact" | "input" | "event";
+  readonly kind: "invocation" | "evidence" | "artifact" | "input" | "event" | "memory";
   readonly origin: RehydrationOrigin;
   readonly digest: string;
   readonly content: JsonValue | null;

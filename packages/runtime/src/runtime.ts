@@ -45,6 +45,7 @@ import {
 } from "./context/budget.js";
 import { openRunStore, type RunStore } from "./store/run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
+import { MemoryScopeSchema } from "./memory/index.js";
 import { digestTaskContract, proposeFinish } from "./validation.js";
 import {
   ActionRejectedError,
@@ -131,6 +132,7 @@ export type {
   RunResult,
   RunView,
   RuntimeObserver,
+  RuntimeMemoryOptions,
   RuntimeEvent,
   RuntimeEventListener,
   RuntimeSubscription,
@@ -154,6 +156,7 @@ export class RuntimeEngine {
   readonly #provider: RuntimeProvider;
   readonly #tools: Map<string, RuntimeTool>;
   readonly #store: RunStore;
+  readonly #memory: CreateRuntimeOptions["memory"];
   readonly #now: () => string;
   readonly #createId: () => string;
   readonly #artifactDir: string;
@@ -175,8 +178,13 @@ export class RuntimeEngine {
    */
   readonly #rehydrationRequests = new Map<
     string,
-    { readonly requestId: string; readonly refs: readonly string[] }
+    {
+      readonly requestId: string;
+      readonly refs: readonly string[];
+      readonly memoryDigests: Readonly<Record<string, string>>;
+    }
   >();
+  readonly #publishedMemoryDigests = new Map<string, Readonly<Record<string, string>>>();
   #closed = false;
   #closePromise: Promise<void> | null = null;
 
@@ -217,6 +225,22 @@ export class RuntimeEngine {
       this.#workspace = workspace;
       this.#dataDir = dataDir;
       this.#provider = options.provider;
+      if (options.memory !== undefined) {
+        if (
+          options.memory.store === null
+          || typeof options.memory.store !== "object"
+          || typeof options.memory.store.get !== "function"
+          || typeof options.memory.store.list !== "function"
+        ) {
+          throw new Error("Runtime Memory Store must implement get() and list().");
+        }
+        this.#memory = {
+          store: options.memory.store,
+          scope: MemoryScopeSchema.parse(options.memory.scope)
+        };
+      } else {
+        this.#memory = undefined;
+      }
       resolveProviderModelProfile(options.provider);
       this.#now = now;
       this.#createId = createId;
@@ -1117,9 +1141,14 @@ export class RuntimeEngine {
         workspace: this.#workspaceFor(run.runId),
         tools: this.#tools,
         artifactDir: this.#artifactDir,
+        ...(this.#memory === undefined ? {} : { memory: this.#memory, now: this.#now() }),
         ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs }),
+        ...(pendingRequest === undefined ? {} : { rehydrateMemoryDigests: pendingRequest.memoryDigests }),
         forkContext: this.#forkContextFor(run.runId)
       });
+      this.#publishedMemoryDigests.set(run.runId, Object.fromEntries(
+        decisionResult.context.memoryCandidates.map((candidate) => [candidate.ref, candidate.digest])
+      ));
       const modelCall = await requestModel(
         {
           provider: this.#provider,
@@ -1132,7 +1161,8 @@ export class RuntimeEngine {
           requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
           withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
           notify: (runId, obs) => this.#notify(runId, obs),
-          forkContext: this.#forkContextFor(run.runId)
+          forkContext: this.#forkContextFor(run.runId),
+          ...(this.#memory === undefined ? {} : { memory: this.#memory })
         },
         run,
         "decision",
@@ -1227,17 +1257,21 @@ export class RuntimeEngine {
     // published, belong to another Run, or drifted resolve to REF_UNAVAILABLE
     // without disclosing whether the object exists.
     const requestId = this.#createId();
+    const publishedMemoryDigests = this.#publishedMemoryDigests.get(run.runId) ?? {};
+    const memoryDigests = Object.fromEntries(action.refs.flatMap((ref) => (
+      publishedMemoryDigests[ref] === undefined ? [] : [[ref, publishedMemoryDigests[ref]]]
+    )));
     this.#store.recordRunEvent({
       runId: run.runId,
       event: {
         type: "context.rehydrate_requested",
         occurredAt: this.#now(),
-        payload: { requestId, refs: action.refs }
+        payload: { requestId, refs: action.refs, memoryDigests }
       },
       fencingToken: this.#leases.requireFencingToken(run.runId)
     });
     this.#notify(run.runId, observer);
-    this.#rehydrationRequests.set(run.runId, { requestId, refs: action.refs });
+    this.#rehydrationRequests.set(run.runId, { requestId, refs: action.refs, memoryDigests });
     return run;
   }
 
@@ -1281,8 +1315,15 @@ export class RuntimeEngine {
       const refs = Array.isArray(event.payload.refs)
         ? event.payload.refs.filter((item): item is string => typeof item === "string")
         : [];
+      const memoryDigests = event.payload.memoryDigests !== null
+        && typeof event.payload.memoryDigests === "object"
+        && !Array.isArray(event.payload.memoryDigests)
+        ? Object.fromEntries(Object.entries(event.payload.memoryDigests).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string"
+          ))
+        : {};
       if (refs.length > 0) {
-        this.#rehydrationRequests.set(runId, { requestId, refs });
+        this.#rehydrationRequests.set(runId, { requestId, refs, memoryDigests });
       }
     }
   }
@@ -1556,6 +1597,7 @@ export class RuntimeEngine {
       provider: this.#provider,
       tools: this.#tools,
       store: this.#store,
+      ...(this.#memory === undefined ? {} : { memory: this.#memory }),
       now: () => this.#now(),
       createId: () => this.#createId(),
       signal,
@@ -1585,7 +1627,8 @@ export class RuntimeEngine {
               requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
               withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
               notify: (runId, obs) => this.#notify(runId, obs),
-              forkContext: this.#forkContextFor(run.runId)
+              forkContext: this.#forkContextFor(run.runId),
+              ...(this.#memory === undefined ? {} : { memory: this.#memory })
             },
           run,
           phase,

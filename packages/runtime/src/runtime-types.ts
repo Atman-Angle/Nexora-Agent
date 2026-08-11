@@ -3,6 +3,7 @@ import { z } from "zod";
 import { JsonValueSchema, type BranchForkBase, type BranchRecord, type Evidence, type ForkContext, type ModelCallRecord, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolInvocation } from "./contracts.js";
 import type { ModelCallPhase, ModelDecisionContext, RuntimeProvider, SemanticValidationContext } from "./providers/model-client.js";
 import type { RunStore } from "./store/run-store.js";
+import type { MemoryScope, MemoryStore } from "./memory/index.js";
 
 export const ToolResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("success"), subjectRef: z.string().trim().min(1), facts: JsonValueSchema }).strict(),
@@ -33,7 +34,11 @@ export type RuntimeTool = {
   dispose?(): void | Promise<void>;
 };
 
-export type CreateRuntimeOptions = { readonly workspace: string; readonly dataDir?: string; readonly provider: RuntimeProvider; readonly tools: readonly RuntimeTool[]; readonly now?: () => string; readonly createId?: () => string; readonly leaseTtlMs?: number };
+export type RuntimeMemoryOptions = {
+  readonly store: MemoryStore;
+  readonly scope: MemoryScope;
+};
+export type CreateRuntimeOptions = { readonly workspace: string; readonly dataDir?: string; readonly provider: RuntimeProvider; readonly tools: readonly RuntimeTool[]; readonly memory?: RuntimeMemoryOptions; readonly now?: () => string; readonly createId?: () => string; readonly leaseTtlMs?: number };
 export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets };
 export type ApprovalDecision = { readonly requestId: string; readonly approved: boolean; readonly reason?: string };
 export type RecoveryDecision =
@@ -292,6 +297,7 @@ export type RuntimeServices = {
   readonly provider: RuntimeProvider;
   readonly tools: ReadonlyMap<string, RuntimeTool>;
   readonly store: RunStore;
+  readonly memory?: RuntimeMemoryOptions;
   readonly now: () => string;
   readonly createId: () => string;
   readonly signal: AbortSignal;

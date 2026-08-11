@@ -258,6 +258,7 @@ function decisionContext(options: {
       error: null
     }],
     historyCandidates: [],
+    memoryCandidates: [],
     ...(repair === undefined ? {} : { repair }),
     tools: []
   };

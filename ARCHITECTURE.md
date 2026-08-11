@@ -88,7 +88,7 @@ Memory 是 Runtime 的通用连续性子系统，但不是 Execution Core 的 Ru
 
 Memory 生命周期只有一条内容变更路径：模型或其他不可信来源先形成 `candidate`；Host 再以带 actor/time 的 explicit promotion，或在 Memory 已携带 persisted verification 后以 verified promotion 转为 `active`。Promotion 对同 scope 的 type/statement/sensitivity 做精确确定性去重；重复候选保留为 `superseded` 并指向既有 active Memory。内容不原地更新：新 candidate 替换一个 active predecessor 表示 update，替换多个表示 merge；同一事务把 replacement 激活、把全部 predecessor 标为 superseded，并保存双向 lineage。到期 candidate/active 通过显式 `expire` 转为 `expired`，重新验证只更新 eligible candidate/active 的 verification。生命周期操作支持相同请求安全重试，不能用通用 `setStatus` 绕过 promotion 或 supersession。
 
-Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。Context 尚不检索或注入 Memory。后续只能通过独立 Feature 把少量、可解释、可删除的 active Memory 候选投影给 Context，当前 Run Authority 始终优先。
+Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。Host 可在 `createRuntime.memory` 显式注入共享 Memory Store 与 exact scope；Runtime 不拥有或关闭该 Store。Context 只确定性扫描 exact-scope 的 active、未过期、normal Memory，投影最多 6 条、768 estimated tokens / 4 KiB 的 `memoryCandidates`。候选不复制 statement；模型必须用候选的 `memory:<id>` 调用 `request_context`，下一轮重新校验 scope、lifecycle、expiry、sensitivity 与 record digest 后才恢复完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 与 Evidence 始终优先。
 
 ### Action Runtime
 

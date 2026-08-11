@@ -41,3 +41,12 @@ export {
   openMemoryStore,
   type MemoryLifecycleErrorCode
 } from "./store.js";
+
+export {
+  MAX_MEMORY_CANDIDATES,
+  MAX_MEMORY_CANDIDATE_BYTES,
+  MAX_MEMORY_CANDIDATE_ESTIMATED_TOKENS,
+  memoryIdFromRef,
+  memoryRef,
+  projectMemoryCandidates
+} from "./recall.js";

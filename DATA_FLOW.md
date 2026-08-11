@@ -188,6 +188,8 @@ E091 建立一条与 Run 执行完全分离的数据流：`Host stateDir + exact
 
 E092 把 Memory 内容演进收敛为单一事务流：`candidate → explicit/verified promote → active`；同 scope 的 exact type/statement/sensitivity 重复会变成 `candidate → superseded → existing active`。更新和合并都走 `new candidate + 1..32 active predecessors → one SQLite transaction → active replacement + superseded predecessors + bidirectional lineage`，不原地改 statement/source/scope/ID。缺失或非 active predecessor、未验证的 verified promotion、未改变内容、scope 错误、时间倒退和并发 record drift 都在首个 Store 边界失败并回滚，不产生部分 lineage。`expire` 只处理 exact scope 内已到期的 candidate/active，`revalidate` 只更新 eligible candidate/active；通用 `setStatus` 只保留 archive/invalidate 人工操作，不能激活、supersede 或 expire。该流仍不进入 Context、Run Store 或 State Machine。
 
+E093 增加单向只读投影：`Host-injected MemoryStore + exact scope → list active → deterministic task relevance → memoryCandidates`。投影只携带 ref/type/reason/hint/source/verification/lifecycle/sensitivity/record digest，最多 6 条且同时受 768 estimated tokens 与 4 KiB 限制，不携带 statement。`request_context(memory:<id>) → exact-scope get → active/expiry/sensitivity/digest recheck → rehydratedFacts(kind=memory)`；删除、错误 scope、生命周期或 digest 漂移统一 `REF_UNAVAILABLE`。Memory 不反写 Run Authority，Runtime close 也不关闭 Host 的 Memory Store。
+
 ## 6. 当前代码落点与冻结边界
 
 ```text

@@ -15,7 +15,8 @@ import type {
   RepairContext,
   RehydratedFact
 } from "../providers/model-client.js";
-import type { RuntimeTool } from "../runtime-types.js";
+import type { RuntimeMemoryOptions, RuntimeTool } from "../runtime-types.js";
+import { projectMemoryCandidates } from "../memory/recall.js";
 import { ArtifactStore } from "../store/artifacts.js";
 import type { RunStore } from "../store/run-store.js";
 import {
@@ -64,7 +65,10 @@ export function buildDecisionContext(args: {
   readonly tools: ReadonlyMap<string, RuntimeTool>;
   readonly artifactDir: string;
   readonly rehydrateRequests?: readonly string[];
+  readonly rehydrateMemoryDigests?: Readonly<Record<string, string>>;
   readonly forkContext?: ForkContext | null;
+  readonly memory?: RuntimeMemoryOptions;
+  readonly now?: string;
 }): DecisionContextResult {
   const { run, store, workspace, tools, artifactDir } = args;
   const invocations = store.listToolInvocations(run.runId);
@@ -110,6 +114,13 @@ export function buildDecisionContext(args: {
           }
         })
   });
+  const memoryCandidates = args.memory === undefined
+    ? []
+    : projectMemoryCandidates({
+        run,
+        records: args.memory.store.list({ scope: args.memory.scope, status: "active", limit: 500 }),
+        asOf: args.now ?? new Date().toISOString()
+      });
 
   const manifest = buildAvailableContextRefs({
     run,
@@ -118,6 +129,7 @@ export function buildDecisionContext(args: {
     store,
     artifactDir,
     historyCandidates,
+    memoryCandidates,
     ...(inherited === undefined ? {} : { inheritedRefs: inherited.refs })
   });
   const hasAvailableRefs = manifest.size > 0 && run.currentPlan !== null;
@@ -146,6 +158,10 @@ export function buildDecisionContext(args: {
         artifactDir,
         manifest,
         origin: "model_request",
+        ...(args.rehydrateMemoryDigests?.[ref] === undefined
+          ? {}
+          : { expectedMemoryDigest: args.rehydrateMemoryDigests[ref] }),
+        ...(args.memory === undefined ? {} : { memory: args.memory, asOf: args.now ?? new Date().toISOString() }),
         ...(inherited === undefined ? {} : { inherited })
       }));
     }
@@ -213,6 +229,7 @@ export function buildDecisionContext(args: {
     contextCheckpoint: checkpointView,
     rehydratedFacts,
     historyCandidates,
+    memoryCandidates,
     sessionArchive: projectSessionArchive({ run, events }),
     repair: projectRepairContext(run),
     tools: [...tools.values()].map((tool) => ({
@@ -241,6 +258,7 @@ export function buildDecisionContext(args: {
     contextCheckpoint: projection.contextCheckpoint,
     rehydratedFacts: projection.rehydratedFacts,
     historyCandidates: projection.historyCandidates,
+    memoryCandidates: projection.memoryCandidates,
     sessionArchive: projection.sessionArchive,
     repair: projection.repair,
     tools: projection.tools

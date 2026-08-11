@@ -508,6 +508,7 @@ function decisionContext(): ModelDecisionContext {
     contextCheckpoint: null,
     rehydratedFacts: [],
     historyCandidates: [candidate],
+    memoryCandidates: [],
     tools: []
   };
 }

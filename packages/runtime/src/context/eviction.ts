@@ -67,6 +67,7 @@ function rebuildDecisionContext(
     contextCheckpoint: context.contextCheckpoint,
     rehydratedFacts: context.rehydratedFacts,
     historyCandidates: context.historyCandidates,
+    memoryCandidates: context.memoryCandidates,
     ...(context.repair === undefined ? {} : { repair: context.repair }),
     ...(context.sessionArchive === undefined
       ? {}

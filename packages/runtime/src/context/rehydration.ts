@@ -12,6 +12,7 @@ import {
 } from "../contracts.js";
 import type {
   HistoryCandidate,
+  MemoryCandidate,
   JsonValue,
   RehydratedFact,
   RehydrationError,
@@ -22,6 +23,9 @@ import type {
 } from "../providers/model-client.js";
 import { ArtifactStore } from "../store/artifacts.js";
 import type { RunStore } from "../store/run-store.js";
+import type { RuntimeMemoryOptions } from "../runtime-types.js";
+import { digestCanonicalJson } from "../runtime-helpers.js";
+import { memoryIdFromRef } from "../memory/recall.js";
 import {
   digestRunEvent,
   resolveSourceRef,
@@ -31,7 +35,7 @@ import { buildCompactionAuthority } from "./decision-context.js";
 
 export const RequestContextActionSchema = z.object({
   type: z.literal("request_context"),
-  refs: z.array(z.string().trim().min(1).max(200)).min(1).max(8)
+  refs: z.array(z.string().trim().min(1).max(4096)).min(1).max(8)
 }).strict();
 export type RequestContextAction = z.infer<typeof RequestContextActionSchema>;
 
@@ -52,7 +56,8 @@ export function isValidSourceRefFormat(ref: string): boolean {
     || /^event:[1-9][0-9]*$/.test(ref)
     || /^invocation:[a-zA-Z0-9._-]{1,100}$/.test(ref)
     || /^evidence:[a-zA-Z0-9._-]{1,100}$/.test(ref)
-    || /^artifact:sha256:[0-9a-f]{64}$/.test(ref);
+    || /^artifact:sha256:[0-9a-f]{64}$/.test(ref)
+    || memoryIdFromRef(ref) !== null;
 }
 
 /**
@@ -134,6 +139,7 @@ export function buildAvailableContextRefs(args: {
   readonly store: RunStore;
   readonly artifactDir: string;
   readonly historyCandidates?: readonly HistoryCandidate[];
+  readonly memoryCandidates?: readonly MemoryCandidate[];
   /** Fork Base inherited refs (parent facts at the fork point) the child may request. */
   readonly inheritedRefs?: Readonly<Record<string, string>>;
 }): Map<string, string> {
@@ -175,6 +181,9 @@ export function buildAvailableContextRefs(args: {
   for (const ref of refs) {
     const resolved = resolveSourceRef(ref, authority);
     if (resolved !== null) manifest.set(ref, resolved.digest);
+  }
+  for (const candidate of args.memoryCandidates ?? []) {
+    manifest.set(candidate.ref, candidate.digest);
   }
   // The bounded Session Archive publishes complete same-Run Input/Event
   // ranges. Populate their exact digest entries directly instead of resolving
@@ -384,11 +393,29 @@ export function resolveRehydratedFact(args: {
     readonly parentRun: RunSnapshot;
     readonly refs: Readonly<Record<string, string>>;
   };
+  readonly memory?: RuntimeMemoryOptions;
+  readonly asOf?: string;
+  readonly expectedMemoryDigest?: string;
 }): RehydratedFact {
   const { ref, run, store, artifactDir, manifest, origin } = args;
   const authority = buildCompactionAuthority({ run, store, artifactDir });
   if (!isValidSourceRefFormat(ref)) {
     return { ref, kind: "invocation", origin, digest: "", content: null, error: "INVALID_REF" };
+  }
+  const memoryId = memoryIdFromRef(ref);
+  if (memoryId !== null) {
+    const record = args.memory?.store.get(args.memory.scope, memoryId) ?? null;
+    const digest = record === null ? "" : digestCanonicalJson(record);
+    const available = record !== null
+      && args.expectedMemoryDigest !== undefined
+      && args.expectedMemoryDigest === digest
+      && record.status === "active"
+      && record.sensitivity === "normal"
+      && (record.expiresAt === undefined || Date.parse(record.expiresAt) > Date.parse(args.asOf ?? new Date().toISOString()))
+      && manifest.get(ref) === digest;
+    return available
+      ? { ref, kind: "memory", origin, digest, content: record as unknown as JsonValue, error: null }
+      : { ref, kind: "memory", origin, digest: "", content: null, error: "REF_UNAVAILABLE" };
   }
   const resolved = resolveSourceRef(ref, authority);
   if (resolved !== null && manifest.get(ref) === resolved.digest) {
@@ -550,6 +577,7 @@ function kindOf(kind: "input" | "invocation" | "evidence" | "event" | "artifact"
 }
 
 function kindOfPrefix(ref: string): RehydratedFact["kind"] {
+  if (ref.startsWith("memory:")) return "memory";
   if (ref.startsWith("input:")) return "input";
   if (ref.startsWith("event:")) return "event";
   if (ref.startsWith("evidence:")) return "evidence";
