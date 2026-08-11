@@ -208,6 +208,18 @@ export async function proposeFinish(
     );
     const inheritedFacts = services.forkContext?.forkBase.inheritedFacts ?? {};
     const facts = citedEvidence.map((evidence) => {
+      if (evidence.kind === "context_ref" && evidence.source === "context") {
+        return {
+          toolName: "context.rehydrate",
+          subjectRef: evidence.subjectRef,
+          input: { ref: evidence.subjectRef },
+          facts: {
+            kind: "context_ref",
+            ref: evidence.subjectRef,
+            digest: evidence.digest
+          }
+        };
+      }
       const invocation = evidence.invocationId === null
         ? undefined
         : invocationById.get(evidence.invocationId);

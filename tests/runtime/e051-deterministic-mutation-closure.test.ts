@@ -80,7 +80,7 @@ describe("E051 deterministic mutation closure", () => {
     const environment = providerEnvironment(stub.baseUrl);
 
     const started = await spawnCli(["Change note.txt from before to after and validate it.", "--cwd", fixture.workspace], environment);
-    expect(started.code).toBe(2);
+    expect(started.code, started.stderr).toBe(2);
     const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
 
     let view = await inspectCli(runId, fixture.workspace);
@@ -119,7 +119,7 @@ describe("E051 deterministic mutation closure", () => {
     const environment = providerEnvironment(stub.baseUrl);
 
     const started = await spawnCli(["Change note.txt from before to after and validate it.", "--cwd", fixture.workspace], environment);
-    expect(started.code).toBe(2);
+    expect(started.code, started.stderr).toBe(2);
     const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
     const beforeDenial = await inspectCli(runId, fixture.workspace);
     const request = beforeDenial.snapshot.pendingRequest!;
@@ -160,7 +160,7 @@ describe("E051 deterministic mutation closure", () => {
     const environment = providerEnvironment(stub.baseUrl);
 
     const started = await spawnCli(["Wait for input.", "--cwd", fixture.workspace], environment);
-    expect(started.code).toBe(2);
+    expect(started.code, started.stderr).toBe(2);
     const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
     const firstResume = spawnCli([
       "resume", runId, "--cwd", fixture.workspace, "--input", "accepted input"
@@ -429,7 +429,10 @@ function providerEnvironment(baseUrl: string): Record<string, string> {
     NEXORA_MODEL_PROVIDER: "openai-compatible",
     NEXORA_MODEL_BASE_URL: baseUrl,
     NEXORA_MODEL_API_KEY: "test-key",
-    NEXORA_MODEL_NAME: "test-model"
+    NEXORA_MODEL_NAME: "qwen3.7-flash",
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
+    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
+    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
   };
 }
 

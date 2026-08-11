@@ -12,6 +12,7 @@ import {
   JsonValueSchema,
   createInitialRunSnapshot,
   type BranchRecord,
+  type Evidence,
   type PlanTaskContract,
   type RunSnapshot,
   type RuntimeAction,
@@ -38,6 +39,7 @@ import {
   type RequestContextAction
 } from "./context/rehydration.js";
 import type {
+  RehydratedFact,
   RuntimeProvider
 } from "./providers/model-client.js";
 import {
@@ -51,6 +53,7 @@ import {
   ActionRejectedError,
   allowedActions,
   assertCompletedStepsUnchanged,
+  completeSatisfiedSteps,
   deepFreeze,
   digestJson,
   errorMessage,
@@ -1136,7 +1139,7 @@ export class RuntimeEngine {
       }
 
       const pendingRequest = this.#rehydrationRequests.get(run.runId);
-      const decisionResult = buildDecisionContext({
+      let decisionResult = buildDecisionContext({
         run,
         store: this.#store,
         workspace: this.#workspaceFor(run.runId),
@@ -1147,6 +1150,25 @@ export class RuntimeEngine {
         ...(pendingRequest === undefined ? {} : { rehydrateMemoryDigests: pendingRequest.memoryDigests }),
         forkContext: this.#forkContextFor(run.runId)
       });
+      const runWithContextEvidence = this.#recordContextRefEvidence(
+        run,
+        decisionResult.context.rehydratedFacts,
+        observer
+      );
+      if (runWithContextEvidence !== run) {
+        run = runWithContextEvidence;
+        decisionResult = buildDecisionContext({
+          run,
+          store: this.#store,
+          workspace: this.#workspaceFor(run.runId),
+          tools: this.#tools,
+          artifactDir: this.#artifactDir,
+          ...(this.#memory === undefined ? {} : { memory: this.#memory, now: this.#now() }),
+          ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs }),
+          ...(pendingRequest === undefined ? {} : { rehydrateMemoryDigests: pendingRequest.memoryDigests }),
+          forkContext: this.#forkContextFor(run.runId)
+        });
+      }
       this.#publishedMemoryDigests.set(run.runId, Object.fromEntries(
         decisionResult.context.memoryCandidates.map((candidate) => [candidate.ref, candidate.digest])
       ));
@@ -1315,6 +1337,52 @@ export class RuntimeEngine {
     });
     if (clearPending) this.#rehydrationRequests.delete(runId);
     this.#notify(runId, observer);
+  }
+
+  #recordContextRefEvidence(
+    run: RunSnapshot,
+    facts: readonly RehydratedFact[],
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    const plan = run.currentPlan;
+    if (plan === null) return run;
+    const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+    const activeStep = plan.orderedSteps.find((item) => item.id === activeStepId);
+    if (activeStep === undefined) return run;
+    const available = new Map(facts.filter((fact) => fact.error === null).map((fact) => [fact.ref, fact]));
+    const existingChecks = new Set(run.evidence.filter((item) => (
+      item.planVersion <= plan.version && item.stepId === activeStep.id
+    )).map((item) => item.checkId));
+    const newEvidence: Evidence[] = activeStep.acceptanceChecks.flatMap((check) => {
+      if (check.kind !== "context_ref" || existingChecks.has(check.id)) return [];
+      const fact = available.get(check.ref);
+      if (fact === undefined) return [];
+      return [{
+        id: this.#createId(),
+        kind: "context_ref" as const,
+        source: "context" as const,
+        producedAt: this.#now(),
+        planVersion: plan.version,
+        stepId: activeStep.id,
+        checkId: check.id,
+        subjectRef: fact.ref,
+        invocationId: null,
+        artifactRef: null,
+        digest: fact.digest
+      }];
+    });
+    if (newEvidence.length === 0) return run;
+    const evidence = [...run.evidence, ...newEvidence];
+    const next = RunSnapshotSchema.parse({
+      ...run,
+      evidence,
+      stepProgress: completeSatisfiedSteps(plan, run.stepProgress, evidence),
+      updatedAt: this.#now()
+    });
+    return this.#commit(run, next, "context.evidence_recorded", {
+      evidenceIds: newEvidence.map((item) => item.id),
+      refs: newEvidence.map((item) => item.subjectRef)
+    }, observer);
   }
 
   /**

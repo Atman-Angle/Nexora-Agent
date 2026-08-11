@@ -51,3 +51,10 @@
 3. HPE-05 暴露 validation convergence 问题：证据齐全，summary 却不携带具体结果；同时 v1 stress arm 没有触发治理，下一版必须先用确定性 token evidence 校准窗口/载荷，再获授权执行新的 Provider Runs。
 
 本 Feature 只建立和运行评测，不在同一 Feature 内修改 Prompt、Context ranking、Memory recall、Completion Gate 或 Runtime Authority。后续优化应以以上失败样本为 RED evidence，分别处理动作合同收敛、Memory-required completion evidence 和可证明触发 Eviction 的 stress dataset。
+
+## 后续修复状态
+
+- `448e73b`：恢复事实持续到合法后续 Action，重复 ref 请求幂等，非法 Action 和 validation repair 不再提前消费事实；
+- 当前 `context-ref-acceptance-evidence` Feature：新增 Run-owned `context_ref` Check/Evidence，Tool Evidence 不能替代明确要求的 Memory/History restoration；
+- 尚未形成新的真实 Provider 对比数据；E101 失败基线保持不变，后续只能在 versioned dataset 和新费用授权下复测；
+- Token estimator 校准、validation summary 收敛和可证明触发 Eviction 的 Benchmark v2 仍是独立后续 Feature。

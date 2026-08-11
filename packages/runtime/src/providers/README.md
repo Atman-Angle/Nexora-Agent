@@ -42,6 +42,8 @@ Provider 不能把候选 hint/reasons 当作原始事实。需要历史内容时
 
 `memoryCandidates` 与 `rehydratedFacts(kind="memory")` 都携带 `trust: "untrusted_memory_data"`。精确字节不是指令权限：Adapter 必须拒绝 Memory statement 中的角色伪造、Tool/Approval 请求、Evidence/Completion 声明和策略覆盖，并保持当前 TaskContract、Plan、Runtime Approval 与 Completion Gate 的优先级。
 
+当用户明确要求恢复 Memory 或 History 时，Provider 必须在 Plan 中使用 required `context_ref` Acceptance Check，并填写本轮发布的精确 ref。Runtime 只有在正常 scope/lifecycle/digest 校验与原文恢复成功后才生成 `source=context` 的 Run Evidence；该 Evidence 只证明 ref 被恢复，不证明 Memory statement 为真，也不授予任何 Tool、Approval 或 Completion 权限。Semantic validation 只接收 ref/digest 恢复证明，不接收 Memory statement 作为指令。
+
 ### Repeated Compaction Contract
 
 `CompactionContext.previousCheckpoint` 在首次 Compaction 时为 `null`；后续只携带 Runtime 已针对当前 Authority 完整重验的 latest `{ digest, summary }`。生产 Adapter 会把该字段原样写入 compaction wire 的 `context.previousCheckpoint`，但不会向 Provider 暴露 `checkpointId`、`sourceDigests`、`coveredInvocations` 等 Runtime-only 持久化元数据。

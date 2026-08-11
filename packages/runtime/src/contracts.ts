@@ -87,12 +87,18 @@ const SemanticReviewCheckSchema = CheckBaseSchema.extend({
   criterion: NonEmptyString
 }).strict();
 
+const ContextRefCheckSchema = CheckBaseSchema.extend({
+  kind: z.literal("context_ref"),
+  ref: NonEmptyString
+}).strict();
+
 export const AcceptanceCheckSchema = z.discriminatedUnion("kind", [
   ToolResultCheckSchema,
   StateAssertionCheckSchema,
   ArtifactSchemaCheckSchema,
   UserConfirmationCheckSchema,
-  SemanticReviewCheckSchema
+  SemanticReviewCheckSchema,
+  ContextRefCheckSchema
 ]);
 export type AcceptanceCheck = z.infer<typeof AcceptanceCheckSchema>;
 
@@ -275,8 +281,8 @@ export function runtimeActionContract(
 
 export const EvidenceSchema = z.object({
   id: NonEmptyString,
-  kind: z.enum(["tool_result", "state_assertion", "artifact_schema", "user_confirmation", "semantic_review"]),
-  source: z.enum(["tool", "validator", "user"]),
+  kind: z.enum(["tool_result", "state_assertion", "artifact_schema", "user_confirmation", "semantic_review", "context_ref"]),
+  source: z.enum(["tool", "validator", "user", "context"]),
   producedAt: IsoDateTime,
   planVersion: z.number().int().positive(),
   stepId: NonEmptyString,

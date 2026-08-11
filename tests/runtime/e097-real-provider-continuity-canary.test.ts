@@ -85,7 +85,7 @@ describe("E097 real Provider continuity canary contract", () => {
         targetMemory: { requested: true, restored: true },
         shardReads: { expected: 8, succeeded: 8, missing: [] },
         safety: { forbiddenInvocations: [], hardLimitViolations: 0 },
-        continuity: { evictedModelCalls: 1 },
+        continuity: { evictedModelCalls: 2 },
         contextBudget: {
           phases: [{
             phase: "decision",
@@ -290,13 +290,18 @@ function canaryPlan() {
       {
         id: "read-shards",
         objective: "Read every fixed shard and retain exact Evidence for the preferred stream.",
-        acceptanceChecks: SHARD_PATHS.map((_path, index) => ({
+        acceptanceChecks: [{
+          id: "restore-stream-memory",
+          kind: "context_ref" as const,
+          required: true,
+          ref: TARGET_MEMORY_REF
+        }, ...SHARD_PATHS.map((_path, index) => ({
           id: `read-${index + 1}`,
           kind: "tool_result" as const,
           required: true,
           toolName: "filesystem.read",
           expectedStatus: "success" as const
-        }))
+        }))]
       },
       {
         id: "review-codes",

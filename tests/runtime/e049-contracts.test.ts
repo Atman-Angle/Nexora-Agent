@@ -72,6 +72,37 @@ describe("E049 authoritative runtime contracts", () => {
     })).toThrow();
   });
 
+  it("accepts context_ref checks and Runtime-owned Context Evidence", () => {
+    const contextPlan = {
+      ...plan(),
+      orderedSteps: [{
+        id: "restore",
+        objective: "Restore an exact published fact.",
+        acceptanceChecks: [{
+          id: "restore-memory",
+          kind: "context_ref",
+          required: true,
+          ref: "memory:required"
+        }]
+      }]
+    };
+    expect(StructuredPlanSchema.parse(contextPlan).orderedSteps[0]!.acceptanceChecks[0])
+      .toMatchObject({ kind: "context_ref", ref: "memory:required" });
+    expect(EvidenceSchema.parse({
+      id: "context-evidence",
+      kind: "context_ref",
+      source: "context",
+      producedAt: now,
+      planVersion: 1,
+      stepId: "restore",
+      checkId: "restore-memory",
+      subjectRef: "memory:required",
+      invocationId: null,
+      artifactRef: null,
+      digest: "sha256:memory"
+    })).toMatchObject({ kind: "context_ref", source: "context" });
+  });
+
   it("exposes only the four model actions and rejects legacy progress actions", () => {
     const contract = taskContract();
     expect(RuntimeActionSchema.parse({

@@ -9,41 +9,46 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: rehydration-action-continuity
+current_feature: context-ref-acceptance-evidence
 status: done_locally
 
 feature_contract:
-  feature: rehydration-action-continuity
-  title: Rehydrated Fact Action Continuity
+  feature: context-ref-acceptance-evidence
+  title: Run-owned Context Ref Acceptance Evidence
   mode: DIRECT
   goal: >
-    Keep an exact rehydrated fact available until the Provider produces an accepted follow-up action,
-    without duplicate Store work or losing repair context after an invalid action or failed validation.
+    Make an explicit Memory or History restoration requirement deterministically verifiable by the
+    existing Plan, Evidence and Completion Gate instead of relying on final text or benchmark logic.
   scope:
-    - consume a pending rehydration request only after an accepted non-finish action or successful finish
-    - keep the same exact fact across duplicate request_context, invalid Action and validation repair turns
-    - merge newly requested refs without orphaning the previous persisted request
-    - tell Provider adapters that request_context is a top-level control action, never a Tool name
+    - add the authorized context_ref Acceptance Check to the public Plan Contract
+    - record source=context and kind=context_ref Evidence after exact ref restoration succeeds
+    - bind Context Evidence to the active Plan version, Step and Check and recompute Step Progress
+    - project restoration proof, but not untrusted Memory content, into semantic validation
+    - require Provider plans and validation to preserve explicit Memory or History restoration requirements
   invariants:
-    - Run Store remains the Authority for original facts and rehydration audit Events
-    - request_context remains a Harness control action outside the Core State Machine
-    - repeated requests do not create duplicate rehydration Events or Tool Effects
-    - invalid actions and failed validation cannot consume facts needed for repair
+    - Run-owned Plan and Evidence remain the only Completion Authority
+    - Context Evidence proves only exact restoration, never that Memory content is true or trusted
+    - invalid, cross-scope, expired, sensitive or digest-drifted refs cannot create Evidence
+    - no Benchmark state, second Evidence Store or new database table participates in completion
   non_goals:
-    - adding context_ref Acceptance Checks or changing Completion Evidence in this Feature
-    - changing Context ranking, Memory recall, Store Authority or Compaction policy
+    - inferring arbitrary natural-language Context requirements inside Core
+    - changing Memory ranking, trust, lifecycle, Store Authority or Compaction policy
+    - fixing Provider token estimation or redesigning the stress dataset
     - rerunning billed Provider evaluation
   acceptance:
-    - exact input or invocation facts remain visible after duplicate request and invalid action
-    - successful Tool work consumes the pending request exactly once
-    - validation failure retains the restored fact until a validated finish succeeds
-    - rehydration and Context Harness regressions, static checks and builds pass
-  risk: L2
+    - exact scoped Memory restoration creates one persisted Context Evidence record
+    - Tool Evidence cannot satisfy a required context_ref Check or permit premature finish
+    - semantic validation receives restoration metadata without Memory statement content
+    - public Contract, Memory security, Canary and Context Harness regressions pass
+  risk: L3
 
 latest_verification:
   deterministic:
-    e102_contract: 2-of-2-passed
-    rehydration_and_system_suite: 29-of-29-passed-no-skips
+    e103_contract: 2-of-2-passed
+    provider_prompt_contract: 7-of-7-passed
+    relevant_suite: 40-of-40-passed-no-skips
+    full_core_regression: 320-of-320-passed-no-skips
+    context_memory_benchmark: 12-of-12-scenarios-and-39-of-39-supporting-tests
     typecheck: passed
     lint: passed
     root_build: passed
@@ -52,8 +57,8 @@ latest_verification:
     external_provider_calls: 0
     provider_cost_usd: 0
 
-last_completed_feature: rehydration-action-continuity
-next_action: begin the authorized Run-owned context_ref Acceptance Evidence Feature
+last_completed_feature: context-ref-acceptance-evidence
+next_action: provider-decision-validation-convergence
 ```
 
 ## Update Rules
