@@ -415,8 +415,8 @@ export function resolveRehydratedFact(args: {
       && (record.expiresAt === undefined || Date.parse(record.expiresAt) > Date.parse(args.asOf ?? new Date().toISOString()))
       && manifest.get(ref) === digest;
     return available
-      ? { ref, kind: "memory", origin, digest, content: record as unknown as JsonValue, error: null }
-      : { ref, kind: "memory", origin, digest: "", content: null, error: "REF_UNAVAILABLE" };
+      ? { ref, kind: "memory", origin, digest, content: record as unknown as JsonValue, error: null, trust: "untrusted_memory_data" }
+      : { ref, kind: "memory", origin, digest: "", content: null, error: "REF_UNAVAILABLE", trust: "untrusted_memory_data" };
   }
   const resolved = resolveSourceRef(ref, authority);
   if (resolved !== null && manifest.get(ref) === resolved.digest) {

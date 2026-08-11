@@ -192,6 +192,8 @@ E093 增加单向只读投影：`Host-injected MemoryStore + exact scope → lis
 
 E094 增加用户控制流：`Host user action → MemoryControls Schema → exact-scope MemoryStore transaction → record/policy mutation + append-only control event`。Correct 复用 candidate→Supersession；Invalidate/Delete/Clear 和 Recall enable/disable 不创建旁路状态。Audit 只保存 operationId/action/actor/reason/time/Memory IDs/count/policy/digest，不复制 statement；相同 operationId/command 返回原 event，不同 command 拒绝并回滚。`memory_scope_controls.enabled=false → Context memoryCandidates=[]`，Rehydration 同时拒绝旧候选；重新启用后只恢复仍 eligible 的记录。Audit export 与所有操作都使用完整 user/project/workspace/branch scope。
 
+E095 固化 Memory 安全流：`MemoryRecord statement → deterministic candidate(trust=untrusted_memory_data, no statement) → request_context + published digest → restored fact(trust=untrusted_memory_data)`。精确恢复只证明持久化字节与 digest，不提升指令权限；Provider Policy 明确拒绝其中的角色、工具、Approval、Evidence、Completion 和 policy override。猜测/cross-scope/branch/sensitive/deleted/disabled/drifted ref 在同一边界返回 `REF_UNAVAILABLE`。即使 Provider 在看到恶意 statement 后提交 write Tool，仍进入既有 Runtime Approval Gate，Memory 不产生 permission 或 Tool Effect。Delete 在下一轮同时移除候选和恢复资格；无正文 audit tombstone 保留用户操作可审计性。
+
 ## 6. 当前代码落点与冻结边界
 
 ```text

@@ -32,7 +32,7 @@ Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第�
 | Memory 晋升、去重、Supersession | 本地完成 | candidate→active 显式/验证晋升、精确去重、单/多前驱原子替换、双向 lineage、过期与重新验证；E092 | 尚未建立语义冲突判断或自动提取策略 |
 | Memory 召回与 Context 注入 | 本地完成 | exact-scope active/expiry/sensitivity 过滤；最多 6 条、768 tokens/4 KiB；request_context 精确恢复与 drift 拒绝；restart/wire/eviction；E093 | 真实 Provider 选择效果与安全隐私发布门仍待后续 Feature |
 | 用户控制 | 本地完成 | exact-scope inspect/explain、candidate+supersession correction、invalidate/delete/clear、scope recall policy、无正文 audit export、restart/idempotency；E094 | UI、认证授权与远程 API 属于 Host/发布门 |
-| Memory 安全与隐私 | 部分本地证据 | exact user/project/workspace/branch scope、normal-only recall、猜测/漂移统一拒绝；E091/E093 | 缺 Prompt Injection、删除传播、禁用/清域与完整发布门测试 |
+| Memory 安全与隐私 | 本地完成 | untrusted-data Wire/Prompt、scope/branch/sensitive/guess 拒绝、删除传播、disable/restart、Approval Gate 攻击测试；E091/E093–E095 | Host auth/scope binding、磁盘加密、secure erase 与真实模型红队仍是发布门 |
 | 真实 Provider 最终验收 | 缺失于当前版本 | Scripted/Stub Provider 只能证明确定性边界 | 缺当前提交上的长任务 Canary、效果、Token、延迟和费用记录 |
 
 Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者是同 Run Authority 的有界派生视图，后者是显式只读继承边界。当前仓库已能把 exact-scope Memory 作为有界导航投影并按需精确恢复，但自动提取、用户控制、安全隐私发布门与真实 Provider 效果仍未完成，不能把整个跨 Run 连续性描述成成品。
@@ -48,7 +48,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 5. `memory-promotion-supersession`：状态为 `done_locally`。支持显式及验证后晋升、精确去重、单/多前驱原子 Supersession、过期和重新验证；模型产物默认先成为 candidate，不自动 active。
 6. `bounded-memory-recall`：状态为 `done_locally`。Host 显式注入 Store/exact scope；确定性召回最多 6 条、768 estimated tokens/4 KiB 的 active normal 候选，statement 只经 `request_context(memory:<id>)` 重验后恢复；当前 Run Authority 永远优先。
 7. `memory-user-controls`：状态为 `done_locally`。`MemoryControls` 提供 exact-scope 查看/解释、修正、失效、删除、禁用、清域与无正文审计导出；mutation 带 operationId/actor/reason/time 并与 audit 原子提交，禁用策略由 Context/Rehydration 执行。
-8. `memory-security-privacy`：完成 user/project/workspace 隔离、敏感级别、SourceRef 防猜测、Prompt Injection、Approval/Security Gate 与删除传播测试。
+8. `memory-security-privacy`：状态为 `done_locally`。候选和恢复 Fact 标记 untrusted data，生产 Policy 禁止执行 Memory 内角色/工具/Approval/完成伪造；固定攻击测试覆盖 scope/branch/sensitive/guess、删除传播、disable/restart 和 Approval Gate。Host auth、加密/secure erase 与真实模型红队保留为发布门。
 9. `memory-performance-rebuild`：记录 Context/Memory p50、p95、max、数据规模、模型调用和费用；证明索引丢失可从 Authority/Memory Record 重建。
 10. `real-provider-continuity-canary`：用真实 Provider 运行固定长任务与 Memory 数据集，记录成功率、错误召回、Token、调用数、延迟、费用和可复现失败样本，满足后才可从 `done_locally` 升为 `done`。
 

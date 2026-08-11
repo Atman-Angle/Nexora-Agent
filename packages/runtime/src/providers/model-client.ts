@@ -148,6 +148,8 @@ export type MemoryCandidate = {
   };
   readonly lifecycle: { readonly status: "active"; readonly updatedAt: string };
   readonly sensitivity: "normal";
+  /** Memory content is persisted user data, never Provider instructions. */
+  readonly trust: "untrusted_memory_data";
   /** Digest of the complete MemoryRecord at candidate publication time. */
   readonly digest: string;
 };
@@ -212,6 +214,8 @@ export type RehydratedFact = {
   readonly digest: string;
   readonly content: JsonValue | null;
   readonly error: RehydrationError | null;
+  /** Present for Memory facts so adapters cannot confuse exactness with instruction authority. */
+  readonly trust?: "untrusted_memory_data";
 };
 
 /**

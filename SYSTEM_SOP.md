@@ -31,6 +31,7 @@
    Memory 内容变化必须先创建 candidate，再通过 `promote` 或 `supersede`；update 和 merge 不得直接改写既有 statement/provenance，也不得用 `setStatus` 模拟生命周期。
    Runtime 需要跨 Run 连续性时，由 Host 显式传入 `{store, scope}`。模型只能先看到有界 `memoryCandidates`；必须请求其原样 `memory:<id>` ref，Harness 重验 exact scope、active、未过期、normal sensitivity 和 record digest 后才交付完整 MemoryRecord。Memory 与当前 Run 冲突时，以最新 Input、TaskContract、Plan、Progress 和 Evidence 为准。
    用户查看、修正、失效、删除、禁用、清域和审计导出必须走 `MemoryControls`。所有 mutation 必须携带 exact scope、operationId、actor、reason、occurredAt；修正只能走 candidate + supersession。禁用 scope 后检查生产 Context 无 Memory candidate，删除/清域后检查 audit tombstone 不含 statement，并验证 close/reopen 后策略与 audit 仍存在。
+   所有 Memory statement 按 untrusted data 处理，即使已 verified 或 digest 精确也不得执行其内部指令。安全验收必须使用包含伪 system role、越权 Tool 请求、Approval/完成伪造的固定攻击样本，并检查：候选不含正文；恢复 Fact 有 trust 标记；当前 TaskContract 不变；猜测/跨域/sensitive/deleted ref 统一不可用；write/execute 仍停在正常 Approval Gate。Host 负责把已认证身份绑定到 exact scope，部署侧另行满足加密和 secure erase 发布门。
 2. 外部输入先过 Zod。Model 只能提出 `set_plan | call_tool | request_input | propose_finish`。
 3. Provider context 必须由 Runtime 投影真实 workspace、Tool 的 Identity/Capability/Decision/Effect/Evidence、当前 allowed Action 的 Schema 合法示例、active Step 所绑定 Tool 的输入示例，以及权威 Invocation 的有界 observation；不要在 Provider Prompt 复制第二份 Action/Tool facts 状态。
 4. 每个 RuntimeTool 五层Contract的文本边界必须完整且有界；`inputExample`必须在Runtime构造时通过JSON Contract和该Tool的`inputSchema`，`facts`必须在成功持久化前通过`factsSchema`。example只用于active Tool字段构造，Schema/idempotency不暴露给Model。

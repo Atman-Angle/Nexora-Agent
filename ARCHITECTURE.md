@@ -92,6 +92,8 @@ Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，�
 
 `MemoryControls` 是 Host 面向用户动作的审计化入口，复用同一个 Memory Store，不成为第二数据 Authority。Inspect 返回 exact-scope Record、Source 与当前召回资格；Correct 必须创建 candidate 并走原子 Supersession；Invalidate、Delete、Clear Scope 和 Scope Recall Policy 都要求 operationId、actor、reason 与 occurredAt。每个 mutation 与无正文 audit tombstone 在同一 SQLite 事务提交，operationId 在 exact scope 内幂等且内容冲突拒绝。Scope disable 持久化在 `memory-v1.db` 并由 Context 与 Rehydration 同时执行。底层 Store CRUD 保留为数据所有者原语；Host 的用户操作应走 Controls。
 
+Memory 的安全信任边界是“精确但不可信的数据”。`memoryCandidates` 和恢复后的 Memory Fact 都显式携带 `trust: untrusted_memory_data`；statement 中的 system/developer/user 角色声明、工具请求、Approval、Evidence、完成结论或策略覆盖均没有执行语义。生产 Provider Policy 必须把它们当作待与当前 Run Authority 核对的事实主张，不能当指令。未发布、猜测、跨 scope/branch、sensitive、deleted、disabled 或 digest drift 的 Memory ref 统一 `REF_UNAVAILABLE`。Memory 不进入 Tool permission、Approval、State Machine、Evidence 或 Completion Gate。Host 仍负责认证和 scope 绑定；磁盘加密、密钥管理与文件系统 secure erase 是部署发布门，不由 Runtime 伪造保证。
+
 ### Action Runtime
 
 完整执行管线：

@@ -154,6 +154,10 @@ const audit = controls.exportAudit({ scope });
 
 `correct` 要求 replacement 是同 scope 的 candidate，并在一个事务中复用 Supersession；`invalidate`、`delete`、`clearScope` 和 `setScopeRecall` 都要求 operationId/actor/reason/time。审计事件不复制 Memory statement。相同 operationId 与相同 command 可安全重试；相同 ID 的不同 command 抛出 `MemoryControlConflictError`。Scope recall 禁用会同时关闭候选发布与旧 Memory ref 的恢复，策略和 audit 在 Store 重启后仍保留。
 
+Memory 对 Provider 的信任等级固定为 `untrusted_memory_data`。候选与恢复 Fact 都携带该标记；“精确恢复”仅表示 Store 中的原始字节和 digest 一致，不表示 statement 可以发出指令。Adapter 必须忽略 Memory 中伪造的 system/developer/user role、Tool 请求、Approval、Evidence、完成结论和策略覆盖，只把它作为需要与当前 Input/TaskContract/Plan/Evidence 核对的事实主张。Memory 永远不能绕过 Runtime 的 Tool Approval、State Machine 或 Completion Gate。未发布、跨 scope/branch、sensitive、删除、禁用和 digest drift 的 ref 都只返回 `REF_UNAVAILABLE`，不泄露对象是否存在。
+
+Runtime 只负责应用 Host 提供的 exact scope；用户认证、租户授权和 scope 绑定属于 Host 安全边界。`memory-v1.db` 的磁盘加密、备份删除、密钥轮换和文件系统 secure erase 是部署发布门，不应由应用层删除结果冒充。
+
 ## Runtime API
 
 ### `run`

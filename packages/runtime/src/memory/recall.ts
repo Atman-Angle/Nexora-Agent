@@ -71,6 +71,7 @@ export function projectMemoryCandidates(args: {
             },
         lifecycle: { status: "active", updatedAt: record.updatedAt },
         sensitivity: "normal",
+        trust: "untrusted_memory_data",
         digest: digestCanonicalJson(record)
       }
     });

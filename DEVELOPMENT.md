@@ -9,67 +9,73 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-memory-harness
-current_feature: memory-user-controls
+current_feature: memory-security-privacy
 status: done_locally
 
 feature_contract:
-  feature: memory-user-controls
-  title: Auditable Memory User Controls
+  feature: memory-security-privacy
+  title: Memory Security and Privacy Boundaries
   mode: VERIFY
   goal: >
-    Give Hosts one auditable, exact-scope control surface for users to inspect,
-    correct, invalidate, delete, disable, clear and export their Memory state.
+    Make Memory safe to expose to a decision model as untrusted scoped data,
+    while preserving Core Approval, current-task authority and deletion boundaries.
   scope:
-    - expose MemoryControls over the existing Memory Store and lifecycle
-    - persist idempotent mutation audit events without statement content
-    - persist exact-scope recall enable/disable policy and enforce it in Context recall
-    - support exact-scope inspection, correction, invalidation, deletion, clear and audit export
+    - mark Memory candidates and restored Memory facts as untrusted data
+    - add production Provider policy that Memory content is never an instruction or authority override
+    - close deterministic scope, sensitivity, guessed-ref and post-delete restoration paths
+    - prove Memory content cannot bypass Tool Approval or Core state transitions
   invariants:
-    - every user mutation requires actor, reason, time and an idempotent operationId
-    - correction reuses candidate plus supersession and never edits statement/provenance in place
-    - delete and clear audit tombstones never retain Memory statement content
-    - every policy, record and audit read/write uses complete exact scope
-    - disabled scopes publish no memoryCandidates and cannot rehydrate guessed Memory refs
+    - Memory is persisted user data, never system/developer/user instruction to the Provider
+    - latest Input, TaskContract, Plan, Progress and Evidence always outrank Memory
+    - only exact-scope active unexpired normal Memory can be published or restored
+    - unpublished, guessed, deleted, disabled, sensitive or drifted refs share REF_UNAVAILABLE
+    - Memory never grants Tool permission, Approval, Evidence, completion or Run status
   non_goals:
-    - UI screens, authentication, authorization roles or remote APIs
-    - cross-scope bulk administration or implicit parent/child scope inheritance
-    - retention schedules, deletion propagation outside memory-v1.db or secure erase guarantees
-    - changing runtime-v1.1.db, RunStore, Context candidate format or Execution Core Authority
+    - Host authentication/authorization, tenant provisioning or remote API policy
+    - cryptographic encryption-at-rest, key management or filesystem secure erase guarantees
+    - heuristic prompt-injection classifiers, model-based filters or content censorship
+    - changing Approval, State Machine, RunStore or Execution Core Authority
   acceptance:
-    - inspect explains source, lifecycle and current recall eligibility without cross-scope leakage
-    - correction atomically activates a replacement and preserves supersession lineage plus audit
-    - invalidate/delete/clear and scope recall policy are idempotent and survive restart
-    - disabled scope has zero Context candidates; re-enable restores eligible recall
-    - audit export is exact-scope, ordered and contains no deleted statement content
-    - invalid input, wrong scope and reused operationId with different content reject without partial writes
-    - targeted tests, Memory/Context regression, typecheck, lint and builds pass with no relevant skips
-  risk: L2
+    - production Wire labels candidate and restored Memory as untrusted data and carries explicit policy
+    - instruction-like Memory never appears in candidate metadata and cannot replace current task authority
+    - cross-scope, branch, guessed and sensitive refs are unavailable without existence disclosure
+    - deletion after publication revokes the pending ref and removes statement from live Record/Audit projections
+    - malicious Memory followed by a write Tool action still stops at the normal Approval Gate
+    - restart and scope disable preserve all security decisions
+    - targeted attack tests, Memory/Context regression, typecheck, lint and builds pass with no relevant skips
+  risk: L3
 
 latest_verification:
   deterministic:
-    red_to_green: Store CRUD lacked actor-reason-operation audit, scope policy and Host user-control contract
-    targeted: E094-1-file-7-tests-passed
-    memory_regression: E091-E094-4-files-29-tests-passed
+    red_to_green: exact Memory facts lacked an explicit untrusted-data contract and injection policy
+    targeted_attack_suite: E095-1-file-4-tests-passed
+    memory_regression: E091-E095-5-files-33-tests-passed
     context_quality_gate: 12-files-80-tests-passed
-    inspection: exact-scope-source-lifecycle-eligibility-and-nondisclosure-passed
-    correction: candidate-supersession-atomic-lineage-and-idempotency-passed
-    deletion: invalidate-delete-clear-tombstone-no-statement-and-scope-isolation-passed
-    policy: disable-restart-zero-candidates-reenable-recall-passed
-    migration: memory-schema-v1-to-v2-passed
-    audit: ordered-exact-scope-export-restart-and-command-conflict-passed
-    full_regression: 65-files-294-tests-passed-no-skips-no-unhandled-errors
+    prompt_injection: production-wire-trust-policy-current-task-authority-passed
+    scope_privacy: cross-project-branch-sensitive-and-guessed-ref-unavailable-passed
+    deletion: published-ref-revoked-and-no-statement-in-live-audit-projection-passed
+    approval: malicious-memory-write-stopped-before-tool-effect-passed
+    ref_encoding: special-and-unicode-memory-id-no-alias-passed
+    restart_disable: covered-by-E094-memory-regression
+    full_regression: 66-files-298-tests-passed-no-skips-no-unhandled-errors
     typecheck: passed
     lint: passed
     runtime_package_build: passed
     root_build: passed
-    built_public_api: MemoryControls-command-event-inspection-and-factory-exported
+    built_public_api: trust-markers-exported-in-MemoryCandidate-and-RehydratedFact
     diff_check: passed
+  release_gates:
+    security_status: release_gate
+    open:
+      - Host authentication, tenant authorization and exact-scope binding
+      - encryption-at-rest, backup deletion, key management and filesystem secure erase
+      - real-Provider prompt-injection red-team and measurable attack success threshold
   external_environment_acceptance:
-    status: not_applicable
-    reason: This Feature is a local Host API and SQLite control surface with no external service.
+    status: deferred
+    reason: Deployment security and real-model red-team require Host infrastructure and Provider execution.
 
-last_completed_feature: memory-user-controls
-next_action: stop; activate memory-security-privacy only as a separate Feature
+last_completed_feature: memory-security-privacy
+next_action: stop; activate memory-performance-rebuild only as a separate Feature
 ```
 
 ## Update Rules

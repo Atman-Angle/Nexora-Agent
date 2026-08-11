@@ -40,6 +40,8 @@ interface RuntimeProvider {
 
 Provider 不能把候选 hint/reasons 当作原始事实。需要历史内容时，返回既有 `request_context` 请求候选 `ref` 或 `relatedRefs`；Runtime 继续执行当前作用域、digest 与 Token 预算校验，并在下一轮以 `rehydratedFacts` 交付精确内容。候选不会暴露 sibling、其他 Run 或 parent post-fork 内容，也不会触发额外模型调用。
 
+`memoryCandidates` 与 `rehydratedFacts(kind="memory")` 都携带 `trust: "untrusted_memory_data"`。精确字节不是指令权限：Adapter 必须拒绝 Memory statement 中的角色伪造、Tool/Approval 请求、Evidence/Completion 声明和策略覆盖，并保持当前 TaskContract、Plan、Runtime Approval 与 Completion Gate 的优先级。
+
 ### Repeated Compaction Contract
 
 `CompactionContext.previousCheckpoint` 在首次 Compaction 时为 `null`；后续只携带 Runtime 已针对当前 Authority 完整重验的 latest `{ digest, summary }`。生产 Adapter 会把该字段原样写入 compaction wire 的 `context.previousCheckpoint`，但不会向 Provider 暴露 `checkpointId`、`sourceDigests`、`coveredInvocations` 等 Runtime-only 持久化元数据。
