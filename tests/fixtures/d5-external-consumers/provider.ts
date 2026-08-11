@@ -41,105 +41,88 @@ export function createAcceptanceProvider() {
         && context.run.currentPlan === null
       ) {
         return JSON.stringify({
-          type: "request_input",
-          question: "Confirm the mutation.",
-          reason: "The external caller must provide one input."
+          intent: {
+            kind: "request_input",
+            question: "Confirm the mutation.",
+            reason: "The external caller must provide one input."
+          }
         });
       }
 
       const file = /\bnote(?:-[a-z])?\.txt\b/i.exec(semanticInput)?.[0]
         ?? "note.txt";
       if (context.run.currentPlan === null) {
-        return JSON.stringify(plan(context, file));
+        return JSON.stringify(plan(file));
       }
 
       const activeStep = context.run.stepProgress.find(
         (step) => step.status === "active"
       )?.stepId;
-      if (activeStep === "read-before") {
+      const activeObjective = context.run.currentPlan?.orderedSteps.find(
+        (step) => step.id === activeStep
+      )?.objective;
+      if (activeObjective === `Read ${file} before mutation`) {
         return JSON.stringify({
-          type: "call_tool",
-          stepId: "read-before",
-          checkIds: ["read-before-check"],
-          toolName: "filesystem.read",
-          input: { path: file }
-        });
-      }
-      if (activeStep === "patch") {
-        return JSON.stringify({
-          type: "call_tool",
-          stepId: "patch",
-          checkIds: ["patch-check"],
-          toolName: "filesystem.patch",
-          input: {
-            path: file,
-            expectedDigest: INITIAL_DIGEST,
-            find: "before",
-            replace: "after"
+          intent: {
+            kind: "use_capabilities",
+            calls: [{ capability: "filesystem.read", arguments: { path: file } }]
           }
         });
       }
-      if (activeStep === "read-after") {
+      if (activeObjective === `Patch ${file}`) {
         return JSON.stringify({
-          type: "call_tool",
-          stepId: "read-after",
-          checkIds: ["read-after-check"],
-          toolName: "filesystem.read",
-          input: { path: file }
+          intent: {
+            kind: "use_capabilities",
+            calls: [{
+              capability: "filesystem.patch",
+              arguments: {
+                path: file,
+                expectedDigest: INITIAL_DIGEST,
+                find: "before",
+                replace: "after"
+              }
+            }]
+          }
+        });
+      }
+      if (activeObjective === `Read ${file} after mutation`) {
+        return JSON.stringify({
+          intent: {
+            kind: "use_capabilities",
+            calls: [{ capability: "filesystem.read", arguments: { path: file } }]
+          }
         });
       }
       return JSON.stringify({
-        type: "propose_finish",
-        summary: `Changed and verified ${file}.`,
-        evidenceIds: context.run.evidence.map((evidence) => evidence.id)
+        intent: { kind: "finish", summary: `Changed and verified ${file}.` }
       });
     }
   });
 }
 
-function plan(context: ModelDecisionContext, file: string) {
+function plan(file: string) {
   return {
-    type: "set_plan",
-    basedOnVersion: null,
-    taskContract: {
-      goal: `Change ${file} from before to after and verify it`,
-      constraints: [`Only change ${file}`],
-      acceptanceCriteria: [`${file} contains after`]
-    },
-    orderedSteps: [
-      {
-        id: "read-before",
-        objective: `Read ${file} before mutation`,
-        acceptanceChecks: [{
-          id: "read-before-check",
-          kind: "tool_result",
-          required: true,
-          toolName: "filesystem.read",
-          expectedStatus: "success"
-        }]
+    intent: {
+      kind: "plan_tasks",
+      taskContract: {
+        goal: `Change ${file} from before to after and verify it`,
+        constraints: [`Only change ${file}`],
+        acceptanceCriteria: [`${file} contains after`]
       },
-      {
-        id: "patch",
-        objective: `Patch ${file}`,
-        acceptanceChecks: [{
-          id: "patch-check",
-          kind: "tool_result",
-          required: true,
-          toolName: "filesystem.patch",
-          expectedStatus: "success"
-        }]
-      },
-      {
-        id: "read-after",
-        objective: `Read ${file} after mutation`,
-        acceptanceChecks: [{
-          id: "read-after-check",
-          kind: "tool_result",
-          required: true,
-          toolName: "filesystem.read",
-          expectedStatus: "success"
-        }]
-      }
-    ]
+      tasks: [
+        {
+          objective: `Read ${file} before mutation`,
+          completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }]
+        },
+        {
+          objective: `Patch ${file}`,
+          completionRequirements: [{ kind: "capability_result", capability: "filesystem.patch" }]
+        },
+        {
+          objective: `Read ${file} after mutation`,
+          completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }]
+        }
+      ]
+    }
   };
 }

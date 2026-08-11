@@ -5,8 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
-import { RuntimeActionSchema } from "../../packages/runtime/src/contracts.js";
+import { createRuntime, ProviderDecisionSchema } from "../../packages/runtime/src/index.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import {
   ScriptedRuntimeProvider,
@@ -119,7 +118,7 @@ describe("E066 execute_step granularity", () => {
     expect(view.snapshot.budgetsUsed.iterations).toBe(3);
     expect(view.snapshot.budgetsUsed.toolCalls).toBe(3);
     expect(executeStepEvent(view)?.payload).toEqual(expect.objectContaining({
-      stepId: "inspect",
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
       executedActionCount: 3,
       totalActions: 3,
       stoppedReason: "completed"
@@ -202,7 +201,7 @@ describe("E066 execute_step granularity", () => {
     }));
   });
 
-  it("stops the batch as soon as the active Step completes", async () => {
+  it("rejects a capability batch with more calls than unsatisfied Checks", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       { type: "set_plan", basedOnVersion: null, taskContract: taskContract(), orderedSteps: [readStepChecks(1)] },
@@ -217,17 +216,14 @@ describe("E066 execute_step granularity", () => {
     const view = await runtime.inspect(result.runId);
     runtime.close();
 
-    expect(view.toolInvocations).toHaveLength(1);
-    expect(view.snapshot.stepProgress[0]?.status).toBe("completed");
+    expect(view.toolInvocations).toHaveLength(0);
+    expect(view.snapshot.stepProgress[0]?.status).toBe("active");
     expect(provider.contexts).toHaveLength(3);
-    expect(executeStepEvent(view)?.payload).toEqual(expect.objectContaining({
-      executedActionCount: 1,
-      totalActions: 2,
-      stoppedReason: "step_completed"
-    }));
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
+    expect(executeStepEvent(view)).toBeUndefined();
   });
 
-  it("advertises a parseable execute_step example while an active Tool check exists", async () => {
+  it("advertises a parseable capability intent without internal execute_step fields", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       { type: "set_plan", basedOnVersion: null, taskContract: taskContract(), orderedSteps: [readStepChecks(1)] },
@@ -238,20 +234,20 @@ describe("E066 execute_step granularity", () => {
     runtime.close();
 
     expect(result.status).toBe("waiting");
-    const contract = provider.contexts[1]?.actionContract ?? [];
-    expect(contract.map((action) => action.type)).toEqual([
-      "set_plan",
-      "call_tool",
-      "execute_step",
+    const contract = provider.contexts[1]?.intentContract ?? [];
+    expect(contract.map((decision) => decision.intent.kind)).toEqual([
+      "plan_tasks",
+      "use_capabilities",
       "request_input",
-      "request_context"
+      "restore_context"
     ]);
-    const example = contract.find((action) => action.type === "execute_step");
+    const example = contract.find((decision) => decision.intent.kind === "use_capabilities");
     expect(example).toBeDefined();
-    const parsed = RuntimeActionSchema.parse(example);
-    expect(parsed.type).toBe("execute_step");
-    expect(parsed).toEqual(expect.objectContaining({ stepId: "<active-step-id>" }));
-    expect((parsed as { actions: readonly { readonly type: string }[] }).actions[0]?.type).toBe("call_tool");
+    const parsed = ProviderDecisionSchema.parse(example);
+    expect(parsed.intent.kind).toBe("use_capabilities");
+    expect(JSON.stringify(parsed)).not.toContain("stepId");
+    expect(JSON.stringify(parsed)).not.toContain("checkIds");
+    expect(JSON.stringify(parsed)).not.toContain("execute_step");
   });
 
   it("rejects a malformed execute_step as a whole before executing any sub-action", async () => {
@@ -317,7 +313,11 @@ describe("E066 execute_step granularity", () => {
     const postBatch = provider.contexts[2]!;
     expect(postBatch.run.stepProgress.map((item) => item.status)).toEqual(["completed"]);
     expect(postBatch.toolObservations).toHaveLength(3);
-    expect(postBatch.toolObservations.map((item) => item.stepId)).toEqual(["inspect", "inspect", "inspect"]);
+    expect(postBatch.toolObservations.map((item) => item.stepId)).toEqual([
+      postBatch.run.currentPlan!.orderedSteps[0]!.id,
+      postBatch.run.currentPlan!.orderedSteps[0]!.id,
+      postBatch.run.currentPlan!.orderedSteps[0]!.id
+    ]);
     expect(postBatch.toolObservations.every((item) => item.payloadMode === "full")).toBe(true);
   });
 });

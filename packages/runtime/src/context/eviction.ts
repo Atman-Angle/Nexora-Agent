@@ -73,8 +73,9 @@ function rebuildDecisionContext(
   const projection = {
     workspace: context.workspace,
     run: context.run,
-    allowedActions: context.allowedActions,
-    actionContract: context.actionContract,
+    providerContractVersion: context.providerContractVersion,
+    allowedIntents: context.allowedIntents,
+    intentContract: context.intentContract,
     toolObservations,
     contextCheckpoint: context.contextCheckpoint,
     rehydratedFacts,

@@ -43,19 +43,18 @@ describe("E077 Tool decision efficiency", () => {
     runtime.close();
 
     expect(result.status).toBe("succeeded");
-    expect(provider.contexts[0]?.allowedActions).toEqual(["set_plan", "request_input"]);
-    expect(provider.contexts[1]?.allowedActions).toEqual([
-      "set_plan",
-      "call_tool",
-      "execute_step",
+    expect(provider.contexts[0]?.allowedIntents).toEqual(["plan_tasks", "request_input", "restore_context"]);
+    expect(provider.contexts[1]?.allowedIntents).toEqual([
+      "plan_tasks",
+      "use_capabilities",
       "request_input",
-      "request_context"
+      "restore_context"
     ]);
-    expect(provider.contexts[1]?.actionContract.map((action) => action.type))
-      .toEqual(["set_plan", "call_tool", "execute_step", "request_input", "request_context"]);
-    expect(provider.contexts[2]?.allowedActions).toEqual(["set_plan", "request_input", "propose_finish", "request_context"]);
-    expect(provider.contexts[2]?.actionContract.map((action) => action.type))
-      .toEqual(["set_plan", "request_input", "propose_finish", "request_context"]);
+    expect(provider.contexts[1]?.intentContract.map((decision) => decision.intent.kind))
+      .toEqual(["plan_tasks", "use_capabilities", "request_input", "restore_context"]);
+    expect(provider.contexts[2]?.allowedIntents).toEqual(["plan_tasks", "request_input", "finish", "restore_context"]);
+    expect(provider.contexts[2]?.intentContract.map((decision) => decision.intent.kind))
+      .toEqual(["plan_tasks", "request_input", "finish", "restore_context"]);
   });
 
   it("does not advertise call_tool when the active Step has no Tool result check", async () => {
@@ -88,9 +87,9 @@ describe("E077 Tool decision efficiency", () => {
     runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(provider.contexts[1]?.allowedActions).toEqual(["set_plan", "request_input", "request_context"]);
-    expect(provider.contexts[1]?.actionContract.map((action) => action.type))
-      .toEqual(["set_plan", "request_input", "request_context"]);
+    expect(provider.contexts[1]?.allowedIntents).toEqual(["plan_tasks", "request_input", "restore_context"]);
+    expect(provider.contexts[1]?.intentContract.map((decision) => decision.intent.kind))
+      .toEqual(["plan_tasks", "request_input", "restore_context"]);
   });
 });
 

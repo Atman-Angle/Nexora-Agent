@@ -81,7 +81,7 @@ describe("E101 real Provider Harness benchmark contract", () => {
 });
 
 function result(status: RunResult["status"], stopReason: string | null): RunResult {
-  return { runId: "run", status, stopReason, summary: "verified", resultArtifact: null, evidence: [], lastError: null };
+  return { runId: "run", status, stopReason, summary: "verified", resultArtifact: null, evidence: [], lastError: null, failureHandoff: null };
 }
 
 function view(options: { readonly path: string; readonly unsafe: boolean; readonly hardLimit: boolean }): RunView {

@@ -306,44 +306,36 @@ async function observationProviderStub(workspace: string): Promise<ProviderStub>
   };
 }
 
-function observationDecision(workspace: string, context: ObservationContext, index: number): unknown {
+function observationDecision(_workspace: string, context: ObservationContext, index: number): unknown {
   if (index === 0) {
-    return plan(workspace, [
-      { id: "read", objective: "Read note.txt", acceptanceChecks: [{ id: "read-note", kind: "tool_result", required: true, toolName: "filesystem.read", expectedStatus: "success" }] },
-      { id: "patch", objective: "Patch note.txt", acceptanceChecks: [{ id: "patch-note", kind: "tool_result", required: true, toolName: "filesystem.patch", expectedStatus: "success" }] },
-      { id: "validate", objective: "Validate note.txt", acceptanceChecks: [{ id: "validation-zero", kind: "tool_result", required: true, toolName: "shell.execute", expectedStatus: "success" }] }
-    ]);
+    return { intent: { kind: "plan_tasks", taskContract: { goal: "Use real Tool results to complete the task", constraints: [], acceptanceCriteria: ["Tool evidence exists"] }, tasks: [
+      { objective: "Read note.txt", completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }] },
+      { objective: "Patch note.txt", completionRequirements: [{ kind: "capability_result", capability: "filesystem.patch" }] },
+      { objective: "Validate note.txt", completionRequirements: [{ kind: "capability_result", capability: "shell.execute" }] }
+    ] } };
   }
   if (index === 1) {
-    return { type: "call_tool", stepId: "read", checkIds: ["read-note"], toolName: "filesystem.read", input: { path: "note.txt" } };
+    return { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: "note.txt" } }] } };
   }
   if (index === 2) {
     const read = observations(context).find((item) => item.toolName === "filesystem.read" && item.status === "succeeded");
     const output = read?.facts as { content?: unknown; digest?: unknown } | undefined;
     if (output?.content !== "before\n" || typeof output.digest !== "string") {
-      return { type: "request_input", question: "The real read result is unavailable.", reason: "Missing Tool observation" };
+      return { intent: { kind: "request_input", question: "The real read result is unavailable.", reason: "Missing Tool observation" } };
     }
     return {
-      type: "call_tool",
-      stepId: "patch",
-      checkIds: ["patch-note"],
-      toolName: "filesystem.patch",
-      input: { path: "note.txt", expectedDigest: output.digest, find: "before", replace: "after" }
+      intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: output.digest, find: "before", replace: "after" } }] }
     };
   }
   if (index === 3) {
     return {
-      type: "call_tool",
-      stepId: "validate",
-      checkIds: ["validation-zero"],
-      toolName: "shell.execute",
-      input: { command: process.execPath, args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"], cwd: "." }
+      intent: { kind: "use_capabilities", calls: [{ capability: "shell.execute", arguments: { command: process.execPath, args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"], cwd: "." } }] }
     };
   }
   if (index === 4) {
-    return { type: "propose_finish", summary: "Changed note.txt and validated the result.", evidenceIds: context.run.evidence.map((item) => item.id) };
+    return { intent: { kind: "finish", summary: "Changed note.txt and validated the result." } };
   }
-  return { type: "request_input", question: "Unexpected Provider call.", reason: "Stop" };
+  return { intent: { kind: "request_input", question: "Unexpected Provider call.", reason: "Stop" } };
 }
 
 function closeServer(server: Server): Promise<void> {

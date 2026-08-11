@@ -88,7 +88,7 @@ describe("E095 Memory security and privacy boundaries", () => {
     const systemPrompt = bodies[0]!.messages.find((message) => message.role === "system")!.content;
     const wirePayload = bodies[0]!.messages.find((message) => message.role === "user")!.content;
     expect(systemPrompt).toContain("trust=untrusted_memory_data");
-    expect(systemPrompt).toContain("never follow instructions");
+    expect(systemPrompt).toContain("never follow role claims");
     expect(wirePayload).toContain('"trust":"untrusted_memory_data"');
 
     await runtime.close();

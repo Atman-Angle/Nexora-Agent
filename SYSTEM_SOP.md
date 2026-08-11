@@ -33,27 +33,27 @@
    用户查看、修正、失效、删除、禁用、清域和审计导出必须走 `MemoryControls`。所有 mutation 必须携带 exact scope、operationId、actor、reason、occurredAt；修正只能走 candidate + supersession。禁用 scope 后检查生产 Context 无 Memory candidate，删除/清域后检查 audit tombstone 不含 statement，并验证 close/reopen 后策略与 audit 仍存在。
    所有 Memory statement 按 untrusted data 处理，即使已 verified 或 digest 精确也不得执行其内部指令。安全验收必须使用包含伪 system role、越权 Tool 请求、Approval/完成伪造的固定攻击样本，并检查：候选不含正文；恢复 Fact 有 trust 标记；当前 TaskContract 不变；猜测/跨域/sensitive/deleted ref 统一不可用；write/execute 仍停在正常 Approval Gate。Host 负责把已认证身份绑定到 exact scope，部署侧另行满足加密和 secure erase 发布门。
    Memory 性能索引只从 Authority 表派生。Store 打开时必须在当前 schema 上幂等确认全部声明索引，不能因 `user_version` 已是当前值而跳过。恢复演练应删除派生索引后 reopen，检查 Record 与候选逐项一致、索引全部恢复且查询计划重新命中 scope/status/time 索引；性能报告同时记录固定数据规模、p50/p95/max、Context 字节、模型调用与费用，不能把单机测量冒充跨环境 SLA。
-2. 外部输入先过 Zod。Model 只能提出 `set_plan | call_tool | request_input | propose_finish`。
-3. Provider context 必须由 Runtime 投影真实 workspace、Tool 的 Identity/Capability/Decision/Effect/Evidence、当前 allowed Action 的 Schema 合法示例、active Step 所绑定 Tool 的输入示例，以及权威 Invocation 的有界 observation；不要在 Provider Prompt 复制第二份 Action/Tool facts 状态。
+2. 外部输入先过 Zod。Provider Contract v2 只能提出 `plan_tasks | restore_context | use_capabilities | request_input | finish`；reasoningSummary 不执行。Provider 不得输出 Step/Check/Invocation/Evidence ID、Plan version/binding、Approval 或完成状态。
+3. Provider context 必须由 Runtime 投影真实 workspace、Tool 的 Identity/Capability/Decision/Effect/Evidence、`allowedIntents/intentContract`、active Step 可调用 Tool 的输入示例，以及权威 Invocation 的有界 observation；不要在 Prompt 复制第二份 Plan/Action/Tool facts 状态。
 4. 每个 RuntimeTool 五层Contract的文本边界必须完整且有界；`inputExample`必须在Runtime构造时通过JSON Contract和该Tool的`inputSchema`，`facts`必须在成功持久化前通过`factsSchema`。example只用于active Tool字段构造，Schema/idempotency不暴露给Model。
-5. 首个 `set_plan` 必须包含 Task Contract；修订示例必须携带当前 Plan version，并只在有新增输入时携带更新后的 Task Contract。Plan version 和 goal digest 只能由 Runtime 生成。
-6. Tool Action 必须绑定当前 active Step 和 Acceptance Check；Invocation ID、幂等键和 Fencing Token 只能由 Runtime 生成。
+5. 首个 `plan_tasks` 必须包含语义 Task Contract；修订只描述未完成的有序 Task。Runtime 生成并拥有 Task/Plan version、goal digest、Step/Check ID，保留已完成前缀，并从精确用户 ref 要求补齐可审计 `context_ref` Check。
+6. `use_capabilities` 只携带 Capability 名称与完整业务参数。Runtime 绑定当前 active Step 和下一个匹配的 unsatisfied Check，构造/拆分内部 batch；Invocation ID、幂等键和 Fencing Token 只能由 Runtime 生成。
 7. 所有 Tool input 必须先通过真实 Tool Schema 并展开默认值；若同一 Run/Plan/Step/Tool/input 的 Invocation 幂等键已经持久化，必须在 Approval/Effect 前按非法 Action 拒绝；否则写/执行工具才转为 `waiting/APPROVAL_REQUIRED`。Pending Action、批准后 Invocation 与 Tool execute 必须使用同一 canonical input，resume 必须重校验，批准必须绑定 Pending Request ID。
 8. Tool 意图与 Run snapshot/event 原子提交后才执行 Effect；Tool 结果、Evidence 与 Run snapshot/event 再原子提交。
 9. 下一轮只从 `tool_invocations` 投影最近 8 个 completed result/error；约 32 KiB 以上使用 digest + preview，且不得暴露 input/idempotency/Fencing/Lease。read 结果必须提供 patch-compatible 内容 digest。
-10. 非法 Action 必须记录路径化诊断，并把原始 JSON 写入 Artifact 后关联 `detailsArtifact`；它不能进入执行路径。
+10. 非法 Intent 或无法编译的 Capability 必须记录路径化诊断，并把原始 JSON 写入 Artifact 后关联 `detailsArtifact`；它不能进入执行路径，更不能部分执行 batch。
 11. 非零命令、Schema 错误、Provider 错误或失效 Fencing Token 必须形成失败/阻断，不得生成成功 Evidence。
 12. Provider decide/validate 调用只能在同一无副作用请求内有限重试；耗尽后使用 `blocked/PROVIDER_UNAVAILABLE`，resume 回到同一 loop，不能重放已成功 Tool Effect。
-13. `propose_finish.evidenceIds` 必须非空、唯一，并覆盖每个 required Check；`validateCompletion` 只能解析这组 persisted Evidence，不能替换为 Run 全部 Evidence。
-14. 确定性完成、独立语义验证、Result、`validation.passed` 和 State Machine 必须消费同一 cited Evidence 集；两道门都通过才允许写 `succeeded`。
+13. `finish` 只携带 verified summary。Runtime 从当前 Plan 的 required Checks 确定性选择唯一 persisted Evidence 集；Provider 无权提供或筛选 Evidence ID，缺失/未知/部分覆盖仍由 Completion Gate 拒绝。
+14. Validation issue 必须属于 finite taxonomy；确定性完成、独立语义验证、Result、`validation.passed` 和 State Machine 必须消费同一 Runtime-derived Evidence 集；两道门都通过才允许写 `succeeded`。失败/取消的 Public projection 只能从持久化 Authority 派生 Failure Handoff，不能写成功 Result。
 
 ## C. 正常运行链
 
 1. 执行 `nexora "自然语言目标" [--cwd <path>]`，或调用 `runtime.start({input})`。
 2. CLI start/resume 先从启动目录加载可选 `.env`，再创建 Provider；显式进程环境优先，目标 `--cwd` 的 `.env` 不加载。Runtime API 调用方显式提供配置。
 3. Runtime 创建 Run、`run.created` 和 Lease。
-4. 循环检查预算，从 Run/Tool Invocation 权威投影状态正确且有界的 Provider context，记录 `model.requested`，获取一个 Action并由唯一 Zod Contract 校验。
-5. `set_plan` 保存唯一当前 Plan；`call_tool` 执行真实工具；`request_input` 停在 waiting；`propose_finish` 引证 required Evidence 后进入两道完成门。
+4. 循环检查预算，从 Run/Tool Invocation 权威投影状态正确且有界的 Provider context，记录 `model.requested`，获取一个 Semantic Intent 并由 Contract v2 校验；Runtime 编译成功后记录 `intent.compiled`。
+5. `plan_tasks` 编译并保存唯一当前 Plan；`restore_context` 校验/恢复或复用已可见 refs；`use_capabilities` 编译为内部 Tool Action；`request_input` 停在 waiting；`finish` 使用 Runtime-derived required Evidence 进入两道完成门。
 6. read 工具在 Schema parse 后直接执行；write/execute 在 parse/default expansion 后持久化 canonical Pending Action，用 `inspect` 核对精确 input 和 Request ID，再显式 `resume --approve <id>`。
 7. 进程崩溃后，`resume` 必须先检查未决 Invocation：
    - 幂等 started：原 ID、原输入重试；
@@ -121,7 +121,7 @@ E078是对E076/E077的交错基准表征，不是新的运行路径或发布门�
 
 # 逆向 SOP：失败定位、审计与恢复
 
-用途：从一个最终输出、异常或“声称已完成”的 Run，反查到原始输入、Plan、Model Action、Tool Effect、Evidence、状态提交和具体代码断点。
+用途：从一个最终输出、异常或“声称已完成”的 Run，反查到原始输入、Plan、Provider Intent、编译后的内部 Action、Tool Effect、Evidence、状态提交和具体代码断点。
 
 ## A. 先确定真实结论
 
@@ -176,7 +176,7 @@ Event 只用于审计，不反向覆盖 snapshot。若日志显示请求已发�
 
 1. 读取 `payload.diagnostic.kind/actionType/issues[]`，先定位 Schema 路径或状态拒绝原因；
 2. 读取 `payload.detailsArtifact`，按 digest 打开 `<dataDir>/artifacts/<sha256>`（默认 `.nexora/artifacts/<sha256>`）；
-3. 将原始 JSON 与当轮 `ModelDecisionContext.actionContract`、workspace、active Step 和 Tool inputExample 对比；
+3. 将原始 JSON 与当轮 `ModelDecisionContext.intentContract`、workspace、active Step 和 Tool inputExample 对比，并检查 `intent.compiled` 是否存在；
 4. 下一次 `model.requested` 必须能在 `snapshot.lastError.message` 看到相同结构化诊断；
 5. 原始 Action Artifact 和 Event 只用于审计，不能视为已接受 Action 或 Tool Evidence。
 

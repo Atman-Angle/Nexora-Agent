@@ -308,8 +308,8 @@ describe("E080 deterministic Context Eviction", () => {
     expect(invocation.payloadDigest).toBe(invocation.payloadArtifactRef);
     expect(view.snapshot.evidence).toHaveLength(1);
     expect(view.snapshot.evidence[0]).toEqual(expect.objectContaining({
-      stepId: current.id,
-      checkId: "check-1a",
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+      checkId: view.snapshot.currentPlan!.orderedSteps[0]!.acceptanceChecks[0]!.id,
       invocationId: invocation.id,
       artifactRef: invocation.payloadArtifactRef
     }));
@@ -354,7 +354,7 @@ describe("E080 deterministic Context Eviction", () => {
       new ArtifactStore(join(dataDir, "artifacts")).getText(invocation.payloadArtifactRef!)
     )).toEqual(invocation.errorJson);
     expect(view.snapshot.stepProgress[0]).toEqual(expect.objectContaining({
-      stepId: "step-1",
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
       status: "active",
       evidenceIds: []
     }));

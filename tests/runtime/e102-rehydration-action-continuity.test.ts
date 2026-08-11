@@ -80,8 +80,8 @@ describe("E102 rehydration action continuity", () => {
       expect(view.events.filter((event) => event.type === "context.rehydrate_requested")).toHaveLength(1);
       expect(view.events.filter((event) => event.type === "context.rehydrated")).toHaveLength(1);
       const rejected = view.events.filter((event) => event.type === "action.rejected");
-      expect(rejected).toHaveLength(2);
-      expect(rejected.some((event) => JSON.stringify(event.payload).includes("already restored"))).toBe(true);
+      expect(rejected).toHaveLength(1);
+      expect(view.events.filter((event) => event.type === "context.request_reused")).toHaveLength(1);
       expect(view.toolInvocations).toHaveLength(1);
       expect(view.snapshot.evidence).toHaveLength(1);
     } finally {
@@ -128,7 +128,7 @@ describe("E102 rehydration action continuity", () => {
       async validate() {
         validations += 1;
         return validations === 1
-          ? { passed: false, issues: ["Summary omits the restored result."] }
+          ? { passed: false, issues: [{ kind: "incomplete_summary", message: "Summary omits the restored result." }] }
           : { passed: true, issues: [] };
       }
     };

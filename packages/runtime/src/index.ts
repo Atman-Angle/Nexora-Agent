@@ -37,6 +37,7 @@ export {
   type BranchHandle,
   type BranchView,
   type ForkOptions,
+  type FailureHandoff,
   type MergeDecisions,
   type MergeOutcome
 } from "./runtime.js";
@@ -71,6 +72,22 @@ export type {
   SemanticValidationVerdict,
   ToolObservation
 } from "./providers/model-client.js";
+
+export {
+  ProviderDecisionSchema,
+  ProviderIntentSchema,
+  CapabilityCallSchema,
+  SemanticCompletionRequirementSchema,
+  SemanticTaskSchema,
+  ValidationIssueKindSchema,
+  type ProviderDecision,
+  type ProviderIntent,
+  type ProviderIntentKind,
+  type SemanticCompletionRequirement,
+  type SemanticTask,
+  type SemanticValidationIssue,
+  type ValidationIssueKind
+} from "./providers/intent-contract.js";
 
 export type {
   Evidence,

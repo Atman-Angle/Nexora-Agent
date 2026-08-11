@@ -1,20 +1,22 @@
 import {
-  runtimeActionContract,
   type ForkContext,
   type RunSnapshot,
   type ToolInvocation
 } from "../contracts.js";
 import {
-  allowedActions,
+  allowedProviderIntents,
   deepFreeze,
   digestJson
 } from "../runtime-helpers.js";
 import type {
-  ModelAction,
   ModelDecisionContext,
   RepairContext,
   RehydratedFact
 } from "../providers/model-client.js";
+import {
+  providerIntentContract,
+  ValidationIssueKindSchema
+} from "../providers/intent-contract.js";
 import type { RuntimeMemoryOptions, RuntimeTool } from "../runtime-types.js";
 import { projectMemoryCandidates } from "../memory/recall.js";
 import { ArtifactStore } from "../store/artifacts.js";
@@ -132,8 +134,8 @@ export function buildDecisionContext(args: {
     memoryCandidates,
     ...(inherited === undefined ? {} : { inheritedRefs: inherited.refs })
   });
-  const hasAvailableRefs = manifest.size > 0 && run.currentPlan !== null;
-  const actions = allowedActions(run, hasAvailableRefs);
+  const hasAvailableRefs = manifest.size > 0;
+  const intents = allowedProviderIntents(run, hasAvailableRefs);
 
   const autoCandidates = autoRehydrateForActiveStep({ run, observations, invocations });
   const modelRequests = args.rehydrateRequests ?? [];
@@ -192,26 +194,7 @@ export function buildDecisionContext(args: {
 
   const includeTaskContract = run.currentPlan === null || run.taskContract === null
     || run.taskContract.inputVersion < run.inputHistory.length;
-  const allStepsCompleted = run.currentPlan !== null
-    && run.stepProgress.length === run.currentPlan.orderedSteps.length
-    && run.stepProgress.every((item) => item.status === "completed");
-  const baseContract = runtimeActionContract(
-    actions.filter((item): item is "set_plan" | "call_tool" | "execute_step" | "request_input" | "propose_finish" => item !== "request_context"),
-    {
-      workspace,
-      inputVersion: run.inputHistory.length,
-      basedOnVersion: run.currentPlan?.version ?? null,
-      includeTaskContract,
-      currentPlan: run.currentPlan,
-      finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
-    }
-  );
-  const actionContract: readonly ModelAction[] = hasAvailableRefs
-    ? [
-        ...baseContract,
-        Object.freeze({ type: "request_context" as const, refs: ["<source-ref>"] })
-      ]
-    : baseContract;
+  const intentContract = providerIntentContract(intents, includeTaskContract);
 
   const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
   const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
@@ -221,8 +204,9 @@ export function buildDecisionContext(args: {
   const projection = deepFreeze(structuredClone({
     workspace,
     run: projectRunContext(run),
-    allowedActions: actions,
-    actionContract,
+    providerContractVersion: 2 as const,
+    allowedIntents: intents,
+    intentContract,
     toolObservations: checkpoint === null
       ? observations
       : observations.filter((item) => !covered.has(item.invocationId)),
@@ -238,7 +222,7 @@ export function buildDecisionContext(args: {
       decision: tool.contract.decision,
       execution: {
         effect: tool.contract.execution.effect,
-        ...((actions.includes("call_tool") || actions.includes("execute_step")) && callableTools.has(tool.contract.identity.name)
+        ...(intents.includes("use_capabilities") && callableTools.has(tool.contract.identity.name)
           ? { inputExample: tool.contract.execution.inputExample }
           : {})
       },
@@ -246,14 +230,15 @@ export function buildDecisionContext(args: {
     }))
   }));
   const context = deepFreeze({
+    providerContractVersion: projection.providerContractVersion,
     workspace: projection.workspace,
     run: projection.run,
     projection: {
       schemaVersion: 1 as const,
       digest: digestJson(projection)
     },
-    allowedActions: projection.allowedActions,
-    actionContract: projection.actionContract,
+    allowedIntents: projection.allowedIntents,
+    intentContract: projection.intentContract,
     toolObservations: projection.toolObservations,
     contextCheckpoint: projection.contextCheckpoint,
     rehydratedFacts: projection.rehydratedFacts,
@@ -288,8 +273,7 @@ function repairKind(code: string): RepairContext["kind"] {
   return "runtime_error";
 }
 
-function repairIssues(code: string, message: string): readonly string[] {
-  if (code !== "INVALID_MODEL_ACTION") return [message];
+function repairIssues(code: string, message: string): RepairContext["issues"] {
   try {
     const parsed = JSON.parse(message) as { readonly issues?: unknown };
     if (Array.isArray(parsed.issues)) {
@@ -298,16 +282,35 @@ function repairIssues(code: string, message: string): readonly string[] {
           item !== null
           && typeof item === "object"
           && typeof (item as { readonly message?: unknown }).message === "string"
-            ? (item as { readonly message: string }).message
+            ? {
+                kind: parsedRepairIssueKind(
+                  (item as { readonly kind?: unknown }).kind,
+                  code === "INVALID_MODEL_ACTION"
+                  ? "plan_mismatch" as const
+                  : "unresolved_failure" as const
+                ),
+                message: (item as { readonly message: string }).message
+              }
             : null
         ))
-        .filter((item): item is string => item !== null);
+        .filter((item): item is RepairContext["issues"][number] => item !== null);
       if (issues.length > 0) return issues;
     }
   } catch {
     // Keep the persisted message as bounded fallback feedback.
   }
-  return [message];
+  return [{
+    kind: code === "INVALID_MODEL_ACTION" ? "plan_mismatch" : "unresolved_failure",
+    message
+  }];
+}
+
+function parsedRepairIssueKind(
+  value: unknown,
+  fallback: RepairContext["issues"][number]["kind"]
+): RepairContext["issues"][number]["kind"] {
+  const parsed = ValidationIssueKindSchema.safeParse(value);
+  return parsed.success ? parsed.data : fallback;
 }
 
 /**

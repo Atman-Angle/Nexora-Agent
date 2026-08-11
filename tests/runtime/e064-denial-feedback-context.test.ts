@@ -48,7 +48,7 @@ describe("E064 denial feedback context", () => {
     expect(provider.contexts[2]!.repair).toEqual({
       kind: "approval_denied",
       code: "APPROVAL_DENIED",
-      issues: ["Use an ESM-compatible command instead."],
+      issues: [{ kind: "unresolved_failure", message: "Use an ESM-compatible command instead." }],
       retry: { used: 0, remaining: 10 }
     });
     expect(view.snapshot.inputHistory).toHaveLength(3);

@@ -6,8 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createOpenAICompatibleProvider, createRuntime } from "../../packages/runtime/src/index.js";
-import { RuntimeActionSchema } from "../../packages/runtime/src/contracts.js";
+import { createOpenAICompatibleProvider, createRuntime, ProviderDecisionSchema } from "../../packages/runtime/src/index.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import { ScriptedRuntimeProvider, setPlan } from "./runtime-testkit.js";
 
@@ -33,7 +32,8 @@ type DecisionPayload = {
   readonly mode: string;
   readonly context: {
     readonly workspace?: string;
-    readonly actionContract?: readonly { readonly type: string }[];
+    readonly providerContractVersion?: number;
+    readonly intentContract?: readonly { readonly intent: { readonly kind: string } }[];
     readonly run: Record<string, unknown>;
     readonly repair?: {
       readonly kind: string;
@@ -70,32 +70,26 @@ describe("E050 Provider Action Contract convergence", () => {
     const server = await providerServer(async (request) => {
       requests.push(request);
       const payload = JSON.parse(request.messages.at(-1)!.content) as DecisionPayload;
-      if (payload.mode === "validate") return { passed: false, issues: ["not expected"] };
+      if (payload.mode === "validate") return { passed: false, issues: [{ kind: "unresolved_failure", message: "not expected" }] };
       decisions += 1;
       if (decisions === 1) return invalidAction;
       if (decisions === 2) {
         return {
-          type: "set_plan",
-          basedOnVersion: null,
-          taskContract: {
-            goal: "Inspect the target",
-            constraints: [],
-            acceptanceCriteria: ["The target is inspected"]
-          },
-          orderedSteps: [{
-            id: "inspect",
-            objective: "Inspect the target",
-            acceptanceChecks: [{
-              id: "read-target",
-              kind: "tool_result",
-              required: true,
-              toolName: "example.read",
-              expectedStatus: "success"
+          intent: {
+            kind: "plan_tasks",
+            taskContract: {
+              goal: "Inspect the target",
+              constraints: [],
+              acceptanceCriteria: ["The target is inspected"]
+            },
+            tasks: [{
+              objective: "Inspect the target",
+              completionRequirements: [{ kind: "capability_result", capability: "example.read" }]
             }]
-          }]
+          }
         };
       }
-      return { type: "request_input", question: "Continue?", reason: "E050 deterministic stop" };
+      return { intent: { kind: "request_input", question: "Continue?", reason: "E050 deterministic stop" } };
     });
     const provider = createOpenAICompatibleProvider({
       baseUrl: `http://127.0.0.1:${server.port}/v1`,
@@ -124,9 +118,10 @@ describe("E050 Provider Action Contract convergence", () => {
       inputs: expect.objectContaining({ firstSequence: 1, lastSequence: 1, count: 1 }),
       events: expect.objectContaining({ firstSequence: 1, count: expect.any(Number) })
     }));
-    expect(decisionRequests[0]?.context.actionContract?.map((item) => item.type)).toEqual(["set_plan", "request_input"]);
-    for (const example of decisionRequests[0]?.context.actionContract ?? []) {
-      expect(RuntimeActionSchema.parse(example).type).toBe(example.type);
+    expect(decisionRequests[0]?.context.providerContractVersion).toBe(2);
+    expect(decisionRequests[0]?.context.intentContract?.map((item) => item.intent.kind)).toEqual(["plan_tasks", "request_input", "restore_context"]);
+    for (const example of decisionRequests[0]?.context.intentContract ?? []) {
+      expect(ProviderDecisionSchema.parse(example).intent.kind).toBe(example.intent.kind);
     }
     expect(decisionRequests[0]?.context.toolCatalog).toContainEqual(expect.objectContaining({ name: "example.read" }));
     expect(decisionRequests[0]?.context.tools).toEqual([]);
@@ -139,19 +134,20 @@ describe("E050 Provider Action Contract convergence", () => {
     expect(decisionRequests[1]!.context.repair).toEqual(expect.objectContaining({
       kind: "invalid_action",
       code: "INVALID_MODEL_ACTION",
-      issues: expect.arrayContaining([expect.stringContaining("Required")]),
+      issues: expect.arrayContaining([
+        expect.objectContaining({ kind: "plan_mismatch", message: expect.stringContaining("Required") })
+      ]),
       retry: { used: 1, remaining: 9 }
     }));
-    const revisionExample = decisionRequests[2]?.context.actionContract
-      ?.find((item) => item.type === "set_plan") as Record<string, unknown> | undefined;
-    expect(revisionExample).toEqual(expect.objectContaining({ basedOnVersion: 1 }));
-    expect(revisionExample).not.toHaveProperty("taskContract");
+    const revisionExample = decisionRequests[2]?.context.intentContract
+      ?.find((item) => item.intent.kind === "plan_tasks") as Record<string, unknown> | undefined;
+    expect(revisionExample).not.toHaveProperty("intent.taskContract");
     expect(requests[0]?.messages[0]?.content).not.toContain("filesystem.patch {path,expectedDigest");
     expect(requests[0]?.messages[0]?.content).toContain(
-      "For validation_failed, keep the cited Evidence"
+      "inaccurate_summary or incomplete_summary requires a corrected finish"
     );
     expect(requests[0]?.messages[0]?.content).toContain(
-      "An evidence:<id> fact restores Evidence metadata, not the underlying Tool payload"
+      "Never output RuntimeAction DSL fields"
     );
 
     const rejected = view.events.find((event) => event.type === "action.rejected");
@@ -174,36 +170,29 @@ describe("E050 Provider Action Contract convergence", () => {
       decisions += 1;
       if (decisions === 1) {
         return {
-          type: "set_plan",
-          basedOnVersion: null,
-          taskContract: {
-            goal: "Read the target",
-            constraints: [],
-            acceptanceCriteria: ["The target is read"]
-          },
-          orderedSteps: [{
-            id: "read",
-            objective: "Read the target",
-            acceptanceChecks: [{
-              id: "read-target",
-              kind: "tool_result",
-              required: true,
-              toolName: "example.read",
-              expectedStatus: "success"
+          intent: {
+            kind: "plan_tasks",
+            taskContract: {
+              goal: "Read the target",
+              constraints: [],
+              acceptanceCriteria: ["The target is read"]
+            },
+            tasks: [{
+              objective: "Read the target",
+              completionRequirements: [{ kind: "capability_result", capability: "example.read" }]
             }]
-          }]
+          }
         };
       }
       if (decisions === 2) {
         return {
-          type: "call_tool",
-          stepId: "read",
-          checkIds: ["read-target"],
-          toolName: "example.read",
-          input: { path: "target.txt" }
+          intent: {
+            kind: "use_capabilities",
+            calls: [{ capability: "example.read", arguments: { path: "target.txt" } }]
+          }
         };
       }
-      return { type: "request_input", question: "Stop.", reason: "Wire payload captured" };
+      return { intent: { kind: "request_input", question: "Stop.", reason: "Wire payload captured" } };
     });
     const runtime = createRuntime({
       workspace,
@@ -226,7 +215,7 @@ describe("E050 Provider Action Contract convergence", () => {
     const observation = context.toolObservations?.[0];
     expect(context).not.toHaveProperty("projection");
     expect(observation).toEqual(expect.objectContaining({
-      stepId: "read",
+      stepId: expect.stringMatching(/^step-/),
       toolName: "example.read",
       status: "succeeded",
       payloadMode: "full",
@@ -265,22 +254,14 @@ describe("E050 Provider Action Contract convergence", () => {
     runtime.close();
 
     expect(resumed.status).toBe("waiting");
-    const revisionExample = provider.contexts[2]?.actionContract
-      .find((item) => item.type === "set_plan");
+    const revisionExample = provider.contexts[2]?.intentContract
+      .find((item) => item.intent.kind === "plan_tasks");
     expect(revisionExample).toEqual(expect.objectContaining({
-      type: "set_plan",
-      basedOnVersion: 1,
-      // The model-facing example carries only the semantic Task Contract
-      // proposal; the mechanical fields are Runtime-derived and injected.
-      taskContract: expect.objectContaining({
-        goal: "<goal>",
-        constraints: [],
-        acceptanceCriteria: ["<verifiable-criterion>"]
-      })
+      intent: expect.objectContaining({ kind: "plan_tasks" })
     }));
-    expect(revisionExample).not.toHaveProperty("taskContract.workspace");
-    expect(revisionExample).not.toHaveProperty("taskContract.version");
-    expect(revisionExample).not.toHaveProperty("taskContract.inputVersion");
+    expect(revisionExample).not.toHaveProperty("intent.taskContract.workspace");
+    expect(revisionExample).not.toHaveProperty("intent.taskContract.version");
+    expect(revisionExample).not.toHaveProperty("intent.taskContract.inputVersion");
   });
 
   it("rejects a Tool input example that does not satisfy the Tool input Schema", () => {
@@ -292,8 +273,8 @@ describe("E050 Provider Action Contract convergence", () => {
         workspace,
         dataDir: join(workspace, ".nexora"),
         provider: {
-          async decide() { return { type: "request_input", question: "Stop?", reason: "test" }; },
-          async validate() { return { passed: false, issues: ["not expected"] }; }
+          async decide() { return { intent: { kind: "request_input", question: "Stop?", reason: "test" } }; },
+          async validate() { return { passed: false, issues: [{ kind: "unresolved_failure", message: "not expected" }] }; }
         },
         tools: [exampleTool({ path: 42 })]
       });

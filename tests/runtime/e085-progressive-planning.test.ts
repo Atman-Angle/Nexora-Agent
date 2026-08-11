@@ -42,19 +42,16 @@ describe("E085 progressive planning", () => {
       // 4. After validation.failed, append the read Step. The completed
       //    discovery Step is preserved byte-identical.
       {
-        type: "set_plan",
-        basedOnVersion: 1,
-        orderedSteps: [
-          { id: "discover", objective: "Discover available source files", acceptanceChecks: [{ id: "check-list", kind: "tool_result", required: true, toolName: "filesystem.list", expectedStatus: "success" }] },
-          {
-            id: "read",
+        intent: {
+          kind: "plan_tasks",
+          tasks: [{
             objective: "Read every discovered source",
-            acceptanceChecks: [
-              { id: "check-a", kind: "tool_result", required: true, toolName: "filesystem.read", expectedStatus: "success" },
-              { id: "check-b", kind: "tool_result", required: true, toolName: "filesystem.read", expectedStatus: "success" }
+            completionRequirements: [
+              { kind: "capability_result", capability: "filesystem.read" },
+              { kind: "capability_result", capability: "filesystem.read" }
             ]
-          }
-        ]
+          }]
+        }
       },
       // 5. Batch both reads, one action per check.
       { type: "execute_step", stepId: "read", actions: [
@@ -67,7 +64,7 @@ describe("E085 progressive planning", () => {
     // Validation backstop: reject a finish that cites only discovery facts.
     provider.validate = async (context) => {
       const hasRead = context.facts.some((fact) => fact.toolName === "filesystem.read");
-      return hasRead ? { passed: true, issues: [] } : { passed: false, issues: ["Only discovery performed; the report is not produced."] };
+      return hasRead ? { passed: true, issues: [] } : { passed: false, issues: [{ kind: "missing_tool_evidence", message: "Only discovery performed; the report is not produced." }] };
     };
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [listTool(), readTool()] });
 
@@ -80,14 +77,12 @@ describe("E085 progressive planning", () => {
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
     expect(view.snapshot.currentPlan?.version).toBe(2);
     expect(view.snapshot.stepProgress).toEqual([
-      { stepId: "discover", status: "completed", evidenceIds: [expect.any(String)] },
-      { stepId: "read", status: "completed", evidenceIds: [expect.any(String), expect.any(String)] }
+      { stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id, status: "completed", evidenceIds: [expect.any(String)] },
+      { stepId: view.snapshot.currentPlan!.orderedSteps[1]!.id, status: "completed", evidenceIds: [expect.any(String), expect.any(String)] }
     ]);
-    expect(view.snapshot.evidence.map((item) => `${item.stepId}:${item.checkId}`).sort()).toEqual([
-      "discover:check-list",
-      "read:check-a",
-      "read:check-b"
-    ]);
+    expect(view.snapshot.evidence.map((item) => item.checkId).sort()).toEqual(
+      view.snapshot.currentPlan!.orderedSteps.flatMap((step) => step.acceptanceChecks.map((check) => check.id)).sort()
+    );
     runtime.close();
   });
 
@@ -126,8 +121,10 @@ describe("E085 progressive planning", () => {
 
     expect(result.status).toBe("succeeded");
     expect(view.toolInvocations).toHaveLength(3);
-    expect(view.snapshot.evidence.map((item) => item.checkId).sort()).toEqual(["check-a", "check-b", "check-c"]);
-    expect(view.snapshot.stepProgress).toEqual([{ stepId: "read-all", status: "completed", evidenceIds: [expect.any(String), expect.any(String), expect.any(String)] }]);
+    expect(view.snapshot.evidence.map((item) => item.checkId).sort()).toEqual(
+      view.snapshot.currentPlan!.orderedSteps[0]!.acceptanceChecks.map((check) => check.id).sort()
+    );
+    expect(view.snapshot.stepProgress).toEqual([{ stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id, status: "completed", evidenceIds: [expect.any(String), expect.any(String), expect.any(String)] }]);
     expect(view.events.some((event) => event.type === "execute_step.completed")).toBe(true);
     expect(provider.contexts).toHaveLength(3);
     runtime.close();

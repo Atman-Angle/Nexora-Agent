@@ -98,39 +98,33 @@ import {
 const workspace = ${JSON.stringify(workspace)};
 let call = 0;
 const provider: RuntimeProvider = {
-  async decide(context: ModelDecisionContext) {
+  async decide(_context: ModelDecisionContext) {
     call += 1;
     if (call === 1) return {
-      type: "set_plan",
-      basedOnVersion: null,
-      taskContract: {
-        goal: "Write D2 output",
-        constraints: [],
-        acceptanceCriteria: ["write evidence"]
-      },
-      orderedSteps: [{
-        id: "write",
-        objective: "Write output",
-        acceptanceChecks: [{
-          id: "write-check",
-          kind: "tool_result",
-          required: true,
-          toolName: "filesystem.write",
-          expectedStatus: "success"
+      intent: {
+        kind: "plan_tasks",
+        taskContract: {
+          goal: "Write D2 output",
+          constraints: [],
+          acceptanceCriteria: ["write evidence"]
+        },
+        tasks: [{
+          objective: "Write output",
+          completionRequirements: [{ kind: "capability_result", capability: "filesystem.write" }]
         }]
-      }]
+      }
     };
     if (call === 2) return {
-      type: "call_tool",
-      stepId: "write",
-      checkIds: ["write-check"],
-      toolName: "filesystem.write",
-      input: { path: "d2-output.txt", content: "trusted D2 output" }
+      intent: {
+        kind: "use_capabilities",
+        calls: [{
+          capability: "filesystem.write",
+          arguments: { path: "d2-output.txt", content: "trusted D2 output" }
+        }]
+      }
     };
     return {
-      type: "propose_finish",
-      summary: "D2 write verified",
-      evidenceIds: context.run.evidence.map((item) => item.id)
+      intent: { kind: "finish", summary: "D2 write verified" }
     };
   },
   async validate() {

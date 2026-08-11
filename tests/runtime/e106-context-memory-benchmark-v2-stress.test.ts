@@ -46,31 +46,20 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       if (payload.mode === "compact") return response(compactionSummary());
       decisions += 1;
       if (decisions === 1) return response(stressPlan());
-      if (decisions === 2) return response({ type: "request_context", refs: [TARGET_MEMORY_REF] });
+      if (decisions === 2) return response({ intent: { kind: "restore_context", refs: [TARGET_MEMORY_REF] } });
       if (decisions === 3) return response({
-        type: "execute_step",
-        stepId: "read-shards",
-        actions: SHARD_PATHS.map((path, index) => ({
-          type: "call_tool",
-          stepId: "read-shards",
-          checkIds: [`read-${index + 1}`],
-          toolName: "filesystem.read",
-          input: { path }
-        }))
+        intent: {
+          kind: "use_capabilities",
+          calls: SHARD_PATHS.map((path) => ({ capability: "filesystem.read", arguments: { path } }))
+        }
       });
       if (decisions === 4) return response({
-        type: "call_tool",
-        stepId: "review-codes",
-        checkIds: ["review-all-codes"],
-        toolName: "filesystem.read",
-        input: { path: SHARD_PATHS[0] }
+        intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: SHARD_PATHS[0] } }] }
       });
       return response({
-        type: "propose_finish",
-        summary: `Verified ordered ORCHID codes ${Array.from({ length: 8 }, (_, index) => (
+        intent: { kind: "finish", summary: `Verified ordered ORCHID codes ${Array.from({ length: 8 }, (_, index) => (
           `ORCHID-${String(index + 1).padStart(2, "0")}-A${String(17 + index).padStart(2, "0")}`
-        )).join(", ")} from all eight file Evidence records.`,
-        evidenceIds: payload.context.run?.evidence?.map((item) => item.id) ?? []
+        )).join(", ")} from all eight file Evidence records.` }
       });
     };
     const provider = createOpenAICompatibleProvider({
@@ -159,39 +148,24 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
 
 function stressPlan() {
   return {
-    type: "set_plan",
-    basedOnVersion: null,
-    taskContract: {
-      goal: "Restore the preferred stream Memory and report all eight verified shard codes.",
-      constraints: ["Do not guess, write files, or execute commands."],
-      acceptanceCriteria: ["Memory is restored and every shard has successful file Evidence."]
-    },
-    orderedSteps: [{
-      id: "read-shards",
-      objective: "Restore Memory and read all eight exact shards.",
-      acceptanceChecks: [{
-        id: "restore-stream-memory",
-        kind: "context_ref",
-        required: true,
-        ref: TARGET_MEMORY_REF
-      }, ...SHARD_PATHS.map((_path, index) => ({
-        id: `read-${index + 1}`,
-        kind: "tool_result",
-        required: true,
-        toolName: "filesystem.read",
-        expectedStatus: "success"
-      }))]
-    }, {
-      id: "review-codes",
-      objective: "Review and report the ordered preferred-stream codes.",
-      acceptanceChecks: [{
-        id: "review-all-codes",
-        kind: "tool_result",
-        required: true,
-        toolName: "filesystem.read",
-        expectedStatus: "success"
+    intent: {
+      kind: "plan_tasks",
+      taskContract: {
+        goal: "Restore the preferred stream Memory and report all eight verified shard codes.",
+        constraints: ["Do not guess, write files, or execute commands."],
+        acceptanceCriteria: ["Memory is restored and every shard has successful file Evidence."]
+      },
+      tasks: [{
+        objective: "Restore Memory and read all eight exact shards.",
+        completionRequirements: [
+          { kind: "context_ref", ref: TARGET_MEMORY_REF },
+          ...SHARD_PATHS.map(() => ({ kind: "capability_result", capability: "filesystem.read" }))
+        ]
+      }, {
+        objective: "Review and report the ordered preferred-stream codes.",
+        completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }]
       }]
-    }]
+    }
   };
 }
 

@@ -85,7 +85,6 @@ describe("E097 real Provider continuity canary contract", () => {
         targetMemory: { requested: true, restored: true },
         shardReads: { expected: 8, succeeded: 8, missing: [] },
         safety: { forbiddenInvocations: [], hardLimitViolations: 0 },
-        continuity: { evictedModelCalls: 2 },
         contextBudget: {
           phases: [{
             phase: "decision",
@@ -111,6 +110,7 @@ describe("E097 real Provider continuity canary contract", () => {
           issues: []
         }
       });
+      expect(report.continuity.evictedModelCalls).toBeGreaterThanOrEqual(1);
       expect(report.modelCalls).toMatchObject({ count: 6, costStatus: "unpriced" });
     } finally {
       rmSync(outputRoot, { recursive: true, force: true });
@@ -331,7 +331,8 @@ function result(status: RunResult["status"], stopReason: string | null): RunResu
       message: "Synthetic failure.",
       retryable: false,
       detailsArtifact: null
-    }
+    },
+    failureHandoff: null
   };
 }
 

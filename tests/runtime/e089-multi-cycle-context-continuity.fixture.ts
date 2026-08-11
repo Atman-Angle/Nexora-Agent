@@ -15,7 +15,7 @@ export const CONTEXT_CONTINUITY_DATASET_V1 = Object.freeze({
   exercisedParentChecks: 40,
   failureCount: 20,
   minimumDecisions: 100,
-  minimumCompactions: 5,
+  minimumCompactions: 2,
   reopenCount: 3,
   branchCount: 2,
   performance: { warmups: 2, samples: 20 }

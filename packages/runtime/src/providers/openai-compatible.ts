@@ -400,8 +400,9 @@ function projectDecisionRequest(input: string): string {
         memoryCandidates: context.memoryCandidates,
         sessionArchive: context.sessionArchive ?? null,
         repair: context.repair ?? null,
-        allowedActions: context.allowedActions,
-        actionContract: context.actionContract,
+        providerContractVersion: context.providerContractVersion,
+        allowedIntents: context.allowedIntents,
+        intentContract: context.intentContract,
         toolObservations: projectDecisionToolObservations(context.toolObservations),
         toolCatalog: context.tools.map((tool) => ({
           name: tool.identity.name,

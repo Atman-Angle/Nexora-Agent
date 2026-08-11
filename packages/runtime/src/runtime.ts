@@ -35,9 +35,10 @@ import type { ForkContext } from "./contracts.js";
 import {
   buildForkBaseInheritedFacts,
   buildForkBaseInheritedRefs,
-  parseRequestContextAction,
   type RequestContextAction
 } from "./context/rehydration.js";
+import { ProviderDecisionSchema } from "./providers/intent-contract.js";
+import { compileProviderDecision } from "./providers/intent-compiler.js";
 import type {
   RehydratedFact,
   RuntimeProvider
@@ -144,6 +145,7 @@ export type {
   RuntimeToolResult,
   StartInput
 } from "./runtime-types.js";
+export type { FailureHandoff } from "./runtime-types.js";
 export {
   RunControlError,
   type RunControlErrorCode
@@ -1190,7 +1192,7 @@ export class RuntimeEngine {
         run,
         "decision",
         decisionResult.context,
-        { allowedActions: decisionResult.context.allowedActions },
+        { allowedIntents: decisionResult.context.allowedIntents },
         signal,
         observer,
         true
@@ -1220,18 +1222,41 @@ export class RuntimeEngine {
         break;
       }
 
-      // ModelAction dispatch: request_context is a Harness control action and
-      // never reaches the Core state machine / #handleAction.
-      const requestContextAction = parseRequestContextAction(rawAction);
-      if (requestContextAction !== null) {
-        run = await this.#handleRequestContext(run, requestContextAction, signal, observer);
-        continue;
-      }
-
-      let action: RuntimeAction;
       try {
-        action = RuntimeActionSchema.parse(rawAction);
+        const decision = ProviderDecisionSchema.parse(rawAction);
+        const compiled = compileProviderDecision({
+          decision,
+          run,
+          createId: () => this.#createId(),
+          rehydratedRefs: decisionResult.injectedRehydratedRefs
+        });
+        this.#store.recordRunEvent({
+          runId: run.runId,
+          event: {
+            type: "intent.compiled",
+            occurredAt: this.#now(),
+            payload: {
+              intentKind: decision.intent.kind,
+              compiledActionType: compiled.type,
+              reasoningSummaryPresent: decision.reasoningSummary !== undefined
+            }
+          },
+          fencingToken: this.#leases.requireFencingToken(run.runId)
+        });
+        this.#notify(run.runId, observer);
+        if (compiled.type === "request_context") {
+          run = await this.#handleRequestContext(run, compiled, signal, observer);
+          continue;
+        }
+        const action: RuntimeAction = RuntimeActionSchema.parse(compiled);
         run = await this.#handleAction(run, action, signal, observer);
+        if (action.type === "set_plan" && decisionResult.context.rehydratedFacts.length > 0) {
+          run = this.#recordContextRefEvidence(
+            run,
+            decisionResult.context.rehydratedFacts,
+            observer
+          );
+        }
         const consumedRehydration = action.type !== "propose_finish" || run.status === "succeeded";
         if (pendingRequest !== undefined && consumedRehydration) {
           this.#completeRehydrationRequest(
@@ -1277,18 +1302,35 @@ export class RuntimeEngine {
     signal.throwIfAborted();
     const pending = this.#rehydrationRequests.get(run.runId);
     if (pending !== undefined && action.refs.every((ref) => pending.refs.includes(ref))) {
-      // The exact facts are already present in this decision context. Route
-      // the no-op through the existing bounded repair path: this performs no
-      // second Store read or rehydration write, while preventing an unchanged
-      // request_context action from consuming the entire model-call budget.
-      return this.#rejectAction(
-        run,
-        new ActionRejectedError(
-          "Every requested Context ref is already restored in rehydratedFacts. Use those facts and return the next Plan, Tool, input, or propose_finish action."
-        ),
-        action,
-        observer
-      );
+      const reusedCount = this.#store.listEvents(run.runId).filter((event) => (
+        event.type === "context.request_reused"
+        && JSON.stringify(event.payload.refs) === JSON.stringify(action.refs)
+      )).length;
+      if (reusedCount >= run.budgets.maxRetries) {
+        return this.#fail({
+          ...run,
+          lastError: {
+            code: "CONTEXT_INTENT_STALLED",
+            message: `Provider repeatedly requested already-visible Context refs: ${action.refs.join(", ")}`,
+            retryable: false,
+            detailsArtifact: null
+          }
+        }, "CONTEXT_INTENT_STALLED", "CONTEXT_INTENT_STALLED", observer);
+      }
+      // Contract v2 normalization: the exact facts are already visible. Keep
+      // the pending fact projection alive, perform no Store read and consume no
+      // Action-repair budget. The next decision can use the existing facts.
+      this.#store.recordRunEvent({
+        runId: run.runId,
+        event: {
+          type: "context.request_reused",
+          occurredAt: this.#now(),
+          payload: { refs: action.refs }
+        },
+        fencingToken: this.#leases.requireFencingToken(run.runId)
+      });
+      this.#notify(run.runId, observer);
+      return run;
     }
     // Every requested ref is queued; the next decision turn resolves each one
     // against that turn's manifest (ref already published + digest matches) and

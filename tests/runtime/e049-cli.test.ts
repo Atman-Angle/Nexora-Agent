@@ -27,15 +27,16 @@ describe("E049 natural-language CLI", () => {
         content = { passed: true, issues: [] };
       } else if (calls === 1) {
         content = {
-          type: "set_plan",
-          basedOnVersion: null,
-          taskContract: { goal: "Read the requested target", constraints: [], acceptanceCriteria: ["target.txt was read"] },
-          orderedSteps: [{ id: "read", objective: "Read target.txt", acceptanceChecks: [{ id: "read-target", kind: "tool_result", required: true, toolName: "filesystem.read", expectedStatus: "success" }] }]
+          intent: {
+            kind: "plan_tasks",
+            taskContract: { goal: "Read the requested target", constraints: [], acceptanceCriteria: ["target.txt was read"] },
+            tasks: [{ objective: "Read target.txt", completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }] }]
+          }
         };
       } else if (calls === 2) {
-        content = { type: "call_tool", stepId: "read", checkIds: ["read-target"], toolName: "filesystem.read", input: { path: "target.txt" } };
+        content = { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: "target.txt" } }] } };
       } else {
-        content = { type: "propose_finish", summary: "Read target.txt with verified evidence.", evidenceIds: payload.context.run.evidence.map((item: { id: string }) => item.id) };
+        content = { intent: { kind: "finish", summary: "Read target.txt with verified evidence." } };
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));

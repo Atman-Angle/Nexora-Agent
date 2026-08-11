@@ -116,10 +116,10 @@ describe("E103 context_ref Acceptance Evidence", () => {
 
       expect(result).toMatchObject({ status: "waiting", stopReason: "INPUT_REQUIRED" });
       expect(view.snapshot.evidence).toEqual([
-        expect.objectContaining({ kind: "tool_result", checkId: "read-proof" })
+        expect.objectContaining({ kind: "tool_result" })
       ]);
       expect(view.snapshot.stepProgress).toEqual([
-        { stepId: "verify", status: "active", evidenceIds: [] }
+        { stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id, status: "active", evidenceIds: [] }
       ]);
       expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
       expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);

@@ -162,7 +162,8 @@ Load Run
 → Rehydrate Required Fresh Facts
 → Assemble Bounded Decision Context
 → Call Model
-→ Parse Action
+→ Parse Semantic Intent
+→ Compile Runtime Action
 → Validate / Authorize
 → Execute
 → Normalize Result
@@ -173,20 +174,23 @@ Load Run
 → Continue / Wait / Finish
 ```
 
-## 5. Action 规则
+## 5. Provider Intent 与内部 Action 规则
 
-当前 1.1 每轮只允许一个主 Action。Core Runtime Action 仍为四种：
+Provider Contract v2 每轮只允许一个最小语义 Intent：
 
 ```text
-set_plan
-call_tool
+plan_tasks
+restore_context
+use_capabilities
 request_input
-propose_finish
+finish
 ```
 
-此外 Harness 控制动作 `request_context` 属于模型可选的第五种动作，但它不是 Core Runtime Action：不进入 `RuntimeActionSchema`、不进入 State Machine、不进入 Core `#handleAction`。模型返回 `request_context` 时，Harness 识别并由 Context 子系统（Rehydration）处理——校验 refs、恢复原始内容、重新投影并继续循环，Run 状态不变。Core 的四种 Action 仍由 `#handleAction` 走状态机。
+Provider 只决定语义 Task、待恢复 ref、Capability 与业务参数、澄清问题或最终总结，不提供 Plan/Step/Check/Invocation/Evidence ID、version、binding、Approval 或完成状态。Runtime 是唯一协议编译器：它从当前 Run、Plan、Tool Catalog、Invocation、Evidence 与 Context manifest 确定性生成内部 `set_plan`、`request_context`、`call_tool`/`execute_step`、`request_input` 或 `propose_finish`。
 
-Approval 不是模型 Action，而是 Runtime 对受保护 `call_tool` 的确定性执行边界。Runtime 内部失败通过 State Machine 进入 `failed`，不是模型可直接选择的成功旁路。
+`restore_context` 编译为 Harness 内部 `request_context` 控制动作；它不进入 `RuntimeActionSchema`、State Machine 或 Core `#handleAction`。已成功恢复且仍可见的同一 ref 会记录 `context.request_reused` 并直接继续，不重复读取或消耗 Action repair；持久化的重复次数受 retry budget 限制，不能形成无界循环。
+
+Approval 不是 Provider Intent，而是 Runtime 对受保护内部 Tool Action 的确定性执行边界。Runtime 自动从 required Checks 选择 persisted Evidence 作为 finish citations，再经过确定性 Completion Gate 与独立语义验证。内部失败通过 State Machine 进入 `failed`；Public/Host 只从持久化 Run、Plan、Evidence 与 lastError 派生 Failure Handoff，不创建第二 Result 或成功旁路。
 
 ## 6. 数据传输
 

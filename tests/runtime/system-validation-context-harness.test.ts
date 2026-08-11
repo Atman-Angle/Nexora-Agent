@@ -15,7 +15,7 @@ import type {
   RehydratedFact
 } from "../../packages/runtime/src/providers/model-client.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
-import { ScriptedRuntimeProvider, finishFromEvidence } from "./runtime-testkit.js";
+import { ScriptedRuntimeProvider, finishFromEvidence, legacyTestActionToDecision } from "./runtime-testkit.js";
 
 /**
  * System-level validation of the Context Harness (Slices 1-6 plus run-local
@@ -535,7 +535,8 @@ function gatedProvider(
       if (gated) { gated = false; await gate; }
       const action = queue.shift();
       if (action === undefined) throw new Error("Gated Provider exhausted.");
-      return typeof action === "function" ? action(context) : action;
+      const resolved = typeof action === "function" ? action(context) : action;
+      return legacyTestActionToDecision(resolved, context);
     },
     async validate() { return { passed: true, issues: [] }; }
   };

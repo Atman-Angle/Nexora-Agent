@@ -314,7 +314,7 @@ async function seedHistoryRun(input: {
 }): Promise<string> {
   const bootstrap: RuntimeProvider = {
     modelProfile: { provider: "benchmark-fixture", model: "history-seeder", contextWindowTokens: 32_000, reservedOutputTokens: { decision: 1_024, validation: 1_024, compaction: 1_024 }, softLimitRatio: 0.8 },
-    async decide() { return { type: "request_input", question: "Continue fixture setup.", reason: "Build persisted Session Archive input history." }; },
+    async decide() { return { intent: { kind: "request_input", question: "Continue fixture setup.", reason: "Build persisted Session Archive input history." } }; },
     async validate() { return { passed: true, issues: [] }; }
   };
   const runtime = createRuntime({ workspace: input.workspace, dataDir: input.dataDir, provider: bootstrap, tools: createBuiltInTools(), memory: { store: input.memoryStore, scope: benchmarkScope() } });
@@ -335,13 +335,21 @@ function observeProvider(provider: RuntimeProvider, observations: Observation[])
   const invoke = async (phase: Observation["phase"], context: unknown, call: () => Promise<unknown>) => {
     const started = performance.now();
     const result = await call();
-    const action = result as { readonly type?: unknown; readonly refs?: unknown };
+    const action = result as {
+      readonly type?: unknown;
+      readonly refs?: unknown;
+      readonly intent?: { readonly kind?: unknown; readonly refs?: unknown };
+    };
+    const actionType = typeof action.intent?.kind === "string"
+      ? action.intent.kind
+      : typeof action.type === "string" ? action.type : null;
+    const refs = action.intent?.kind === "restore_context" ? action.intent.refs : action.refs;
     const decision = phase === "decision" ? context as ModelDecisionContext : null;
     observations.push({
       phase,
       latencyMs: performance.now() - started,
-      actionType: typeof action.type === "string" ? action.type : null,
-      requestedRefs: Array.isArray(action.refs) ? action.refs.filter((ref): ref is string => typeof ref === "string") : [],
+      actionType,
+      requestedRefs: Array.isArray(refs) ? refs.filter((ref): ref is string => typeof ref === "string") : [],
       candidateRefs: decision === null ? [] : [...decision.memoryCandidates.map((item) => item.ref), ...decision.historyCandidates.map((item) => item.ref)],
       restoredRefs: decision === null ? [] : decision.rehydratedFacts.filter((item) => item.error === null).map((item) => item.ref)
     });

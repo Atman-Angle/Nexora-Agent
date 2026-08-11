@@ -28,7 +28,7 @@ class PausedProvider implements RuntimeProvider {
   async decide(_context: ModelDecisionContext): Promise<unknown> {
     this.entered();
     await this.releasePromise;
-    return { type: "request_input", question: "Pause", reason: "test" };
+    return { intent: { kind: "request_input", question: "Pause", reason: "test" } };
   }
 
   async validate(): Promise<unknown> {
@@ -46,7 +46,7 @@ describe("E049 lease and fencing", () => {
         await new Promise((resolve) => setTimeout(resolve, 15));
         return calls < 30
           ? { type: "unknown_action" }
-          : { type: "request_input", question: "Continue?", reason: "lease test" };
+          : { intent: { kind: "request_input", question: "Continue?", reason: "lease test" } };
       },
       async validate() { return { passed: false, issues: [] }; }
     };
@@ -73,7 +73,7 @@ describe("E049 lease and fencing", () => {
     const second = createRuntime({
       workspace,
       dataDir,
-      provider: { async decide() { return { type: "request_input", question: "x", reason: "x" }; }, async validate() { return { passed: false, issues: [] }; } },
+      provider: { async decide() { return { intent: { kind: "request_input", question: "x", reason: "x" } }; }, async validate() { return { passed: false, issues: [] }; } },
       tools: []
     });
     await expect(second.resume({ runId })).rejects.toThrow(/RUN_BUSY/);

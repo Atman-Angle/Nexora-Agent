@@ -73,30 +73,30 @@ describe("E088 decision continuity projection", () => {
         decisions += 1;
         const action = decisions === 1
           ? {
-              type: "set_plan",
-              basedOnVersion: null,
-              taskContract: {
-                goal: "Prove exact Context recovery.",
-                constraints: ["Preserve the original Input."],
-                acceptanceCriteria: ["The original Input is restored exactly."]
-              },
-              orderedSteps: [{
-                id: "recall",
-                objective: "Recall the original Input.",
-                acceptanceChecks: [{
-                  id: "exact-input",
-                  kind: "semantic_review",
-                  required: true,
-                  criterion: "The original Input is available verbatim."
+              intent: {
+                kind: "plan_tasks",
+                taskContract: {
+                  goal: "Prove exact Context recovery.",
+                  constraints: ["Preserve the original Input."],
+                  acceptanceCriteria: ["The original Input is restored exactly."]
+                },
+                tasks: [{
+                  objective: "Recall the original Input.",
+                  completionRequirements: [{
+                    kind: "semantic_review",
+                    criterion: "The original Input is available verbatim."
+                  }]
                 }]
-              }]
+              }
             }
           : decisions === 2
-            ? { type: "request_context", refs: ["input:1"] }
+            ? { intent: { kind: "restore_context", refs: ["input:1"] } }
             : {
-                type: "request_input",
-                question: "Stop?",
-                reason: "Exact wire rehydration captured."
+                intent: {
+                  kind: "request_input",
+                  question: "Stop?",
+                  reason: "Exact wire rehydration captured."
+                }
               };
         return new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify(action) } }]
@@ -166,7 +166,7 @@ function decisionContext(options: {
     ? {
         kind: "invalid_action",
         code: "INVALID_MODEL_ACTION",
-        issues: ["Revise only the invalid action."],
+        issues: [{ kind: "plan_mismatch", message: "Revise only the invalid intent." }],
         retry: { used: 1, remaining: 2 }
       }
     : undefined;
@@ -208,10 +208,11 @@ function decisionContext(options: {
       }
     },
     projection: { schemaVersion: 1, digest: `sha256:${"0".repeat(64)}` },
-    allowedActions: ["request_context", "request_input"],
-    actionContract: [
-      { type: "request_context", refs: ["input:1"] },
-      { type: "request_input", question: "<question>", reason: "<reason>" }
+    providerContractVersion: 2,
+    allowedIntents: ["restore_context", "request_input"],
+    intentContract: [
+      { intent: { kind: "restore_context", refs: ["input:1"] } },
+      { intent: { kind: "request_input", question: "<question>", reason: "<reason>" } }
     ],
     toolObservations: options.withObservation ? [{
       invocationId: "invocation-1",

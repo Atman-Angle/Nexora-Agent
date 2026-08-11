@@ -14,6 +14,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/runtime/src/index.js";
+import { legacyTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -345,7 +346,7 @@ function temporaryWorkspace(): string {
 }
 
 function requestInputProvider(): RuntimeProvider {
-  return {
+  return legacyTestProvider({
     async decide() {
       return {
         type: "request_input",
@@ -356,7 +357,7 @@ function requestInputProvider(): RuntimeProvider {
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function protectedToolProvider(
@@ -364,7 +365,7 @@ function protectedToolProvider(
   toolName: string
 ): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context) {
       call += 1;
       if (call === 1) return plan(workspace, toolName);
@@ -386,7 +387,7 @@ function protectedToolProvider(
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function successfulReadProvider(
@@ -394,7 +395,7 @@ function successfulReadProvider(
   validation: Pick<RuntimeProvider, "validate">
 ): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context: ModelDecisionContext) {
       call += 1;
       if (call === 1) return plan(workspace, "test.read");
@@ -414,7 +415,7 @@ function successfulReadProvider(
       };
     },
     validate: validation.validate
-  };
+  });
 }
 
 function plan(workspace: string, toolName: string) {
@@ -442,7 +443,7 @@ function plan(workspace: string, toolName: string) {
 
 function shellProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide() {
       call += 1;
       if (call === 1) return plan(workspace, "shell.execute");
@@ -462,7 +463,7 @@ function shellProvider(workspace: string): RuntimeProvider {
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function immediateReadTool(): RuntimeTool {

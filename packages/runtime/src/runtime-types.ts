@@ -47,7 +47,20 @@ export type RecoveryDecision =
   | { readonly invocationId: string; readonly outcome: "abandon_run"; readonly reason?: string };
 export type ResumeInput = { readonly runId: string; readonly input?: string; readonly approvalDecision?: ApprovalDecision; readonly recoveryDecision?: RecoveryDecision };
 export type RuntimeObserver = (event: RunEvent) => void;
-export type RunResult = { readonly runId: string; readonly status: RunStatus; readonly stopReason: string | null; readonly summary: string | null; readonly resultArtifact: string | null; readonly evidence: readonly Evidence[]; readonly lastError: RunSnapshot["lastError"] };
+export type FailureHandoff = {
+  readonly originalGoal: string;
+  readonly completedWork: readonly string[];
+  readonly confirmedFacts: readonly string[];
+  readonly unfinishedRequirements: readonly string[];
+  readonly exactFailure: {
+    readonly code: string;
+    readonly message: string;
+    readonly stopReason: string | null;
+  };
+  readonly resumable: false;
+  readonly nextAction: string;
+};
+export type RunResult = { readonly runId: string; readonly status: RunStatus; readonly stopReason: string | null; readonly summary: string | null; readonly resultArtifact: string | null; readonly evidence: readonly Evidence[]; readonly lastError: RunSnapshot["lastError"]; readonly failureHandoff: FailureHandoff | null };
 export type RunView = {
   readonly snapshot: RunSnapshot;
   readonly events: readonly RunEvent[];
@@ -107,6 +120,7 @@ export type RunFinalResult =
       readonly resultArtifact: string | null;
       readonly evidence: readonly PublicEvidence[];
       readonly error: null;
+      readonly failureHandoff: null;
     }
   | {
       readonly runId: string;
@@ -116,6 +130,7 @@ export type RunFinalResult =
       readonly resultArtifact: null;
       readonly evidence: readonly PublicEvidence[];
       readonly error: PublicRunError;
+      readonly failureHandoff: FailureHandoff;
     };
 
 export type RunInspection = {

@@ -17,7 +17,7 @@ class OriginalInputValidator extends ScriptedRuntimeProvider {
     const hasRead = context.facts.some((item) => item.toolName === "filesystem.read");
     return hasRead
       ? { passed: true, issues: [] }
-      : { passed: false, issues: ["Original input requires reading the matched file, but no read Evidence exists."] };
+      : { passed: false, issues: [{ kind: "missing_tool_evidence", message: "Original input requires reading the matched file, but no read Evidence exists." }] };
   }
 }
 

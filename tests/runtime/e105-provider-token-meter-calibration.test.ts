@@ -147,8 +147,9 @@ function decisionContext(text: string): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:e105" },
-    allowedActions: ["set_plan", "request_input"],
-    actionContract: [],
+    providerContractVersion: 2,
+    allowedIntents: ["plan_tasks", "request_input"],
+    intentContract: [],
     toolObservations: [],
     contextCheckpoint: null,
     rehydratedFacts: [],

@@ -104,7 +104,7 @@ async function providerStub(): Promise<{ readonly baseUrl: string; readonly call
   const server = createServer(async (request, response) => {
     for await (const _chunk of request) { /* consume request */ }
     calls += 1;
-    const content = { type: "request_input", question: "Stop after Provider configuration is proven.", reason: "Provider configuration loaded" };
+    const content = { intent: { kind: "request_input", question: "Stop after Provider configuration is proven.", reason: "Provider configuration loaded" } };
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
   });

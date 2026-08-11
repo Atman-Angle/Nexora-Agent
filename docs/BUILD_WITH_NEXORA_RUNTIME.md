@@ -135,7 +135,7 @@ const runtime = createRuntime({
 });
 ```
 
-Decision Context 的 `memoryCandidates` 最多 6 条，并同时受 768 estimated tokens / 4 KiB 硬上限约束；只来自 exact scope 内 active、未过期、normal sensitivity 的记录。候选包含 ref、type、reasons、source、verification、lifecycle 和 record digest，但不包含 statement。Provider 必须返回 `request_context` 请求原样 `memory:<id>` ref，Runtime 才在下一轮重验 scope/lifecycle/expiry/sensitivity/digest 并以 `rehydratedFacts(kind="memory")` 交付完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 和 Evidence 永远优先。
+Decision Context 的 `memoryCandidates` 最多 6 条，并同时受 768 estimated tokens / 4 KiB 硬上限约束；只来自 exact scope 内 active、未过期、normal sensitivity 的记录。候选包含 ref、type、reasons、source、verification、lifecycle 和 record digest，但不包含 statement。Provider 必须返回 `restore_context` intent 请求原样 `memory:<id>` ref，Runtime 才在下一轮重验 scope/lifecycle/expiry/sensitivity/digest 并以 `rehydratedFacts(kind="memory")` 交付完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 和 Evidence 永远优先。
 
 面向用户的动作应使用 `MemoryControls`，不要把底层 CRUD 直接暴露成产品控制：
 
@@ -422,6 +422,7 @@ const provider = defineProviderAdapter({
 
 Decision Provider 接收 `ProjectedRunContext`，不是完整 `RunSnapshot`：
 
+- `providerContractVersion` 固定为 `2`，`allowedIntents/intentContract` 是本轮唯一可输出边界；
 - `run.inputCount` 是持久化输入总数；
 - `run.coveredInputCount` 是当前 Task Contract 已覆盖的输入数；
 - `run.inputHistory` 只包含尚未覆盖的 `{ sequence, text }`；
@@ -429,9 +430,9 @@ Decision Provider 接收 `ProjectedRunContext`，不是完整 `RunSnapshot`：
 - `toolObservations` 只包含 active Step/Check 和已完成前置 Evidence 所需的有界事实；
 - `projection.digest` 是当前完整决策投影的稳定摘要，可用于缓存键、日志关联和确定性测试，不能作为 Evidence。
 
-Provider 创建或修订 Task Contract 时必须把 `inputVersion` 设为 `run.inputCount`，不能使用 `run.inputHistory.length`。Semantic Validation 仍收到完整原始 inputs，因此 Decision Projection 不会降低最终完成校验范围。
+Provider 的 `plan_tasks` 只提交 `goal/constraints/acceptanceCriteria` 与有序语义 Task；Runtime 根据 `run.inputCount` 生成 `inputVersion`，并生成 Plan version、Step/Check ID 和 binding。`use_capabilities` 只提交 Capability 名称与完整业务参数。`finish` 只提交 verified summary。任何旧 `set_plan/call_tool/execute_step/propose_finish` Provider 输出都会在边界 fail closed。Semantic Validation 仍收到完整原始 inputs，因此 Decision Projection 不会降低最终完成校验范围。
 
-Decision Context 的公开 `historyCandidates` 字段提供当前任务相关的历史导航。每条候选包含 `ref`、最多 4 个 `relatedRefs`、`category`、确定性 `reasons`、短 `hint` 和 `occurredAt`；全集最多 8 条且不超过 4 KiB。候选只来自当前 Run Authority 或 Branch 的显式 Fork Base，并按同 Check、Step、Tool、精确 Input、路径、错误码、Evidence/Artifact、Approval/Fork Base 关系排序。它不会复制 Tool 结果、错误正文或 Artifact 内容；Provider 必须返回 `request_context` 请求候选 ref，下一轮才会收到精确 `rehydratedFacts`。其他 Run、sibling Branch 与 parent post-fork ref 不会成为候选。
+Decision Context 的公开 `historyCandidates` 字段提供当前任务相关的历史导航。每条候选包含 `ref`、最多 4 个 `relatedRefs`、`category`、确定性 `reasons`、短 `hint` 和 `occurredAt`；全集最多 8 条且不超过 4 KiB。候选只来自当前 Run Authority 或 Branch 的显式 Fork Base，并按同 Check、Step、Tool、精确 Input、路径、错误码、Evidence/Artifact、Approval/Fork Base 关系排序。它不会复制 Tool 结果、错误正文或 Artifact 内容；Provider 必须返回 `restore_context` intent 请求候选 ref，下一轮才会收到精确 `rehydratedFacts`。其他 Run、sibling Branch 与 parent post-fork ref 不会成为候选。
 
 Compaction phase 接收 `CompactionContext.previousCheckpoint`：第一次为 `null`，之后为 Runtime 针对当前 Authority 完整重验过的 latest `{ digest, summary }`。Adapter 会把它放入真实 wire 的 `context.previousCheckpoint`，但不会公开 `checkpointId`、`sourceDigests` 或 `coveredInvocations`。Provider 必须生成一份完整替代 Summary；不能返回 delta、嵌套 previous Summary，或把 Checkpoint ID/digest 当作 SourceRef。旧 Summary 仍有效的内容只能通过原始 SourceRef 延续；同 Plan/Step/Check 后来已有成功 Invocation 时，旧失败必须从 `unresolvedIssues` 删除。该字段是可丢弃的连续性候选，不是事实或完成依据。
 
@@ -536,11 +537,11 @@ Harness 使用生产 `createRuntime()`、真实临时 workspace 和 SQLite；clo
 
 ## 成功与证据 Contract
 
-Structured Plan 的 required Check 绑定具体 Tool。成功 Tool Invocation 生成 persisted Evidence；`propose_finish` 必须明确引证覆盖全部 required Check 的 Evidence。Runtime 只把这组 cited Evidence 交给独立语义验证，并把同一组 ID 写入 Result 和成功 Event。
+Provider Contract v2 只提交语义 Task 与 Completion Requirement；Runtime 生成 Structured Plan、Step/Check ID 并把 Capability 绑定到 required Check。成功 Tool Invocation 生成 persisted Evidence；Provider 的 `finish` 只提交 verified summary，Runtime 从 required Checks 确定性派生完整 Evidence citations，并把同一组 ID 交给独立语义验证、Result 和成功 Event。
 
 以下情况都不会成功：
 
-- 空、重复、未知或只覆盖部分 required Check 的 finish Evidence IDs；
+- 任一 required Check 缺少合法 persisted Evidence；
 - failed/unknown Tool Invocation；
 - 非零 `shell.execute`；
 - 未完成 Plan Step；
@@ -569,7 +570,7 @@ Runtime 在提交新 Summary 前严格校验 Schema、引用存在性与 Run 归
 
 全部校验通过后，Store 在单个事务内删除该 Run 的旧 Checkpoint 行并插入唯一新行。有效 Checkpoint 会替换被其 `coveredInvocations` 覆盖的 Observation，并把 `contextCheckpoint: { checkpointId, digest, summary }` 注入 Decision Context；重建后的上下文重新计量 Token。如果 Provider 输出无效，旧缓存不被替换，Decision 走既有安全回退；如果重建后仍超过 hard limit，Runtime 安全阻塞并写入 `refused` Ledger 行，Decision Provider 不会被调用。Checkpoint 是可删除的 Prompt 派生缓存，从不拥有 TaskContract、Plan、Invocation、Evidence、Approval、Run Status 或 Completion；删除全部 Checkpoint 后，同一 Run 的 Decision Projection 必须从 Authority 确定性重建。
 
-Rehydration 是 Eviction/Compaction 之后的按需恢复层。模型可返回 Harness 控制动作 `{"type":"request_context","refs":["<source-ref>",...]}`，请求恢复已公开的原始内容；`request_context` 不是 Core RuntimeAction，不进 `RuntimeActionSchema` / State Machine / `#handleAction`。Runtime 构建本轮 `availableContextRefs`（`toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` 的 refs ∪ `run.evidence` 的 refs ∪ 当前 Run 的 Input/Event sequence 范围 → digest），下一轮把恢复结果注入 `context.rehydratedFacts`（`ref` / `kind` / `digest` / `content` / `error`）。`context.sessionArchive` 以固定 first/last/count 范围和最多 16 条、每条最多 180 字符的 Milestone 发布同一 Run 的历史导航；首个目标 Input、最新 Input 和每种已出现的 Plan/Failure/Approval/Checkpoint/Branch 类别各保留一个代表，其余位置按安全优先级与时间填充，避免重复失败淹没其他入口。Milestone 不复制完整 Session，也不是 Authority。范围内的 `input:<sequence>` / `event:<sequence>` 可按需精确恢复。错误语义统一：`INVALID_REF`（格式错误）、`REF_UNAVAILABLE`（未公开 / 跨 Run / 不存在 / digest 漂移，不泄露对象真实性）、`REHYDRATION_BUDGET_EXCEEDED`（准入预算拒绝）。准入预算独立于整体模型预算：`maxRefsPerRequest=8`、`maxRehydratedTokensPerTurn=4096`、`maxSingleFactTokens=2048`，按优先级 `harness_required`（unresolved / safety / 当前错误 / required Evidence / active Check 必需）→ `model_request` → `harness_helpful`（一般 reference 历史）优先级准入，安全关键内容不被模型请求挤掉。请求通过 `context.rehydrate_requested` / `context.rehydrated` 事件对进行崩溃恢复（resume 时重建未消费请求），不新增权威表。生产 OpenAI-compatible Adapter 会把有界的 `contextCheckpoint` 和 `rehydratedFacts` 连同当前 `repair` 投影到最终 Decision user message；它只剥离 Runtime-only projection/retention provenance，不再剥离模型实际需要的连续性事实。
+Rehydration 是 Eviction/Compaction 之后的按需恢复层。Provider 返回 `{"intent":{"kind":"restore_context","refs":["<source-ref>"]}}`；Runtime 将其编译为内部 Harness `request_context` 控制动作，后者不是 Core RuntimeAction，不进 `RuntimeActionSchema` / State Machine / `#handleAction`。Runtime 构建本轮 `availableContextRefs`（`toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` 的 refs ∪ `run.evidence` 的 refs ∪ 当前 Run 的 Input/Event sequence 范围 → digest），下一轮把恢复结果注入 `context.rehydratedFacts`（`ref` / `kind` / `digest` / `content` / `error`）。已恢复且仍可见的相同 refs 记录 `context.request_reused`，不重复读取或生成 Evidence；持久化重复次数超过 retry budget 时以 `CONTEXT_INTENT_STALLED` 失败。`context.sessionArchive` 以固定 first/last/count 范围和最多 16 条、每条最多 180 字符的 Milestone 发布同一 Run 的历史导航；Milestone 不复制完整 Session，也不是 Authority。错误语义统一：`INVALID_REF`、`REF_UNAVAILABLE`、`REHYDRATION_BUDGET_EXCEEDED`。准入预算仍为 `maxRefsPerRequest=8`、`maxRehydratedTokensPerTurn=4096`、`maxSingleFactTokens=2048`，请求通过 `context.rehydrate_requested` / `context.rehydrated` 事件对进行崩溃恢复，不新增权威表。生产 Adapter 保留 `contextCheckpoint`、`rehydratedFacts`、History/Memory Candidates 与 finite typed `repair.issues`。
 
 E090 在上述 `availableContextRefs` 并集中加入 `historyCandidates.ref` 与 `relatedRefs`。候选本身不进入 Rehydration 内容预算，也不会自动变成 `rehydratedFacts`；只有模型显式请求后才按相同作用域、digest 和 Token 规则读取。生产 OpenAI-compatible Adapter 同时投影 `historyCandidates`，Eviction 重建必须原样保留并纳入新的 projection digest。
 

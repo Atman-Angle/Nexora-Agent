@@ -28,7 +28,8 @@ export class ScriptedRuntimeProvider implements RuntimeProvider {
     this.contexts.push(structuredClone(context));
     const action = this.#actions.shift();
     if (action === undefined) throw new Error("Scripted Provider exhausted.");
-    return typeof action === "function" ? action(context) : action;
+    const resolved = typeof action === "function" ? action(context) : action;
+    return legacyTestActionToDecision(resolved, context);
   }
 
   async validate(context: Parameters<RuntimeProvider["validate"]>[0], _operation?: unknown): Promise<unknown> {
@@ -97,9 +98,95 @@ export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
 }
 
 export function finishFromEvidence(summary: string): (context: ModelDecisionContext) => unknown {
-  return (context) => ({
-    type: "propose_finish",
-    summary,
-    evidenceIds: context.run.evidence.map((item) => item.id)
+  return (_context) => ({
+    intent: { kind: "finish", summary }
   });
+}
+
+/** Keeps pre-v2 scripted fixtures focused on the Runtime behavior they exercise. */
+export function legacyTestProvider(provider: RuntimeProvider): RuntimeProvider {
+  return {
+    ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
+    ...(provider.measureTokens === undefined ? {} : { measureTokens: provider.measureTokens }),
+    async decide(context, operation) {
+      return legacyTestActionToDecision(await provider.decide(context, operation), context);
+    },
+    validate: (context, operation) => provider.validate(context, operation),
+    ...(provider.compact === undefined ? {} : {
+      compact: (context, operation) => provider.compact!(context, operation)
+    }),
+    ...(provider.dispose === undefined ? {} : {
+      dispose: () => provider.dispose!()
+    })
+  };
+}
+
+export function legacyTestActionToDecision(value: unknown, context: ModelDecisionContext): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if ("intent" in value) return value;
+  const action = value as Record<string, unknown>;
+  if (action.type === "request_context") {
+    return { intent: { kind: "restore_context", refs: action.refs } };
+  }
+  if (action.type === "request_input") {
+    return { intent: { kind: "request_input", question: action.question, reason: action.reason } };
+  }
+  if (action.type === "propose_finish") {
+    return { intent: { kind: "finish", summary: action.summary } };
+  }
+  if (action.type === "call_tool") {
+    return { intent: { kind: "use_capabilities", calls: [{ capability: action.toolName, arguments: action.input }] } };
+  }
+  if (action.type === "execute_step" && Array.isArray(action.actions)) {
+    return {
+      intent: {
+        kind: "use_capabilities",
+        calls: action.actions.map((item) => {
+          const call = item as Record<string, unknown>;
+          return { capability: call.toolName, arguments: call.input };
+        })
+      }
+    };
+  }
+  if (action.type !== "set_plan" || !Array.isArray(action.orderedSteps)) return value;
+  const completedIds = new Set(context.run.stepProgress
+    .filter((progress) => progress.status === "completed")
+    .map((progress) => progress.stepId));
+  const remaining = action.orderedSteps.filter((item) => {
+    const step = item as Record<string, unknown>;
+    return typeof step.id !== "string" || !completedIds.has(step.id);
+  });
+  const sourceSteps = remaining.length === 0 ? action.orderedSteps : remaining;
+  const taskContractValue = action.taskContract as Record<string, unknown> | undefined;
+  return {
+    intent: {
+      kind: "plan_tasks",
+      ...(taskContractValue === undefined ? {} : {
+        taskContract: {
+          goal: taskContractValue.goal,
+          constraints: taskContractValue.constraints,
+          acceptanceCriteria: taskContractValue.acceptanceCriteria
+        }
+      }),
+      tasks: sourceSteps.map((item) => {
+        const step = item as Record<string, unknown>;
+        const checks = Array.isArray(step.acceptanceChecks) ? step.acceptanceChecks : [];
+        return {
+          objective: step.objective,
+          completionRequirements: checks.map(legacyCheckToRequirement)
+        };
+      })
+    }
+  };
+}
+
+function legacyCheckToRequirement(value: unknown): unknown {
+  const check = value as Record<string, unknown>;
+  if (check.kind === "tool_result") return { kind: "capability_result", capability: check.toolName };
+  if (check.kind === "state_assertion") return { kind: "state_assertion", capability: check.toolName, arguments: check.input, assertion: check.assertion };
+  if (check.kind === "artifact_schema") return { kind: "artifact_schema", schemaName: check.schemaName };
+  if (check.kind === "user_confirmation") return { kind: "user_confirmation", prompt: check.prompt };
+  if (check.kind === "semantic_review") return { kind: "semantic_review", criterion: check.criterion };
+  if (check.kind === "context_ref") return { kind: "context_ref", ref: check.ref };
+  return check;
 }

@@ -323,14 +323,24 @@ function observeProvider(
   ): Promise<unknown> => {
     const started = performance.now();
     const result = await call();
-    const decision = result as { readonly type?: unknown; readonly refs?: unknown };
+    const decision = result as {
+      readonly type?: unknown;
+      readonly refs?: unknown;
+      readonly intent?: { readonly kind?: unknown; readonly refs?: unknown };
+    };
+    const actionType = typeof decision.intent?.kind === "string"
+      ? decision.intent.kind
+      : typeof decision.type === "string" ? decision.type : null;
+    const requestedRefs = decision.intent?.kind === "restore_context"
+      ? decision.intent.refs
+      : decision.refs;
     const decisionContext = phase === "decision" ? context as ModelDecisionContext : null;
     observations.push({
       phase,
       latencyMs: performance.now() - started,
-      actionType: typeof decision.type === "string" ? decision.type : null,
-      requestedRefs: Array.isArray(decision.refs)
-        ? decision.refs.filter((ref): ref is string => typeof ref === "string")
+      actionType,
+      requestedRefs: Array.isArray(requestedRefs)
+        ? requestedRefs.filter((ref): ref is string => typeof ref === "string")
         : [],
       memoryCandidateRefs: decisionContext?.memoryCandidates.map((candidate) => candidate.ref) ?? [],
       restoredMemoryRefs: decisionContext?.rehydratedFacts.flatMap((fact) => (

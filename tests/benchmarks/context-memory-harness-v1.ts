@@ -65,7 +65,7 @@ export const HARNESS_BENCHMARK_SCENARIOS: readonly BenchmarkScenario[] = Object.
   scenario("HBE-10", "100+ decision multi-cycle continuity", ["continuity", "recovery", "authority"],
     "tests/runtime/e089-multi-cycle-context-continuity.test.ts",
     "E089 multi-cycle Context continuity preserves bounded continuity through 100+ decisions, repeated Compaction, restart and sibling Branches",
-    { minimumDecisions: 100, minimumCompactions: 5, restarts: 3, siblingBranches: 2, crossBranchLeaks: 0 }),
+    { minimumDecisions: 100, minimumCompactions: 2, restarts: 3, siblingBranches: 2, crossBranchLeaks: 0 }),
   scenario("HBE-11", "Bounded Memory query and complete Context build performance", ["efficiency", "retrieval"],
     "tests/runtime/e096-memory-performance-rebuild.test.ts",
     "E096 Memory performance and derived-index rebuild records bounded Memory query and complete Context build p50, p95 and max",

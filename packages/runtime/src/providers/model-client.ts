@@ -1,13 +1,18 @@
-import { z } from "zod";
+import type { z } from "zod";
 
 import type {
   Evidence,
   RunSnapshot,
-  RuntimeAction,
   StructuredPlan,
   TaskContract,
   ToolInvocation
 } from "../contracts.js";
+import {
+  SemanticValidationVerdictV2Schema,
+  type ProviderDecision,
+  type ProviderIntentKind,
+  type SemanticValidationIssue
+} from "./intent-contract.js";
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
@@ -54,14 +59,15 @@ export type ProjectedRunContext = {
 };
 
 export type ModelDecisionContext = {
+  readonly providerContractVersion: 2;
   readonly workspace: string;
   readonly run: ProjectedRunContext;
   readonly projection: {
     readonly schemaVersion: 1;
     readonly digest: string;
   };
-  readonly allowedActions: readonly ("set_plan" | "call_tool" | "execute_step" | "request_input" | "propose_finish" | "request_context")[];
-  readonly actionContract: readonly ModelAction[];
+  readonly allowedIntents: readonly ProviderIntentKind[];
+  readonly intentContract: readonly ProviderDecision[];
   readonly toolObservations: readonly ToolObservation[];
   readonly contextCheckpoint: ContextCheckpoint | null;
   readonly rehydratedFacts: readonly RehydratedFact[];
@@ -178,26 +184,12 @@ export type SessionArchive = {
 export type RepairContext = {
   readonly kind: "invalid_action" | "validation_failed" | "tool_failure" | "approval_denied" | "runtime_error";
   readonly code: string;
-  readonly issues: readonly string[];
+  readonly issues: readonly SemanticValidationIssue[];
   readonly retry: {
     readonly used: number;
     readonly remaining: number;
   };
 };
-
-/**
- * Harness control action: the model asks the Runtime to rehydrate selected
- * sourceRefs that were already exposed in the current context. Unlike the
- * Core RuntimeActions, request_context is handled by the Harness (the run
- * loop) and never reaches the state machine or the Core #handleAction.
- */
-export type RequestContextAction = {
-  readonly type: "request_context";
-  readonly refs: readonly string[];
-};
-
-/** Every action a model may return in one decision call. */
-export type ModelAction = RuntimeAction | RequestContextAction;
 
 export type RehydrationError = "INVALID_REF" | "REF_UNAVAILABLE" | "REHYDRATION_BUDGET_EXCEEDED";
 export type RehydrationOrigin = "harness_required" | "model_request" | "harness_helpful";
@@ -276,10 +268,7 @@ export type SemanticValidationContext = {
   }[];
 };
 
-export const SemanticValidationVerdictSchema = z.object({
-  passed: z.boolean(),
-  issues: z.array(z.string().trim().min(1))
-}).strict();
+export const SemanticValidationVerdictSchema = SemanticValidationVerdictV2Schema;
 export type SemanticValidationVerdict = z.infer<typeof SemanticValidationVerdictSchema>;
 
 export type ModelCallPhase = "decision" | "validation" | "compaction";

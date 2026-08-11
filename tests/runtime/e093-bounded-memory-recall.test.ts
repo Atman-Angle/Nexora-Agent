@@ -213,7 +213,7 @@ describe("E093 bounded Memory recall", () => {
     const { projection, ...facts } = evicted;
 
     expect(payload.context.memoryCandidates).toEqual(context.memoryCandidates);
-    expect(systemPrompt).toContain("context.memoryCandidates");
+    expect(systemPrompt).toContain("memoryCandidates");
     expect(evicted.memoryCandidates).toEqual(context.memoryCandidates);
     expect(projection.digest).toBe(digestJson(facts));
   });
@@ -345,8 +345,9 @@ function memoryDecisionContext(): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:placeholder" },
-    allowedActions: ["request_input", "request_context"],
-    actionContract: [{ type: "request_input", question: "<question>", reason: "<reason>" }],
+    providerContractVersion: 2,
+    allowedIntents: ["request_input", "restore_context"],
+    intentContract: [{ intent: { kind: "request_input", question: "<question>", reason: "<reason>" } }],
     toolObservations: [{
       invocationId: "old",
       planVersion: 1,

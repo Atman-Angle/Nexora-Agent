@@ -335,15 +335,14 @@ describe("E084 Model / Provider configuration", () => {
         mode: "decide" | "validate";
         context: {
           run: { evidence: Array<{ id: string }> };
-          actionContract?: Array<Record<string, unknown>>;
+          intentContract?: Record<string, unknown>;
         };
       };
       if (payload.mode === "validate") return providerResponse({ passed: true, issues: [] });
       decisions += 1;
       if (decisions === 1) return providerResponse(setPlan());
       if (decisions === 2) return providerResponse(callTool());
-      const finish = payload.context.actionContract?.find((action) => action.type === "propose_finish");
-      return providerResponse({ ...finish, summary: "Read the target file." });
+      return providerResponse({ intent: { kind: "finish", summary: "Read the target file." } });
     };
     const runtime = createRuntime({
       workspace,
@@ -385,7 +384,7 @@ function captureBodies(): {
   const bodies: Array<Record<string, unknown>> = [];
   const fetch: typeof globalThis.fetch = async (_input, init) => {
     bodies.push(JSON.parse(String(init?.body)));
-    return providerResponse({ type: "request_input", question: "Q", reason: "R" });
+    return providerResponse({ intent: { kind: "request_input", question: "Q", reason: "R" } });
   };
   return { fetch, bodies };
 }
@@ -404,8 +403,9 @@ function decisionContext(currentPlan: unknown): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:test" },
-    allowedActions: [],
-    actionContract: [],
+    providerContractVersion: 2,
+    allowedIntents: [],
+    intentContract: [],
     toolObservations: [],
     contextCheckpoint: null,
     rehydratedFacts: [],
@@ -446,34 +446,27 @@ function compactionContext(
 
 function setPlan(): unknown {
   return {
-    type: "set_plan",
-    basedOnVersion: null,
-    taskContract: {
-      goal: "Read the target file",
-      constraints: [],
-      acceptanceCriteria: ["The file content is verified"]
-    },
-    orderedSteps: [{
-      id: "read",
-      objective: "Read the target file",
-      acceptanceChecks: [{
-        id: "read-check",
-        kind: "tool_result",
-        required: true,
-        toolName: "test.read",
-        expectedStatus: "success"
+    intent: {
+      kind: "plan_tasks",
+      taskContract: {
+        goal: "Read the target file",
+        constraints: [],
+        acceptanceCriteria: ["The file content is verified"]
+      },
+      tasks: [{
+        objective: "Read the target file",
+        completionRequirements: [{ kind: "capability_result", capability: "test.read" }]
       }]
-    }]
+    }
   };
 }
 
 function callTool(): unknown {
   return {
-    type: "call_tool",
-    stepId: "read",
-    checkIds: ["read-check"],
-    toolName: "test.read",
-    input: { name: "target" }
+    intent: {
+      kind: "use_capabilities",
+      calls: [{ capability: "test.read", arguments: { name: "target" } }]
+    }
   };
 }
 

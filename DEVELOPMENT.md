@@ -8,54 +8,53 @@
 workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
-current_capability: context-memory-harness
-current_feature: real-provider-harness-revalidation-post-fixes
-status: done
+current_capability: runtime-owned-intent-compilation
+current_feature: runtime-owned-intent-compilation
+status: done_locally
 
 feature_contract:
-  feature: real-provider-harness-revalidation-post-fixes
-  title: Fixed-dataset qwen Context and Memory Harness Revalidation
+  feature: runtime-owned-intent-compilation
+  title: Reduce LLM Protocol Tax with Runtime-owned Intent Compilation
   mode: VERIFY
   goal: >
-    Re-run the fixed 15-Run real qwen Provider dataset on the clean post-fix revision and record
-    comparable task, safety, continuity, usage and latency evidence without tuning or replacement Runs.
+    Replace the Provider-facing Runtime Action DSL with a minimal semantic Intent contract while
+    preserving the existing Run, Plan, Invocation, Approval, Evidence and Completion authorities.
   scope:
-    - execute HPE-01 through HPE-05 exactly three times each
-    - use the explicit model capability and the existing 32K HPE-05 override
-    - compare the immutable E101 baseline with the new clean-revision report
-    - retain every failed Run and diagnose it from persisted Runtime evidence
+    - compile semantic plan, context, capability, input and finish intents into existing internal actions
+    - remove Runtime-owned IDs, versions, bindings and execute_step wrappers from Provider output
+    - classify validation issues into a finite Runtime-facing taxonomy
+    - derive readable failure handoff from persisted Runtime authority without creating a second Result
+    - migrate all in-repository Providers, tests, examples and public documentation to Contract v2
   invariants:
-    - no prompt, Runtime, dataset or threshold changes occur during execution
-    - no failed sample is replaced, retried outside Runtime policy or omitted
-    - Provider usage remains ledger evidence and cost remains unpriced when no trusted pricing exists
-    - the historical E101 report and the deterministic v2 report remain unchanged
+    - State Machine remains the only Run Status writer
+    - Run-owned Structured Plan remains the only current Plan
+    - Tool Invocation remains the side-effect and recovery authority
+    - Approval, Evidence and Completion Gate cannot be bypassed
+    - Runtime does not parse natural-language reasoning or invoke a translation LLM
   non_goals:
-    - fixing newly observed convergence failures in the same Feature
-    - claiming statistical significance from three repetitions
-    - treating successful task output as a substitute for Eviction or Completion Evidence gates
+    - Provider-specific behavior in Core
+    - pure-text action parsing
+    - a second Plan, Evidence, Context or task-status authority
+    - increasing iteration or model-call budgets to hide convergence failures
   acceptance:
-    - all 15 planned Runs execute once on a clean committed source revision
-    - the aggregate report contains actual usage, latency, budget and per-Run failure evidence
-    - old and new results are compared without weakening any hard gate
-    - remaining failures are separated into production convergence and benchmark-pressure gaps
-  risk: L2
+    - Provider emits no Runtime-owned IDs, versions, Evidence IDs or execute_step wrapper
+    - E107 Plan Schema, action hierarchy, missing context_ref, duplicate ref and finish convergence failures have deterministic regressions
+    - invalid, unsafe or ambiguous intents fail closed without partial Tool execution
+    - failed terminal Runs expose a deterministic readable handoff and never a success Result
+    - L3 Core Regression and fixed local Runtime acceptance pass
+  risk: L3
 
-latest_verification:
-  real_provider:
-    source_commit: a37e62fe6dc8e5b6add55ff79422b6456cfa3746
-    source_dirty: false
-    fixed_runs: 15-of-15-completed
-    benchmark_result: failed-8-of-15-passed
-    succeeded_validated: 11-of-15
-    memory_recall_gate: passed
-    hard_gate_failures: 0
-    provider_calls: 112
-    provider_usage_coverage: 100-percent
-    provider_actual_tokens: 505903
-    provider_cost: unpriced
-
-last_completed_feature: real-provider-harness-revalidation-post-fixes
-next_action: provider-context-ref-plan-convergence
+last_completed_feature: runtime-owned-intent-compilation
+result: >
+  Provider Contract v2 now emits semantic intents while Runtime deterministically owns Plan IDs,
+  versions, bindings, internal actions, Evidence citations and readable failed-Run handoff.
+validation: >
+  L3 local gates passed: 332/332 full regression, 80/80 context-quality tests, deterministic
+  benchmark v2 13/13 with zero hard-gate failures, typecheck, lint, root/runtime builds and diff check.
+residual: >
+  Real paid Provider Contract v1/v2 token, latency, repair and convergence comparison remains
+  external acceptance and was not run without separate cost authorization.
+next_action: authorize-and-run-real-provider-contract-v2-comparison
 ```
 
 ## Update Rules

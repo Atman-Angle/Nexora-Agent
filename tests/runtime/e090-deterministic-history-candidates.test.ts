@@ -234,7 +234,7 @@ describe("E090 deterministic history candidates", () => {
     expect(restoredContext?.rehydratedFacts, JSON.stringify(provider.contexts.map((context) => ({
       candidates: context.historyCandidates.map((item) => item.ref),
       facts: context.rehydratedFacts.map((item) => ({ ref: item.ref, origin: item.origin, error: item.error })),
-      actions: context.allowedActions
+      actions: context.allowedIntents
     })))).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ref: selectedRef,
@@ -243,7 +243,6 @@ describe("E090 deterministic history candidates", () => {
         error: null,
         content: expect.objectContaining({
           id: selectedRef.slice("evidence:".length),
-          checkId: "historical-check",
           subjectRef: "src/context.ts"
         })
       })
@@ -278,8 +277,8 @@ describe("E090 deterministic history candidates", () => {
     const { projection, ...facts } = evicted;
 
     expect(payload.context.historyCandidates).toEqual(context.historyCandidates);
-    expect(systemPrompt).toContain("context.historyCandidates");
-    expect(systemPrompt).toContain("navigation candidates");
+    expect(systemPrompt).toContain("History candidates");
+    expect(systemPrompt).toContain("navigation");
     expect(evicted.historyCandidates).toEqual(context.historyCandidates);
     expect(projection.digest).toBe(digestJson(facts));
   });
@@ -480,8 +479,9 @@ function decisionContext(): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:placeholder" },
-    allowedActions: ["request_input"],
-    actionContract: [{ type: "request_input", question: "<question>", reason: "<reason>" }],
+    providerContractVersion: 2,
+    allowedIntents: ["request_input"],
+    intentContract: [{ intent: { kind: "request_input", question: "<question>", reason: "<reason>" } }],
     toolObservations: [{
       invocationId: "current",
       planVersion: 1,

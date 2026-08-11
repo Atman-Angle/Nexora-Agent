@@ -18,7 +18,7 @@ flowchart TD
     SNAP --> LOOP["单一 #runLoop"]
     LOOP --> BUDGET{"预算允许？"}
     BUDGET -- "否" --> FAIL["State Machine → failed"]
-    BUDGET -- "是" --> CONTEXT["决策上下文<br/>workspace + Capability/Decision + allowed Action examples<br/>active Tool example + bounded observations"]
+    BUDGET -- "是" --> CONTEXT["决策上下文<br/>Contract v2 + allowed Intent examples<br/>Capability Catalog + bounded observations"]
     INVOBS["tool_invocations<br/>completed result/error authority"] --> OBS["价值排序 + 普通候选默认 8 项<br/>full / deterministic fragment / Authority refs"]
     INVOBS --> HISTCAND["确定性历史关系候选<br/>最多 8 条 / 4 KiB / refs only"]
     HISTCAND --> CONTEXT
@@ -32,13 +32,16 @@ flowchart TD
     REBUILD --> MODEL
     COMPACT -- "否" --> MODEL["RuntimeProvider.decide"]
     MODEL --> WIRE["Provider Wire Projection<br/>Checkpoint + Rehydrated Facts + Repair"]
-    WIRE --> ACTION{"严格 Action Contract"}
-    ACTION -- "非法" --> REJECT["结构化诊断 + 原始 Action Artifact<br/>action.rejected + 有界修复"]
+    WIRE --> INTENTPARSE{"严格 Semantic Intent Contract"}
+    INTENTPARSE -- "非法" --> REJECT["结构化诊断 + 原始输出 Artifact<br/>action.rejected + 有界修复"]
     REJECT --> LOOP
-    ACTION -- "set_plan" --> PLAN["Runtime 生成 version + goalDigest<br/>保存唯一当前 Plan"]
+    INTENTPARSE -- "合法" --> COMPILE["Runtime 唯一编译器<br/>生成 ID/version/binding/batch/citations"]
+    COMPILE -- "plan_tasks → set_plan" --> PLAN["Runtime 生成 identity + goalDigest<br/>保存唯一当前 Plan"]
     PLAN --> LOOP
-    ACTION -- "request_input" --> WAIT["State Machine → waiting"]
-    ACTION -- "call_tool" --> BIND["绑定 active Step + Check"]
+    COMPILE -- "restore_context → request_context" --> REHYDRATE["校验 published refs<br/>恢复/去重/Context Evidence"]
+    REHYDRATE --> LOOP
+    COMPILE -- "request_input" --> WAIT["State Machine → waiting"]
+    COMPILE -- "use_capabilities → call_tool/execute_step" --> BIND["绑定 active Step + unsatisfied Check"]
     BIND --> PARSE{"Tool Schema parse<br/>默认值展开 + JSON canonicalize"}
     PARSE -- "非法" --> REJECT
     PARSE -- "合法" --> APPROVAL{"read 或已批准？"}
@@ -50,7 +53,7 @@ flowchart TD
     TOOLFAIL --> LOOP
     RESULT -- "成功" --> EVIDENCE["factsSchema → 原子保存 result_json + Evidence + Step Progress"]
     EVIDENCE --> LOOP
-    ACTION -- "propose_finish" --> CITE["解析明确引证的 persisted Evidence<br/>覆盖全部 required Checks"]
+    COMPILE -- "finish → propose_finish" --> CITE["Runtime 选择 required persisted Evidence<br/>覆盖全部 required Checks"]
     CITE -- "缺失/未知/部分" --> REPAIR
     CITE -- "完整" --> DET["确定性完成检查"]
     DET -- "失败" --> REPAIR["validation.failed + 有界修复"]
@@ -69,22 +72,22 @@ flowchart TD
 | RunInspection / RunFinalResult | Runtime 从当前 Snapshot、最后 Event sequence 和 Invocation 投影 | 深层冻结，不接受调用方修改 | 包外 Host | 每次读取重建；不持久化，不是 Authority |
 | RuntimeEvent subscription | Runtime 从 `run_events.sequence` 投影 | cursor 只记录交付位置，不修改 Event 或 Run | 包外 Host listener | timer/notification 只唤醒读取；terminal/close 时清理，不是 Authority |
 | CLI Provider 配置 | 启动目录 `.env` 或显式进程环境 | 不修改；显式环境优先 | CLI start/resume 创建 Provider | 只存在于进程环境；不读取目标 `--cwd`，不进入 Runtime/SQLite/Event/Artifact |
-| Task Contract | 首次 `set_plan` 候选 | 仅新输入时版本化 | Plan digest、Provider、验证 | Run snapshot；Zod 校验 |
-| Structured Plan | Model 提议，Runtime 生成 identity | CAS 修订，完成步骤不可改 | Action 授权、Step、完成门 | Run snapshot 唯一当前版本 |
-| Provider Action Contract | Runtime 从 Zod Schema、Run 状态和 Tool 定义投影 | 每轮随 Plan/Input/active Step 重建 | Provider 决策 | 进程内只读数据；不是第二权威 |
+| Task Contract | Provider `plan_tasks.taskContract` 只给语义字段，Runtime 补 workspace/version/inputVersion | 仅新输入时版本化 | Plan digest、Provider、验证 | Run snapshot；Zod 校验 |
+| Structured Plan | Provider 提议有序语义 Task/Requirement；Runtime 生成 Plan/Step/Check identity | CAS 修订并保留完成前缀，完成步骤不可改 | 内部 Action 授权、Step、完成门 | Run snapshot 唯一当前版本 |
+| Provider Intent Contract | Runtime 从 Contract v2、Run 状态和 Tool 定义投影 `allowedIntents/intentContract` | 每轮随 Plan/Input/active Step 重建 | Provider 决策；不得携带 Runtime-owned 字段 | 进程内只读数据；不是第二权威 |
 | Context Budget | Provider Model Profile + Provider-aware Token Meter；已验证模型可有 evidence-calibrated estimated meter | 每次 decision/validation 调用前对最终 wire 重算；精确 tokenizer 优先 | Runtime 触发收缩、硬拒绝或允许 Provider 调用 | meter identity 与决策写入 `model_calls`；actual usage 不被改写，不写回 Context/Run task facts |
 | Context + Memory Benchmark | versioned scenario manifest + 生产 Adapter/Runtime + 本地确定性 Provider stub | runner 收集 Vitest 与持久化 Run/Evidence/Model Call 证据，缺失/failed/skipped 一律失败 | 验证 Eviction、恢复、完成与安全合同；不参与生产决策 | timestamped report；不是 Run、Context、Memory 或 Provider Authority，不能代替真实 Provider Eval |
 | Model Call Ledger | Runtime 在 Provider 调用前创建 logical call | success/failure/cancel/interrupted/refused 与实际 usage 终结 | `runtime.inspect(runId).modelCalls`、成本/诊断 | `model_calls`；只拥有调用审计，不参与 Plan/Evidence/完成判断 |
 | Tool Capability Contract | Tool定义时必填五层结构 | Runtime构造时校验文本、example和Schema边界 | Model读取选择投影；Runtime读取Execution/Evidence内部字段 | 进程内静态metadata，不持久化 |
 | Tool inputExample | `contract.execution`定义 | 不修改；Runtime构造时过JSON + inputSchema | 仅active Step可调用Tool的Provider context | 不单独持久化 |
 | Tool Facts | Tool执行产生 | Runtime用`factsSchema`校验 | Invocation、Observation、Evidence、semantic validation | 保存在既有`tool_invocations.result_json`；不建新表 |
-| Canonical Tool input | Provider Action 经 Tool Schema parse/default expansion | protected resume 从 Pending Action 重校验 | Approval UI、Invocation、Tool execute | protected Action 在 Run Pending Request；执行后以 Invocation input 为权威 |
-| 被拒绝 Action | Provider 返回 | 不修改 | 下一轮修复、逆向审计 | 原始 JSON 进 Artifact；诊断/引用进 Event 与 lastError |
+| Canonical Tool input | Provider Capability arguments 经 Runtime 编译、Tool Schema parse/default expansion | protected resume 从 Pending Action 重校验 | Approval UI、Invocation、Tool execute | protected Action 在 Run Pending Request；执行后以 Invocation input 为权威 |
+| 被拒绝 Provider 输出 | Provider 返回 | 不修改 | 下一轮有限分类修复、逆向审计 | 原始 JSON 进 Artifact；诊断/引用进 Event 与 lastError |
 | Run Status | 初始 snapshot | 仅 State Machine | CLI、Resume、验收 | `runs.status` + snapshot |
 | Tool Invocation | Runtime 生成 ID/digest/key/token | result/unknown/recovery 原子更新 | 恢复、完成门、语义验证 | `tool_invocations` |
 | Tool Observation | Runtime 从当前 Run completed Invocation 投影 | active Check/未解决错误/安全约束优先；稳定 tie-break；Token Meter 驱动收缩 | 下一轮 Provider 决策 | full/fragment/reference 都是可重建派生投影；8 项默认值、32 KiB 保险丝 |
 | Evidence | 成功 Tool、用户恢复确认，或 required `context_ref` 的精确恢复 | Plan 修订仅保留有效证据；大型 facts 绑定内容寻址 Artifact；Context Evidence 只证明 ref 恢复，不证明内容为真 | Step、验证、Result、Observation ref | Run snapshot，绑定 Plan/Step/Check/可选 Invocation/Artifact |
-| Finish Evidence 引证 | Provider `propose_finish` 提议，Runtime 解析 | 不修改；缺失/重复/未知/部分覆盖均拒绝 | 确定性完成、语义验证、Result、成功 Event | `validation.requested/passed` 与 Result 保存同一 ID 集；不是第二 Evidence Store |
+| Finish Evidence 引证 | Runtime 编译 `finish` 时从当前 Plan required Checks 与 persisted Evidence 确定性派生 | Provider 不提供 ID；缺失/未知/部分覆盖均拒绝 | 确定性完成、语义验证、Result、成功 Event | `validation.requested/passed` 与 Result 保存同一 ID 集；不是第二 Evidence Store |
 | Event | Store 成功提交时追加 | 永不修改 | observer、inspect、审计 | `run_events`；不是状态源 |
 | Artifact | 大内容按 SHA-256 创建 | 不修改 | Tool result/ref、人工审计 | `.nexora/artifacts` |
 | Lease/Fencing | start/resume acquire | 操作前及长调用中 renew | 所有写事务校验 | `runs` lease 列；release 清空 |
@@ -118,7 +121,7 @@ flowchart LR
 
     LARGE["大内容"] --> ART["Artifact Store<br/>内容寻址"]
     ART -->|"digest/ref"| INV
-    REJECTED["非法 Provider Action"] --> ART
+    REJECTED["非法 Provider Intent / 输出"] --> ART
     ART -->|"detailsArtifact"| EVENTS
 ```
 
@@ -155,13 +158,13 @@ flowchart TD
 4. 在该边界写 RED；不要在下游增加补偿状态。
 5. 修复后同时验证正向路径和 Resume/失败分支，确保没有第二个真相源。
 
-Provider Action Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 是独立持久化的调用审计：它引用 Run 和 projection digest，但不保存或覆盖 Context 内容，不是 Task Contract、Plan、Invocation、Evidence、Artifact 或 Run Status 的 Authority。`context_checkpoints` 是独立持久化的 Prompt 派生缓存：每条 `context_checkpoint` 行都携带 plan_version、revision、canonical summary digest 和按 sourceRef 捕获的 Source Digest 映射；Checkpoint 只引用既有 Authority 实体，从不改写 Run 或 Model Call，删除全部 Checkpoint 后 Decision Projection 必须从 Authority 确定性重建。
+Provider Intent Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Decision Projection 在交给 Provider 前解除与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 是独立持久化的调用审计：它引用 Run 和 projection digest，但不保存或覆盖 Context 内容，不是 Task Contract、Plan、Invocation、Evidence、Artifact 或 Run Status 的 Authority。`context_checkpoints` 是独立持久化的 Prompt 派生缓存：每条 `context_checkpoint` 行都携带 plan_version、revision、canonical summary digest 和按 sourceRef 捕获的 Source Digest 映射；Checkpoint 只引用既有 Authority 实体，从不改写 Run 或 Model Call，删除全部 Checkpoint 后 Decision Projection 必须从 Authority 确定性重建。
 
 重复 Compaction 不建立 Checkpoint 链或第二套历史。首次调用向 Provider 传 `previousCheckpoint: null`；后续调用只传 latest 且已完整重验的 `{ digest, summary }`，不传 checkpoint ID、Source Digest map 或 covered Invocation list。Provider 必须结合当前 `run/toolObservations` 输出一份完整替代 Summary，不能嵌套旧 Summary，也不能引用 Checkpoint ID/digest；Runtime 从原始 Authority 重新校验每条 ref 和 section，重新派生 canonical Summary digest、完整 Source Digest map 与 covered Invocation multiset。failed/unknown Invocation 若已被同 Plan/Step/Check 的后续成功 Invocation 解决，就不能继续进入 `unresolvedIssues`。全部通过后，Store 在同一事务中删除旧 Checkpoint 并插入唯一新行；失败输出不改变有效缓存。该缓存参与后续 Prompt，但不能反写 TaskContract、Plan、Invocation、Evidence、Approval、Run Status 或 Completion。
 
 Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 保留完整 Tool Authority。价值 class 依次覆盖 active Check、未解决错误、安全/审批失败和 predecessor Evidence，同 class 使用 `stepOrder → invocationSequence → invocationId`。大型 success/failure payload 都以 canonical JSON 计算 digest 并写入 Artifact；Invocation 保存 payload provenance，只有合法绑定同一成功 Invocation 的既有 Evidence 才引用该 Artifact。critical 大 payload 保留明确标记的固定 fragment，普通大 payload 转 reference。Provider soft token limit 会触发继续收缩并重测；32 KiB 仅作保险丝。任何 fragment/reference 都不能冒充完整 facts。
 
-Rehydration 是 Eviction/Compaction 之后的按需恢复层：`request_context` 是 Harness 控制动作（不属于 Core RuntimeAction，不进 state-machine 与 `#handleAction`），模型用它请求恢复本轮已公开的 sourceRef。Runtime 构建 `availableContextRefs`（本轮 `toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` refs ∪ `historyCandidates` refs/relatedRefs ∪ `run.evidence` refs ∪ 当前 Run 的 Input/Event sequence 范围 → digest），下一轮把恢复的原始内容以 `rehydratedFacts` 注入；未公开 / 跨 Run / digest 漂移统一返回 `REF_UNAVAILABLE`（不泄露对象真实性），格式错误返回 `INVALID_REF`，准入预算拒绝返回 `REHYDRATION_BUDGET_EXCEEDED`。如果 active Step 有 ref 精确匹配的 required `context_ref` Check，Runtime 在成功恢复后把 `{kind: context_ref, source: context, subjectRef, digest}` 原子写入 Run Evidence 并重算 Step Progress；它只证明恢复过程，不提升 Memory 内容的信任级别。`historyCandidates` 只从当前 Run 与显式 Fork Base 派生最多 8 条、4 KiB 的关系导航，按同 Check、Step、Tool、精确 Input、路径、错误码、Evidence/Artifact、Approval 与 Fork Base 解释排序，不自动注入候选正文。`sessionArchive` 继续提供 Input/Event 时间导航。Harness 自动恢复按 `harness_required` → `model_request` → `harness_helpful` 优先级准入，候选本身不改变该优先级。请求通过 `context.rehydrate_requested` / `context.rehydrated` 事件对进行崩溃恢复，不新增权威表；恢复事实持续到合法后续 Action 被接受。若 Provider 再次请求完整包含于当前 `rehydratedFacts` 的 ref 集合，Runtime 不重复读 Store、不新增 rehydration 事件，而是通过既有、受 retry budget 限制的 invalid-action repair 要求其消费现有事实并进入下一动作，避免静默 no-op 循环耗尽 model-call budget。最终 OpenAI-compatible Wire Projection 必须保留 `contextCheckpoint`、`rehydratedFacts`、`historyCandidates` 和 `repair`，但继续移除 `projection` 及 Observation retention/digest 等 Runtime-only provenance；任何 Eviction 重建也只能收缩 Observation，不能删除这些当前决策字段。
+Rehydration 是 Eviction/Compaction 之后的按需恢复层：Provider 只返回 `restore_context` intent，Runtime 将其编译为内部 `request_context` Harness 控制动作（不属于 Core RuntimeAction，不进 state-machine 与 `#handleAction`）。Runtime 构建 `availableContextRefs`（本轮 `toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` refs ∪ `historyCandidates` refs/relatedRefs ∪ `run.evidence` refs ∪ 当前 Run 的 Input/Event sequence 范围 → digest），下一轮把恢复的原始内容以 `rehydratedFacts` 注入；未公开 / 跨 Run / digest 漂移统一返回 `REF_UNAVAILABLE`（不泄露对象真实性），格式错误返回 `INVALID_REF`，准入预算拒绝返回 `REHYDRATION_BUDGET_EXCEEDED`。如果 active Step 有 ref 精确匹配的 required `context_ref` Check，Runtime 在成功恢复后把 `{kind: context_ref, source: context, subjectRef, digest}` 原子写入 Run Evidence 并重算 Step Progress；它只证明恢复过程，不提升 Memory 内容的信任级别。`historyCandidates` 只从当前 Run 与显式 Fork Base 派生最多 8 条、4 KiB 的关系导航，按同 Check、Step、Tool、精确 Input、路径、错误码、Evidence/Artifact、Approval 与 Fork Base 解释排序，不自动注入候选正文。`sessionArchive` 继续提供 Input/Event 时间导航。Harness 自动恢复按 `harness_required` → `model_request` → `harness_helpful` 优先级准入，候选本身不改变该优先级。请求通过 `context.rehydrate_requested` / `context.rehydrated` 事件对进行崩溃恢复，不新增权威表；恢复事实持续到合法后续 Intent 被接受。若 Provider 再次请求完整包含于当前 `rehydratedFacts` 的 ref 集合，Runtime 不重复读 Store、不新增 rehydration 或 Evidence，而记录 `context.request_reused` 并继续；同一 refs 的持久化重复次数受 retry budget 限制，超过边界以 `CONTEXT_INTENT_STALLED` 失败。最终 OpenAI-compatible Wire Projection 必须保留 `contextCheckpoint`、`rehydratedFacts`、`historyCandidates` 和 finite typed `repair.issues`，但继续移除 `projection` 及 Observation retention/digest 等 Runtime-only provenance；任何 Eviction 重建也只能收缩 Observation，不能删除这些当前决策字段。
 
 用户输入投影使用 `TaskContract.inputVersion` 作为覆盖边界：`sequence <= inputVersion` 的原文继续只保存在 `RunSnapshot.inputHistory`，Provider 读取当前 Task Contract；更大的 sequence 以 `{ sequence, text }` 进入 `ProjectedRunContext.inputHistory`，不暴露 Input ID、接收时间、Run revision、Budget、Pending Request 或 Result。`inputCount` 始终表示持久化输入总数，模型修订 Task Contract 时必须使用它，而不是可见输入数组长度。Semantic Validation 仍直接读取完整原始输入，不受 Decision Projection 裁剪影响。
 

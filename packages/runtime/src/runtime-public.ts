@@ -9,6 +9,7 @@ import type {
   RunFinalResult,
   RunInspection
 } from "./runtime-types.js";
+import { deriveFailureHandoff } from "./failure-handoff.js";
 
 export function projectRunInspection(
   snapshot: RunSnapshot,
@@ -119,13 +120,16 @@ export function projectRunFinalResult(
       summary: snapshot.result.summary,
       resultArtifact: snapshot.result.resultArtifact,
       evidence: citedEvidence,
-      error: null
+      error: null,
+      failureHandoff: null
     });
   }
   if (snapshot.status === "failed") {
     if (snapshot.lastError === null) {
       throw new Error(`Failed Run is missing its persisted error: ${snapshot.runId}`);
     }
+    const failureHandoff = deriveFailureHandoff(snapshot);
+    if (failureHandoff === null) throw new Error(`Failed Run is missing its Failure Handoff: ${snapshot.runId}`);
     return deepFreeze({
       runId: snapshot.runId,
       status: "failed",
@@ -133,13 +137,16 @@ export function projectRunFinalResult(
       summary: null,
       resultArtifact: null,
       evidence: snapshot.evidence,
-      error: snapshot.lastError
+      error: snapshot.lastError,
+      failureHandoff
     });
   }
   if (snapshot.status === "cancelled") {
     if (snapshot.lastError === null || snapshot.lastError.code !== "CANCELLED") {
       throw new Error(`Cancelled Run is missing its persisted cancellation error: ${snapshot.runId}`);
     }
+    const failureHandoff = deriveFailureHandoff(snapshot);
+    if (failureHandoff === null) throw new Error(`Cancelled Run is missing its Failure Handoff: ${snapshot.runId}`);
     return deepFreeze({
       runId: snapshot.runId,
       status: "cancelled",
@@ -147,7 +154,8 @@ export function projectRunFinalResult(
       summary: null,
       resultArtifact: null,
       evidence: snapshot.evidence,
-      error: snapshot.lastError
+      error: snapshot.lastError,
+      failureHandoff
     });
   }
   return null;
