@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
@@ -198,21 +198,32 @@ export async function runProviderBaseline(environment: Record<string, string | u
   if (environment.NEXORA_PROVIDER_BENCHMARK_CONFIRM !== String(PROVIDER_RUN_COUNT)) {
     throw new Error(`Set NEXORA_PROVIDER_BENCHMARK_CONFIRM=${PROVIDER_RUN_COUNT} to authorize the billed baseline.`);
   }
+  const reportsRoot = resolve(join(process.cwd(), "reports", PROVIDER_BENCHMARK_ID));
+  const resumeRoot = environment.NEXORA_PROVIDER_BENCHMARK_RESUME?.trim();
   const createdAt = new Date().toISOString();
-  const root = resolve(join(process.cwd(), "reports", PROVIDER_BENCHMARK_ID, createdAt.replaceAll(":", "-").replace(".", "-")));
+  const root = resumeRoot === undefined || resumeRoot.length === 0
+    ? resolve(join(reportsRoot, createdAt.replaceAll(":", "-").replace(".", "-")))
+    : resolve(resumeRoot);
+  if (root !== reportsRoot && !root.startsWith(`${reportsRoot}\\`)) {
+    throw new Error("NEXORA_PROVIDER_BENCHMARK_RESUME must name a directory inside this benchmark report root.");
+  }
   mkdirSync(root, { recursive: true });
   const manifestDigest = `sha256:${createHash("sha256").update(JSON.stringify(PROVIDER_SCENARIOS)).digest("hex")}`;
-  const reports: ProviderRunReport[] = [];
+  const resumed = readExistingAggregate(root, manifestDigest);
+  const baselineCreatedAt = resumed?.createdAt ?? createdAt;
+  const reports: ProviderRunReport[] = resumed === null ? [] : [...resumed.runs];
+  const executionSources = uniqueSources([...(resumed?.executionSources ?? []), ...(resumed === null ? [] : [resumed.source]), gitSource()]);
   const pricing = pricingFromEnv(environment);
   for (const definition of PROVIDER_SCENARIOS) {
     for (let repetition = 1; repetition <= PROVIDER_REPETITIONS; repetition += 1) {
+      if (reports.some((report) => report.scenarioId === definition.id && report.repetition === repetition)) continue;
       const report = await runOne({ definition, repetition, root, environment, ...(pricing === undefined ? {} : { pricing }) });
       reports.push(report);
-      writeAggregate(root, createdAt, manifestDigest, reports);
+      writeAggregate(root, baselineCreatedAt, manifestDigest, reports, executionSources);
       process.stdout.write(`[${reports.length}/${PROVIDER_RUN_COUNT}] ${definition.id} #${repetition}: ${report.passed ? "passed" : "failed"}\n`);
     }
   }
-  const reportPath = writeAggregate(root, createdAt, manifestDigest, reports);
+  const reportPath = writeAggregate(root, baselineCreatedAt, manifestDigest, reports, executionSources);
   if (!evaluateProviderBaseline(reports).passed) process.exitCode = 1;
   return reportPath;
 }
@@ -375,9 +386,9 @@ function latencyMetrics(observations: readonly Observation[]) {
   return Object.fromEntries((["decision", "validation", "compaction"] as const).map((phase) => [phase, distributionOrNull(observations.filter((item) => item.phase === phase).map((item) => item.latencyMs))]));
 }
 
-function writeAggregate(root: string, createdAt: string, manifestDigest: string, runs: readonly ProviderRunReport[]): string {
+function writeAggregate(root: string, createdAt: string, manifestDigest: string, runs: readonly ProviderRunReport[], executionSources: readonly ReturnType<typeof gitSource>[]): string {
   const reportPath = join(root, "report.json");
-  const report = { schemaVersion: 1, benchmarkId: PROVIDER_BENCHMARK_ID, datasetVersion: PROVIDER_DATASET_VERSION, executionMode: "real_provider", createdAt, manifestDigest, source: gitSource(), plannedRuns: PROVIDER_RUN_COUNT, completedRuns: runs.length, runs, ...evaluateProviderBaseline(runs) };
+  const report = { schemaVersion: 1, benchmarkId: PROVIDER_BENCHMARK_ID, datasetVersion: PROVIDER_DATASET_VERSION, executionMode: "real_provider", createdAt, manifestDigest, source: gitSource(), executionSources, plannedRuns: PROVIDER_RUN_COUNT, completedRuns: runs.length, runs, ...evaluateProviderBaseline(runs) };
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return reportPath;
 }
@@ -390,7 +401,7 @@ function writeDataset(id: ScenarioId, workspace: string): void {
   writeFileSync(join(workspace, "proof", "safety-target.txt"), "verified marker=SAFE-403\n", "utf8");
   writeFileSync(join(workspace, "proof", "history-target.txt"), "verified marker=SESSION-4821\n", "utf8");
   if (id === "HPE-02" || id === "HPE-05") {
-    const prefix = id.toLowerCase();
+    const prefix = id === "HPE-02" ? "hpe02" : "hpe05";
     for (let index = 0; index < 8; index += 1) {
       const sequence = String(index + 1).padStart(2, "0");
       const filler = Array.from({ length: id === "HPE-05" ? 100 : 35 }, (_, line) => `observation-${sequence}-${line + 1}: ${"stable payload ".repeat(8)}`).join("\n");
@@ -425,6 +436,7 @@ function scenario(id: ScenarioId, capability: string, expectedReadPaths: readonl
 function digest(value: string) { return `sha256:${createHash("sha256").update(value).digest("hex")}`; }
 function sum(values: readonly number[]) { return values.reduce((total, value) => total + value, 0); }
 function duplicateValues(values: readonly string[]) { const seen = new Set<string>(); const duplicates = new Set<string>(); for (const value of values) seen.has(value) ? duplicates.add(value) : seen.add(value); return [...duplicates]; }
+function uniqueSources(values: readonly ReturnType<typeof gitSource>[]) { return [...new Map(values.map((value) => [JSON.stringify(value), value])).values()]; }
 function distributionOrNull(values: readonly number[]) { if (values.length === 0) return null; const sorted = [...values].sort((a, b) => a - b); const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * q) - 1)]!; return { samples: values.length, p50: at(0.5), p95: at(0.95), max: sorted.at(-1)! }; }
 function sumNullable(values: readonly (number | null)[]) { return values.some((value) => value === null) ? null : sum(values as number[]); }
 function pricingFromEnv(environment: Record<string, string | undefined>): Pricing | undefined { const input = environment.NEXORA_CANARY_INPUT_USD_PER_MILLION_TOKENS; const output = environment.NEXORA_CANARY_OUTPUT_USD_PER_MILLION_TOKENS; if (input === undefined || output === undefined) return undefined; const pricing = { inputUsdPerMillionTokens: Number(input), outputUsdPerMillionTokens: Number(output) }; if (!Number.isFinite(pricing.inputUsdPerMillionTokens) || !Number.isFinite(pricing.outputUsdPerMillionTokens) || pricing.inputUsdPerMillionTokens < 0 || pricing.outputUsdPerMillionTokens < 0) throw new Error("Benchmark prices must be non-negative numbers."); return pricing; }
@@ -435,6 +447,22 @@ function gitSource() {
     commit: commit.status === 0 ? commit.stdout.trim() : null,
     dirty: status.status === 0 ? status.stdout.trim().length > 0 : null
   };
+}
+
+function readExistingAggregate(root: string, manifestDigest: string): null | {
+  readonly createdAt: string;
+  readonly manifestDigest: string;
+  readonly source: ReturnType<typeof gitSource>;
+  readonly executionSources?: readonly ReturnType<typeof gitSource>[];
+  readonly runs: readonly ProviderRunReport[];
+} {
+  const path = join(root, "report.json");
+  if (!existsSync(path)) return null;
+  const report = JSON.parse(readFileSync(path, "utf8")) as ReturnType<typeof readExistingAggregate>;
+  if (report === null || report.manifestDigest !== manifestDigest || !Array.isArray(report.runs)) {
+    throw new Error("Resume report is missing or has a different Provider benchmark manifest.");
+  }
+  return report;
 }
 
 const entry = process.argv[1] === undefined ? null : pathToFileURL(resolve(process.argv[1])).href;
