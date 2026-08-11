@@ -34,6 +34,12 @@ interface RuntimeProvider {
 
 `compact` 是可选方法。未实现的 Provider 会沿用 Slice 3 的 Eviction-only 行为（不写 Checkpoint）。
 
+### History Candidates Contract
+
+`ModelDecisionContext.historyCandidates` 是公开的有界导航字段：最多 8 条、合计不超过 4 KiB。每条只包含 `ref`、`relatedRefs`、`category`、`reasons`、短 `hint` 与 `occurredAt`；Runtime 从当前 Run Authority 和显式 Fork Base 按同 Check/Step/Tool/Input/path/error code、Evidence/Artifact、Approval 等关系确定性重建。它不保存或复制历史结果，也不是 Memory、搜索索引或第二 Authority。
+
+Provider 不能把候选 hint/reasons 当作原始事实。需要历史内容时，返回既有 `request_context` 请求候选 `ref` 或 `relatedRefs`；Runtime 继续执行当前作用域、digest 与 Token 预算校验，并在下一轮以 `rehydratedFacts` 交付精确内容。候选不会暴露 sibling、其他 Run 或 parent post-fork 内容，也不会触发额外模型调用。
+
 ### Repeated Compaction Contract
 
 `CompactionContext.previousCheckpoint` 在首次 Compaction 时为 `null`；后续只携带 Runtime 已针对当前 Authority 完整重验的 latest `{ digest, summary }`。生产 Adapter 会把该字段原样写入 compaction wire 的 `context.previousCheckpoint`，但不会向 Provider 暴露 `checkpointId`、`sourceDigests`、`coveredInvocations` 等 Runtime-only 持久化元数据。

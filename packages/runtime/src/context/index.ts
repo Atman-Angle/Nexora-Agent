@@ -33,6 +33,12 @@ export {
 } from "./compaction.js";
 
 export {
+  MAX_HISTORY_CANDIDATES,
+  MAX_HISTORY_CANDIDATE_BYTES,
+  projectHistoryCandidates
+} from "./history-candidates.js";
+
+export {
   MAX_REHYDRATED_TOKENS_PER_TURN,
   MAX_REHYDRATION_REFS_PER_REQUEST,
   MAX_SESSION_ARCHIVE_MILESTONES,

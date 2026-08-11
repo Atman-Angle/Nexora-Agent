@@ -27,7 +27,7 @@ Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第�
 | 精确 Rehydration | 本地完成 | Input/Event/Invocation/Evidence/Artifact 解析、预算、错误语义；102 决策组合评测五类全部精确恢复；E082/E089 | 跨 Run 仍明确不支持，后续由 Host-owned Memory 处理 |
 | Session Archive | 已实现 | 有界 range、最多 16 个代表性 Milestone、8 KiB 守卫；E087 | 仍只是导航，不应承担正常轮次的主要发现责任 |
 | Restart 与 Branch 隔离 | 本地完成 | 同一长序列 3 次 reopen、2 个 sibling Branch、跨 Branch 统一拒绝、Parent Authority 不变；E082/E083/E089 | 真实 Host 进程级长任务仍需 Canary |
-| 确定性自动候选发现 | 部分完成 | active Check、unresolved/safety failure、required Evidence、reference Observation | 文件路径、错误码、Artifact、Approval、同类失败等关系尚未形成有界候选集 |
+| 确定性自动候选发现 | 本地完成 | 最多 8 条/4 KiB；Check/Step/Tool/Input/path/error code、Evidence/Artifact、Approval、Fork Base；候选 ref 可精确恢复；E090 | 真实模型选择候选的效果仍需 Canary |
 | Memory Contract 与 Host-owned Store | 缺失 | 无 | 缺 scope identity、source provenance、lifecycle、sensitivity、CRUD 和隔离 |
 | Memory 晋升、去重、Supersession | 缺失 | 无 | 缺显式/验证后晋升与冲突生命周期 |
 | Memory 召回与 Context 注入 | 缺失 | 无 | 缺有界候选、reason、Token 上限、冲突优先级和注入标记 |
@@ -43,7 +43,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 
 1. `decision-continuity-projection`：把 Checkpoint、精确恢复事实和 Repair 送达生产 Provider Wire；状态为 `done_locally`，真实 Provider 为外部验收。
 2. `multi-cycle-context-continuity`：状态为 `done_locally`。固定评测已覆盖 102 决策、5 Compaction、3 reopen、2 sibling Branch、4 个 TaskContract/Plan 版本、20 次实际失败和五类精确 SourceRef 恢复；完整构建性能场景覆盖 1,000 Input + 1,000 Event。
-3. `deterministic-history-candidates`：用 TaskContract/Plan/Step、SourceRef、Invocation/Evidence、Tool、文件路径、错误码、Artifact、Approval、Branch、时间与作用域发现少量候选 ref；内容仍从 Authority 精确恢复。
+3. `deterministic-history-candidates`：状态为 `done_locally`。公开 `historyCandidates` 以最多 8 条/4 KiB 的确定性关系导航当前 Run 与显式 Fork Base，内容仍只从 Authority 精确恢复；10,001 Invocation 固定场景无需索引或模型调用。
 4. `host-owned-memory-contract-store`：在 Host 数据平面建立严格 MemoryRecord、稳定作用域身份、`{sourceRunId, ref, digest}` provenance、显式 create/get/list/status/delete、重启与隔离；不修改 Core Run Authority。
 5. `memory-promotion-supersession`：支持显式及验证后晋升、去重、合并、更新、Supersede、过期和重新验证；模型产物默认不自动可信。
 6. `bounded-memory-recall`：在新 Run 或 TaskContract 改变时召回少量 Memory，附 scope、source、reason、lifecycle 与硬数量/Token 上限；当前 Run Authority 永远优先。

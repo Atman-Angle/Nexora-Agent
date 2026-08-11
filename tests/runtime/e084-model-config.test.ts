@@ -338,6 +338,7 @@ function decisionContext(currentPlan: unknown): ModelDecisionContext {
     toolObservations: [],
     contextCheckpoint: null,
     rehydratedFacts: [],
+    historyCandidates: [],
     tools: []
   };
 }

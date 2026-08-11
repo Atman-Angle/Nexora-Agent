@@ -11,6 +11,7 @@ import {
   type ToolInvocation
 } from "../contracts.js";
 import type {
+  HistoryCandidate,
   JsonValue,
   RehydratedFact,
   RehydrationError,
@@ -132,6 +133,7 @@ export function buildAvailableContextRefs(args: {
   readonly checkpoint: PersistedCheckpoint | null;
   readonly store: RunStore;
   readonly artifactDir: string;
+  readonly historyCandidates?: readonly HistoryCandidate[];
   /** Fork Base inherited refs (parent facts at the fork point) the child may request. */
   readonly inheritedRefs?: Readonly<Record<string, string>>;
 }): Map<string, string> {
@@ -164,6 +166,10 @@ export function buildAvailableContextRefs(args: {
     for (const artifact of summary.relatedArtifacts) {
       refs.add(`artifact:${artifact.artifactRef}`);
     }
+  }
+  for (const candidate of args.historyCandidates ?? []) {
+    refs.add(candidate.ref);
+    for (const ref of candidate.relatedRefs) refs.add(ref);
   }
   const manifest = new Map<string, string>();
   for (const ref of refs) {

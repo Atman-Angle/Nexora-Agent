@@ -13,7 +13,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run --no-file-parallelism",
-    "test:context-quality": "vitest run tests/runtime/e049-plan-authority.test.ts tests/runtime/e080-deterministic-context-eviction.test.ts tests/runtime/e081-structured-compaction.test.ts tests/runtime/e082-rehydration.test.ts tests/runtime/e083-context-branching.test.ts tests/runtime/e087-long-sequence-context-quality.test.ts tests/runtime/e088-decision-continuity-projection.test.ts tests/runtime/e089-checkpoint-integrity.test.ts tests/runtime/e089-multi-cycle-context-continuity.test.ts tests/runtime/e089-context-build-performance.test.ts tests/runtime/system-validation-context-harness.test.ts --no-file-parallelism",
+    "test:context-quality": "vitest run tests/runtime/e049-plan-authority.test.ts tests/runtime/e080-deterministic-context-eviction.test.ts tests/runtime/e081-structured-compaction.test.ts tests/runtime/e082-rehydration.test.ts tests/runtime/e083-context-branching.test.ts tests/runtime/e087-long-sequence-context-quality.test.ts tests/runtime/e088-decision-continuity-projection.test.ts tests/runtime/e089-checkpoint-integrity.test.ts tests/runtime/e089-multi-cycle-context-continuity.test.ts tests/runtime/e089-context-build-performance.test.ts tests/runtime/e090-deterministic-history-candidates.test.ts tests/runtime/system-validation-context-harness.test.ts --no-file-parallelism",
     "nexora": "node --import tsx apps/cli/src/index.ts"
   },
   "devDependencies": {

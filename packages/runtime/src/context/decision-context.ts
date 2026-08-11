@@ -30,6 +30,7 @@ import {
   projectRelevantToolObservations,
   projectRunContext
 } from "./projection.js";
+import { projectHistoryCandidates } from "./history-candidates.js";
 import {
   admitRehydratedFacts,
   autoRehydrateForActiveStep,
@@ -95,12 +96,28 @@ export function buildDecisionContext(args: {
           : { parentRun, refs: args.forkContext!.forkBase.inheritedRefs };
       })();
 
+  const historyCandidates = projectHistoryCandidates({
+    run,
+    invocations,
+    events,
+    ...(inherited === undefined
+      ? {}
+      : {
+          inherited: {
+            parentRun: inherited.parentRun,
+            refs: inherited.refs,
+            facts: args.forkContext!.forkBase.inheritedFacts
+          }
+        })
+  });
+
   const manifest = buildAvailableContextRefs({
     run,
     observations,
     checkpoint,
     store,
     artifactDir,
+    historyCandidates,
     ...(inherited === undefined ? {} : { inheritedRefs: inherited.refs })
   });
   const hasAvailableRefs = manifest.size > 0 && run.currentPlan !== null;
@@ -195,6 +212,7 @@ export function buildDecisionContext(args: {
       : observations.filter((item) => !covered.has(item.invocationId)),
     contextCheckpoint: checkpointView,
     rehydratedFacts,
+    historyCandidates,
     sessionArchive: projectSessionArchive({ run, events }),
     repair: projectRepairContext(run),
     tools: [...tools.values()].map((tool) => ({
@@ -222,6 +240,7 @@ export function buildDecisionContext(args: {
     toolObservations: projection.toolObservations,
     contextCheckpoint: projection.contextCheckpoint,
     rehydratedFacts: projection.rehydratedFacts,
+    historyCandidates: projection.historyCandidates,
     sessionArchive: projection.sessionArchive,
     repair: projection.repair,
     tools: projection.tools

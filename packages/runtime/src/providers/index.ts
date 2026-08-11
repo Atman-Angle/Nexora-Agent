@@ -12,6 +12,8 @@ export type {
   CompactionStatement,
   CompactionSummary,
   ContextCheckpoint,
+  HistoryCandidate,
+  HistoryCandidateReason,
   JsonValue,
   ModelCallPhase,
   ModelDecisionContext,

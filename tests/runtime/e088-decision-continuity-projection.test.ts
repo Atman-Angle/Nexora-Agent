@@ -257,6 +257,7 @@ function decisionContext(options: {
       content: { sequence: 1, text: "Preserve the original constraint." },
       error: null
     }],
+    historyCandidates: [],
     ...(repair === undefined ? {} : { repair }),
     tools: []
   };

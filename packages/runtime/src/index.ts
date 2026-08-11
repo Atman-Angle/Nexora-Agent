@@ -50,6 +50,8 @@ export type {
 
 export type {
   CompactionContext,
+  HistoryCandidate,
+  HistoryCandidateReason,
   ModelDecisionContext,
   ModelCallPhase,
   ProjectedRunContext,

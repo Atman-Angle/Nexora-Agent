@@ -9,59 +9,56 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-harness
-current_feature: multi-cycle-context-continuity
+current_feature: deterministic-history-candidates
 status: done_locally
 
 feature_contract:
-  feature: multi-cycle-context-continuity
-  title: Multi-cycle Context Continuity
+  feature: deterministic-history-candidates
+  title: Deterministic History Candidates
   mode: VERIFY
   goal: >
-    Prove and preserve bounded, SourceRef-backed continuity across repeated
-    Compactions, TaskContract revisions, Runtime restarts and sibling Branches
-    in one versioned deterministic long-sequence evaluation.
+    Publish a small deterministic set of explainable historical sourceRef
+    candidates related to the current task without injecting their content.
   scope:
-    - expose only the latest fully revalidated Checkpoint summary to the next Compaction
-    - revalidate persisted summary digest, SourceRefs, derived source digests and coverage
-    - invalidate an unresolved failure after a later success satisfies the same Check
-    - fixed evaluation with 100+ decisions, 5+ Compactions, 3 restarts,
-      2 sibling Branches, 4 TaskContract versions and 20+ real Tool failures
-    - exact Input, Event, Invocation, Evidence and Artifact rehydration evidence
-    - repeatable full Context build p50, p95 and max measurements
+    - add the authorized public ModelDecisionContext.historyCandidates field
+    - derive candidates from current Run Authority and explicit Fork Base only
+    - rank same Check, Step, Tool, Input, path and error-code relations deterministically
+    - link candidate Invocation, Evidence, Artifact and Approval refs with reasons
+    - publish candidate refs to the existing request_context manifest
+    - cap the projection at 8 candidates and 4 KiB
   invariants:
     - Run/Input/Event/Invocation/Evidence/Artifact remain the only Authorities
-    - TaskContract remains current semantic Authority for covered Inputs
-    - a prior Checkpoint is only a carry-forward candidate after full Authority revalidation
-    - every replacement Summary re-resolves original SourceRefs and replaces one latest row
-    - checkpoint IDs, internal source maps and covered lists never become model SourceRefs
-    - Plan revision, source drift or resolved failure invalidates stale Checkpoint content
+    - candidates are navigation metadata and never claim historical content
+    - exact content is restored only by existing request_context scope and digest checks
+    - sibling Branch, unrelated Run and parent post-fork facts remain invisible
+    - current TaskContract, Plan, Progress and Evidence always outrank candidates
   non_goals:
-    - deterministic history candidate expansion or cross-Run Memory
-    - vector, embedding, full-text index or new persistence table
-    - Runtime merging semantic statements without Provider judgment
-    - real Provider credential use or final Canary
+    - vector, embedding, full-text index or fuzzy semantic search
+    - cross-Run Memory, Memory promotion or a new Store/table
+    - automatic candidate content injection or new model calls
+    - real Provider credential use
   acceptance:
-    - first Compaction sees null and later Compactions see the latest valid prior Summary
-    - five or more replacements preserve early valid refs without checkpoint chaining
-    - tampered or stale persisted Checkpoints never enter CompactionContext
-    - the versioned long scenario meets every declared count and isolation assertion
+    - repeated builds emit byte-identical ordering and reasons
+    - no more than 8 candidates and serialized candidates remain below 4 KiB
+    - candidates reach the production Provider Wire and survive Eviction rebuilds
+    - requesting a candidate ref restores exact Authority content on the next turn
+    - current Run and explicit Fork Base candidates are visible while all other scopes are absent
     - targeted tests, Context quality gate, system validation, full regression,
       typecheck, lint and builds pass with no relevant skips
-  risk: L3
+  risk: L2
 
 latest_verification:
   deterministic:
     red_to_green: >
-      Repeated Compaction previously omitted the latest valid Summary, persisted
-      Checkpoint derivatives were not fully revalidated, Event digests ignored
-      payload, and a multi-Check failure was cleared after only one Check passed.
-    targeted: 7-e089-tests-passed
-    context_quality_gate: 11-files-75-tests-passed
+      The Runtime previously had no relationship-based history candidate
+      projection; E090 now publishes bounded refs and restores exact content
+      only after request_context.
+    targeted: 1-file-5-tests-passed
+    related_context_branch_wire: 7-files-61-tests-passed
+    context_quality_gate: 12-files-80-tests-passed
     system_validation: 10-tests-passed
-    full_regression: 60-files-260-tests-passed-no-skips
-    long_scenario: 102-decisions-5-compactions-3-reopens-2-branches-20-failures
-    exact_rehydration: input-event-invocation-evidence-artifact-passed
-    performance: 1000-inputs-1000-events-p95-72.005ms-max-72.005ms-3478-bytes
+    full_regression: 61-files-265-tests-passed-no-skips
+    scale: 10001-invocations-8-candidates-2297-bytes-51.084ms
     typecheck: passed
     lint: passed
     runtime_package_build: passed
@@ -71,8 +68,8 @@ latest_verification:
     status: not_run
     reason: Real Provider credential use requires separate authorization.
 
-last_completed_feature: multi-cycle-context-continuity
-next_action: stop; activate deterministic-history-candidates only as a separate Feature
+last_completed_feature: deterministic-history-candidates
+next_action: stop; activate host-owned-memory-contract-store only as a separate Feature
 ```
 
 ## Update Rules

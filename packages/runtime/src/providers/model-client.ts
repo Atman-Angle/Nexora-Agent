@@ -66,6 +66,12 @@ export type ModelDecisionContext = {
   readonly contextCheckpoint: ContextCheckpoint | null;
   readonly rehydratedFacts: readonly RehydratedFact[];
   /**
+   * Bounded, deterministic navigation metadata derived from current-Run
+   * Authority and an explicit Fork Base. Candidates never contain historical
+   * fact content; request_context is still required to restore an exact ref.
+   */
+  readonly historyCandidates: readonly HistoryCandidate[];
+  /**
    * A bounded index over exact Input and Event facts already persisted for
    * this Run. The archive publishes addressable sequence ranges, not the
    * history content itself; request_context resolves individual refs back to
@@ -98,6 +104,27 @@ export type ModelDecisionContext = {
     };
     readonly evidence: { readonly produces: readonly string[] };
   }[];
+};
+
+export type HistoryCandidateReason =
+  | "same_check"
+  | "same_step"
+  | "same_tool"
+  | "same_input"
+  | "same_path"
+  | "same_error_code"
+  | "linked_evidence"
+  | "linked_artifact"
+  | "approval_history"
+  | "fork_base";
+
+export type HistoryCandidate = {
+  readonly ref: string;
+  readonly relatedRefs: readonly string[];
+  readonly category: "failure" | "evidence" | "approval" | "branch";
+  readonly reasons: readonly HistoryCandidateReason[];
+  readonly hint: string;
+  readonly occurredAt: string;
 };
 
 export type SessionArchiveRange = {

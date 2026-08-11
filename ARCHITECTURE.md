@@ -72,13 +72,15 @@ Fresh External Facts
 
 Session Archive 是同一 Run 的有界历史索引，不是第二个 Memory Store。它只发布已持久化 Input/Event 的 sequence 范围，以及最多 16 条由 Input、Plan 修订、失败、拒绝、Checkpoint 和 Branch Event 确定性派生的 Milestone；首个目标 Input、最新 Input 和每种已出现的 Event 类别各保留一个代表，其余位置再按既有安全优先级与时间填充，避免重复失败淹没其他导航入口。标签最长 180 字符，只用于导航。模型可对范围内的 `input:<sequence>` / `event:<sequence>` 使用既有 `request_context`，Runtime 再从 Run/Input/Event Authority 精确恢复原始内容。删除 Archive 投影不影响任何事实，下一轮可从 Store 重建。
 
+`historyCandidates` 是与当前任务相关的有界关系导航，不是全文、向量或 Memory 检索。Runtime 只从当前 Run Authority 与显式 Fork Base 确定性派生最多 8 条、合计不超过 4 KiB 的候选，关系包括同 Check、Step、Tool、精确 Input、路径、错误码，以及已关联的 Evidence、Artifact、Approval 和 Fork Base。每条只携带 `ref`、少量 `relatedRefs`、category、reasons、hint 与 occurredAt，不复制历史事实；模型必须通过 `request_context` 才能读取原始内容。候选 ref 进入同一 digest/作用域 manifest，sibling、其他 Run 和 parent post-fork 内容不可见。删除候选投影不会删除事实，也不新增表、索引、模型调用或 Authority。
+
 每次 decision/validation 调用前，Runtime 由 Provider 自己声明的模型容量、输出预留、软阈值和 Token Meter 评估投影。硬上限拒绝发生在 Provider 调用前，软上限允许调用但进入持久化 Model Call Ledger；Provider 返回 usage 时同时保留实测值。Ledger 只拥有模型调用与计费审计，不拥有任务事实、Plan、Evidence 或 Run Status。
 
 Structured Compaction 是 Eviction 之后的第二层收缩：当 Eviction 耗尽且 Decision 上下文仍超过 Token 预算时，Runtime 调用 Provider 生成结构化 Summary（目标/约束、已完成工作、关键决策、未解决问题、相关 Artifact），每条陈述必须携带可解析到 Input、Invocation、Evidence、Event 或 Artifact 的 sourceRefs。首次 Compaction 的 `previousCheckpoint` 为 `null`；重复 Compaction 只向 Provider 发布 latest Checkpoint 的 `{ digest, summary }`，且该 Checkpoint 已先针对当前 Authority 完整重验。Checkpoint ID、Source Digest map 与 covered Invocation list 不进入 Provider Contract。Provider 必须返回一份完整替代 Summary，而不是增量或嵌套 Summary；Checkpoint ID/digest 不能作为 SourceRef，陈述仍必须追溯到原始 Authority ref。
 
 新 Summary 写入前必须通过 Schema、引用存在性、Run 归属、Source Digest 与 section 一致性校验。后续复用 Checkpoint 时，Runtime 还会重新计算 canonical Summary digest，重新解析并验证全部原始 SourceRef，精确比较重新派生的 Source Digest map 和 covered Invocation multiset；任一项不一致就使缓存失效。`unresolvedIssues` 中的 failed/unknown Invocation 如果已有同 Plan、同 Step 且覆盖同一 Check 的后续成功 Invocation，就不再是 unresolved，不能被下一轮 Summary 继续携带。验证通过后，Store 在一个事务中删除旧行并写入唯一新行；失败或拒绝的 Summary 不替换现有有效缓存，决策沿用安全回退路径。Checkpoint 始终是 Prompt 派生缓存，不拥有 TaskContract、Plan、Invocation、Evidence、Run Status 或 Completion Authority；删除全部 Checkpoint 后 Runtime 必须从 Authority 确定性重建 Decision Projection。
 
-Provider-neutral Context 到生产 Wire 还有最后一层有界投影。OpenAI-compatible Adapter 必须把 `contextCheckpoint`、`rehydratedFacts` 和当前 `repair` 交给 Decision 模型，同时继续移除 `projection` digest 元数据和 Tool Observation 的 Runtime-only provenance。Eviction 只允许改变 `toolObservations` 的 payload retention；重建 Context 时必须原样保留 Checkpoint、Rehydrated Facts、Session Archive 和 Repair，并把这些实际可见字段纳入新的 projection digest。该投影不保存 Provider transcript，也不产生第二套 Context 状态。
+Provider-neutral Context 到生产 Wire 还有最后一层有界投影。OpenAI-compatible Adapter 必须把 `contextCheckpoint`、`rehydratedFacts`、`historyCandidates` 和当前 `repair` 交给 Decision 模型，同时继续移除 `projection` digest 元数据和 Tool Observation 的 Runtime-only provenance。Eviction 只允许改变 `toolObservations` 的 payload retention；重建 Context 时必须原样保留 Checkpoint、Rehydrated Facts、History Candidates、Session Archive 和 Repair，并把这些实际可见字段纳入新的 projection digest。该投影不保存 Provider transcript，也不产生第二套 Context 状态。
 
 ### Action Runtime
 
