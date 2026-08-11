@@ -21,7 +21,11 @@ import type {
 } from "../providers/model-client.js";
 import { ArtifactStore } from "../store/artifacts.js";
 import type { RunStore } from "../store/run-store.js";
-import { resolveSourceRef, type PersistedCheckpoint } from "./compaction.js";
+import {
+  digestRunEvent,
+  resolveSourceRef,
+  type PersistedCheckpoint
+} from "./compaction.js";
 import { buildCompactionAuthority } from "./decision-context.js";
 
 export const RequestContextActionSchema = z.object({
@@ -175,7 +179,7 @@ export function buildAvailableContextRefs(args: {
   for (const event of publishedSessionArchiveEvents(authority.events)) {
     manifest.set(
       `event:${event.sequence}`,
-      digestText(`${event.type}:${event.occurredAt}`)
+      digestRunEvent(event)
     );
   }
   if (args.inheritedRefs !== undefined) {

@@ -82,6 +82,12 @@ export async function compactDecisionContext(
     workspace: services.workspace,
     run: context.run,
     toolObservations: context.toolObservations,
+    previousCheckpoint: context.contextCheckpoint === null
+      ? null
+      : {
+          digest: context.contextCheckpoint.digest,
+          summary: context.contextCheckpoint.summary
+        },
     budgetDecision: assessment.decision === "within_budget"
       ? "soft_limit_exceeded"
       : assessment.decision

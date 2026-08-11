@@ -196,6 +196,16 @@ export type CompactionContext = {
   readonly workspace: string;
   readonly run: ProjectedRunContext;
   readonly toolObservations: readonly ToolObservation[];
+  /**
+   * The latest Checkpoint after full revalidation against current Authority.
+   * It is a bounded carry-forward candidate only: the Provider must emit a
+   * complete replacement Summary whose original SourceRefs are revalidated.
+   * Runtime-only checkpoint identity and derived coverage maps stay hidden.
+   */
+  readonly previousCheckpoint: {
+    readonly digest: string;
+    readonly summary: CompactionSummary;
+  } | null;
   readonly budgetDecision: "soft_limit_exceeded" | "hard_limit_exceeded";
 };
 

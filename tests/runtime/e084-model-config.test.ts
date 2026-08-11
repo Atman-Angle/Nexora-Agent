@@ -54,6 +54,62 @@ describe("E084 Model / Provider configuration", () => {
     expect(bodies[2]).toEqual(expect.objectContaining({ temperature: 0.7, max_tokens: 4_096 }));
   });
 
+  it("projects bounded rolling Checkpoint context into the real compaction wire request", async () => {
+    const seen = captureBodies();
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      fetch: seen.fetch
+    });
+    const operation = { signal: new AbortController().signal };
+    const previousCheckpoint: NonNullable<CompactionContext["previousCheckpoint"]> = {
+      digest: `sha256:${"a".repeat(64)}`,
+      summary: {
+        schemaVersion: 1,
+        goal: { statement: "Preserve the original goal.", sourceRefs: ["input:1"] },
+        constraints: [{ statement: "Keep the verified constraint.", sourceRefs: ["input:1"] }],
+        completedWork: [],
+        keyDecisions: [{ statement: "Retain the earlier decision.", sourceRefs: ["event:2"] }],
+        unresolvedIssues: [],
+        relatedArtifacts: []
+      }
+    };
+
+    await provider.compact!(compactionContext(), operation);
+    await provider.compact!(compactionContext(previousCheckpoint), operation);
+
+    const requests = seen.bodies.map((body) => {
+      const messages = body.messages as Array<{ readonly role: string; readonly content: string }>;
+      return {
+        system: messages[0]!.content,
+        payload: JSON.parse(messages[1]!.content) as {
+          readonly mode: string;
+          readonly context: CompactionContext;
+        }
+      };
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]!.payload).toMatchObject({
+      mode: "compact",
+      context: { previousCheckpoint: null }
+    });
+    expect(requests[1]!.payload).toMatchObject({
+      mode: "compact",
+      context: { previousCheckpoint }
+    });
+    expect(requests[1]!.payload.context.previousCheckpoint).toEqual(previousCheckpoint);
+    expect(JSON.stringify(requests[1]!.payload.context.previousCheckpoint)).not.toMatch(
+      /checkpointId|sourceDigests|coveredInvocations/
+    );
+
+    const system = requests[1]!.system;
+    expect(system).toContain("one complete replacement summary");
+    expect(system).toContain("Never cite a checkpoint ID or digest as a SourceRef");
+    expect(system).toContain("never nest a previous Summary");
+    expect(system).toContain("never Authority");
+  });
+
   it("applies the configured timeout to the transport", async () => {
     const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init?.signal?.reason));
@@ -294,7 +350,9 @@ function validationContext(): SemanticValidationContext {
   };
 }
 
-function compactionContext(): CompactionContext {
+function compactionContext(
+  previousCheckpoint: CompactionContext["previousCheckpoint"] = null
+): CompactionContext {
   return {
     workspace: "D:\\fixture",
     run: {
@@ -308,6 +366,7 @@ function compactionContext(): CompactionContext {
       lastError: null
     },
     toolObservations: [],
+    previousCheckpoint,
     budgetDecision: "soft_limit_exceeded"
   };
 }

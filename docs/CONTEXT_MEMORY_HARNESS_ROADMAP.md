@@ -21,12 +21,12 @@ Memory、Checkpoint、Session Archive、全文或向量索引都不能成为第�
 | 能力 | 当前状态 | 已有证据 | 达到成品前的缺口 |
 |---|---|---|---|
 | Authority Store 与当前事实投影 | 已实现 | Input/Event/Invocation/Evidence/Artifact、TaskContract、Plan、Progress 均从 Store 投影 | 继续守住单一 Authority |
-| Token 预算与确定性 Eviction | 已实现 | Provider-aware soft/hard limit；full → fragment/reference/drop；E080 | 尚缺完整 Context 构建的版本化 p50/p95/max |
-| Structured Compaction / Checkpoint | 部分完成 | Schema、SourceRef、Digest、持久化、失效、单次恢复；E081 | 尚未证明 5+ 次滚动 Compaction 不丢旧的有效连续性 |
+| Token 预算与确定性 Eviction | 已实现 | Provider-aware soft/hard limit；full → fragment/reference/drop；E080；1,000 Input + 1,000 Event 完整构建指标；E089 | 真实工作负载分布仍需 Canary |
+| Structured Compaction / Checkpoint | 本地完成 | 完整替代 Summary、latest Checkpoint 全量重验、5 次滚动 Compaction、唯一持久化行；E081/E089 | 真实模型遵守完整替代 Contract 仍需 Canary |
 | OpenAI-compatible 连续性投影 | 本地完成 | E088 捕获真实 HTTP body，覆盖 Checkpoint、Rehydrated Facts、Repair | 真实模型效果仍需 Canary |
-| 精确 Rehydration | 部分完成 | Input/Event/Invocation/Evidence/Artifact 解析、预算、错误语义、Event 恢复；E082 | 需要纳入 100+ 决策的组合评测 |
+| 精确 Rehydration | 本地完成 | Input/Event/Invocation/Evidence/Artifact 解析、预算、错误语义；102 决策组合评测五类全部精确恢复；E082/E089 | 跨 Run 仍明确不支持，后续由 Host-owned Memory 处理 |
 | Session Archive | 已实现 | 有界 range、最多 16 个代表性 Milestone、8 KiB 守卫；E087 | 仍只是导航，不应承担正常轮次的主要发现责任 |
-| Restart 与 Branch 隔离 | 部分完成 | 单次恢复、Fork Base、跨 Branch 拒绝；E082/E083 | 尚未在同一长序列中覆盖 3 Restart、2+ Branch |
+| Restart 与 Branch 隔离 | 本地完成 | 同一长序列 3 次 reopen、2 个 sibling Branch、跨 Branch 统一拒绝、Parent Authority 不变；E082/E083/E089 | 真实 Host 进程级长任务仍需 Canary |
 | 确定性自动候选发现 | 部分完成 | active Check、unresolved/safety failure、required Evidence、reference Observation | 文件路径、错误码、Artifact、Approval、同类失败等关系尚未形成有界候选集 |
 | Memory Contract 与 Host-owned Store | 缺失 | 无 | 缺 scope identity、source provenance、lifecycle、sensitivity、CRUD 和隔离 |
 | Memory 晋升、去重、Supersession | 缺失 | 无 | 缺显式/验证后晋升与冲突生命周期 |
@@ -42,7 +42,7 @@ Session Archive、Checkpoint 和 Branch Fork Base 都不是 Memory：前两者�
 每次只在 `DEVELOPMENT.md` 激活一个 Feature，先 RED，再做最小垂直切片，独立提交后停止。
 
 1. `decision-continuity-projection`：把 Checkpoint、精确恢复事实和 Repair 送达生产 Provider Wire；状态为 `done_locally`，真实 Provider 为外部验收。
-2. `multi-cycle-context-continuity`：建立 100+ 决策、5+ Compaction、3 Restart、2+ Branch、多次 TaskContract 修订、20+ 实际失败和精确 SourceRef 恢复的固定评测；只修复评测暴露的滚动连续性缺口。
+2. `multi-cycle-context-continuity`：状态为 `done_locally`。固定评测已覆盖 102 决策、5 Compaction、3 reopen、2 sibling Branch、4 个 TaskContract/Plan 版本、20 次实际失败和五类精确 SourceRef 恢复；完整构建性能场景覆盖 1,000 Input + 1,000 Event。
 3. `deterministic-history-candidates`：用 TaskContract/Plan/Step、SourceRef、Invocation/Evidence、Tool、文件路径、错误码、Artifact、Approval、Branch、时间与作用域发现少量候选 ref；内容仍从 Authority 精确恢复。
 4. `host-owned-memory-contract-store`：在 Host 数据平面建立严格 MemoryRecord、稳定作用域身份、`{sourceRunId, ref, digest}` provenance、显式 create/get/list/status/delete、重启与隔离；不修改 Core Run Authority。
 5. `memory-promotion-supersession`：支持显式及验证后晋升、去重、合并、更新、Supersede、过期和重新验证；模型产物默认不自动可信。

@@ -34,6 +34,14 @@ interface RuntimeProvider {
 
 `compact` 是可选方法。未实现的 Provider 会沿用 Slice 3 的 Eviction-only 行为（不写 Checkpoint）。
 
+### Repeated Compaction Contract
+
+`CompactionContext.previousCheckpoint` 在首次 Compaction 时为 `null`；后续只携带 Runtime 已针对当前 Authority 完整重验的 latest `{ digest, summary }`。生产 Adapter 会把该字段原样写入 compaction wire 的 `context.previousCheckpoint`，但不会向 Provider 暴露 `checkpointId`、`sourceDigests`、`coveredInvocations` 等 Runtime-only 持久化元数据。
+
+Provider 必须从 `toolObservations + previousCheckpoint + run` 生成一份**完整替代** `CompactionSummary`，不能返回增量、嵌套旧 Summary，也不能把 Checkpoint ID 或 digest 当作 SourceRef。仍有效的陈述继续引用原始 Input/Event/Invocation/Evidence/Artifact refs；已由同 Plan/Step/Check 的后续成功 Invocation 解决的失败必须从 `unresolvedIssues` 淘汰。`previousCheckpoint` 只是有界 carry-forward candidate，不是 Authority。
+
+Provider 输出不会直接覆盖 Context。Runtime 会重新校验 Summary Schema、原始 SourceRef、Run 归属和 section 语义，并重新派生 canonical Summary digest、完整 Source Digest map 与 covered Invocation multiset；只有全部通过才原子替换 `context_checkpoints` 的单行缓存。Provider 不拥有 Checkpoint 生命周期、Run、Plan、Evidence 或完成判断。
+
 ## 设计约束
 
 - 这个文件夹**不依赖** Runtime 核心（`runtime.ts`、`run-store.ts`、`contracts.ts` 中的运行态实现）。只允许依赖 `contracts.ts` 的权威 schema 和 `runtime-error.ts`。

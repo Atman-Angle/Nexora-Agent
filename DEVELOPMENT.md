@@ -9,37 +9,42 @@ workspace: D:\Nexora-1.1
 branch: context-episodic-recall
 
 current_capability: context-harness
-current_feature: decision-continuity-projection
+current_feature: multi-cycle-context-continuity
 status: done_locally
 
 feature_contract:
-  feature: decision-continuity-projection
-  title: Decision Continuity Projection
-  mode: DIRECT
+  feature: multi-cycle-context-continuity
+  title: Multi-cycle Context Continuity
+  mode: VERIFY
   goal: >
-    Ensure an active Context Checkpoint, exact rehydrated facts and current
-    Repair guidance survive every Context projection layer and reach the real
-    OpenAI-compatible decision request.
+    Prove and preserve bounded, SourceRef-backed continuity across repeated
+    Compactions, TaskContract revisions, Runtime restarts and sibling Branches
+    in one versioned deterministic long-sequence evaluation.
   scope:
-    - project active contextCheckpoint and rehydratedFacts onto the OpenAI-compatible wire
-    - preserve repair while deterministic Eviction rebuilds ModelDecisionContext
-    - prove both paths with direct deterministic request and contraction tests
+    - expose only the latest fully revalidated Checkpoint summary to the next Compaction
+    - revalidate persisted summary digest, SourceRefs, derived source digests and coverage
+    - invalidate an unresolved failure after a later success satisfies the same Check
+    - fixed evaluation with 100+ decisions, 5+ Compactions, 3 restarts,
+      2 sibling Branches, 4 TaskContract versions and 20+ real Tool failures
+    - exact Input, Event, Invocation, Evidence and Artifact rehydration evidence
+    - repeatable full Context build p50, p95 and max measurements
   invariants:
     - Run/Input/Event/Invocation/Evidence/Artifact remain the only Authorities
     - TaskContract remains current semantic Authority for covered Inputs
-    - Checkpoint and rehydratedFacts remain bounded derived Context, never Authority
-    - wire projection omits Runtime-only provenance but preserves decision-bearing facts
-    - Eviction changes only Tool Observation payload retention
+    - a prior Checkpoint is only a carry-forward candidate after full Authority revalidation
+    - every replacement Summary re-resolves original SourceRefs and replaces one latest row
+    - checkpoint IDs, internal source maps and covered lists never become model SourceRefs
+    - Plan revision, source drift or resolved failure invalidates stale Checkpoint content
   non_goals:
-    - Memory Contract, Store, lifecycle, promotion, recall or Context injection
-    - automatic historical candidate discovery, vector search or embedding
-    - persistence migration, new model call, dependency or public Contract change
-    - real Provider credential use or final long-sequence Canary
+    - deterministic history candidate expansion or cross-Run Memory
+    - vector, embedding, full-text index or new persistence table
+    - Runtime merging semantic statements without Provider judgment
+    - real Provider credential use or final Canary
   acceptance:
-    - captured OpenAI-compatible HTTP user message contains the active Checkpoint
-    - captured OpenAI-compatible HTTP user message contains exact rehydrated facts
-    - Runtime-only projection provenance remains absent from the wire
-    - every deterministic Eviction contraction preserves current Repair and hashes it
+    - first Compaction sees null and later Compactions see the latest valid prior Summary
+    - five or more replacements preserve early valid refs without checkpoint chaining
+    - tampered or stale persisted Checkpoints never enter CompactionContext
+    - the versioned long scenario meets every declared count and isolation assertion
     - targeted tests, Context quality gate, system validation, full regression,
       typecheck, lint and builds pass with no relevant skips
   risk: L3
@@ -47,15 +52,16 @@ feature_contract:
 latest_verification:
   deterministic:
     red_to_green: >
-      The captured OpenAI-compatible wire omitted contextCheckpoint and
-      rehydratedFacts, while the first Eviction rebuild dropped repair; E088
-      now proves all three survive the production projection path.
-    targeted: 3-files-21-tests-passed
-    context_quality_gate: 8-files-68-tests-passed
+      Repeated Compaction previously omitted the latest valid Summary, persisted
+      Checkpoint derivatives were not fully revalidated, Event digests ignored
+      payload, and a multi-Check failure was cleared after only one Check passed.
+    targeted: 7-e089-tests-passed
+    context_quality_gate: 11-files-75-tests-passed
     system_validation: 10-tests-passed
-    full_regression: 57-files-252-tests-passed-no-skips
-    wire_projection: checkpoint-and-exact-rehydrated-fact-present
-    eviction_repair: 2-of-2-contraction-rebuilds-preserved-and-digested
+    full_regression: 60-files-260-tests-passed-no-skips
+    long_scenario: 102-decisions-5-compactions-3-reopens-2-branches-20-failures
+    exact_rehydration: input-event-invocation-evidence-artifact-passed
+    performance: 1000-inputs-1000-events-p95-72.005ms-max-72.005ms-3478-bytes
     typecheck: passed
     lint: passed
     runtime_package_build: passed
@@ -65,8 +71,8 @@ latest_verification:
     status: not_run
     reason: Real Provider credential use requires separate authorization.
 
-last_completed_feature: decision-continuity-projection
-next_action: stop; activate multi-cycle-context-continuity only as a separate Feature
+last_completed_feature: multi-cycle-context-continuity
+next_action: stop; activate deterministic-history-candidates only as a separate Feature
 ```
 
 ## Update Rules
