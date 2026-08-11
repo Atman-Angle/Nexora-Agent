@@ -54,7 +54,8 @@
 
 ## 后续修复状态
 
-- `448e73b`：恢复事实持续到合法后续 Action，重复 ref 请求幂等，非法 Action 和 validation repair 不再提前消费事实；
-- 当前 `context-ref-acceptance-evidence` Feature：新增 Run-owned `context_ref` Check/Evidence，Tool Evidence 不能替代明确要求的 Memory/History restoration；
+- `448e73b`：恢复事实持续到合法后续 Action，重复 ref 不触发第二次 Store 读取，非法 Action 和 validation repair 不再提前消费事实；
+- `7b67077`：新增 Run-owned `context_ref` Check/Evidence，Tool Evidence 不能替代明确要求的 Memory/History restoration；
+- 当前 `provider-decision-validation-convergence` Feature：已恢复的重复 ref 请求不再成为静默 no-op，而是进入有界 invalid-action repair；validation repair 明确要求保留 Evidence、消费当前可见事实并补齐 summary 的具体结果；
 - 尚未形成新的真实 Provider 对比数据；E101 失败基线保持不变，后续只能在 versioned dataset 和新费用授权下复测；
-- Token estimator 校准、validation summary 收敛和可证明触发 Eviction 的 Benchmark v2 仍是独立后续 Feature。
+- Token estimator 校准和可证明触发 Eviction 的 Benchmark v2 仍是独立后续 Feature；validation summary 的真实 Provider 改善需要新的费用授权后复测。

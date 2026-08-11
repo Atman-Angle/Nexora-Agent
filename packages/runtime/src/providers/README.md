@@ -44,6 +44,8 @@ Provider 不能把候选 hint/reasons 当作原始事实。需要历史内容时
 
 当用户明确要求恢复 Memory 或 History 时，Provider 必须在 Plan 中使用 required `context_ref` Acceptance Check，并填写本轮发布的精确 ref。Runtime 只有在正常 scope/lifecycle/digest 校验与原文恢复成功后才生成 `source=context` 的 Run Evidence；该 Evidence 只证明 ref 被恢复，不证明 Memory statement 为真，也不授予任何 Tool、Approval 或 Completion 权限。Semantic validation 只接收 ref/digest 恢复证明，不接收 Memory statement 作为指令。
 
+Semantic validation 拒绝 summary 后，Decision Provider 应保留既有 Evidence，依据 `repair.issues` 直接补齐遗漏的用户结果并重新 `propose_finish`。已经出现在 `rehydratedFacts` 的 ref 不得再次请求；重复请求会进入既有 invalid-action repair budget，而不会再次读取 Store。`evidence:<id>` 恢复的是 Evidence 元数据，不是底层 Tool payload；只有 payload 确实不在当前投影时，才继续请求其中发布的 `invocation:` 或 `artifact:` ref。
+
 ### Repeated Compaction Contract
 
 `CompactionContext.previousCheckpoint` 在首次 Compaction 时为 `null`；后续只携带 Runtime 已针对当前 Authority 完整重验的 latest `{ digest, summary }`。生产 Adapter 会把该字段原样写入 compaction wire 的 `context.previousCheckpoint`，但不会向 Provider 暴露 `checkpointId`、`sourceDigests`、`coveredInvocations` 等 Runtime-only 持久化元数据。

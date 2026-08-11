@@ -147,6 +147,12 @@ describe("E050 Provider Action Contract convergence", () => {
     expect(revisionExample).toEqual(expect.objectContaining({ basedOnVersion: 1 }));
     expect(revisionExample).not.toHaveProperty("taskContract");
     expect(requests[0]?.messages[0]?.content).not.toContain("filesystem.patch {path,expectedDigest");
+    expect(requests[0]?.messages[0]?.content).toContain(
+      "For validation_failed, keep the cited Evidence"
+    );
+    expect(requests[0]?.messages[0]?.content).toContain(
+      "An evidence:<id> fact restores Evidence metadata, not the underlying Tool payload"
+    );
 
     const rejected = view.events.find((event) => event.type === "action.rejected");
     expect(rejected).toBeDefined();

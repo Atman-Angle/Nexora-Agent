@@ -79,7 +79,9 @@ describe("E102 rehydration action continuity", () => {
       expect(absentAfterConsumption).toBe(true);
       expect(view.events.filter((event) => event.type === "context.rehydrate_requested")).toHaveLength(1);
       expect(view.events.filter((event) => event.type === "context.rehydrated")).toHaveLength(1);
-      expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
+      const rejected = view.events.filter((event) => event.type === "action.rejected");
+      expect(rejected).toHaveLength(2);
+      expect(rejected.some((event) => JSON.stringify(event.payload).includes("already restored"))).toBe(true);
       expect(view.toolInvocations).toHaveLength(1);
       expect(view.snapshot.evidence).toHaveLength(1);
     } finally {

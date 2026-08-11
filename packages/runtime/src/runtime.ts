@@ -1277,10 +1277,18 @@ export class RuntimeEngine {
     signal.throwIfAborted();
     const pending = this.#rehydrationRequests.get(run.runId);
     if (pending !== undefined && action.refs.every((ref) => pending.refs.includes(ref))) {
-      // The exact facts are already present in this decision context. Keep the
-      // pending request alive without another event or a second Store read so
-      // the next decision can repair a duplicate request idempotently.
-      return run;
+      // The exact facts are already present in this decision context. Route
+      // the no-op through the existing bounded repair path: this performs no
+      // second Store read or rehydration write, while preventing an unchanged
+      // request_context action from consuming the entire model-call budget.
+      return this.#rejectAction(
+        run,
+        new ActionRejectedError(
+          "Every requested Context ref is already restored in rehydratedFacts. Use those facts and return the next Plan, Tool, input, or propose_finish action."
+        ),
+        action,
+        observer
+      );
     }
     // Every requested ref is queued; the next decision turn resolves each one
     // against that turn's manifest (ref already published + digest matches) and
