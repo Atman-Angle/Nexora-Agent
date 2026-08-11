@@ -134,23 +134,11 @@ export function buildDecisionContext(args: {
     memoryCandidates,
     ...(inherited === undefined ? {} : { inheritedRefs: inherited.refs })
   });
-  const hasAvailableRefs = manifest.size > 0;
-  const intents = allowedProviderIntents(run, hasAvailableRefs);
 
   const autoCandidates = autoRehydrateForActiveStep({ run, observations, invocations });
+  const automaticRefs = automaticPublishedRefs(run, manifest, memoryCandidates);
   const modelRequests = args.rehydrateRequests ?? [];
   const candidates: RehydratedFact[] = [];
-  for (const ref of autoCandidates.required) {
-    candidates.push(resolveRehydratedFact({
-      ref,
-      run,
-      store,
-      artifactDir,
-      manifest,
-      origin: "harness_required",
-      ...(inherited === undefined ? {} : { inherited })
-    }));
-  }
   for (const ref of modelRequests) {
     if (!candidates.some((candidate) => candidate.ref === ref)) {
       candidates.push(resolveRehydratedFact({
@@ -167,6 +155,21 @@ export function buildDecisionContext(args: {
         ...(inherited === undefined ? {} : { inherited })
       }));
     }
+  }
+  for (const ref of [...automaticRefs, ...autoCandidates.required]) {
+    if (candidates.some((candidate) => candidate.ref === ref)) continue;
+    const memoryDigest = memoryCandidates.find((candidate) => candidate.ref === ref)?.digest;
+    candidates.push(resolveRehydratedFact({
+      ref,
+      run,
+      store,
+      artifactDir,
+      manifest,
+      origin: "harness_required",
+      ...(memoryDigest === undefined ? {} : { expectedMemoryDigest: memoryDigest }),
+      ...(args.memory === undefined ? {} : { memory: args.memory, asOf: args.now ?? new Date().toISOString() }),
+      ...(inherited === undefined ? {} : { inherited })
+    }));
   }
   for (const ref of autoCandidates.helpful) {
     if (!candidates.some((candidate) => candidate.ref === ref)) {
@@ -191,6 +194,7 @@ export function buildDecisionContext(args: {
   const injectedRehydratedRefs = rehydratedFacts
     .filter((fact) => fact.error === null)
     .map((fact) => fact.ref);
+  const intents = allowedProviderIntents(run, manifest.size > 0);
 
   const includeTaskContract = run.currentPlan === null || run.taskContract === null
     || run.taskContract.inputVersion < run.inputHistory.length;
@@ -249,6 +253,20 @@ export function buildDecisionContext(args: {
     tools: projection.tools
   });
   return { context, injectedRehydratedRefs };
+}
+
+function automaticPublishedRefs(
+  run: RunSnapshot,
+  manifest: ReadonlyMap<string, string>,
+  memoryCandidates: readonly ModelDecisionContext["memoryCandidates"][number][]
+): string[] {
+  const latestInput = run.inputHistory.at(-1)?.text ?? "";
+  const explicit = [...manifest.keys()].filter((ref) => latestInput.includes(ref));
+  const highestRankedMemory = memoryCandidates[0]?.ref;
+  return [...new Set([
+    ...(highestRankedMemory === undefined ? [] : [highestRankedMemory]),
+    ...explicit
+  ])];
 }
 
 function projectRepairContext(run: RunSnapshot): RepairContext | null {

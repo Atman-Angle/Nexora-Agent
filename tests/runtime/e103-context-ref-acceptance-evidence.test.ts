@@ -83,7 +83,7 @@ describe("E103 context_ref Acceptance Evidence", () => {
     }
   });
 
-  it("cannot complete a required context_ref Check with Tool Evidence alone", async () => {
+  it("auto-restores a published required context_ref before accepting Tool Evidence", async () => {
     const fixture = createFixture();
     const provider = new ScriptedRuntimeProvider([
       plan(),
@@ -94,12 +94,7 @@ describe("E103 context_ref Acceptance Evidence", () => {
         toolName: "filesystem.read",
         input: { path: "proof.txt" }
       },
-      (context: ModelDecisionContext) => ({
-        type: "propose_finish",
-        summary: "The file marker is sufficient.",
-        evidenceIds: context.run.evidence.map((item) => item.id)
-      }),
-      { type: "request_input", question: "Stop after the rejected finish.", reason: "Contract test." }
+      finishFromEvidence("The required Memory and file marker are both verified.")
     ]);
     const runtime = createRuntime({
       workspace: fixture.workspace,
@@ -114,15 +109,18 @@ describe("E103 context_ref Acceptance Evidence", () => {
       });
       const view = await runtime.inspect(result.runId);
 
-      expect(result).toMatchObject({ status: "waiting", stopReason: "INPUT_REQUIRED" });
-      expect(view.snapshot.evidence).toEqual([
-        expect.objectContaining({ kind: "tool_result" })
-      ]);
+      expect(result).toMatchObject({ status: "succeeded", stopReason: "VALIDATED" });
+      expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["context_ref", "tool_result"]);
       expect(view.snapshot.stepProgress).toEqual([
-        { stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id, status: "active", evidenceIds: [] }
+        expect.objectContaining({
+          stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+          status: "completed",
+          evidenceIds: expect.arrayContaining(view.snapshot.evidence.map((item) => item.id))
+        })
       ]);
-      expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
-      expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
+      expect(view.events.filter((event) => event.type === "context.evidence_recorded")).toHaveLength(1);
+      expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+      expect(view.events.some((event) => event.type === "run.succeeded")).toBe(true);
     } finally {
       await runtime.close();
       fixture.memoryStore.close();

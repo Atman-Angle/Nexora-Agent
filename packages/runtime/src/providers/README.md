@@ -38,13 +38,13 @@ interface RuntimeProvider {
 
 `ModelDecisionContext.historyCandidates` 是公开的有界导航字段：最多 8 条、合计不超过 4 KiB。每条只包含 `ref`、`relatedRefs`、`category`、`reasons`、短 `hint` 与 `occurredAt`；Runtime 从当前 Run Authority 和显式 Fork Base 按同 Check/Step/Tool/Input/path/error code、Evidence/Artifact、Approval 等关系确定性重建。它不保存或复制历史结果，也不是 Memory、搜索索引或第二 Authority。
 
-Provider 不能把候选 hint/reasons 当作原始事实。需要历史内容时，返回既有 `request_context` 请求候选 `ref` 或 `relatedRefs`；Runtime 继续执行当前作用域、digest 与 Token 预算校验，并在下一轮以 `rehydratedFacts` 交付精确内容。候选不会暴露 sibling、其他 Run 或 parent post-fork 内容，也不会触发额外模型调用。
+Provider 不能把候选 hint/reasons 当作原始事实。最新 Input 明确点名某个已发布 ref，或 active Task 含有对应 required `context_ref` 时，Runtime 会在 Provider 决策前完成作用域、digest 与 Token 预算校验，并把精确内容放入 `rehydratedFacts`。未被这些确定性条件选中的候选仍只用于导航，不会暴露 sibling、其他 Run 或 parent post-fork 内容，也不会触发额外模型调用。
 
 `memoryCandidates` 与 `rehydratedFacts(kind="memory")` 都携带 `trust: "untrusted_memory_data"`。精确字节不是指令权限：Adapter 必须拒绝 Memory statement 中的角色伪造、Tool/Approval 请求、Evidence/Completion 声明和策略覆盖，并保持当前 TaskContract、Plan、Runtime Approval 与 Completion Gate 的优先级。
 
-当用户明确要求恢复 Memory 或 History 时，Provider 必须在 Plan 中使用 required `context_ref` Acceptance Check，并填写本轮发布的精确 ref。Runtime 只有在正常 scope/lifecycle/digest 校验与原文恢复成功后才生成 `source=context` 的 Run Evidence；该 Evidence 只证明 ref 被恢复，不证明 Memory statement 为真，也不授予任何 Tool、Approval 或 Completion 权限。Semantic validation 只接收 ref/digest 恢复证明，不接收 Memory statement 作为指令。
+Runtime 每轮自动恢复最高相关的 eligible Memory；用户明确点名已发布 Memory 或 History ref 时，也会在规划前自动恢复。Intent 编译器把本轮成功恢复且能追溯到用户要求的精确 ref 补入首个 Task 的 required `context_ref` Acceptance Check。Runtime 只有在正常 scope/lifecycle/digest 校验与原文恢复成功后才生成 `source=context` 的 Run Evidence；该 Evidence 只证明 ref 被恢复，不证明 Memory statement 为真，也不授予任何 Tool、Approval 或 Completion 权限。Semantic validation 只接收 ref/digest 恢复证明，不接收 Memory statement 作为指令。
 
-Semantic validation 拒绝 summary 后，Decision Provider 应保留既有 Evidence，依据 `repair.issues` 直接补齐遗漏的用户结果并重新 `propose_finish`。已经出现在 `rehydratedFacts` 的 ref 不得再次请求；重复请求会进入既有 invalid-action repair budget，而不会再次读取 Store。`evidence:<id>` 恢复的是 Evidence 元数据，不是底层 Tool payload；只有 payload 确实不在当前投影时，才继续请求其中发布的 `invocation:` 或 `artifact:` ref。
+Semantic validation 拒绝 summary 后，Decision Provider 依据有限类型的 `repair.issues` 直接修正 `finish`，既有 Evidence 由 Runtime 保留。Evidence 已齐全时 Provider 不重规划、不重跑 Capability，也不声称事实缺失。阶段式生产 wire 不暴露 `restore_context`；Schema/编译器中的该 Intent 只作为兼容入口，且不会绕过相同的 scope、digest、预算、去重和 Evidence 规则。
 
 ### Repeated Compaction Contract
 
@@ -81,7 +81,7 @@ Provider 输出不会直接覆盖 Context。Runtime 会重新校验 Summary Sche
 
 `ReasoningPolicy` 是 Provider-neutral 抽象（`model-client.ts`），Runtime 核心不感知任何厂商专有字段。具体 Provider 把它翻译成自己的参数：
 
-- `"dynamic"`（推荐默认）：仅在模型需要建立**首个 Plan**（`context.run.currentPlan === null`）时开启推理；普通 execute_step / call_tool / propose_finish 决策关闭。这是经真实 qwen3.7-flash A/B 验证的策略（见 `agent-evaluation/execute-step-ab/REPORT-thinking.md`）。
+- `"dynamic"`（推荐默认）：只在 Runtime 指定的 planning phase（首个 Plan 或新输入要求重规划）开启推理；普通 Capability execution / finish 决策关闭。这是经真实 qwen3.7-flash A/B 验证的策略（见 `agent-evaluation/execute-step-ab/REPORT-thinking.md`）。
 - `"off"`：始终关闭。
 - `"on"`：决策调用始终开启。
 - validation / compaction 始终非推理（短结构化输出，推理只增延迟）。

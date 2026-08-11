@@ -276,9 +276,12 @@ describe("E090 deterministic history candidates", () => {
     const evicted = evictDecisionContextOnce(context)!;
     const { projection, ...facts } = evicted;
 
-    expect(payload.context.historyCandidates).toEqual(context.historyCandidates);
-    expect(systemPrompt).toContain("History candidates");
-    expect(systemPrompt).toContain("navigation");
+    expect(payload.context.historyCandidates).toEqual(context.historyCandidates.map((candidate) => ({
+      ref: candidate.ref,
+      category: candidate.category,
+      hint: candidate.hint
+    })));
+    expect(systemPrompt).toContain("Candidates are navigation only");
     expect(evicted.historyCandidates).toEqual(context.historyCandidates);
     expect(projection.digest).toBe(digestJson(facts));
   });

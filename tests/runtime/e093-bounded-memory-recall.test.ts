@@ -86,7 +86,7 @@ describe("E093 bounded Memory recall", () => {
     expect(candidates.map((item) => item.ref)).toEqual(["memory:active"]);
   });
 
-  it("publishes navigation, restores the exact MemoryRecord on request, and preserves Run authority", async () => {
+  it("automatically restores the highest-ranked Memory and preserves Run authority", async () => {
     const workspace = fixture("integration");
     const memoryStore = openMemoryStore({ stateDir: join(workspace, "memory") });
     const record = memoryStore.create(memory());
@@ -94,13 +94,8 @@ describe("E093 bounded Memory recall", () => {
       memoryId: "other-scope",
       scope: { ...SCOPE, projectId: "project-b" }
     }));
-    let selectedRef = "";
     const provider = new ScriptedRuntimeProvider([
       plan(),
-      (context: ModelDecisionContext) => {
-        selectedRef = context.memoryCandidates[0]?.ref ?? "";
-        return { type: "request_context", refs: [selectedRef] };
-      },
       { type: "request_input", question: "Stop.", reason: "Memory restored." }
     ]);
     const runtime = createRuntime({
@@ -112,9 +107,7 @@ describe("E093 bounded Memory recall", () => {
     });
 
     const result = await runtime.start({ input: "Use deterministic retrieval for this task." });
-    const candidateContext = provider.contexts.find((context) => (
-      context.memoryCandidates.length > 0 && context.run.taskContract !== null
-    ))!;
+    const candidateContext = provider.contexts.find((context) => context.run.taskContract !== null)!;
     const restored = provider.contexts.find((context) => context.rehydratedFacts.some(
       (fact) => fact.kind === "memory" && fact.error === null
     ))!;
@@ -125,7 +118,7 @@ describe("E093 bounded Memory recall", () => {
     await runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(selectedRef).toBe(`memory:${record.memoryId}`);
+    const selectedRef = `memory:${record.memoryId}`;
     expect(candidateContext.memoryCandidates[0]).not.toHaveProperty("statement");
     expect(candidateContext.memoryCandidates.map((item) => item.ref)).not.toContain("memory:other-scope");
     expect(candidateContext.run.taskContract?.goal).toBe("Use deterministic retrieval for this task.");
@@ -207,13 +200,22 @@ describe("E093 bounded Memory recall", () => {
     await provider.decide(context, { signal: new AbortController().signal });
     const payload = JSON.parse(
       bodies[0]!.messages.find((message) => message.role === "user")!.content
-    ) as { readonly context: { readonly memoryCandidates: readonly MemoryCandidate[] } };
+    ) as { readonly context: { readonly memoryCandidates: readonly MemoryCandidate[]; readonly run: Record<string, unknown> } };
     const systemPrompt = bodies[0]!.messages.find((message) => message.role === "system")!.content;
     const evicted = evictDecisionContextOnce(context)!;
     const { projection, ...facts } = evicted;
 
-    expect(payload.context.memoryCandidates).toEqual(context.memoryCandidates);
-    expect(systemPrompt).toContain("memoryCandidates");
+    expect(payload.context.memoryCandidates).toEqual(context.memoryCandidates.map((candidate) => ({
+      ref: candidate.ref,
+      memoryType: candidate.memoryType,
+      hint: candidate.hint,
+      trust: candidate.trust
+    })));
+    expect(systemPrompt).toContain("untrusted data");
+    expect(Buffer.byteLength(systemPrompt, "utf8")).toBeLessThan(2_000);
+    expect(payload.context.run).not.toHaveProperty("currentPlan");
+    expect(payload.context.run).not.toHaveProperty("evidence");
+    expect(JSON.stringify(payload)).not.toContain("check-memory");
     expect(evicted.memoryCandidates).toEqual(context.memoryCandidates);
     expect(projection.digest).toBe(digestJson(facts));
   });

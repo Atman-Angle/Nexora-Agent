@@ -14,12 +14,12 @@ export const HARNESS_BENCHMARK_V2_DATASET_VERSION = 2;
 
 const CALIBRATED_STRESS_SCENARIO: BenchmarkScenario = Object.freeze({
   id: "HBE-13",
-  capability: "Calibrated qwen wire stress triggers governance and preserves completion",
+  capability: "Constrained calibrated qwen wire stress triggers governance and preserves completion",
   dimensions: ["continuity", "budget", "safety"] as const,
   testFile: "tests/runtime/e106-context-memory-benchmark-v2-stress.test.ts",
-  fullName: "E106 Context and Memory benchmark v2 stress drives the calibrated qwen 32K wire path through Eviction and validated completion",
+  fullName: "E106 Context and Memory benchmark v2 stress drives a constrained calibrated qwen wire path through Eviction and validated completion",
   evidenceContract: {
-    contextWindowTokens: 32_000,
+    contextWindowTokens: 24_384,
     minimumEvictions: 1,
     hardLimitViolations: 0,
     shardReads: 8,

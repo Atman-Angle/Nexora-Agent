@@ -18,7 +18,9 @@ flowchart TD
     SNAP --> LOOP["单一 #runLoop"]
     LOOP --> BUDGET{"预算允许？"}
     BUDGET -- "否" --> FAIL["State Machine → failed"]
-    BUDGET -- "是" --> CONTEXT["决策上下文<br/>Contract v2 + allowed Intent examples<br/>Capability Catalog + bounded observations"]
+    BUDGET -- "是" --> AUTOREF["Runtime 自动选择 ref<br/>最新 Input 明确 ref + 最高相关 Memory<br/>+ active context_ref Check"]
+    AUTOREF --> REHYDRATE["校验 published refs<br/>恢复/去重/Context Evidence"]
+    REHYDRATE --> CONTEXT["决策上下文<br/>phase-directed Contract v2<br/>bounded wire projection"]
     INVOBS["tool_invocations<br/>completed result/error authority"] --> OBS["价值排序 + 普通候选默认 8 项<br/>full / deterministic fragment / Authority refs"]
     INVOBS --> HISTCAND["确定性历史关系候选<br/>最多 8 条 / 4 KiB / refs only"]
     HISTCAND --> CONTEXT
@@ -38,8 +40,8 @@ flowchart TD
     INTENTPARSE -- "合法" --> COMPILE["Runtime 唯一编译器<br/>生成 ID/version/binding/batch/citations"]
     COMPILE -- "plan_tasks → set_plan" --> PLAN["Runtime 生成 identity + goalDigest<br/>保存唯一当前 Plan"]
     PLAN --> LOOP
-    COMPILE -- "restore_context → request_context" --> REHYDRATE["校验 published refs<br/>恢复/去重/Context Evidence"]
-    REHYDRATE --> LOOP
+    COMPILE -. "compat restore_context" .-> COMPATREHYDRATE["同一 scope/digest/预算校验<br/>兼容路径，不进入正常 wire"]
+    COMPATREHYDRATE --> LOOP
     COMPILE -- "request_input" --> WAIT["State Machine → waiting"]
     COMPILE -- "use_capabilities → call_tool/execute_step" --> BIND["绑定 active Step + unsatisfied Check"]
     BIND --> PARSE{"Tool Schema parse<br/>默认值展开 + JSON canonicalize"}
@@ -164,7 +166,7 @@ Provider Intent Contract、`ProjectedRunContext`、公共 Inspection 和 Runtime
 
 Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 保留完整 Tool Authority。价值 class 依次覆盖 active Check、未解决错误、安全/审批失败和 predecessor Evidence，同 class 使用 `stepOrder → invocationSequence → invocationId`。大型 success/failure payload 都以 canonical JSON 计算 digest 并写入 Artifact；Invocation 保存 payload provenance，只有合法绑定同一成功 Invocation 的既有 Evidence 才引用该 Artifact。critical 大 payload 保留明确标记的固定 fragment，普通大 payload 转 reference。Provider soft token limit 会触发继续收缩并重测；32 KiB 仅作保险丝。任何 fragment/reference 都不能冒充完整 facts。
 
-Rehydration 是 Eviction/Compaction 之后的按需恢复层：Provider 只返回 `restore_context` intent，Runtime 将其编译为内部 `request_context` Harness 控制动作（不属于 Core RuntimeAction，不进 state-machine 与 `#handleAction`）。Runtime 构建 `availableContextRefs`（本轮 `toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` refs ∪ `historyCandidates` refs/relatedRefs ∪ `run.evidence` refs ∪ 当前 Run 的 Input/Event sequence 范围 → digest），下一轮把恢复的原始内容以 `rehydratedFacts` 注入；未公开 / 跨 Run / digest 漂移统一返回 `REF_UNAVAILABLE`（不泄露对象真实性），格式错误返回 `INVALID_REF`，准入预算拒绝返回 `REHYDRATION_BUDGET_EXCEEDED`。如果 active Step 有 ref 精确匹配的 required `context_ref` Check，Runtime 在成功恢复后把 `{kind: context_ref, source: context, subjectRef, digest}` 原子写入 Run Evidence 并重算 Step Progress；它只证明恢复过程，不提升 Memory 内容的信任级别。`historyCandidates` 只从当前 Run 与显式 Fork Base 派生最多 8 条、4 KiB 的关系导航，按同 Check、Step、Tool、精确 Input、路径、错误码、Evidence/Artifact、Approval 与 Fork Base 解释排序，不自动注入候选正文。`sessionArchive` 继续提供 Input/Event 时间导航。Harness 自动恢复按 `harness_required` → `model_request` → `harness_helpful` 优先级准入，候选本身不改变该优先级。请求通过 `context.rehydrate_requested` / `context.rehydrated` 事件对进行崩溃恢复，不新增权威表；恢复事实持续到合法后续 Intent 被接受。若 Provider 再次请求完整包含于当前 `rehydratedFacts` 的 ref 集合，Runtime 不重复读 Store、不新增 rehydration 或 Evidence，而记录 `context.request_reused` 并继续；同一 refs 的持久化重复次数受 retry budget 限制，超过边界以 `CONTEXT_INTENT_STALLED` 失败。最终 OpenAI-compatible Wire Projection 必须保留 `contextCheckpoint`、`rehydratedFacts`、`historyCandidates` 和 finite typed `repair.issues`，但继续移除 `projection` 及 Observation retention/digest 等 Runtime-only provenance；任何 Eviction 重建也只能收缩 Observation，不能删除这些当前决策字段。
+Rehydration 是 Eviction/Compaction 之后的精确恢复层。Runtime 构建 `availableContextRefs`（本轮 `toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` refs ∪ `historyCandidates` refs/relatedRefs ∪ `run.evidence` refs ∪ 当前 Run 的 Input/Event sequence 范围 → digest），并在 Provider 决策前自动选择：最新 Input 中明确出现的已发布 ref、最高相关 eligible Memory、active Step 未满足的 required `context_ref`。恢复的原始内容以 `rehydratedFacts` 注入；未公开 / 跨 Run / digest 漂移统一返回 `REF_UNAVAILABLE`（不泄露对象真实性），格式错误返回 `INVALID_REF`，准入预算拒绝返回 `REHYDRATION_BUDGET_EXCEEDED`。如果 active Step 有精确匹配的 required `context_ref` Check，Runtime 在成功恢复后把 `{kind: context_ref, source: context, subjectRef, digest}` 原子写入 Run Evidence 并重算 Step Progress；它只证明恢复过程，不提升 Memory 内容的信任级别。`historyCandidates` 仍只从当前 Run 与显式 Fork Base 派生最多 8 条、4 KiB 的关系导航，未命中确定性选择条件的候选不注入正文；`sessionArchive` 继续提供 Input/Event 时间导航。自动恢复按 `harness_required` → `model_request` → `harness_helpful` 优先级准入，不新增权威表。`restore_context` / 内部 `request_context` 仅保留为兼容路径，仍执行相同 scope、digest、预算和去重规则。最终 OpenAI-compatible Wire Projection 按 phase 省略无关字段，保留当前需要的 `rehydratedFacts`、Checkpoint/Candidates 与 finite typed `repair.issues`，同时移除 workspace、内部 ID/version、Evidence、Plan/Step/Check 结构、`projection` 和 Observation provenance。
 
 用户输入投影使用 `TaskContract.inputVersion` 作为覆盖边界：`sequence <= inputVersion` 的原文继续只保存在 `RunSnapshot.inputHistory`，Provider 读取当前 Task Contract；更大的 sequence 以 `{ sequence, text }` 进入 `ProjectedRunContext.inputHistory`，不暴露 Input ID、接收时间、Run revision、Budget、Pending Request 或 Result。`inputCount` 始终表示持久化输入总数，模型修订 Task Contract 时必须使用它，而不是可见输入数组长度。Semantic Validation 仍直接读取完整原始输入，不受 Decision Projection 裁剪影响。
 

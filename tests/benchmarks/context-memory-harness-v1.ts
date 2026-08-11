@@ -52,7 +52,7 @@ export const HARNESS_BENCHMARK_SCENARIOS: readonly BenchmarkScenario[] = Object.
     { parentMutationCount: 0, crossBranchLeaks: 0 }),
   scenario("HBE-07", "Scoped Memory navigation and exact restoration", ["retrieval", "authority"],
     "tests/runtime/e093-bounded-memory-recall.test.ts",
-    "E093 bounded Memory recall publishes navigation, restores the exact MemoryRecord on request, and preserves Run authority",
+    "E093 bounded Memory recall automatically restores the highest-ranked Memory and preserves Run authority",
     { wrongScopeCandidates: 0, statementInCandidate: false, exactMemoryRecall: true }),
   scenario("HBE-08", "Injection-like Memory remains untrusted and approval-gated", ["safety", "authority"],
     "tests/runtime/e095-memory-security-privacy.test.ts",

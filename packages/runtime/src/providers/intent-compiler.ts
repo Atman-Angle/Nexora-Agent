@@ -76,7 +76,8 @@ function compilePlanTasks(input: {
       .map((progress) => run.currentPlan!.orderedSteps.find((step) => step.id === progress.stepId)!)
       .filter((step) => step !== undefined);
   const tracedRefs = input.rehydratedRefs.filter((ref) => (
-    run.inputHistory.some((entry) => entry.text.includes(ref))
+    ref.startsWith("memory:")
+    || run.inputHistory.some((entry) => entry.text.includes(ref))
   ));
   const tasks = input.tasks.map((task, index) => index === 0
     ? addTracedContextRequirements(task, tracedRefs)

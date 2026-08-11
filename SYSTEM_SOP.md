@@ -29,12 +29,12 @@
 
 1. 先修纯 Contract/状态转换，再修 Store 事务，最后接 Runtime wiring；不要从 CLI 添加旁路。
    Memory 内容变化必须先创建 candidate，再通过 `promote` 或 `supersede`；update 和 merge 不得直接改写既有 statement/provenance，也不得用 `setStatus` 模拟生命周期。
-   Runtime 需要跨 Run 连续性时，由 Host 显式传入 `{store, scope}`。模型只能先看到有界 `memoryCandidates`；必须请求其原样 `memory:<id>` ref，Harness 重验 exact scope、active、未过期、normal sensitivity 和 record digest 后才交付完整 MemoryRecord。Memory 与当前 Run 冲突时，以最新 Input、TaskContract、Plan、Progress 和 Evidence 为准。
+   Runtime 需要跨 Run 连续性时，由 Host 显式传入 `{store, scope}`。模型只看到有界 `memoryCandidates`；Runtime 在 Provider 决策前自动选择最高相关候选，并重验 exact scope、active、未过期、normal sensitivity 和 record digest 后交付完整 MemoryRecord。Memory 与当前 Run 冲突时，以最新 Input、TaskContract、Plan、Progress 和 Evidence 为准。
    用户查看、修正、失效、删除、禁用、清域和审计导出必须走 `MemoryControls`。所有 mutation 必须携带 exact scope、operationId、actor、reason、occurredAt；修正只能走 candidate + supersession。禁用 scope 后检查生产 Context 无 Memory candidate，删除/清域后检查 audit tombstone 不含 statement，并验证 close/reopen 后策略与 audit 仍存在。
    所有 Memory statement 按 untrusted data 处理，即使已 verified 或 digest 精确也不得执行其内部指令。安全验收必须使用包含伪 system role、越权 Tool 请求、Approval/完成伪造的固定攻击样本，并检查：候选不含正文；恢复 Fact 有 trust 标记；当前 TaskContract 不变；猜测/跨域/sensitive/deleted ref 统一不可用；write/execute 仍停在正常 Approval Gate。Host 负责把已认证身份绑定到 exact scope，部署侧另行满足加密和 secure erase 发布门。
    Memory 性能索引只从 Authority 表派生。Store 打开时必须在当前 schema 上幂等确认全部声明索引，不能因 `user_version` 已是当前值而跳过。恢复演练应删除派生索引后 reopen，检查 Record 与候选逐项一致、索引全部恢复且查询计划重新命中 scope/status/time 索引；性能报告同时记录固定数据规模、p50/p95/max、Context 字节、模型调用与费用，不能把单机测量冒充跨环境 SLA。
-2. 外部输入先过 Zod。Provider Contract v2 只能提出 `plan_tasks | restore_context | use_capabilities | request_input | finish`；reasoningSummary 不执行。Provider 不得输出 Step/Check/Invocation/Evidence ID、Plan version/binding、Approval 或完成状态。
-3. Provider context 必须由 Runtime 投影真实 workspace、Tool 的 Identity/Capability/Decision/Effect/Evidence、`allowedIntents/intentContract`、active Step 可调用 Tool 的输入示例，以及权威 Invocation 的有界 observation；不要在 Prompt 复制第二份 Plan/Action/Tool facts 状态。
+2. 外部输入先过 Zod。生产 Provider Contract v2 按 phase 只暴露 `plan_tasks | request_input`、`use_capabilities`、`request_input` 或 `finish`；每轮只接受一个 Intent，reasoningSummary 不执行。`restore_context` 仅为兼容 Schema/编译路径，不进入正常 phase wire。Provider 不得输出 Step/Check/Invocation/Evidence ID、Plan version/binding、Approval 或完成状态。
+3. Provider-neutral Context 必须由 Runtime 从真实 workspace、Tool 的 Identity/Capability/Decision/Effect/Evidence 和权威 Invocation 构建；production wire 只保留 `allowedIntents/intentContract`、当前 phase 必需的 Task/Fact、active callable Tool 输入示例与有界 observation，并移除 workspace 和内部 provenance。不要在 Prompt 复制第二份 Plan/Action/Tool facts 状态。
 4. 每个 RuntimeTool 五层Contract的文本边界必须完整且有界；`inputExample`必须在Runtime构造时通过JSON Contract和该Tool的`inputSchema`，`facts`必须在成功持久化前通过`factsSchema`。example只用于active Tool字段构造，Schema/idempotency不暴露给Model。
 5. 首个 `plan_tasks` 必须包含语义 Task Contract；修订只描述未完成的有序 Task。Runtime 生成并拥有 Task/Plan version、goal digest、Step/Check ID，保留已完成前缀，并从精确用户 ref 要求补齐可审计 `context_ref` Check。
 6. `use_capabilities` 只携带 Capability 名称与完整业务参数。Runtime 绑定当前 active Step 和下一个匹配的 unsatisfied Check，构造/拆分内部 batch；Invocation ID、幂等键和 Fencing Token 只能由 Runtime 生成。
@@ -53,7 +53,7 @@
 2. CLI start/resume 先从启动目录加载可选 `.env`，再创建 Provider；显式进程环境优先，目标 `--cwd` 的 `.env` 不加载。Runtime API 调用方显式提供配置。
 3. Runtime 创建 Run、`run.created` 和 Lease。
 4. 循环检查预算，从 Run/Tool Invocation 权威投影状态正确且有界的 Provider context，记录 `model.requested`，获取一个 Semantic Intent 并由 Contract v2 校验；Runtime 编译成功后记录 `intent.compiled`。
-5. `plan_tasks` 编译并保存唯一当前 Plan；`restore_context` 校验/恢复或复用已可见 refs；`use_capabilities` 编译为内部 Tool Action；`request_input` 停在 waiting；`finish` 使用 Runtime-derived required Evidence 进入两道完成门。
+5. Runtime 在决策前自动恢复最新 Input 明确点名的已发布 ref、最高相关 Memory 和 active `context_ref` Check；`plan_tasks` 编译并保存唯一当前 Plan；`use_capabilities` 编译为内部 Tool Action；`request_input` 停在 waiting；Evidence 齐全时直接暴露 `finish`，并使用 Runtime-derived required Evidence 进入两道完成门。
 6. read 工具在 Schema parse 后直接执行；write/execute 在 parse/default expansion 后持久化 canonical Pending Action，用 `inspect` 核对精确 input 和 Request ID，再显式 `resume --approve <id>`。
 7. 进程崩溃后，`resume` 必须先检查未决 Invocation：
    - 幂等 started：原 ID、原输入重试；

@@ -361,9 +361,13 @@ function resolveThinkingToggle(
 function decisionNeedsPlanning(input: string): boolean {
   try {
     const payload = JSON.parse(input) as {
-      readonly context?: { readonly run?: { readonly currentPlan?: unknown } };
+      readonly context?: {
+        readonly phase?: unknown;
+        readonly allowedIntents?: readonly string[];
+      };
     };
-    return payload?.context?.run?.currentPlan === null;
+    return payload?.context?.phase === "plan"
+      || payload?.context?.allowedIntents?.includes("plan_tasks") === true;
   } catch {
     return false;
   }
@@ -381,35 +385,85 @@ function projectDecisionRequest(input: string): string {
       (tool) => tool.execution.inputExample !== undefined
     );
     const run = context.run;
+    const taskContract = run.taskContract === null
+      ? null
+      : {
+          goal: run.taskContract.goal,
+          constraints: run.taskContract.constraints,
+          acceptanceCriteria: run.taskContract.acceptanceCriteria
+        };
+    const tasks = (run.currentPlan?.orderedSteps ?? []).map((step) => ({
+      objective: step.objective,
+      status: run.stepProgress.find((item) => item.stepId === step.id)?.status ?? "pending",
+      completionRequirements: step.acceptanceChecks.map((check) => ({
+        ...semanticRequirement(check),
+        satisfied: run.evidence.some((evidence) => (
+          evidence.stepId === step.id && evidence.checkId === check.id
+        ))
+      }))
+    }));
+    const planning = run.currentPlan === null || context.allowedIntents.includes("plan_tasks");
+    const executing = context.allowedIntents.includes("use_capabilities");
+    const rehydratedFacts = context.rehydratedFacts.map((fact) => ({
+      ref: fact.ref,
+      kind: fact.kind,
+      content: fact.content,
+      error: fact.error,
+      ...(fact.trust === undefined ? {} : { trust: fact.trust })
+    }));
+    const memoryCandidates = context.memoryCandidates.map((candidate) => ({
+      ref: candidate.ref,
+      memoryType: candidate.memoryType,
+      hint: candidate.hint,
+      trust: candidate.trust
+    }));
+    const historyCandidates = context.historyCandidates.map((candidate) => ({
+      ref: candidate.ref,
+      category: candidate.category,
+      hint: candidate.hint
+    }));
     return JSON.stringify({
       mode: "decide",
       context: {
-        workspace: context.workspace,
+        phase: planning
+          ? "plan"
+          : executing
+            ? "execute"
+            : context.allowedIntents.includes("finish") ? "finish" : "input",
         run: {
-          inputCount: run.inputCount,
-          coveredInputCount: run.coveredInputCount,
           inputs: run.inputHistory.map((entry) => entry.text),
-          taskContract: run.taskContract,
-          currentPlan: run.currentPlan,
-          stepProgress: run.stepProgress,
-          evidence: run.evidence
+          taskContract,
+          tasks
         },
-        contextCheckpoint: context.contextCheckpoint,
-        rehydratedFacts: context.rehydratedFacts,
-        historyCandidates: context.historyCandidates,
-        memoryCandidates: context.memoryCandidates,
-        sessionArchive: context.sessionArchive ?? null,
-        repair: context.repair ?? null,
         providerContractVersion: context.providerContractVersion,
         allowedIntents: context.allowedIntents,
         intentContract: context.intentContract,
-        toolObservations: projectDecisionToolObservations(context.toolObservations),
-        toolCatalog: context.tools.map((tool) => ({
-          name: tool.identity.name,
-          purpose: tool.capability.purpose,
-          produces: tool.evidence.produces
-        })),
-        tools: callableTools
+        ...(context.repair === null || context.repair === undefined ? {} : { repair: context.repair }),
+        ...(rehydratedFacts.length === 0 ? {} : { rehydratedFacts }),
+        ...(context.toolObservations.length === 0 ? {} : {
+          toolObservations: projectDecisionToolObservations(context.toolObservations)
+        }),
+        ...(context.contextCheckpoint === null ? {} : { contextCheckpoint: context.contextCheckpoint.summary }),
+        ...(historyCandidates.length === 0 ? {} : { historyCandidates }),
+        ...(memoryCandidates.length === 0 ? {} : { memoryCandidates }),
+        ...(rehydratedFacts.some((fact) => fact.kind === "input" || fact.kind === "event")
+          || context.sessionArchive === undefined
+          ? {}
+          : { sessionArchive: context.sessionArchive }),
+        ...(planning ? {
+          toolCatalog: context.tools.map((tool) => ({
+            name: tool.identity.name,
+            purpose: tool.capability.purpose,
+            produces: tool.evidence.produces
+          }))
+        } : {}),
+        ...(executing ? {
+          tools: callableTools.map((tool) => ({
+            name: tool.identity.name,
+            purpose: tool.capability.purpose,
+            inputExample: tool.execution.inputExample
+          }))
+        } : {})
       }
     });
   } catch {
@@ -426,15 +480,24 @@ function projectDecisionToolObservations(
   observations: ModelDecisionContext["toolObservations"]
 ): readonly Record<string, unknown>[] {
   return observations.map((observation) => ({
-    stepId: observation.stepId,
     toolName: observation.toolName,
     status: observation.status,
     facts: observation.facts,
     error: observation.error,
     payloadFragment: observation.payloadFragment,
-    payloadMode: observation.payloadMode,
-    sourceRefs: observation.sourceRefs
+    payloadMode: observation.payloadMode
   }));
+}
+
+function semanticRequirement(
+  check: NonNullable<ModelDecisionContext["run"]["currentPlan"]>["orderedSteps"][number]["acceptanceChecks"][number]
+): Record<string, unknown> {
+  if (check.kind === "tool_result") return { kind: "capability_result", capability: check.toolName };
+  if (check.kind === "state_assertion") return { kind: check.kind, capability: check.toolName, arguments: check.input, assertion: check.assertion };
+  if (check.kind === "artifact_schema") return { kind: check.kind, schemaName: check.schemaName };
+  if (check.kind === "user_confirmation") return { kind: check.kind, prompt: check.prompt };
+  if (check.kind === "semantic_review") return { kind: check.kind, criterion: check.criterion };
+  return { kind: check.kind, ref: check.ref };
 }
 
 function required(environment: Record<string, string | undefined>, name: string): string {

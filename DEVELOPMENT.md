@@ -10,7 +10,7 @@ branch: context-episodic-recall
 
 current_capability: runtime-owned-intent-compilation
 current_feature: runtime-owned-intent-compilation
-status: done_locally
+status: done
 
 feature_contract:
   feature: runtime-owned-intent-compilation
@@ -46,15 +46,16 @@ feature_contract:
 
 last_completed_feature: runtime-owned-intent-compilation
 result: >
-  Provider Contract v2 now emits semantic intents while Runtime deterministically owns Plan IDs,
-  versions, bindings, internal actions, Evidence citations and readable failed-Run handoff.
+  Runtime now restores published Context/Memory before decisions, exposes one phase-directed Intent,
+  executes active Tasks without replanning, and finishes directly from complete persisted Evidence.
 validation: >
-  L3 local gates passed: 332/332 full regression, 80/80 context-quality tests, deterministic
-  benchmark v2 13/13 with zero hard-gate failures, typecheck, lint, root/runtime builds and diff check.
+  L3 gates passed: 334/334 full regression, 80/80 context-quality tests, deterministic benchmark v2
+  13/13, typecheck/lint/root+runtime builds/diff check, and real qwen3.7-flash API HPE-01..05 15/15
+  with memoryRecallGate=true and zero hard-gate, unsafe-invocation, false-success or hard-limit failures.
 residual: >
-  Real paid Provider Contract v1/v2 token, latency, repair and convergence comparison remains
-  external acceptance and was not run without separate cost authorization.
-next_action: authorize-and-run-real-provider-contract-v2-comparison
+  No unresolved Feature acceptance defect. Provider cost remains unpriced; historical dataset v1 to
+  final dataset v2 efficiency comparison is directional because Runtime-owned recovery changed the manifest.
+next_action: none_current_feature_complete
 ```
 
 ## Update Rules

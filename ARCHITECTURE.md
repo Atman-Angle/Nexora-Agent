@@ -70,9 +70,9 @@ Fresh External Facts
 
 上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。当前 Context Projection 不再把完整 `RunSnapshot` 交给 Provider：`TaskContract.inputVersion` 之前的输入由当前 Task Contract 覆盖，模型只接收尚未覆盖的新输入；Tool Observation 由 active Check、未解决错误、安全失败和已完成 predecessor Evidence 投影。确定性 Eviction 先按 retention class，再按 `stepOrder → invocationSequence → invocationId` 排序；大型 critical payload 保留固定片段与精确引用，普通大 payload 转为引用。8 条是普通候选默认值，32 KiB 是序列化保险丝，最终收缩由 Provider-aware Token Meter 的 soft/hard limit 驱动。每份最终投影带稳定 digest，但 digest 不拥有 Run 状态。
 
-Session Archive 是同一 Run 的有界历史索引，不是第二个 Memory Store。它只发布已持久化 Input/Event 的 sequence 范围，以及最多 16 条由 Input、Plan 修订、失败、拒绝、Checkpoint 和 Branch Event 确定性派生的 Milestone；首个目标 Input、最新 Input 和每种已出现的 Event 类别各保留一个代表，其余位置再按既有安全优先级与时间填充，避免重复失败淹没其他导航入口。标签最长 180 字符，只用于导航。模型可对范围内的 `input:<sequence>` / `event:<sequence>` 使用既有 `request_context`，Runtime 再从 Run/Input/Event Authority 精确恢复原始内容。删除 Archive 投影不影响任何事实，下一轮可从 Store 重建。
+Session Archive 是同一 Run 的有界历史索引，不是第二个 Memory Store。它只发布已持久化 Input/Event 的 sequence 范围，以及最多 16 条由 Input、Plan 修订、失败、拒绝、Checkpoint 和 Branch Event 确定性派生的 Milestone；首个目标 Input、最新 Input 和每种已出现的 Event 类别各保留一个代表，其余位置再按既有安全优先级与时间填充，避免重复失败淹没其他导航入口。标签最长 180 字符，只用于导航。最新 Input 明确包含范围内的 `input:<sequence>` / `event:<sequence>` 时，Runtime 在 Provider 决策前从 Run/Input/Event Authority 精确恢复原始内容。删除 Archive 投影不影响任何事实，下一轮可从 Store 重建。
 
-`historyCandidates` 是与当前任务相关的有界关系导航，不是全文、向量或 Memory 检索。Runtime 只从当前 Run Authority 与显式 Fork Base 确定性派生最多 8 条、合计不超过 4 KiB 的候选，关系包括同 Check、Step、Tool、精确 Input、路径、错误码，以及已关联的 Evidence、Artifact、Approval 和 Fork Base。每条只携带 `ref`、少量 `relatedRefs`、category、reasons、hint 与 occurredAt，不复制历史事实；模型必须通过 `request_context` 才能读取原始内容。候选 ref 进入同一 digest/作用域 manifest，sibling、其他 Run 和 parent post-fork 内容不可见。删除候选投影不会删除事实，也不新增表、索引、模型调用或 Authority。
+`historyCandidates` 是与当前任务相关的有界关系导航，不是全文、向量或 Memory 检索。Runtime 只从当前 Run Authority 与显式 Fork Base 确定性派生最多 8 条、合计不超过 4 KiB 的候选，关系包括同 Check、Step、Tool、精确 Input、路径、错误码，以及已关联的 Evidence、Artifact、Approval 和 Fork Base。每条只携带 `ref`、少量 `relatedRefs`、category、reasons、hint 与 occurredAt，不复制历史事实；最新 Input 明确点名候选 ref 或 active `context_ref` Check 要求该 ref 时才自动读取原始内容。候选 ref 进入同一 digest/作用域 manifest，sibling、其他 Run 和 parent post-fork 内容不可见。删除候选投影不会删除事实，也不新增表、索引、模型调用或 Authority。
 
 每次 decision/validation 调用前，Runtime 由 Provider 自己声明的模型容量、输出预留、软阈值和 Token Meter 评估最终 wire 投影。硬上限拒绝发生在 Provider 调用前，软上限驱动 Context 治理并进入持久化 Model Call Ledger；Provider 返回 usage 时同时保留实测值。已验证模型可以在同一 capability catalog 中声明基于固定 Provider usage 数据集的 estimated meter 校准，但必须保留 calibration meter identity、不能标记为 exact，也不能覆盖 Host 注入的精确 tokenizer；未知模型继续使用兼容 fallback。Ledger 中的 actual usage 不被校准值改写，只拥有模型调用与计费审计，不拥有任务事实、Plan、Evidence 或 Run Status。
 
@@ -80,7 +80,7 @@ Structured Compaction 是 Eviction 之后的第二层收缩：当 Eviction 耗�
 
 新 Summary 写入前必须通过 Schema、引用存在性、Run 归属、Source Digest 与 section 一致性校验。后续复用 Checkpoint 时，Runtime 还会重新计算 canonical Summary digest，重新解析并验证全部原始 SourceRef，精确比较重新派生的 Source Digest map 和 covered Invocation multiset；任一项不一致就使缓存失效。`unresolvedIssues` 中的 failed/unknown Invocation 如果已有同 Plan、同 Step 且覆盖同一 Check 的后续成功 Invocation，就不再是 unresolved，不能被下一轮 Summary 继续携带。验证通过后，Store 在一个事务中删除旧行并写入唯一新行；失败或拒绝的 Summary 不替换现有有效缓存，决策沿用安全回退路径。Checkpoint 始终是 Prompt 派生缓存，不拥有 TaskContract、Plan、Invocation、Evidence、Run Status 或 Completion Authority；删除全部 Checkpoint 后 Runtime 必须从 Authority 确定性重建 Decision Projection。
 
-Provider-neutral Context 到生产 Wire 还有最后一层有界投影。OpenAI-compatible Adapter 必须把 `contextCheckpoint`、`rehydratedFacts`、`historyCandidates` 和当前 `repair` 交给 Decision 模型，同时继续移除 `projection` digest 元数据和 Tool Observation 的 Runtime-only provenance。Eviction 只允许改变 `toolObservations` 的 payload retention；重建 Context 时必须原样保留 Checkpoint、Rehydrated Facts、History Candidates、Session Archive 和 Repair，并把这些实际可见字段纳入新的 projection digest。该投影不保存 Provider transcript，也不产生第二套 Context 状态。
+Provider-neutral Context 到生产 Wire 还有最后一层有界投影。OpenAI-compatible Adapter 按 planning / execute / input / finish phase 只投影当前需要的数据与 Intent：planning 才带 Tool Catalog，execute 才带 active callable Tool 的 `inputExample`，空的可选集合直接省略；`rehydratedFacts`、有界 Observation、必要 Checkpoint/Candidates 与当前 `repair` 按需携带。Adapter 移除 workspace、内部 ID/version、Evidence、Plan/Step/Check 结构、`projection` digest 和 Observation provenance。Eviction 只改变 `toolObservations` 的 payload retention；所有实际可见字段仍纳入 Provider-neutral projection digest。该投影不保存 Provider transcript，也不产生第二套 Context 状态。
 
 ### Memory
 
@@ -88,7 +88,7 @@ Memory 是 Runtime 的通用连续性子系统，但不是 Execution Core 的 Ru
 
 Memory 生命周期只有一条内容变更路径：模型或其他不可信来源先形成 `candidate`；Host 再以带 actor/time 的 explicit promotion，或在 Memory 已携带 persisted verification 后以 verified promotion 转为 `active`。Promotion 对同 scope 的 type/statement/sensitivity 做精确确定性去重；重复候选保留为 `superseded` 并指向既有 active Memory。内容不原地更新：新 candidate 替换一个 active predecessor 表示 update，替换多个表示 merge；同一事务把 replacement 激活、把全部 predecessor 标为 superseded，并保存双向 lineage。到期 candidate/active 通过显式 `expire` 转为 `expired`，重新验证只更新 eligible candidate/active 的 verification。生命周期操作支持相同请求安全重试，不能用通用 `setStatus` 绕过 promotion 或 supersession。
 
-Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。Host 可在 `createRuntime.memory` 显式注入共享 Memory Store 与 exact scope；Runtime 不拥有或关闭该 Store。Context 只确定性扫描 exact-scope 的 active、未过期、normal Memory，投影最多 6 条、768 estimated tokens / 4 KiB 的 `memoryCandidates`。候选不复制 statement；模型必须用候选的 `memory:<id>` 调用 `request_context`，下一轮重新校验 scope、lifecycle、expiry、sensitivity 与 record digest 后才恢复完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 与 Evidence 始终优先。
+Memory 与 `context/`、`execution/` 平级，不能写入 `runtime-v1.1.db`，也不能修改 RunSnapshot、TaskContract、Plan、Invocation、Evidence、Approval、Result 或 Run Status。Host 可在 `createRuntime.memory` 显式注入共享 Memory Store 与 exact scope；Runtime 不拥有或关闭该 Store。Context 只确定性扫描 exact-scope 的 active、未过期、normal Memory，投影最多 6 条、768 estimated tokens / 4 KiB 的 `memoryCandidates`。候选不复制 statement；Runtime 在 Provider 决策前选择最高相关候选，重新校验 scope、lifecycle、expiry、sensitivity 与 record digest，再恢复完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 与 Evidence 始终优先。
 
 `MemoryControls` 是 Host 面向用户动作的审计化入口，复用同一个 Memory Store，不成为第二数据 Authority。Inspect 返回 exact-scope Record、Source 与当前召回资格；Correct 必须创建 candidate 并走原子 Supersession；Invalidate、Delete、Clear Scope 和 Scope Recall Policy 都要求 operationId、actor、reason 与 occurredAt。每个 mutation 与无正文 audit tombstone 在同一 SQLite 事务提交，operationId 在 exact scope 内幂等且内容冲突拒绝。Scope disable 持久化在 `memory-v1.db` 并由 Context 与 Rehydration 同时执行。底层 Store CRUD 保留为数据所有者原语；Host 的用户操作应走 Controls。
 
@@ -96,9 +96,9 @@ Memory 的安全信任边界是“精确但不可信的数据”。`memoryCandid
 
 Memory 的 SQLite scope/status/type/time 索引和 control-event time 索引都是可丢弃的派生性能结构，不保存独立事实。`MemoryStore` 每次打开都会在既有 Authority 表上幂等确认这些索引；即使 schema version 已是当前版本，缺失索引也会从 `memory_records` 与 `memory_control_events` 重建。重建不迁移 Record、不改变 schema version，也不创建第二数据 Authority。
 
-Provider-aware Context Eviction 同时覆盖可重建的 `rehydratedFacts(origin=harness_helpful)`。该类 Fact 的优先级低于 Tool Observation，应先移除；`harness_required` 与模型显式 `request_context` 恢复的 Fact 不在此路径删除。这样自动 helpful 原文不会在小窗口下形成不可收缩的第二预算池，原始 Invocation/Evidence/Artifact 仍留在 Authority Store 并可再次精确恢复。
+Provider-aware Context Eviction 同时覆盖可重建的 `rehydratedFacts(origin=harness_helpful)`。该类 Fact 的优先级低于 Tool Observation，应先移除；由最新 Input 明确 ref、最高相关 Memory 或 active `context_ref` Check 触发的 `harness_required` Fact 不在此路径删除。这样 helpful 原文不会在小窗口下形成不可收缩的第二预算池，原始 Invocation/Evidence/Artifact 仍留在 Authority Store 并可再次精确恢复。
 
-Context + Memory Harness 的确定性 Benchmark 按 dataset version 固定场景与 Evidence Contract。v1 保留原有 12 个通用能力场景；v2 只追加一个 32K qwen calibrated-wire stress 场景，通过真实 OpenAI-compatible Adapter 和本地 HTTP stub 验证 soft-limit 治理、Eviction、Memory 恢复、Tool Evidence 与 Completion Gate 的完整链。Benchmark runner 和 scripted response 只产生测试证据，不进入生产 Runtime，也不成为 Context、Memory、Run 或 Provider Authority；本地结果不能替代真实 Provider 质量评测。
+Context + Memory Harness 的确定性 Benchmark 按 dataset version 固定场景与 Evidence Contract。v1 保留原有 12 个通用能力场景；v2 追加一个受限 24,384-token qwen calibrated-wire stress 场景，通过真实 OpenAI-compatible Adapter 和本地 HTTP stub 验证 soft-limit 治理、Eviction、Memory 恢复、Tool Evidence 与 Completion Gate 的完整链。Benchmark runner 和 scripted response 只产生测试证据，不进入生产 Runtime，也不成为 Context、Memory、Run 或 Provider Authority；本地结果不能替代真实 Provider 质量评测。
 
 ### Action Runtime
 
@@ -176,19 +176,18 @@ Load Run
 
 ## 5. Provider Intent 与内部 Action 规则
 
-Provider Contract v2 每轮只允许一个最小语义 Intent：
+Provider Contract v2 的生产 wire 每轮只暴露当前 phase 所需的最小语义 Intent：
 
 ```text
 plan_tasks
-restore_context
 use_capabilities
 request_input
 finish
 ```
 
-Provider 只决定语义 Task、待恢复 ref、Capability 与业务参数、澄清问题或最终总结，不提供 Plan/Step/Check/Invocation/Evidence ID、version、binding、Approval 或完成状态。Runtime 是唯一协议编译器：它从当前 Run、Plan、Tool Catalog、Invocation、Evidence 与 Context manifest 确定性生成内部 `set_plan`、`request_context`、`call_tool`/`execute_step`、`request_input` 或 `propose_finish`。
+Provider 只决定语义 Task、Capability 与业务参数、澄清问题或最终总结，不提供 Plan/Step/Check/Invocation/Evidence ID、version、binding、Approval 或完成状态。规划/新输入阶段暴露 `plan_tasks | request_input`，active Tool Task 只暴露 `use_capabilities`，用户确认阶段只暴露 `request_input`，Evidence 齐全时只暴露 `finish`。Runtime 是唯一协议编译器：它从当前 Run、Plan、Tool Catalog、Invocation、Evidence 与 Context manifest 确定性生成内部 `set_plan`、`call_tool`/`execute_step`、`request_input` 或 `propose_finish`。
 
-`restore_context` 编译为 Harness 内部 `request_context` 控制动作；它不进入 `RuntimeActionSchema`、State Machine 或 Core `#handleAction`。已成功恢复且仍可见的同一 ref 会记录 `context.request_reused` 并直接继续，不重复读取或消耗 Action repair；持久化的重复次数受 retry budget 限制，不能形成无界循环。
+Runtime 在调用 Provider 前自动恢复最新 Input 明确点名的已发布 ref、最高相关 Memory，以及 active Task 未满足的 `context_ref` Check；成功恢复仍生成真实 Run-owned Context Evidence，失败仍遵守统一 scope/digest/预算错误。`restore_context` 仅保留在 Schema/编译器作为兼容入口，正常 phase-directed wire 不暴露也不依赖它；若兼容调用重复请求可见 ref，仍只复用既有 Fact/Evidence，不能形成无界循环。
 
 Approval 不是 Provider Intent，而是 Runtime 对受保护内部 Tool Action 的确定性执行边界。Runtime 自动从 required Checks 选择 persisted Evidence 作为 finish citations，再经过确定性 Completion Gate 与独立语义验证。内部失败通过 State Machine 进入 `failed`；Public/Host 只从持久化 Run、Plan、Evidence 与 lastError 派生 Failure Handoff，不创建第二 Result 或成功旁路。
 

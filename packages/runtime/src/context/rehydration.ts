@@ -549,6 +549,13 @@ export function autoRehydrateForActiveStep(args: {
     }
   }
   for (const check of activeStep.acceptanceChecks) {
+    if (check.kind === "context_ref") {
+      const satisfied = run.evidence.some(
+        (item) => item.stepId === activeStepId && item.checkId === check.id
+      );
+      if (!satisfied) required.add(check.ref);
+      continue;
+    }
     if (check.kind !== "tool_result") continue;
     const evidence = run.evidence.find(
       (item) => item.stepId === activeStepId && item.checkId === check.id

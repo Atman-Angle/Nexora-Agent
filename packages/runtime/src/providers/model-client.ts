@@ -74,16 +74,17 @@ export type ModelDecisionContext = {
   /**
    * Bounded, deterministic navigation metadata derived from current-Run
    * Authority and an explicit Fork Base. Candidates never contain historical
-   * fact content; request_context is still required to restore an exact ref.
+   * fact content. Runtime automatically restores an exact published ref when
+   * the latest Input names it or an active context_ref Check requires it.
    */
   readonly historyCandidates: readonly HistoryCandidate[];
-  /** Scoped active Memory navigation; exact content requires request_context. */
+  /** Scoped active Memory navigation; Runtime restores the highest-ranked candidate. */
   readonly memoryCandidates: readonly MemoryCandidate[];
   /**
    * A bounded index over exact Input and Event facts already persisted for
    * this Run. The archive publishes addressable sequence ranges, not the
-   * history content itself; request_context resolves individual refs back to
-   * the Authority Store under the normal rehydration budget.
+   * history content itself. Exact refs named by the latest Input are resolved
+   * from the Authority Store under the normal rehydration budget.
    */
   readonly sessionArchive?: SessionArchive;
   /**
@@ -281,9 +282,9 @@ export type ModelCallPhase = "decision" | "validation" | "compaction";
  *
  * - `"off"`     — never enable internal reasoning.
  * - `"on"`      — always enable it for decision calls.
- * - `"dynamic"` — enable reasoning only when the model must establish a
- *   first Plan (`context.run.currentPlan === null`); keep ordinary
- *   execution and finish decisions off. Recommended default.
+ * - `"dynamic"` — enable reasoning only during the Runtime-directed planning
+ *   phase; keep ordinary execution and finish decisions off. Recommended
+ *   default.
  *
  * Validation and compaction calls are always non-reasoning: they are short
  * structured outputs where internal reasoning adds latency without value.

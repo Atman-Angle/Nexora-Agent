@@ -56,6 +56,11 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     }));
     expect(view.toolInvocations).toHaveLength(2);
     expect(view.events.map((event) => event.type)).toContain("execute_step.completed");
+    expect(provider.contexts.map((context) => context.allowedIntents)).toEqual([
+      ["plan_tasks", "request_input"],
+      ["use_capabilities"],
+      ["finish"]
+    ]);
     for (const context of provider.contexts) {
       expect(context.providerContractVersion).toBe(2);
       expect(context).not.toHaveProperty("allowedActions");
@@ -71,31 +76,36 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     writeFileSync(join(root, "b.txt"), "B", "utf8");
     const provider = queuedProvider([
       {
+        reasoningSummary: "r".repeat(3_000),
         intent: {
           kind: "plan_tasks",
           taskContract: {
             goal: "Read both files.",
             constraints: [],
-            acceptanceCriteria: ["Both reads have Evidence."]
-          },
-          tasks: [
-            {
-              objective: "Read a.txt.",
-              completionRequirements: [{
-                kind: "capability_result",
-                capability: "filesystem.read",
-                args: { path: "a.txt" }
-              }]
-            },
-            {
-              objective: "Read b.txt.",
-              completionRequirements: [{
-                kind: "capability_result",
-                capability: "filesystem.read",
-                arguments: { path: "b.txt" }
-              }]
-            }
-          ]
+            acceptanceCriteria: ["Both reads have Evidence."],
+            tasks: [
+              {
+                objective: "Read a.txt.",
+                completionRequirements: [{
+                  kind: "capability_result",
+                  capability: "filesystem.read",
+                  args: { path: "a.txt" }
+                }]
+              },
+              {
+                objective: "Read b.txt.",
+                completionRequirements: [{
+                  kind: "capability_result",
+                  capability: "filesystem.read",
+                  arguments: { path: "b.txt" }
+                }]
+              },
+              {
+                objective: "Summarize the verified result.",
+                completionRequirements: [{ kind: "finish" }]
+              }
+            ]
+          }
         }
       },
       decision({
@@ -130,14 +140,12 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
   });
 
-  it("restores Context before planning, normalizes a duplicate request and creates the omitted exact-ref Check", async () => {
+  it("automatically restores an explicitly published Context ref before planning and creates the omitted exact-ref Check", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "history.txt"), "HISTORY-MARKER", "utf8");
     const provider = queuedProvider([
       decision({ kind: "request_input", question: "Publish history?", reason: "fixture" }),
       decision({ kind: "request_input", question: "State the final goal.", reason: "fixture" }),
-      decision({ kind: "restore_context", refs: ["input:2"] }),
-      decision({ kind: "restore_context", refs: ["input:2"] }),
       planDecision([capability("filesystem.read")]),
       decision({
         kind: "use_capabilities",
@@ -167,8 +175,13 @@ describe("E108 Runtime-owned Intent Compilation", () => {
       expect.objectContaining({ kind: "tool_result", toolName: "filesystem.read" })
     ]));
     expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["context_ref", "tool_result"]);
-    expect(view.events.filter((event) => event.type === "context.rehydrate_requested")).toHaveLength(1);
-    expect(view.events.filter((event) => event.type === "context.request_reused")).toHaveLength(1);
+    expect(provider.contexts[2]?.rehydratedFacts).toContainEqual(expect.objectContaining({
+      ref: "input:2",
+      kind: "input",
+      error: null
+    }));
+    expect(view.events.filter((event) => event.type === "context.rehydrate_requested")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "context.request_reused")).toHaveLength(0);
     expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
   });
 

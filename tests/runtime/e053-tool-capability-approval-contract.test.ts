@@ -184,23 +184,32 @@ describe("E053 Tool capability and Approval input convergence", () => {
   });
 });
 
-type ContextTool = {
-  readonly identity: { readonly name: string };
-  readonly capability: { readonly purpose: string; readonly nonGoals: readonly string[] };
-  readonly decision: { readonly useWhen: readonly string[]; readonly avoidWhen: readonly string[] };
-  readonly execution: { readonly effect: { readonly kind: "read" | "write" | "execute"; readonly description: string }; readonly inputExample?: unknown };
-  readonly evidence: { readonly produces: readonly string[] };
+type RuntimeContextTool = ModelDecisionContext["tools"][number];
+
+type WireContextTool = {
+  readonly name: string;
+  readonly purpose: string;
+  readonly inputExample?: unknown;
 };
 
 type HttpContext = {
   readonly workspace: string;
   readonly run: {
     readonly inputs: readonly string[];
-    readonly taskContract: ModelDecisionContext["run"]["taskContract"];
-    readonly currentPlan: ModelDecisionContext["run"]["currentPlan"];
-    readonly stepProgress: ModelDecisionContext["run"]["stepProgress"];
-    readonly evidence: ModelDecisionContext["run"]["evidence"];
-    readonly lastError: { readonly code: string; readonly message: string } | null;
+    readonly taskContract: {
+      readonly goal: string;
+      readonly constraints: readonly string[];
+      readonly acceptanceCriteria: readonly string[];
+    } | null;
+    readonly tasks: readonly {
+      readonly objective: string;
+      readonly status: "pending" | "active" | "completed";
+      readonly completionRequirements: readonly {
+        readonly kind: string;
+        readonly capability?: string;
+        readonly satisfied: boolean;
+      }[];
+    }[];
   };
   readonly providerContractVersion: 2;
   readonly allowedIntents: ModelDecisionContext["allowedIntents"];
@@ -211,11 +220,11 @@ type HttpContext = {
     readonly purpose: string;
     readonly produces: readonly string[];
   }[];
-  readonly tools: readonly ContextTool[];
+  readonly tools: readonly WireContextTool[];
 };
 
-function tools(context: ModelDecisionContext): readonly ContextTool[] {
-  return context.tools as readonly ContextTool[];
+function tools(context: ModelDecisionContext): readonly RuntimeContextTool[] {
+  return context.tools;
 }
 
 function testContract(name: string, kind: "read" | "write" | "execute", inputSchema: z.ZodType<unknown>, inputExample: unknown, factsSchema: z.ZodType<unknown>, idempotent = true): RuntimeTool["contract"] {
@@ -335,7 +344,7 @@ function capabilityDecision(
     };
   }
 
-  if (context.run.stepProgress.every((item) => item.status === "completed")) {
+  if (context.run.tasks.every((item) => item.status === "completed")) {
     return {
       action: {
         intent: { kind: "finish", summary: "Discovered, read, patched, and validated the file." }
@@ -344,14 +353,13 @@ function capabilityDecision(
     };
   }
 
-  const activeId = context.run.stepProgress.find((item) => item.status === "active")?.stepId;
-  const activeStep = context.run.currentPlan?.orderedSteps.find((step) => step.id === activeId);
-  const check = activeStep?.acceptanceChecks[0];
-  const toolName = check?.kind === "tool_result" ? check.toolName : undefined;
-  const tool = context.tools.find((item) => item.identity.name === toolName);
-  const inputExample = tool?.execution.inputExample as Record<string, unknown> | undefined;
+  const activeStep = context.run.tasks.find((item) => item.status === "active");
+  const check = activeStep?.completionRequirements[0];
+  const toolName = check?.kind === "capability_result" ? check.capability : undefined;
+  const tool = context.tools.find((item) => item.name === toolName);
+  const inputExample = tool?.inputExample as Record<string, unknown> | undefined;
   const objective = activeStep?.objective;
-  if (activeId === undefined || toolName === undefined || objective === undefined || inputExample === undefined) {
+  if (toolName === undefined || objective === undefined || inputExample === undefined) {
     return { action: requestInput("Active Tool input is unavailable.", "Missing inputExample"), selected: false };
   }
 

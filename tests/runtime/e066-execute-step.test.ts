@@ -235,12 +235,7 @@ describe("E066 execute_step granularity", () => {
 
     expect(result.status).toBe("waiting");
     const contract = provider.contexts[1]?.intentContract ?? [];
-    expect(contract.map((decision) => decision.intent.kind)).toEqual([
-      "plan_tasks",
-      "use_capabilities",
-      "request_input",
-      "restore_context"
-    ]);
+    expect(contract.map((decision) => decision.intent.kind)).toEqual(["use_capabilities"]);
     const example = contract.find((decision) => decision.intent.kind === "use_capabilities");
     expect(example).toBeDefined();
     const parsed = ProviderDecisionSchema.parse(example);

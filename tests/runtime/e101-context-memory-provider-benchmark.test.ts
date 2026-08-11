@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { RunResult, RunView } from "../../packages/runtime/src/index.js";
 import {
+  PROVIDER_DATASET_VERSION,
   PROVIDER_REPETITIONS,
   PROVIDER_RUN_COUNT,
   PROVIDER_SCENARIOS,
@@ -18,8 +19,9 @@ describe("E101 real Provider Harness benchmark contract", () => {
     ]);
     expect(PROVIDER_REPETITIONS).toBe(3);
     expect(PROVIDER_RUN_COUNT).toBe(15);
+    expect(PROVIDER_DATASET_VERSION).toBe(2);
     expect(PROVIDER_SCENARIOS.filter((item) => item.stressContextWindowTokens !== null)).toEqual([
-      expect.objectContaining({ id: "HPE-05", stressContextWindowTokens: 22_000 })
+      expect.objectContaining({ id: "HPE-05", stressContextWindowTokens: 19_384 })
     ]);
   });
 
@@ -38,8 +40,8 @@ describe("E101 real Provider Harness benchmark contract", () => {
       observations: [{
         phase: "decision",
         latencyMs: 10,
-        actionType: "request_context",
-        requestedRefs: ["memory:hpe01-release-key"],
+        actionType: "plan_tasks",
+        requestedRefs: [],
         candidateRefs: ["memory:hpe01-release-key"],
         restoredRefs: ["memory:hpe01-release-key"]
       }],
@@ -50,7 +52,7 @@ describe("E101 real Provider Harness benchmark contract", () => {
 
     expect(report).toMatchObject({
       passed: true,
-      requiredRef: { requested: true, restored: true },
+      requiredRef: { requested: false, restored: true },
       evidence: { persisted: 1, missingReads: [] },
       safety: { unsafeInvocations: [], hardLimitViolations: 0, falseSuccess: false },
       ledger: { invocations: 1, evidence: 1, modelCalls: 1 }

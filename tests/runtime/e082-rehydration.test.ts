@@ -166,7 +166,7 @@ describe("E082 rehydration", () => {
     ));
 
     expect(result.status).toBe("waiting");
-    expect(archiveContext.intentContract.map((decision) => decision.intent.kind)).toContain("restore_context");
+    expect(archiveContext.intentContract.map((decision) => decision.intent.kind)).toEqual(["use_capabilities"]);
     expect(archiveContext.sessionArchive).toEqual(expect.objectContaining({
       schemaVersion: 1,
       inputs: {

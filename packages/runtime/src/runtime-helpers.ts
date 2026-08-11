@@ -37,24 +37,27 @@ export function allowedActions(run: RunSnapshot): readonly RuntimeActionType[] {
 
 export function allowedProviderIntents(
   run: RunSnapshot,
-  hasAvailableRefs = false
+  _hasAvailableRefs = false
 ): readonly ProviderIntentKind[] {
-  const base: ProviderIntentKind[] = run.currentPlan === null
-    ? ["plan_tasks", "request_input"]
-    : (() => {
-        const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
-          && run.stepProgress.every((item) => item.status === "completed");
-        if (allStepsCompleted) return ["plan_tasks", "request_input", "finish"];
-        const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
-        const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
-        const hasCallableRequirement = activeStep?.acceptanceChecks.some(
-          (check) => check.kind === "tool_result"
-        ) ?? false;
-        return hasCallableRequirement
-          ? ["plan_tasks", "use_capabilities", "request_input"]
-          : ["plan_tasks", "request_input"];
-      })();
-  return hasAvailableRefs ? [...base, "restore_context"] : base;
+  if (
+    run.currentPlan === null
+    || run.taskContract === null
+    || run.taskContract.inputVersion < run.inputHistory.length
+  ) {
+    return ["plan_tasks", "request_input"];
+  }
+  const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
+    && run.stepProgress.every((item) => item.status === "completed");
+  if (allStepsCompleted) return ["finish"];
+  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+  const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+  if (activeStep?.acceptanceChecks.some((check) => check.kind === "tool_result") === true) {
+    return ["use_capabilities"];
+  }
+  if (activeStep?.acceptanceChecks.some((check) => check.kind === "user_confirmation") === true) {
+    return ["request_input"];
+  }
+  return ["plan_tasks", "request_input"];
 }
 
 export function completeSatisfiedSteps(plan: NonNullable<RunSnapshot["currentPlan"]>, progress: RunSnapshot["stepProgress"], evidence: readonly Evidence[]): RunSnapshot["stepProgress"] {

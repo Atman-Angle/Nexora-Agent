@@ -31,7 +31,6 @@ type ProviderRequest = {
 type DecisionPayload = {
   readonly mode: string;
   readonly context: {
-    readonly workspace?: string;
     readonly providerContractVersion?: number;
     readonly intentContract?: readonly { readonly intent: { readonly kind: string } }[];
     readonly run: Record<string, unknown>;
@@ -47,7 +46,7 @@ type DecisionPayload = {
       readonly events: { readonly firstSequence: number; readonly lastSequence: number; readonly count: number } | null;
     } | null;
     readonly toolCatalog: readonly { readonly name: string }[];
-    readonly tools: readonly { readonly identity: { readonly name: string }; readonly execution: { readonly inputExample?: unknown } }[];
+    readonly tools?: readonly { readonly name: string; readonly purpose: string; readonly inputExample?: unknown }[];
     readonly toolObservations?: readonly Record<string, unknown>[];
   };
 };
@@ -111,7 +110,7 @@ describe("E050 Provider Action Contract convergence", () => {
     expect(decisions).toBe(3);
     const decisionRequests = requests.map((request) => JSON.parse(request.messages.at(-1)!.content) as DecisionPayload)
       .filter((payload) => payload.mode === "decide");
-    expect(decisionRequests[0]?.context.workspace).toBe(workspace);
+    expect(decisionRequests[0]?.context).not.toHaveProperty("workspace");
     expect(decisionRequests[0]?.context).not.toHaveProperty("projection");
     expect(decisionRequests[0]?.context.sessionArchive).toEqual(expect.objectContaining({
       schemaVersion: 1,
@@ -119,17 +118,17 @@ describe("E050 Provider Action Contract convergence", () => {
       events: expect.objectContaining({ firstSequence: 1, count: expect.any(Number) })
     }));
     expect(decisionRequests[0]?.context.providerContractVersion).toBe(2);
-    expect(decisionRequests[0]?.context.intentContract?.map((item) => item.intent.kind)).toEqual(["plan_tasks", "request_input", "restore_context"]);
+    expect(decisionRequests[0]?.context.intentContract?.map((item) => item.intent.kind)).toEqual(["plan_tasks", "request_input"]);
     for (const example of decisionRequests[0]?.context.intentContract ?? []) {
       expect(ProviderDecisionSchema.parse(example).intent.kind).toBe(example.intent.kind);
     }
     expect(decisionRequests[0]?.context.toolCatalog).toContainEqual(expect.objectContaining({ name: "example.read" }));
-    expect(decisionRequests[0]?.context.tools).toEqual([]);
+    expect(decisionRequests[0]?.context).not.toHaveProperty("tools");
     expect(decisionRequests[2]?.context.tools).toContainEqual(expect.objectContaining({
-      identity: { name: "example.read" },
-      execution: expect.objectContaining({ inputExample: { path: "target.txt" } })
+      name: "example.read",
+      inputExample: { path: "target.txt" }
     }));
-    expect(decisionRequests[2]?.context.tools.find((tool) => tool.identity.name === "example.other")).toBeUndefined();
+    expect(decisionRequests[2]?.context.tools?.find((tool) => tool.name === "example.other")).toBeUndefined();
     expect(decisionRequests[1]!.context.run).not.toHaveProperty("lastError");
     expect(decisionRequests[1]!.context.repair).toEqual(expect.objectContaining({
       kind: "invalid_action",
@@ -139,16 +138,15 @@ describe("E050 Provider Action Contract convergence", () => {
       ]),
       retry: { used: 1, remaining: 9 }
     }));
-    const revisionExample = decisionRequests[2]?.context.intentContract
-      ?.find((item) => item.intent.kind === "plan_tasks") as Record<string, unknown> | undefined;
-    expect(revisionExample).not.toHaveProperty("intent.taskContract");
+    expect(decisionRequests[2]?.context.intentContract?.map((item) => item.intent.kind)).toEqual([
+      "use_capabilities"
+    ]);
+    expect(decisionRequests[2]?.context.intentContract?.find(
+      (item) => item.intent.kind === "plan_tasks"
+    )).toBeUndefined();
     expect(requests[0]?.messages[0]?.content).not.toContain("filesystem.patch {path,expectedDigest");
-    expect(requests[0]?.messages[0]?.content).toContain(
-      "inaccurate_summary or incomplete_summary requires a corrected finish"
-    );
-    expect(requests[0]?.messages[0]?.content).toContain(
-      "Never output RuntimeAction DSL fields"
-    );
+    expect(requests[0]?.messages[0]?.content).toContain("inaccurate_summary or incomplete_summary");
+    expect(requests[0]?.messages[0]?.content).toContain("never output those fields or RuntimeAction DSL");
 
     const rejected = view.events.find((event) => event.type === "action.rejected");
     expect(rejected).toBeDefined();
@@ -215,13 +213,13 @@ describe("E050 Provider Action Contract convergence", () => {
     const observation = context.toolObservations?.[0];
     expect(context).not.toHaveProperty("projection");
     expect(observation).toEqual(expect.objectContaining({
-      stepId: expect.stringMatching(/^step-/),
       toolName: "example.read",
       status: "succeeded",
-      payloadMode: "full",
-      sourceRefs: expect.arrayContaining([expect.stringMatching(/^invocation:/)])
+      payloadMode: "full"
     }));
     for (const key of [
+      "stepId",
+      "sourceRefs",
       "invocationId",
       "planVersion",
       "completedAt",

@@ -20,7 +20,7 @@ afterEach(() => {
 });
 
 describe("E077 Tool decision efficiency", () => {
-  it("advertises call_tool only while an active Tool check exists", async () => {
+  it("advertises one phase-specific Intent while an active Tool check exists", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -43,18 +43,13 @@ describe("E077 Tool decision efficiency", () => {
     runtime.close();
 
     expect(result.status).toBe("succeeded");
-    expect(provider.contexts[0]?.allowedIntents).toEqual(["plan_tasks", "request_input", "restore_context"]);
-    expect(provider.contexts[1]?.allowedIntents).toEqual([
-      "plan_tasks",
-      "use_capabilities",
-      "request_input",
-      "restore_context"
-    ]);
+    expect(provider.contexts[0]?.allowedIntents).toEqual(["plan_tasks", "request_input"]);
+    expect(provider.contexts[1]?.allowedIntents).toEqual(["use_capabilities"]);
     expect(provider.contexts[1]?.intentContract.map((decision) => decision.intent.kind))
-      .toEqual(["plan_tasks", "use_capabilities", "request_input", "restore_context"]);
-    expect(provider.contexts[2]?.allowedIntents).toEqual(["plan_tasks", "request_input", "finish", "restore_context"]);
+      .toEqual(["use_capabilities"]);
+    expect(provider.contexts[2]?.allowedIntents).toEqual(["finish"]);
     expect(provider.contexts[2]?.intentContract.map((decision) => decision.intent.kind))
-      .toEqual(["plan_tasks", "request_input", "finish", "restore_context"]);
+      .toEqual(["finish"]);
   });
 
   it("does not advertise call_tool when the active Step has no Tool result check", async () => {
@@ -87,9 +82,9 @@ describe("E077 Tool decision efficiency", () => {
     runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(provider.contexts[1]?.allowedIntents).toEqual(["plan_tasks", "request_input", "restore_context"]);
+    expect(provider.contexts[1]?.allowedIntents).toEqual(["request_input"]);
     expect(provider.contexts[1]?.intentContract.map((decision) => decision.intent.kind))
-      .toEqual(["plan_tasks", "request_input", "restore_context"]);
+      .toEqual(["request_input"]);
   });
 });
 

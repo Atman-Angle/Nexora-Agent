@@ -54,8 +54,14 @@ describe("E088 decision continuity projection", () => {
     const wirePayload = JSON.parse(
       bodies[0]!.messages.find((message) => message.role === "user")!.content
     ) as { readonly context: Record<string, unknown> };
-    expect(wirePayload.context.contextCheckpoint).toEqual(context.contextCheckpoint);
-    expect(wirePayload.context.rehydratedFacts).toEqual(context.rehydratedFacts);
+    expect(wirePayload.context.contextCheckpoint).toEqual(context.contextCheckpoint?.summary);
+    expect(wirePayload.context.rehydratedFacts).toEqual(context.rehydratedFacts.map((fact) => ({
+      ref: fact.ref,
+      kind: fact.kind,
+      content: fact.content,
+      error: fact.error,
+      ...(fact.trust === undefined ? {} : { trust: fact.trust })
+    })));
     expect(wirePayload.context).not.toHaveProperty("projection");
   });
 
@@ -126,7 +132,6 @@ describe("E088 decision continuity projection", () => {
       expect.objectContaining({
         ref: "input:1",
         kind: "input",
-        origin: "model_request",
         content: { sequence: 1, text: exactInput },
         error: null
       })

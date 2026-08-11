@@ -248,7 +248,7 @@ describe("E079 Context Budget and Token Accounting", () => {
 
     expect(meteredInput).not.toContain('"projection"');
     expect(meteredSystem).toContain("Provider Contract v2");
-    expect(meteredSystem).toContain("Runtime owns Plan identity");
+    expect(meteredSystem).toContain("Runtime owns all IDs, versions, bindings");
     expect(meteredInput).toContain('"intentContract"');
     expect(meteredInput).toContain('"toolCatalog"');
     expect(requestBody).toMatchObject({ model: "provider-model", max_tokens: 500 });

@@ -6,6 +6,7 @@ import {
 } from "../contracts.js";
 
 const NonEmptyString = z.string().trim().min(1);
+const BoundedReasoningSummary = z.string().trim().min(1).transform((value) => value.slice(0, 2_000));
 
 const CapabilityResultRequirementSchema = z.object({
   kind: z.literal("capability_result"),
@@ -70,6 +71,39 @@ const PlanTasksIntentSchema = z.object({
   tasks: z.array(SemanticTaskSchema).min(1)
 }).strict();
 
+function removeRedundantFinishTasks(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  let intent = value as Record<string, unknown>;
+  if (intent.kind !== "plan_tasks") return value;
+  const taskContract = intent.taskContract;
+  if (
+    intent.tasks === undefined
+    && taskContract !== null
+    && typeof taskContract === "object"
+    && !Array.isArray(taskContract)
+    && Array.isArray((taskContract as Record<string, unknown>).tasks)
+  ) {
+    const { tasks, ...contract } = taskContract as Record<string, unknown>;
+    intent = { ...intent, taskContract: contract, tasks };
+  }
+  if (!Array.isArray(intent.tasks)) return intent;
+  const tasks = intent.tasks.filter((task) => {
+    if (task === null || typeof task !== "object" || Array.isArray(task)) return true;
+    const requirements = (task as Record<string, unknown>).completionRequirements;
+    return !(
+      Array.isArray(requirements)
+      && requirements.length > 0
+      && requirements.every((requirement) => (
+        requirement !== null
+        && typeof requirement === "object"
+        && !Array.isArray(requirement)
+        && (requirement as Record<string, unknown>).kind === "finish"
+      ))
+    );
+  });
+  return tasks.length === intent.tasks.length ? intent : { ...intent, tasks };
+}
+
 const RestoreContextIntentSchema = z.object({
   kind: z.literal("restore_context"),
   refs: z.array(NonEmptyString.max(4096)).min(1).max(8)
@@ -106,11 +140,21 @@ export const ProviderIntentSchema = z.discriminatedUnion("kind", [
 export type ProviderIntent = z.infer<typeof ProviderIntentSchema>;
 export type ProviderIntentKind = ProviderIntent["kind"];
 
-export const ProviderDecisionSchema = z.object({
-  reasoningSummary: NonEmptyString.max(2_000).optional(),
-  intent: ProviderIntentSchema
-}).strict();
+export const ProviderDecisionSchema = z.preprocess(
+  normalizeProviderDecision,
+  z.object({
+    reasoningSummary: BoundedReasoningSummary.optional(),
+    intent: ProviderIntentSchema
+  }).strict()
+);
 export type ProviderDecision = z.infer<typeof ProviderDecisionSchema>;
+
+function normalizeProviderDecision(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const decision = value as Record<string, unknown>;
+  const normalizedIntent = removeRedundantFinishTasks(decision.intent);
+  return normalizedIntent === decision.intent ? value : { ...decision, intent: normalizedIntent };
+}
 
 export const ValidationIssueKindSchema = z.enum([
   "missing_fact",
