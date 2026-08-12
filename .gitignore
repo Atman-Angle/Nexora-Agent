@@ -7,6 +7,12 @@ coverage/
 .local-tool-settings/
 .local-agent-cache/
 .cursor/
+AGENTS.md
+DEVELOPMENT.md
+LOOP.md
+SYSTEM_SOP.md
+docs/DECISIONS.md
+docs/E[0-9][0-9][0-9]*.md
 MANIFEST.json
 agent-evaluation/
 reports/
