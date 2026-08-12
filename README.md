@@ -60,6 +60,78 @@ Use Nexora when an Agent must do more than return one model response:
 
 For a simple stateless chat completion, Nexora may be unnecessary. It is designed for Agents whose execution has state, side effects, human interaction, or a meaningful completion contract.
 
+## Context: a bounded view of durable Run state
+
+Nexora does not treat the model prompt as the Agent's memory or source of truth. On every Provider call, the Runtime rebuilds a **Projected Run Context** from persisted authority: the current input and task contract, the Run-owned Plan and progress, relevant Tool Observations, Evidence, interaction state, and recovery facts. The projection is disposable; deleting it cannot delete or rewrite what actually happened.
+
+```text
+persisted Run authority
+  → phase-specific projection
+  → token measurement
+  → deterministic eviction when needed
+  → validated checkpoint compaction when needed
+  → exact fact rehydration
+  → bounded Provider request
+```
+
+| Mechanism | How it works |
+| --- | --- |
+| **Phase-specific projection** | Decision, validation, and compaction calls receive only the fields needed for that phase. Internal IDs, versions, workspace details, full Plan structure, and unrelated provenance stay off the production wire. |
+| **Measured token budget** | The final serialized request is checked against the Provider profile's soft and hard limits. A true hard-limit overflow is persisted as a refused model call and never reaches the Provider. |
+| **Deterministic eviction** | Lower-value Tool payloads shrink from full content to fragment, reference, or omission using stable priority rules. Active checks, unresolved failures, safety facts, Evidence, and current work remain ahead of ordinary history. No LLM decides what to evict. |
+| **Structured compaction** | If eviction is insufficient, the Provider may produce a schema-validated summary whose statements cite original SourceRefs. Nexora verifies ownership, digests, completed work, unresolved issues, and covered Invocations before storing one replaceable Checkpoint. A Checkpoint is a cache, never Evidence or completion authority. |
+| **History navigation and rehydration** | Bounded `historyCandidates` expose refs and short hints without copying large content. The Runtime automatically restores explicitly requested refs and active `context_ref` requirements into digest-checked `rehydratedFacts`; unavailable, altered, or oversized facts fail with typed errors instead of being guessed. |
+| **Restart and branch isolation** | Context is rebuilt from persisted authority after restart. A branch inherits a read-only fork base but owns its workspace, Checkpoint, history, Evidence, and completion state, so it cannot mutate or complete its parent. |
+
+The ordering is deliberate: current task and authoritative Evidence first, rebuildable history second. Context management may change what the model can see in one call, but it cannot change Run Status, Plan, Invocation, Evidence, Approval, or the Completion Gate.
+
+## Memory: scoped, durable knowledge across Runs
+
+Memory is separate from the Run Store. The host opens a dedicated Memory Store and injects an exact identity scope: `userId`, `projectId`, `workspaceId`, and optional branch. Records preserve their source Run, source ref, digest, type, verification state, sensitivity, lifecycle, and timestamps. Memory can help a later Run recover relevant knowledge, but it never becomes a second Plan, task state, permission system, or truth authority.
+
+```text
+Run-derived candidate
+  → explicit or verified promotion
+  → scoped active Memory
+  → bounded candidate navigation
+  → eligibility + digest recheck
+  → untrusted rehydrated fact
+  → normal Tool / Approval / Evidence path
+```
+
+| Mechanism | How it works |
+| --- | --- |
+| **Lifecycle and provenance** | New knowledge begins as a candidate. Explicit or evidence-backed promotion can make it active. Corrections and merges create a new record and supersede predecessors transactionally; statements are not silently edited in place. Records may also expire, be archived, invalidated, or deleted. |
+| **Exact scope isolation** | Every create, query, update, recall, and audit operation includes the full scope. Cross-user, cross-project, cross-workspace, sibling-branch, sensitive, expired, deleted, or disabled records are not eligible for recall. |
+| **Bounded candidate projection** | The Runtime deterministically ranks active, relevant, normal-sensitivity records and exposes at most 6 candidates within 768 estimated tokens and 4 KiB. Candidates contain refs, types, reasons, lifecycle and digest metadata, not the Memory statement itself. |
+| **Exact restoration** | Before use, Nexora rechecks scope, lifecycle, expiry, sensitivity, and digest, then restores the selected record as `rehydratedFacts(kind="memory")`. A deleted or changed record becomes unavailable rather than leaking stale content. |
+| **Untrusted by construction** | Restoring exact bytes proves provenance, not authority. Memory content is labeled untrusted data and cannot override policy, request Tools, bypass Approval, manufacture Evidence, or declare completion. Any action suggested by recalled content still follows the normal Runtime gates. |
+| **User control and audit** | Hosts can correct, invalidate, delete, clear, export audit history, or disable recall for an exact scope. Control operations are idempotent and append audit events without copying sensitive statement text. |
+
+Context answers **what this model call needs from the current Run**. Memory answers **what eligible knowledge from earlier Runs may be useful now**. They meet only through bounded candidates and verified rehydration; neither creates a second execution authority.
+
+## Proved under pressure: Context & Memory Harness
+
+Nexora includes a reproducible Harness for the failure modes that usually appear only after an Agent has been running for a while: context eviction, cross-run Memory recall, same-run history recovery, untrusted recalled content, token pressure, and evidence-backed completion.
+
+| Gate | What it exercises | Current verified baseline |
+| --- | --- | --- |
+| **Deterministic Harness v2** | 13 fixed scenarios across continuity, budget, safety, recovery, and completion; no external model calls | **13 / 13 passed** |
+| **Real Provider Harness** | HPE-01–05 against a real OpenAI-compatible Provider, repeated 3 times per scenario | **15 / 15 passed** |
+
+The Provider gate does more than compare final text. It evaluates persisted Run state, requested and restored refs, Tool Invocations, Evidence, token usage, and unsafe actions. Missing runs, skipped evidence, duplicate scenario keys, false success, hard token-limit violations, or unsafe Invocation paths fail the aggregate report closed.
+
+```powershell
+# Fast, deterministic regression baseline
+pnpm benchmark:context-memory:v2
+
+# Real Provider baseline; reads Provider configuration from .env
+$env:NEXORA_PROVIDER_BENCHMARK_CONFIRM = '15'
+pnpm benchmark:context-memory:provider
+```
+
+The checked baseline uses `qwen3.7-flash`; Provider cost is intentionally reported as unpriced unless explicit token pricing is configured. The Harness measures Nexora's own execution contracts, not comparative performance against other Agent systems.
+
 ## Core concepts
 
 | Concept | What it means |
@@ -162,26 +234,35 @@ The harness verifies real retrieval, human interaction, failure recovery, and va
 
 ```text
 Nexora-Agent/
-├─ packages/runtime/                 # Public Runtime
-├─ apps/cli/                         # Thin CLI host
-├─ apps/research-agent/              # Real application harness
-│  └─ src/                           # Application code
-├─ tests/                            # Runtime and application contracts
-├─ docs/                             # Guides and case studies
-└─ assets/readme/                    # Logo and README visuals
+├─ packages/
+│  └─ runtime/                       # Public embeddable Runtime
+├─ apps/
+│  ├─ cli/                           # Thin command-line host
+│  └─ research-agent/                # Real application Harness
+├─ examples/
+│  └─ runtime/                       # Public API usage examples
+├─ tests/
+│  ├─ apps/                          # Host application contracts
+│  ├─ benchmarks/                    # Deterministic and real Provider Harnesses
+│  ├─ canaries/                      # Real Provider continuity canary
+│  ├─ fixtures/                      # Shared deterministic test data
+│  └─ runtime/                       # Runtime, Context, and Memory contracts
+├─ docs/                             # Public guides and validation references
+└─ assets/readme/                    # GitHub README visuals
 ```
 
 ## Documentation
 
 - [Build with the Nexora Runtime](docs/BUILD_WITH_NEXORA_RUNTIME.md)
 - [Research Agent harness and results](docs/applications/research-agent.md)
+- [Context Harness system validation](docs/CONTEXT_HARNESS_SYSTEM_VALIDATION.md)
 - [Architecture and authority boundaries](ARCHITECTURE.md)
 - [System data flow](DATA_FLOW.md)
 - [Testing strategy](TESTS.md)
 
 ## Project status
 
-Nexora Agent is currently pre-release. The Runtime, CLI, and Research Agent harness can be built and tested in this repository; npm publication, long-running hosted deployment, and an open-source license have not yet been completed or declared.
+Nexora Agent is currently pre-release. The Runtime, CLI, Research Agent, and Context & Memory Harnesses can be built and tested in this repository; npm publication, long-running hosted deployment, and an open-source license have not yet been completed or declared.
 
 ```powershell
 pnpm typecheck
