@@ -11,6 +11,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/runtime/src/index.js";
+import { legacyTestActionToDecision } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -120,12 +121,12 @@ describe("E078 bounded decision context projection", () => {
     try {
       await runtime.start({ input: "Exercise observation relevance." });
 
-      expect(provider.contexts[2]!.toolObservations.map((item) => item.stepId)).toEqual(["read"]);
-      expect(provider.contexts[3]!.toolObservations.map((item) => item.stepId)).toEqual([
-        "read",
-        "obsolete"
+      expect(provider.contexts[2]!.toolObservations.map((item) => item.toolName)).toEqual(["test.read"]);
+      expect(provider.contexts[3]!.toolObservations.map((item) => item.toolName)).toEqual([
+        "test.read",
+        "test.obsolete"
       ]);
-      expect(provider.contexts[4]!.toolObservations.map((item) => item.stepId)).toEqual(["read"]);
+      expect(provider.contexts[4]!.toolObservations.map((item) => item.toolName)).toEqual(["test.read"]);
       expect(provider.contexts[4]!.toolObservations[0]?.status).toBe("succeeded");
     } finally {
       await runtime.close();
@@ -158,7 +159,7 @@ describe("E078 bounded decision context projection", () => {
       // still see every completed Step's observation as visible facts.
       const completion = provider.contexts[4]!;
       expect(completion.run.stepProgress.every((item) => item.status === "completed")).toBe(true);
-      expect(completion.toolObservations.map((item) => item.stepId)).toEqual(["one", "two", "three"]);
+      expect(completion.toolObservations.map((item) => item.toolName)).toEqual(["test.one", "test.two", "test.three"]);
     } finally {
       await runtime.close();
     }
@@ -178,7 +179,7 @@ class CapturingProvider implements RuntimeProvider {
     const call = this.contexts.length;
     this.frozen.push(Object.isFrozen(context) && Object.isFrozen(context.run));
     this.contexts.push(structuredClone(context));
-    return this.#decide(context, call);
+    return legacyTestActionToDecision(this.#decide(context, call), context);
   }
 
   async validate(): Promise<unknown> {

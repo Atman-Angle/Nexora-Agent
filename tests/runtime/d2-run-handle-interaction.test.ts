@@ -21,6 +21,7 @@ import {
 } from "../../packages/runtime/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { digestTaskContract } from "../../packages/runtime/src/validation.js";
+import { legacyTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -65,7 +66,7 @@ describe("D2 RunHandle interaction", () => {
     const workspace = temporaryWorkspace();
     const effects = { count: 0 };
     let call = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide(context) {
         call += 1;
         if (call <= 2) return writeDecision(workspace, context, call);
@@ -78,7 +79,7 @@ describe("D2 RunHandle interaction", () => {
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const runtime = createRuntime({
       workspace,
       provider,
@@ -102,7 +103,7 @@ describe("D2 RunHandle interaction", () => {
     const workspace = temporaryWorkspace();
     const secondDecision = deferred<void>();
     let call = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide() {
         call += 1;
         if (call === 1) {
@@ -122,7 +123,7 @@ describe("D2 RunHandle interaction", () => {
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const runtime = createRuntime({ workspace, provider, tools: [] });
     const run = runtime.run("Collect input.");
     const first = await run.wait();
@@ -156,7 +157,7 @@ describe("D2 RunHandle interaction", () => {
     const dataDir = join(workspace, ".nexora");
     const resumedDecision = deferred<void>();
     let call = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide() {
         call += 1;
         if (call === 1) {
@@ -176,7 +177,7 @@ describe("D2 RunHandle interaction", () => {
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const firstRuntime = createRuntime({
       workspace,
       dataDir,
@@ -245,7 +246,7 @@ describe("D2 RunHandle interaction", () => {
   it("projects unknown Invocation recovery and accepts only its matching decision", async () => {
     const workspace = temporaryWorkspace();
     const invocationId = seedInterruptedNonIdempotentInvocation(workspace);
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide(context) {
         return {
           type: "propose_finish",
@@ -256,7 +257,7 @@ describe("D2 RunHandle interaction", () => {
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
@@ -330,7 +331,7 @@ function deferred<T>(): {
 
 function writeProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context) {
       call += 1;
       return writeDecision(workspace, context, call);
@@ -338,7 +339,7 @@ function writeProvider(workspace: string): RuntimeProvider {
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function writeDecision(
@@ -420,7 +421,7 @@ function writeTool(effects: { count: number }): RuntimeTool {
 
 function readProvider(_workspace: string): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context) {
       call += 1;
       if (call === 1) {
@@ -463,7 +464,7 @@ function readProvider(_workspace: string): RuntimeProvider {
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function readTool(): RuntimeTool {

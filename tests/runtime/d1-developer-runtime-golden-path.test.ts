@@ -18,6 +18,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/runtime/src/index.js";
+import { legacyTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -77,14 +78,14 @@ describe("D1 developer Runtime golden path", () => {
 
   it("does not turn a blocked execution segment into a final result", async () => {
     const workspace = temporaryWorkspace();
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide() {
         throw new Error("provider offline");
       },
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const runtime = createRuntime({ workspace, provider, tools: [] });
 
     const run = runtime.run("Wait for the unavailable Provider.");
@@ -105,7 +106,7 @@ describe("D1 developer Runtime golden path", () => {
     const workspace = temporaryWorkspace();
     let call = 0;
     let effects = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide() {
         call += 1;
         if (call === 1) {
@@ -141,7 +142,7 @@ describe("D1 developer Runtime golden path", () => {
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const writeTool: RuntimeTool = {
       contract: {
         identity: { name: "test.write" },
@@ -193,14 +194,14 @@ describe("D1 developer Runtime golden path", () => {
 
   it("returns a persisted failed terminal result without throwing away evidence", async () => {
     const workspace = temporaryWorkspace();
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide() {
         return { type: "not-a-runtime-action" };
       },
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const runtime = createRuntime({ workspace, provider, tools: [] });
 
     const run = runtime.run("Reject an invalid Provider action.", {
@@ -221,10 +222,10 @@ describe("D1 developer Runtime golden path", () => {
     await runtime.close();
   });
 
-  it("projects only the persisted Result citations as successful final evidence", async () => {
+  it("projects only Runtime-selected required citations as successful final evidence", async () => {
     const workspace = temporaryWorkspace();
     let call = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide(context) {
         call += 1;
         if (call === 1) {
@@ -287,7 +288,7 @@ describe("D1 developer Runtime golden path", () => {
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const runtime = createRuntime({
       workspace,
       provider,
@@ -300,8 +301,10 @@ describe("D1 developer Runtime golden path", () => {
 
     expect(result.status).toBe("succeeded");
     expect(inspection.evidence).toHaveLength(2);
-    expect(result.evidence).toHaveLength(1);
-    expect(result.evidence[0]?.checkId).toBe("required-check");
+    expect(result.evidence).toHaveLength(2);
+    expect(result.evidence.map((item) => item.id)).toEqual(
+      inspection.evidence.map((item) => item.id)
+    );
     expect(inspection.result).toEqual(result);
     await runtime.close();
   });
@@ -381,7 +384,7 @@ describe("D1 developer Runtime golden path", () => {
     const dataDir = join(workspace, ".nexora");
     const resumedDecision = deferred<void>();
     let call = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = legacyTestProvider({
       async decide(_context, operation) {
         call += 1;
         if (call === 1) {
@@ -401,7 +404,7 @@ describe("D1 developer Runtime golden path", () => {
       async validate() {
         return { passed: true, issues: [] };
       }
-    };
+    });
     const runtime = createRuntime({ workspace, dataDir, provider, tools: [] });
     const waiting = await runtime.start({ input: "Begin interactive work." });
     expect(waiting.status).toBe("waiting");
@@ -591,7 +594,7 @@ function scriptedReadProvider(
   firstDecision?: Promise<void>
 ): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context: ModelDecisionContext, operation) {
       call += 1;
       if (call === 1) {
@@ -637,7 +640,7 @@ function scriptedReadProvider(
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function externalConsumerSource(workspace: string): string {
@@ -654,39 +657,36 @@ import type { RuntimeEngine as InternalRuntime } from "@nexora/runtime/dist/runt
 let call = 0;
 const workspace = ${JSON.stringify(workspace)};
 const provider: RuntimeProvider = {
-  async decide(context: ModelDecisionContext) {
+  async decide(_context: ModelDecisionContext) {
     call += 1;
     if (call === 1) return {
-      type: "set_plan",
-      basedOnVersion: null,
-      taskContract: {
-        goal: "Search target",
-        constraints: [],
-        acceptanceCriteria: ["search evidence"]
-      },
-      orderedSteps: [{
-        id: "search",
-        objective: "Search target",
-        acceptanceChecks: [{
-          id: "search-check",
-          kind: "tool_result",
-          required: true,
-          toolName: "filesystem.search",
-          expectedStatus: "success"
+      intent: {
+        kind: "plan_tasks",
+        taskContract: {
+          goal: "Search target",
+          constraints: [],
+          acceptanceCriteria: ["search evidence"]
+        },
+        tasks: [{
+          objective: "Search target",
+          completionRequirements: [{
+            kind: "capability_result",
+            capability: "filesystem.search"
+          }]
         }]
-      }]
+      }
     };
     if (call === 2) return {
-      type: "call_tool",
-      stepId: "search",
-      checkIds: ["search-check"],
-      toolName: "filesystem.search",
-      input: { query: "external D1 consumer", path: "." }
+      intent: {
+        kind: "use_capabilities",
+        calls: [{
+          capability: "filesystem.search",
+          arguments: { query: "external D1 consumer", path: "." }
+        }]
+      }
     };
     return {
-      type: "propose_finish",
-      summary: "Verified external package",
-      evidenceIds: context.run.evidence.map((item) => item.id)
+      intent: { kind: "finish", summary: "Verified external package" }
     };
   },
   async validate() {

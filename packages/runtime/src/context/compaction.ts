@@ -70,6 +70,10 @@ export function digestCompactionSummary(summary: CompactionSummary): string {
   return digestText(canonicalJson(summary));
 }
 
+export function digestRunEvent(event: RunEvent): string {
+  return digestText(canonicalJson(event));
+}
+
 export function parseCompactionSummary(raw: unknown): CompactionSummaryZod | null {
   const parsed = CompactionSummarySchema.safeParse(raw);
   return parsed.success ? parsed.data : null;
@@ -158,7 +162,7 @@ export function resolveSourceRef(
       kind: "event",
       id: ref,
       sequence,
-      digest: digestText(`${entry.type}:${entry.occurredAt}`)
+      digest: digestRunEvent(entry)
     };
   }
   const invocationId = ref.startsWith("invocation:") ? ref.slice("invocation:".length) : null;
@@ -222,20 +226,34 @@ function isUnresolvedSource(ref: string, authority: CompactionAuthority): boolea
   if (resolved === null) return false;
   if (resolved.kind === "invocation") {
     const invocation = authority.invocations.find((item) => item.id === resolved.id);
-    return invocation !== undefined
-      && (invocation.status === "failed" || invocation.status === "unknown");
+    return invocation !== undefined && isInvocationUnresolved(invocation, authority);
   }
   if (resolved.kind === "evidence") {
     if (resolved.invocationId === null) return false;
     const invocation = authority.invocations.find((item) => item.id === resolved.invocationId);
-    return invocation !== undefined
-      && (invocation.status === "failed" || invocation.status === "unknown");
+    return invocation !== undefined && isInvocationUnresolved(invocation, authority);
   }
   if (resolved.kind === "event") {
     const event = authority.events.find((item) => item.sequence === resolved.sequence);
     return event !== undefined && /failed|denied|unknown|blocked/.test(event.type);
   }
   return false;
+}
+
+function isInvocationUnresolved(
+  invocation: ToolInvocation,
+  authority: CompactionAuthority
+): boolean {
+  if (invocation.status !== "failed" && invocation.status !== "unknown") return false;
+  const index = authority.invocations.findIndex((item) => item.id === invocation.id);
+  const later = authority.invocations.slice(index + 1).filter((candidate) => (
+    candidate.status === "succeeded"
+    && candidate.planVersion === invocation.planVersion
+    && candidate.stepId === invocation.stepId
+  ));
+  return !invocation.checkIds.every((checkId) => (
+    later.some((candidate) => candidate.checkIds.includes(checkId))
+  ));
 }
 
 /**
@@ -258,9 +276,15 @@ export function isCheckpointValid(
     evidence: new Map(run.evidence.map((item) => [item.id, item])),
     artifactExists
   };
-  for (const [ref, digest] of Object.entries(checkpoint.sourceDigests)) {
-    const resolved = resolveSourceRef(ref, authority);
-    if (resolved === null || resolved.digest !== digest) return false;
+  if (checkpoint.digest !== digestCompactionSummary(checkpoint.summary)) return false;
+  const validated = validateCompactionSummary(checkpoint.summary, authority);
+  if (!validated.ok) return false;
+  if (canonicalJson(checkpoint.sourceDigests) !== canonicalJson(validated.sourceDigests)) {
+    return false;
   }
-  return true;
+  return sameStringMultiset(checkpoint.coveredInvocations, validated.coveredInvocations);
+}
+
+function sameStringMultiset(left: readonly string[], right: readonly string[]): boolean {
+  return canonicalJson([...left].sort()) === canonicalJson([...right].sort());
 }

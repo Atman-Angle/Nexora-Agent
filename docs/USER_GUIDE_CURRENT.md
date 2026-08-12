@@ -122,6 +122,8 @@ try {
 }
 ```
 
+`openAICompatibleProviderFromEnv()` 根据模型名自动匹配总上下文窗口，并要求显式设置 decision、validation、compaction 三个请求输出预算。模型能力未知，或任一输出预算缺失、非法、超过模型最大输出能力时，Runtime 会在创建 Run 前报告 Provider 配置错误。
+
 Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runtime](BUILD_WITH_NEXORA_RUNTIME.md)。
 
 ## 5. 内建 Tool

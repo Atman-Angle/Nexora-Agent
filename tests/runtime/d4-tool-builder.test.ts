@@ -11,6 +11,7 @@ import {
   type ModelDecisionContext,
   type RuntimeProvider
 } from "../../packages/runtime/src/index.js";
+import { legacyTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -244,7 +245,7 @@ function successfulProvider(
   input: unknown
 ): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context) {
       call += 1;
       if (call === 1) return plan(workspace, toolName);
@@ -254,7 +255,7 @@ function successfulProvider(
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function planToolThenInputProvider(
@@ -263,7 +264,7 @@ function planToolThenInputProvider(
   input: unknown
 ): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide() {
       call += 1;
       if (call === 1) return plan(workspace, toolName);
@@ -277,7 +278,7 @@ function planToolThenInputProvider(
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function planAndToolProvider(
@@ -286,7 +287,7 @@ function planAndToolProvider(
   input: unknown
 ): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide() {
       call += 1;
       return call === 1
@@ -296,7 +297,7 @@ function planAndToolProvider(
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function plan(workspace: string, toolName: string): unknown {

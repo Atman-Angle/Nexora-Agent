@@ -141,9 +141,7 @@ describe("D3 typed Runtime errors and disposal", () => {
     const provider: RuntimeProvider = {
       async decide() {
         return {
-          type: "request_input",
-          question: "Wait.",
-          reason: "test"
+          intent: { kind: "request_input", question: "Wait.", reason: "test" }
         };
       },
       async validate() {
@@ -211,9 +209,7 @@ function inputProvider(): RuntimeProvider {
   return {
     async decide() {
       return {
-        type: "request_input",
-        question: "Provide input.",
-        reason: "test"
+        intent: { kind: "request_input", question: "Provide input.", reason: "test" }
       };
     },
     async validate() {

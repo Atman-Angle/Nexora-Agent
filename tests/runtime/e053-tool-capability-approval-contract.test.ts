@@ -184,37 +184,47 @@ describe("E053 Tool capability and Approval input convergence", () => {
   });
 });
 
-type ContextTool = {
-  readonly identity: { readonly name: string };
-  readonly capability: { readonly purpose: string; readonly nonGoals: readonly string[] };
-  readonly decision: { readonly useWhen: readonly string[]; readonly avoidWhen: readonly string[] };
-  readonly execution: { readonly effect: { readonly kind: "read" | "write" | "execute"; readonly description: string }; readonly inputExample?: unknown };
-  readonly evidence: { readonly produces: readonly string[] };
+type RuntimeContextTool = ModelDecisionContext["tools"][number];
+
+type WireContextTool = {
+  readonly name: string;
+  readonly purpose: string;
+  readonly inputExample?: unknown;
 };
 
 type HttpContext = {
   readonly workspace: string;
   readonly run: {
     readonly inputs: readonly string[];
-    readonly taskContract: ModelDecisionContext["run"]["taskContract"];
-    readonly currentPlan: ModelDecisionContext["run"]["currentPlan"];
-    readonly stepProgress: ModelDecisionContext["run"]["stepProgress"];
-    readonly evidence: ModelDecisionContext["run"]["evidence"];
-    readonly lastError: { readonly code: string; readonly message: string } | null;
+    readonly taskContract: {
+      readonly goal: string;
+      readonly constraints: readonly string[];
+      readonly acceptanceCriteria: readonly string[];
+    } | null;
+    readonly tasks: readonly {
+      readonly objective: string;
+      readonly status: "pending" | "active" | "completed";
+      readonly completionRequirements: readonly {
+        readonly kind: string;
+        readonly capability?: string;
+        readonly satisfied: boolean;
+      }[];
+    }[];
   };
-  readonly allowedActions: ModelDecisionContext["allowedActions"];
-  readonly actionContract: ModelDecisionContext["actionContract"];
+  readonly providerContractVersion: 2;
+  readonly allowedIntents: ModelDecisionContext["allowedIntents"];
+  readonly intentContract: ModelDecisionContext["intentContract"];
   readonly toolObservations: ModelDecisionContext["toolObservations"];
   readonly toolCatalog: readonly {
     readonly name: string;
     readonly purpose: string;
     readonly produces: readonly string[];
   }[];
-  readonly tools: readonly ContextTool[];
+  readonly tools: readonly WireContextTool[];
 };
 
-function tools(context: ModelDecisionContext): readonly ContextTool[] {
-  return context.tools as readonly ContextTool[];
+function tools(context: ModelDecisionContext): readonly RuntimeContextTool[] {
+  return context.tools;
 }
 
 function testContract(name: string, kind: "read" | "write" | "execute", inputSchema: z.ZodType<unknown>, inputExample: unknown, factsSchema: z.ZodType<unknown>, idempotent = true): RuntimeTool["contract"] {
@@ -238,24 +248,21 @@ function plan(
   steps: readonly { readonly id: string; readonly objective: string; readonly toolName: string; readonly checkId: string }[]
 ) {
   return {
-    type: "set_plan" as const,
-    basedOnVersion: null,
-    taskContract: {
-      goal: "Complete the Tool-backed task",
-      constraints: [],
-      acceptanceCriteria: steps.map((step) => `${step.toolName} succeeds`)
-    },
-    orderedSteps: steps.map((step) => ({
-      id: step.id,
-      objective: step.objective,
-      acceptanceChecks: [{
-        id: step.checkId,
-        kind: "tool_result" as const,
-        required: true,
-        toolName: step.toolName,
-        expectedStatus: "success" as const
-      }]
-    }))
+    intent: {
+      kind: "plan_tasks" as const,
+      taskContract: {
+        goal: "Complete the Tool-backed task",
+        constraints: [],
+        acceptanceCriteria: steps.map((step) => `${step.toolName} succeeds`)
+      },
+      tasks: steps.map((step) => ({
+        objective: step.objective,
+        completionRequirements: [{
+          kind: "capability_result" as const,
+          capability: step.toolName
+        }]
+      }))
+    }
   };
 }
 
@@ -322,7 +329,7 @@ function capabilityDecision(
     const execute = context.toolCatalog.find((tool) => tool.purpose.includes("executable"));
     if (list === undefined || read === undefined || patch === undefined || execute === undefined) {
       return {
-        action: { type: "request_input", question: "Tool capabilities are unavailable.", reason: "Missing Tool descriptions" },
+        action: requestInput("Tool capabilities are unavailable.", "Missing Tool descriptions"),
         selected: false
       };
     }
@@ -337,70 +344,62 @@ function capabilityDecision(
     };
   }
 
-  if (context.run.stepProgress.every((item) => item.status === "completed")) {
+  if (context.run.tasks.every((item) => item.status === "completed")) {
     return {
       action: {
-        type: "propose_finish",
-        summary: "Discovered, read, patched, and validated the file.",
-        evidenceIds: context.actionContract
-          .find((action) => action.type === "propose_finish")?.evidenceIds ?? []
+        intent: { kind: "finish", summary: "Discovered, read, patched, and validated the file." }
       },
       selected: false
     };
   }
 
-  const activeId = context.run.stepProgress.find((item) => item.status === "active")?.stepId;
-  const activeStep = context.run.currentPlan?.orderedSteps.find((step) => step.id === activeId);
-  const check = activeStep?.acceptanceChecks[0];
-  const toolName = check?.kind === "tool_result" ? check.toolName : undefined;
-  const tool = context.tools.find((item) => item.identity.name === toolName);
-  const inputExample = tool?.execution.inputExample as Record<string, unknown> | undefined;
-  const checkId = check?.id;
-  if (activeId === undefined || toolName === undefined || checkId === undefined || inputExample === undefined) {
-    return { action: { type: "request_input", question: "Active Tool input is unavailable.", reason: "Missing inputExample" }, selected: false };
+  const activeStep = context.run.tasks.find((item) => item.status === "active");
+  const check = activeStep?.completionRequirements[0];
+  const toolName = check?.kind === "capability_result" ? check.capability : undefined;
+  const tool = context.tools.find((item) => item.name === toolName);
+  const inputExample = tool?.inputExample as Record<string, unknown> | undefined;
+  const objective = activeStep?.objective;
+  if (toolName === undefined || objective === undefined || inputExample === undefined) {
+    return { action: requestInput("Active Tool input is unavailable.", "Missing inputExample"), selected: false };
   }
 
-  if (activeId === "discover") {
-    return { action: { type: "call_tool", stepId: activeId, checkIds: [checkId], toolName, input: inputExample }, selected: false };
+  if (objective === "Discover files") {
+    return { action: useCapability(toolName, inputExample), selected: false };
   }
-  if (activeId === "read") {
+  if (objective === "Read discovered file") {
     const listed = context.toolObservations.find((item) => item.toolName === "filesystem.list")?.facts as { entries?: unknown } | undefined;
     const path = Array.isArray(listed?.entries) ? listed.entries.find((item): item is string => typeof item === "string" && item.endsWith(".txt")) : undefined;
-    if (path === undefined) return { action: { type: "request_input", question: "No text file was discovered.", reason: "Missing list observation" }, selected: false };
-    return { action: { type: "call_tool", stepId: activeId, checkIds: [checkId], toolName, input: { ...inputExample, path } }, selected: false };
+    if (path === undefined) return { action: requestInput("No text file was discovered.", "Missing list observation"), selected: false };
+    return { action: useCapability(toolName, { ...inputExample, path }), selected: false };
   }
-  if (activeId === "patch") {
+  if (objective === "Patch file") {
     const read = context.toolObservations.find((item) => item.toolName === "filesystem.read")?.facts as { path?: unknown; content?: unknown; digest?: unknown } | undefined;
     if (typeof read?.path !== "string" || read.content !== "before\n" || typeof read.digest !== "string") {
-      return { action: { type: "request_input", question: "Read observation is incomplete.", reason: "Missing patch facts" }, selected: false };
+      return { action: requestInput("Read observation is incomplete.", "Missing patch facts"), selected: false };
     }
     return {
-      action: {
-        type: "call_tool",
-        stepId: activeId,
-        checkIds: [checkId],
-        toolName,
-        input: { ...inputExample, path: read.path, expectedDigest: read.digest, find: "before", replace: "after" }
-      },
+      action: useCapability(toolName, { ...inputExample, path: read.path, expectedDigest: read.digest, find: "before", replace: "after" }),
       selected: false
     };
   }
-  if (activeId === "validate") {
+  if (objective === "Validate result") {
     return {
-      action: {
-        type: "call_tool",
-        stepId: activeId,
-        checkIds: [checkId],
-        toolName,
-        input: {
+      action: useCapability(toolName, {
           ...inputExample,
           args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"]
-        }
-      },
+        }),
       selected: false
     };
   }
-  return { action: { type: "request_input", question: "Unknown active Step.", reason: "Unsupported test plan" }, selected: false };
+  return { action: requestInput("Unknown active Step.", "Unsupported test plan"), selected: false };
+}
+
+function useCapability(capability: string, args: unknown): unknown {
+  return { intent: { kind: "use_capabilities", calls: [{ capability, arguments: args }] } };
+}
+
+function requestInput(question: string, reason: string): unknown {
+  return { intent: { kind: "request_input", question, reason } };
 }
 
 function closeServer(server: Server): Promise<void> {

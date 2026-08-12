@@ -16,6 +16,7 @@ import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.j
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import {
   finishFromEvidence,
+  legacyTestActionToDecision,
   setPlan,
   successfulReadTool
 } from "./runtime-testkit.js";
@@ -156,7 +157,7 @@ describe("E079 Context Budget and Token Accounting", () => {
       },
       async decide() {
         decideCalls += 1;
-        return { type: "request_input", question: "x", reason: "x" };
+        return { intent: { kind: "request_input", question: "x", reason: "x" } };
       },
       async validate() {
         return { passed: true, issues: [] };
@@ -216,6 +217,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     const workspace = fixture();
     let requestBody: Record<string, unknown> | null = null;
     let meteredInput = "";
+    let meteredSystem = "";
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.invalid/v1",
       apiKey: "test-key",
@@ -223,6 +225,7 @@ describe("E079 Context Budget and Token Accounting", () => {
       contextWindowTokens: 10_000,
       reservedOutputTokens: { decision: 500, validation: 200, compaction: 500 },
       tokenMeter(request) {
+        meteredSystem = request.system;
         meteredInput = request.input;
         return { inputTokens: 321, method: "exact", meter: "provider:test-tokenizer" };
       },
@@ -243,7 +246,11 @@ describe("E079 Context Budget and Token Accounting", () => {
     const result = await runtime.start({ input: "Inspect a target." });
     const call = (await runtime.inspect(result.runId)).modelCalls[0];
 
-    expect(meteredInput).toContain('"projection"');
+    expect(meteredInput).not.toContain('"projection"');
+    expect(meteredSystem).toContain("Provider Contract v2");
+    expect(meteredSystem).toContain("Runtime owns all IDs, versions, bindings");
+    expect(meteredInput).toContain('"intentContract"');
+    expect(meteredInput).toContain('"toolCatalog"');
     expect(requestBody).toMatchObject({ model: "provider-model", max_tokens: 500 });
     expect(call).toMatchObject({
       measuredInputTokens: 321,
@@ -252,6 +259,32 @@ describe("E079 Context Budget and Token Accounting", () => {
       actualInputTokens: 300,
       actualOutputTokens: 20,
       actualTotalTokens: 320
+    });
+    await runtime.close();
+  });
+
+  it("uses the documented compatibility fallback when a custom Provider omits model capabilities", async () => {
+    const workspace = fixture();
+    const provider: RuntimeProvider = {
+      async decide() {
+        return { intent: { kind: "request_input", question: "Which target?", reason: "Target is required." } };
+      },
+      async validate() {
+        return { passed: true, issues: [] };
+      }
+    };
+    const runtime = createRuntime({ workspace, provider, tools: [] });
+
+    const result = await runtime.start({ input: "Inspect a target." });
+    const call = (await runtime.inspect(result.runId)).modelCalls[0];
+
+    expect(call).toMatchObject({
+      provider: "custom",
+      model: "unspecified",
+      contextWindowTokens: 1_000_000_000,
+      reservedOutputTokens: 1_024,
+      hardInputLimitTokens: 999_998_976,
+      measurementMethod: "estimated"
     });
     await runtime.close();
   });
@@ -402,9 +435,7 @@ function budgetedProvider(input: {
         totalTokens: 70
       });
       return {
-        type: "request_input",
-        question: "Which target?",
-        reason: "Target is required."
+        intent: { kind: "request_input", question: "Which target?", reason: "Target is required." }
       };
     },
     async validate() {
@@ -452,9 +483,10 @@ class CompletingBudgetProvider implements RuntimeProvider {
   ): Promise<unknown> {
     operation.reportTokenUsage?.({ inputTokens: 18, outputTokens: 2, totalTokens: 20 });
     const action = this.#actions[this.#cursor++];
-    return typeof action === "function"
+    const resolved = typeof action === "function"
       ? (action as (value: ModelDecisionContext) => unknown)(context)
       : action;
+    return legacyTestActionToDecision(resolved, context);
   }
 
   async validate(

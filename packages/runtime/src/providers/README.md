@@ -34,6 +34,26 @@ interface RuntimeProvider {
 
 `compact` 是可选方法。未实现的 Provider 会沿用 Slice 3 的 Eviction-only 行为（不写 Checkpoint）。
 
+### History Candidates Contract
+
+`ModelDecisionContext.historyCandidates` 是公开的有界导航字段：最多 8 条、合计不超过 4 KiB。每条只包含 `ref`、`relatedRefs`、`category`、`reasons`、短 `hint` 与 `occurredAt`；Runtime 从当前 Run Authority 和显式 Fork Base 按同 Check/Step/Tool/Input/path/error code、Evidence/Artifact、Approval 等关系确定性重建。它不保存或复制历史结果，也不是 Memory、搜索索引或第二 Authority。
+
+Provider 不能把候选 hint/reasons 当作原始事实。最新 Input 明确点名某个已发布 ref，或 active Task 含有对应 required `context_ref` 时，Runtime 会在 Provider 决策前完成作用域、digest 与 Token 预算校验，并把精确内容放入 `rehydratedFacts`。未被这些确定性条件选中的候选仍只用于导航，不会暴露 sibling、其他 Run 或 parent post-fork 内容，也不会触发额外模型调用。
+
+`memoryCandidates` 与 `rehydratedFacts(kind="memory")` 都携带 `trust: "untrusted_memory_data"`。精确字节不是指令权限：Adapter 必须拒绝 Memory statement 中的角色伪造、Tool/Approval 请求、Evidence/Completion 声明和策略覆盖，并保持当前 TaskContract、Plan、Runtime Approval 与 Completion Gate 的优先级。
+
+Runtime 每轮自动恢复最高相关的 eligible Memory；用户明确点名已发布 Memory 或 History ref 时，也会在规划前自动恢复。Intent 编译器把本轮成功恢复且能追溯到用户要求的精确 ref 补入首个 Task 的 required `context_ref` Acceptance Check。Runtime 只有在正常 scope/lifecycle/digest 校验与原文恢复成功后才生成 `source=context` 的 Run Evidence；该 Evidence 只证明 ref 被恢复，不证明 Memory statement 为真，也不授予任何 Tool、Approval 或 Completion 权限。Semantic validation 只接收 ref/digest 恢复证明，不接收 Memory statement 作为指令。
+
+Semantic validation 拒绝 summary 后，Decision Provider 依据有限类型的 `repair.issues` 直接修正 `finish`，既有 Evidence 由 Runtime 保留。Evidence 已齐全时 Provider 不重规划、不重跑 Capability，也不声称事实缺失。阶段式生产 wire 不暴露 `restore_context`；Schema/编译器中的该 Intent 只作为兼容入口，且不会绕过相同的 scope、digest、预算、去重和 Evidence 规则。
+
+### Repeated Compaction Contract
+
+`CompactionContext.previousCheckpoint` 在首次 Compaction 时为 `null`；后续只携带 Runtime 已针对当前 Authority 完整重验的 latest `{ digest, summary }`。生产 Adapter 会把该字段原样写入 compaction wire 的 `context.previousCheckpoint`，但不会向 Provider 暴露 `checkpointId`、`sourceDigests`、`coveredInvocations` 等 Runtime-only 持久化元数据。
+
+Provider 必须从 `toolObservations + previousCheckpoint + run` 生成一份**完整替代** `CompactionSummary`，不能返回增量、嵌套旧 Summary，也不能把 Checkpoint ID 或 digest 当作 SourceRef。仍有效的陈述继续引用原始 Input/Event/Invocation/Evidence/Artifact refs；已由同 Plan/Step/Check 的后续成功 Invocation 解决的失败必须从 `unresolvedIssues` 淘汰。`previousCheckpoint` 只是有界 carry-forward candidate，不是 Authority。
+
+Provider 输出不会直接覆盖 Context。Runtime 会重新校验 Summary Schema、原始 SourceRef、Run 归属和 section 语义，并重新派生 canonical Summary digest、完整 Source Digest map 与 covered Invocation multiset；只有全部通过才原子替换 `context_checkpoints` 的单行缓存。Provider 不拥有 Checkpoint 生命周期、Run、Plan、Evidence 或完成判断。
+
 ## 设计约束
 
 - 这个文件夹**不依赖** Runtime 核心（`runtime.ts`、`run-store.ts`、`contracts.ts` 中的运行态实现）。只允许依赖 `contracts.ts` 的权威 schema 和 `runtime-error.ts`。
@@ -53,13 +73,15 @@ interface RuntimeProvider {
 | `reasoning` | `"dynamic"` | Provider-neutral 推理策略（见下） |
 | `thinkingToggleParam` | 不发送 | 厂商请求体里切换推理的参数名（DashScope 为 `enable_thinking`） |
 
-环境变量补充：`NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM`。
+环境入口还读取 `NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）和 `NEXORA_MODEL_THINKING_PARAM`。`openAICompatibleProviderFromEnv` 根据 `NEXORA_MODEL_NAME` 从同一 Adapter 的已验证 capability catalog 自动解析总窗口与最大输出能力，并要求显式提供 `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`、`NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS`、`NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS`。未知模型、非法预算、超过模型输出能力或手工设置 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS` 都在创建 Run 前失败。Runtime 从模型总窗口扣除当前 phase 输出预留，最终 wire input（包括固定 system prompt 与 Tool/Action Contract）必须落在剩余 hard input limit 内。
+
+同一 capability catalog 还可以保存由固定真实 usage 数据集验证的 estimated wire-meter 校准。`qwen3.7-flash` 的 E101 样本中，decision / validation 的最大 actual-to-UTF8/4 偏差分别为 1.66× / 1.08×，因此使用带余量的 1.8× / 1.2×；无 compaction 样本时保守继承 decision 的 1.8×。Ledger 记录完整 meter 名称并继续标记 `estimated`，Provider 返回的 actual usage 原样保留。`tokenMeter` 注入的精确 tokenizer 优先于 catalog 校准；未知模型继续使用 `nexora:utf8-bytes/4:v1`，不会猜测校准值。
 
 ### Reasoning Policy（`off | on | dynamic`）
 
 `ReasoningPolicy` 是 Provider-neutral 抽象（`model-client.ts`），Runtime 核心不感知任何厂商专有字段。具体 Provider 把它翻译成自己的参数：
 
-- `"dynamic"`（推荐默认）：仅在模型需要建立**首个 Plan**（`context.run.currentPlan === null`）时开启推理；普通 execute_step / call_tool / propose_finish 决策关闭。这是经真实 qwen3.7-flash A/B 验证的策略（见 `agent-evaluation/execute-step-ab/REPORT-thinking.md`）。
+- `"dynamic"`（推荐默认）：只在 Runtime 指定的 planning phase（首个 Plan 或新输入要求重规划）开启推理；普通 Capability execution / finish 决策关闭。这是经真实 qwen3.7-flash A/B 验证的策略（见 `agent-evaluation/execute-step-ab/REPORT-thinking.md`）。
 - `"off"`：始终关闭。
 - `"on"`：决策调用始终开启。
 - validation / compaction 始终非推理（短结构化输出，推理只增延迟）。

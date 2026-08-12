@@ -163,9 +163,10 @@ Run 状态       → State Machine + persisted Run
 过程历史       → append-only Run Events
 大内容         → content-addressed Artifact
 外部真实状态   → 对应外部系统或工作区
+跨 Run 长期记忆 → 独立 Memory Store + scoped MemoryRecord
 ```
 
-这些 Authority 可以产生面向模型、宿主和观察者的有界投影，但投影不能反向成为新的事实源。
+这些 Authority 可以产生面向模型、宿主和观察者的有界投影，但投影不能反向成为新的事实源。Memory 是 Runtime 的通用数据面，不属于 Execution Core：它使用独立数据库和生命周期，不能直接修改 Run、Plan、Invocation、Evidence、Approval、Result 或 Run Status。
 
 ## 7. 版本路线
 

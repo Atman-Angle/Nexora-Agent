@@ -54,6 +54,62 @@ describe("E084 Model / Provider configuration", () => {
     expect(bodies[2]).toEqual(expect.objectContaining({ temperature: 0.7, max_tokens: 4_096 }));
   });
 
+  it("projects bounded rolling Checkpoint context into the real compaction wire request", async () => {
+    const seen = captureBodies();
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      fetch: seen.fetch
+    });
+    const operation = { signal: new AbortController().signal };
+    const previousCheckpoint: NonNullable<CompactionContext["previousCheckpoint"]> = {
+      digest: `sha256:${"a".repeat(64)}`,
+      summary: {
+        schemaVersion: 1,
+        goal: { statement: "Preserve the original goal.", sourceRefs: ["input:1"] },
+        constraints: [{ statement: "Keep the verified constraint.", sourceRefs: ["input:1"] }],
+        completedWork: [],
+        keyDecisions: [{ statement: "Retain the earlier decision.", sourceRefs: ["event:2"] }],
+        unresolvedIssues: [],
+        relatedArtifacts: []
+      }
+    };
+
+    await provider.compact!(compactionContext(), operation);
+    await provider.compact!(compactionContext(previousCheckpoint), operation);
+
+    const requests = seen.bodies.map((body) => {
+      const messages = body.messages as Array<{ readonly role: string; readonly content: string }>;
+      return {
+        system: messages[0]!.content,
+        payload: JSON.parse(messages[1]!.content) as {
+          readonly mode: string;
+          readonly context: CompactionContext;
+        }
+      };
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0]!.payload).toMatchObject({
+      mode: "compact",
+      context: { previousCheckpoint: null }
+    });
+    expect(requests[1]!.payload).toMatchObject({
+      mode: "compact",
+      context: { previousCheckpoint }
+    });
+    expect(requests[1]!.payload.context.previousCheckpoint).toEqual(previousCheckpoint);
+    expect(JSON.stringify(requests[1]!.payload.context.previousCheckpoint)).not.toMatch(
+      /checkpointId|sourceDigests|coveredInvocations/
+    );
+
+    const system = requests[1]!.system;
+    expect(system).toContain("one complete replacement summary");
+    expect(system).toContain("Never cite a checkpoint ID or digest as a SourceRef");
+    expect(system).toContain("never nest a previous Summary");
+    expect(system).toContain("never Authority");
+  });
+
   it("applies the configured timeout to the transport", async () => {
     const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(init?.signal?.reason));
@@ -166,10 +222,11 @@ describe("E084 Model / Provider configuration", () => {
     const seen = captureBodies();
     vi.stubGlobal("fetch", seen.fetch);
     const provider = openAICompatibleProviderFromEnv({
+      ...explicitBudgetEnvironment(),
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
       NEXORA_MODEL_API_KEY: "test-key",
-      NEXORA_MODEL_NAME: "test-model",
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
       NEXORA_MODEL_TEMPERATURE: "0.5",
       NEXORA_MODEL_REASONING: "dynamic",
       NEXORA_MODEL_THINKING_PARAM: "enable_thinking"
@@ -183,12 +240,82 @@ describe("E084 Model / Provider configuration", () => {
     }));
   });
 
-  it("rejects an unknown reasoning value from environment", () => {
-    expect(() => openAICompatibleProviderFromEnv({
+  it("resolves model capabilities and sends explicit phase output budgets", async () => {
+    const seen = captureBodies();
+    vi.stubGlobal("fetch", seen.fetch);
+    const environment = {
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
       NEXORA_MODEL_API_KEY: "test-key",
-      NEXORA_MODEL_NAME: "test-model",
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "2048",
+      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "512",
+      NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "1024"
+    };
+    const provider = openAICompatibleProviderFromEnv(environment);
+
+    expect(provider.modelProfile).toEqual(expect.objectContaining({
+      contextWindowTokens: 1_000_000,
+      reservedOutputTokens: {
+        decision: 2_048,
+        validation: 512,
+        compaction: 1_024
+      }
+    }));
+    const operation = { signal: new AbortController().signal };
+    await provider.decide(decisionContext(null), operation);
+    await provider.validate(validationContext(), operation);
+    await provider.compact!(compactionContext(), operation);
+    expect(seen.bodies.map((body) => body.max_tokens)).toEqual([2_048, 512, 1_024]);
+
+    const stressProvider = openAICompatibleProviderFromEnv(environment, {
+      contextWindowTokensOverride: 12_000
+    });
+    expect(stressProvider.modelProfile).toMatchObject({ contextWindowTokens: 12_000 });
+  });
+
+  it("requires a complete explicit model budget profile from the environment", () => {
+    const connection = {
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
+      NEXORA_MODEL_API_KEY: "test-key",
+      NEXORA_MODEL_NAME: "test-model"
+    };
+
+    expect(() => openAICompatibleProviderFromEnv(connection)).toThrow(
+      "Model capabilities are unknown for test-model"
+    );
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      NEXORA_MODEL_NAME: "qwen3.7-flash"
+    })).toThrow("NEXORA_MODEL_DECISION_OUTPUT_TOKENS is required.");
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "0"
+    })).toThrow("NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS must be a positive integer.");
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "131073"
+    })).toThrow("must not exceed the 131072-token output capability of qwen3.7-flash");
+    expect(() => openAICompatibleProviderFromEnv({
+      ...connection,
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: "12000"
+    })).toThrow("context capacity is resolved from NEXORA_MODEL_NAME");
+  });
+
+  it("rejects an unknown reasoning value from environment", () => {
+    expect(() => openAICompatibleProviderFromEnv({
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
+      NEXORA_MODEL_API_KEY: "test-key",
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
       NEXORA_MODEL_REASONING: "sometimes"
     })).toThrowError(expect.objectContaining({
       name: "ModelConfigError",
@@ -208,15 +335,14 @@ describe("E084 Model / Provider configuration", () => {
         mode: "decide" | "validate";
         context: {
           run: { evidence: Array<{ id: string }> };
-          actionContract?: Array<Record<string, unknown>>;
+          intentContract?: Record<string, unknown>;
         };
       };
       if (payload.mode === "validate") return providerResponse({ passed: true, issues: [] });
       decisions += 1;
       if (decisions === 1) return providerResponse(setPlan());
       if (decisions === 2) return providerResponse(callTool());
-      const finish = payload.context.actionContract?.find((action) => action.type === "propose_finish");
-      return providerResponse({ ...finish, summary: "Read the target file." });
+      return providerResponse({ intent: { kind: "finish", summary: "Read the target file." } });
     };
     const runtime = createRuntime({
       workspace,
@@ -258,7 +384,7 @@ function captureBodies(): {
   const bodies: Array<Record<string, unknown>> = [];
   const fetch: typeof globalThis.fetch = async (_input, init) => {
     bodies.push(JSON.parse(String(init?.body)));
-    return providerResponse({ type: "request_input", question: "Q", reason: "R" });
+    return providerResponse({ intent: { kind: "request_input", question: "Q", reason: "R" } });
   };
   return { fetch, bodies };
 }
@@ -277,11 +403,14 @@ function decisionContext(currentPlan: unknown): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:test" },
-    allowedActions: [],
-    actionContract: [],
+    providerContractVersion: 2,
+    allowedIntents: [],
+    intentContract: [],
     toolObservations: [],
     contextCheckpoint: null,
     rehydratedFacts: [],
+    historyCandidates: [],
+    memoryCandidates: [],
     tools: []
   };
 }
@@ -294,7 +423,9 @@ function validationContext(): SemanticValidationContext {
   };
 }
 
-function compactionContext(): CompactionContext {
+function compactionContext(
+  previousCheckpoint: CompactionContext["previousCheckpoint"] = null
+): CompactionContext {
   return {
     workspace: "D:\\fixture",
     run: {
@@ -308,40 +439,34 @@ function compactionContext(): CompactionContext {
       lastError: null
     },
     toolObservations: [],
+    previousCheckpoint,
     budgetDecision: "soft_limit_exceeded"
   };
 }
 
 function setPlan(): unknown {
   return {
-    type: "set_plan",
-    basedOnVersion: null,
-    taskContract: {
-      goal: "Read the target file",
-      constraints: [],
-      acceptanceCriteria: ["The file content is verified"]
-    },
-    orderedSteps: [{
-      id: "read",
-      objective: "Read the target file",
-      acceptanceChecks: [{
-        id: "read-check",
-        kind: "tool_result",
-        required: true,
-        toolName: "test.read",
-        expectedStatus: "success"
+    intent: {
+      kind: "plan_tasks",
+      taskContract: {
+        goal: "Read the target file",
+        constraints: [],
+        acceptanceCriteria: ["The file content is verified"]
+      },
+      tasks: [{
+        objective: "Read the target file",
+        completionRequirements: [{ kind: "capability_result", capability: "test.read" }]
       }]
-    }]
+    }
   };
 }
 
 function callTool(): unknown {
   return {
-    type: "call_tool",
-    stepId: "read",
-    checkIds: ["read-check"],
-    toolName: "test.read",
-    input: { name: "target" }
+    intent: {
+      kind: "use_capabilities",
+      calls: [{ capability: "test.read", arguments: { name: "target" } }]
+    }
   };
 }
 
@@ -391,4 +516,12 @@ function temporaryWorkspace(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-e084-config-"));
   roots.push(root);
   return root;
+}
+
+function explicitBudgetEnvironment(): Record<string, string> {
+  return {
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
+    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
+    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
+  };
 }

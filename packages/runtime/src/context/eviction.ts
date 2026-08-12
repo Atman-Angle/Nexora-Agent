@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 
 import type {
   ModelDecisionContext,
+  RehydratedFact,
   ToolObservation
 } from "../providers/model-client.js";
 import { deepFreeze, digestJson, stringCompare } from "../runtime-helpers.js";
@@ -12,15 +13,25 @@ import {
 } from "./projection.js";
 
 /**
- * Performs a single deterministic contraction of the decision context: the
- * lowest-value observation is moved from full → fragment → reference → drop.
- * Returns null when no further safe contraction is possible (only critical
- * fragments remain).
+ * Performs a single deterministic contraction of the decision context. A
+ * rebuildable harness_helpful Fact is lower value than an Observation and is
+ * removed first; Observations then move full → fragment → reference → drop.
+ * Required and explicitly model-requested Facts are never removed here.
  */
 export function evictDecisionContextOnce(
   context: ModelDecisionContext
 ): ModelDecisionContext | null {
   const observations = [...context.toolObservations];
+  const rehydratedFacts = [...context.rehydratedFacts];
+  for (let index = rehydratedFacts.length - 1; index >= 0; index -= 1) {
+    if (rehydratedFacts[index]!.origin === "harness_helpful") {
+      return rebuildDecisionContext(
+        context,
+        observations,
+        rehydratedFacts.filter((_fact, factIndex) => factIndex !== index)
+      );
+    }
+  }
   const byValue = [...observations].sort((left, right) => (
     retentionClassRank(left.retention.class) - retentionClassRank(right.retention.class)
     || left.retention.stepOrder - right.retention.stepOrder
@@ -56,16 +67,24 @@ export function evictDecisionContextOnce(
 
 function rebuildDecisionContext(
   context: ModelDecisionContext,
-  toolObservations: readonly ToolObservation[]
+  toolObservations: readonly ToolObservation[],
+  rehydratedFacts: readonly RehydratedFact[] = context.rehydratedFacts
 ): ModelDecisionContext {
   const projection = {
     workspace: context.workspace,
     run: context.run,
-    allowedActions: context.allowedActions,
-    actionContract: context.actionContract,
+    providerContractVersion: context.providerContractVersion,
+    allowedIntents: context.allowedIntents,
+    intentContract: context.intentContract,
     toolObservations,
     contextCheckpoint: context.contextCheckpoint,
-    rehydratedFacts: context.rehydratedFacts,
+    rehydratedFacts,
+    historyCandidates: context.historyCandidates,
+    memoryCandidates: context.memoryCandidates,
+    ...(context.repair === undefined ? {} : { repair: context.repair }),
+    ...(context.sessionArchive === undefined
+      ? {}
+      : { sessionArchive: context.sessionArchive }),
     tools: context.tools
   };
   return deepFreeze({

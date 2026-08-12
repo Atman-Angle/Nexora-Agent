@@ -12,6 +12,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/runtime/src/index.js";
+import { legacyTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -131,7 +132,7 @@ function temporaryWorkspace(): string {
 
 function inputThenReadProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context) {
       call += 1;
       if (call === 1) {
@@ -146,12 +147,12 @@ function inputThenReadProvider(workspace: string): RuntimeProvider {
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function readProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return {
+  return legacyTestProvider({
     async decide(context) {
       call += 1;
       return readDecision(workspace, context, call);
@@ -159,7 +160,7 @@ function readProvider(workspace: string): RuntimeProvider {
     async validate() {
       return { passed: true, issues: [] };
     }
-  };
+  });
 }
 
 function readDecision(

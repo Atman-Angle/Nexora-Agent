@@ -23,6 +23,7 @@ export {
   type RunResult,
   type RunView,
   type RuntimeObserver,
+  type RuntimeMemoryOptions,
   type RuntimeEvent,
   type RuntimeEventListener,
   type RuntimeSubscription,
@@ -36,6 +37,7 @@ export {
   type BranchHandle,
   type BranchView,
   type ForkOptions,
+  type FailureHandoff,
   type MergeDecisions,
   type MergeOutcome
 } from "./runtime.js";
@@ -50,6 +52,10 @@ export type {
 
 export type {
   CompactionContext,
+  HistoryCandidate,
+  HistoryCandidateReason,
+  MemoryCandidate,
+  MemoryCandidateReason,
   ModelDecisionContext,
   ModelCallPhase,
   ProjectedRunContext,
@@ -59,10 +65,29 @@ export type {
   ProviderTokenUsage,
   ReasoningPolicy,
   RuntimeProvider,
+  SessionArchive,
+  SessionArchiveMilestone,
+  SessionArchiveRange,
   SemanticValidationContext,
   SemanticValidationVerdict,
   ToolObservation
 } from "./providers/model-client.js";
+
+export {
+  ProviderDecisionSchema,
+  ProviderIntentSchema,
+  CapabilityCallSchema,
+  SemanticCompletionRequirementSchema,
+  SemanticTaskSchema,
+  ValidationIssueKindSchema,
+  type ProviderDecision,
+  type ProviderIntent,
+  type ProviderIntentKind,
+  type SemanticCompletionRequirement,
+  type SemanticTask,
+  type SemanticValidationIssue,
+  type ValidationIssueKind
+} from "./providers/intent-contract.js";
 
 export type {
   Evidence,
@@ -97,3 +122,54 @@ export {
   type ToolBuilderContext,
   type ToolBuilderDefinition
 } from "./execution/tool-builder.js";
+
+export {
+  MemoryConflictError,
+  MemoryControlConflictError,
+  MemoryControlEventSchema,
+  MemoryControlInputSchema,
+  MemoryControls,
+  MemoryDigestSchema,
+  MemoryExpirationInputSchema,
+  MemoryIdSchema,
+  MemoryLifecycleError,
+  MemoryListOptionsSchema,
+  MemoryRecordSchema,
+  MemoryPromotionInputSchema,
+  MemoryPromotionSchema,
+  MemoryRevalidationInputSchema,
+  MemoryScopeSchema,
+  MemorySensitivitySchema,
+  MemorySourceSchema,
+  MemoryStatusSchema,
+  MemoryStatusUpdateSchema,
+  MemorySupersedeInputSchema,
+  MemorySupersessionSchema,
+  MemoryStore,
+  MemoryVerificationSchema,
+  openMemoryStore,
+  createMemoryControls,
+  type CreateMemoryInput,
+  type MemoryControlEvent,
+  type MemoryControlInput,
+  type MemoryControlResult,
+  type MemoryInspection,
+  type MemoryRecallEligibilityReason,
+  type MemoryExpirationInput,
+  type MemoryLifecycleErrorCode,
+  type MemoryListOptions,
+  type MemoryRecord,
+  type MemoryPromotion,
+  type MemoryPromotionInput,
+  type MemoryPromotionResult,
+  type MemoryRevalidationInput,
+  type MemoryScope,
+  type MemorySensitivity,
+  type MemorySource,
+  type MemoryStatus,
+  type MemoryStatusUpdate,
+  type MemorySupersedeInput,
+  type MemorySupersedeResult,
+  type MemorySupersession,
+  type MemoryVerification
+} from "./memory/index.js";

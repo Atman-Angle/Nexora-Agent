@@ -6,30 +6,44 @@ import { z } from "zod";
 import {
   JsonValueSchema,
   type InheritedFactProjection,
+  type RunEvent,
   type RunSnapshot,
   type ToolInvocation
 } from "../contracts.js";
 import type {
+  HistoryCandidate,
+  MemoryCandidate,
   JsonValue,
   RehydratedFact,
   RehydrationError,
   RehydrationOrigin,
+  SessionArchive,
+  SessionArchiveMilestone,
   ToolObservation
 } from "../providers/model-client.js";
 import { ArtifactStore } from "../store/artifacts.js";
 import type { RunStore } from "../store/run-store.js";
-import { resolveSourceRef, type PersistedCheckpoint } from "./compaction.js";
+import type { RuntimeMemoryOptions } from "../runtime-types.js";
+import { digestCanonicalJson } from "../runtime-helpers.js";
+import { memoryIdFromRef } from "../memory/recall.js";
+import {
+  digestRunEvent,
+  resolveSourceRef,
+  type PersistedCheckpoint
+} from "./compaction.js";
 import { buildCompactionAuthority } from "./decision-context.js";
 
 export const RequestContextActionSchema = z.object({
   type: z.literal("request_context"),
-  refs: z.array(z.string().trim().min(1).max(200)).min(1).max(8)
+  refs: z.array(z.string().trim().min(1).max(4096)).min(1).max(8)
 }).strict();
 export type RequestContextAction = z.infer<typeof RequestContextActionSchema>;
 
 export const MAX_REHYDRATION_REFS_PER_REQUEST = 8;
 export const MAX_REHYDRATED_TOKENS_PER_TURN = 4_096;
 export const MAX_SINGLE_FACT_TOKENS = 2_048;
+export const MAX_SESSION_ARCHIVE_MILESTONES = 16;
+export const MAX_SESSION_MILESTONE_LABEL_LENGTH = 180;
 
 export function parseRequestContextAction(raw: unknown): RequestContextAction | null {
   const parsed = RequestContextActionSchema.safeParse(raw);
@@ -42,7 +56,8 @@ export function isValidSourceRefFormat(ref: string): boolean {
     || /^event:[1-9][0-9]*$/.test(ref)
     || /^invocation:[a-zA-Z0-9._-]{1,100}$/.test(ref)
     || /^evidence:[a-zA-Z0-9._-]{1,100}$/.test(ref)
-    || /^artifact:sha256:[0-9a-f]{64}$/.test(ref);
+    || /^artifact:sha256:[0-9a-f]{64}$/.test(ref)
+    || memoryIdFromRef(ref) !== null;
 }
 
 /**
@@ -123,6 +138,8 @@ export function buildAvailableContextRefs(args: {
   readonly checkpoint: PersistedCheckpoint | null;
   readonly store: RunStore;
   readonly artifactDir: string;
+  readonly historyCandidates?: readonly HistoryCandidate[];
+  readonly memoryCandidates?: readonly MemoryCandidate[];
   /** Fork Base inherited refs (parent facts at the fork point) the child may request. */
   readonly inheritedRefs?: Readonly<Record<string, string>>;
 }): Map<string, string> {
@@ -156,10 +173,29 @@ export function buildAvailableContextRefs(args: {
       refs.add(`artifact:${artifact.artifactRef}`);
     }
   }
+  for (const candidate of args.historyCandidates ?? []) {
+    refs.add(candidate.ref);
+    for (const ref of candidate.relatedRefs) refs.add(ref);
+  }
   const manifest = new Map<string, string>();
   for (const ref of refs) {
     const resolved = resolveSourceRef(ref, authority);
     if (resolved !== null) manifest.set(ref, resolved.digest);
+  }
+  for (const candidate of args.memoryCandidates ?? []) {
+    manifest.set(candidate.ref, candidate.digest);
+  }
+  // The bounded Session Archive publishes complete same-Run Input/Event
+  // ranges. Populate their exact digest entries directly instead of resolving
+  // each ref through a linear lookup, keeping archive publication O(n).
+  for (const entry of run.inputHistory) {
+    manifest.set(`input:${entry.sequence}`, digestText(entry.text));
+  }
+  for (const event of publishedSessionArchiveEvents(authority.events)) {
+    manifest.set(
+      `event:${event.sequence}`,
+      digestRunEvent(event)
+    );
   }
   if (args.inheritedRefs !== undefined) {
     for (const [ref, digest] of Object.entries(args.inheritedRefs)) {
@@ -167,6 +203,175 @@ export function buildAvailableContextRefs(args: {
     }
   }
   return manifest;
+}
+
+/**
+ * Projects fixed-size metadata for the persisted Session history. Content is
+ * never copied here: the ranges only publish which exact Input/Event refs may
+ * be requested from the current Run's Authority Store.
+ */
+export function projectSessionArchive(args: {
+  readonly run: RunSnapshot;
+  readonly events: readonly RunEvent[];
+}): SessionArchive {
+  const { run, events } = args;
+  const publishedEvents = publishedSessionArchiveEvents(events);
+  const candidates: MilestoneCandidate[] = [
+    ...run.inputHistory.map((entry) => ({
+      milestone: {
+        ref: `input:${entry.sequence}`,
+        category: "input" as const,
+        label: boundedLabel(`Input ${entry.sequence}: ${entry.text}`)
+      },
+      priority: 5,
+      stableOrder: entry.sequence,
+      occurredAt: entry.receivedAt
+    })),
+    ...publishedEvents.flatMap((event) => {
+      const projected = projectEventMilestone(event);
+      return projected === null ? [] : [projected];
+    })
+  ];
+  const firstInputRef = run.inputHistory[0] === undefined
+    ? null
+    : `input:${run.inputHistory[0].sequence}`;
+  const firstInput = firstInputRef === null
+    ? undefined
+    : candidates.find((candidate) => candidate.milestone.ref === firstInputRef);
+  const ranked = candidates
+    .filter((candidate) => candidate !== firstInput)
+    .sort(compareMilestoneValueDescending);
+  const representatives = ([
+    "input",
+    "failure",
+    "approval",
+    "plan",
+    "checkpoint",
+    "branch"
+  ] as const).flatMap((category) => {
+    const candidate = ranked.find((item) => item.milestone.category === category);
+    return candidate === undefined ? [] : [candidate];
+  });
+  const representativeRefs = new Set(
+    representatives.map((candidate) => candidate.milestone.ref)
+  );
+  const selected = [
+    ...(firstInput === undefined ? [] : [firstInput]),
+    ...representatives,
+    ...ranked
+      .filter((candidate) => !representativeRefs.has(candidate.milestone.ref))
+      .slice(0, MAX_SESSION_ARCHIVE_MILESTONES
+        - representatives.length
+        - (firstInput === undefined ? 0 : 1))
+  ]
+    .sort((left, right) => (
+      left.occurredAt.localeCompare(right.occurredAt)
+      || left.milestone.ref.localeCompare(right.milestone.ref)
+    ))
+    .map((candidate) => candidate.milestone);
+  return {
+    schemaVersion: 1,
+    inputs: sequenceRange(
+      run.inputHistory.map((entry) => entry.sequence),
+      "input:<sequence>"
+    ),
+    events: sequenceRange(
+      publishedEvents.map((event) => event.sequence),
+      "event:<sequence>"
+    ),
+    milestones: selected,
+    truncated: candidates.length > selected.length
+  };
+}
+
+type MilestoneCandidate = {
+  readonly milestone: SessionArchiveMilestone;
+  readonly priority: number;
+  readonly stableOrder: number;
+  readonly occurredAt: string;
+};
+
+function projectEventMilestone(event: RunEvent): MilestoneCandidate | null {
+  const classification = classifyMilestoneEvent(event.type);
+  if (classification === null) return null;
+  const details = milestoneDetails(event.payload);
+  return {
+    milestone: {
+      ref: `event:${event.sequence}`,
+      category: classification.category,
+      label: boundedLabel(`${event.type}${details === "" ? "" : `: ${details}`}`)
+    },
+    priority: classification.priority,
+    stableOrder: event.sequence,
+    occurredAt: event.occurredAt
+  };
+}
+
+function classifyMilestoneEvent(
+  type: string
+): { readonly category: SessionArchiveMilestone["category"]; readonly priority: number } | null {
+  if (type === "approval.denied") return { category: "approval", priority: 6 };
+  if (/failed|rejected|blocked|unknown/.test(type)) return { category: "failure", priority: 6 };
+  if (type === "plan.set") return { category: "plan", priority: 4 };
+  if (type === "context.checkpointed") return { category: "checkpoint", priority: 3 };
+  if (type.startsWith("branch.")) return { category: "branch", priority: 3 };
+  return null;
+}
+
+function milestoneDetails(payload: RunEvent["payload"]): string {
+  const fields = ["code", "reason", "message", "toolName", "version", "basedOnVersion"];
+  const details: string[] = [];
+  for (const field of fields) {
+    const value = payload[field];
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      details.push(`${field}=${String(value)}`);
+    }
+  }
+  return details.join(", ");
+}
+
+function compareMilestoneValueDescending(left: MilestoneCandidate, right: MilestoneCandidate): number {
+  return right.priority - left.priority
+    || right.occurredAt.localeCompare(left.occurredAt)
+    || right.stableOrder - left.stableOrder
+    || right.milestone.ref.localeCompare(left.milestone.ref);
+}
+
+function isSessionArchiveBoundaryEvent(event: RunEvent): boolean {
+  return event.type !== "model.requested"
+    && event.type !== "context.rehydrate_requested"
+    && event.type !== "context.rehydrated";
+}
+
+function publishedSessionArchiveEvents(events: readonly RunEvent[]): readonly RunEvent[] {
+  // Close the addressable range at the latest semantic state transition.
+  // Trailing model/rehydration transport events would otherwise change an
+  // identical decision projection on every call. Events inside the closed
+  // range remain contiguous and exactly addressable for audit reconstruction.
+  const lastBoundary = [...events].reverse().find(isSessionArchiveBoundaryEvent);
+  return lastBoundary === undefined
+    ? []
+    : events.filter((event) => event.sequence <= lastBoundary.sequence);
+}
+
+function boundedLabel(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= MAX_SESSION_MILESTONE_LABEL_LENGTH
+    ? normalized
+    : `${normalized.slice(0, MAX_SESSION_MILESTONE_LABEL_LENGTH - 1)}…`;
+}
+
+function sequenceRange(
+  sequences: readonly number[],
+  refFormat: "input:<sequence>" | "event:<sequence>"
+): SessionArchive["inputs"] {
+  if (sequences.length === 0) return null;
+  return {
+    firstSequence: sequences[0]!,
+    lastSequence: sequences.at(-1)!,
+    count: sequences.length,
+    refFormat
+  };
 }
 
 /**
@@ -188,11 +393,30 @@ export function resolveRehydratedFact(args: {
     readonly parentRun: RunSnapshot;
     readonly refs: Readonly<Record<string, string>>;
   };
+  readonly memory?: RuntimeMemoryOptions;
+  readonly asOf?: string;
+  readonly expectedMemoryDigest?: string;
 }): RehydratedFact {
   const { ref, run, store, artifactDir, manifest, origin } = args;
   const authority = buildCompactionAuthority({ run, store, artifactDir });
   if (!isValidSourceRefFormat(ref)) {
     return { ref, kind: "invocation", origin, digest: "", content: null, error: "INVALID_REF" };
+  }
+  const memoryId = memoryIdFromRef(ref);
+  if (memoryId !== null) {
+    const record = args.memory?.store.get(args.memory.scope, memoryId) ?? null;
+    const digest = record === null ? "" : digestCanonicalJson(record);
+    const available = record !== null
+      && args.expectedMemoryDigest !== undefined
+      && args.expectedMemoryDigest === digest
+      && args.memory?.store.isRecallEnabled(args.memory.scope) === true
+      && record.status === "active"
+      && record.sensitivity === "normal"
+      && (record.expiresAt === undefined || Date.parse(record.expiresAt) > Date.parse(args.asOf ?? new Date().toISOString()))
+      && manifest.get(ref) === digest;
+    return available
+      ? { ref, kind: "memory", origin, digest, content: record as unknown as JsonValue, error: null, trust: "untrusted_memory_data" }
+      : { ref, kind: "memory", origin, digest: "", content: null, error: "REF_UNAVAILABLE", trust: "untrusted_memory_data" };
   }
   const resolved = resolveSourceRef(ref, authority);
   if (resolved !== null && manifest.get(ref) === resolved.digest) {
@@ -325,6 +549,13 @@ export function autoRehydrateForActiveStep(args: {
     }
   }
   for (const check of activeStep.acceptanceChecks) {
+    if (check.kind === "context_ref") {
+      const satisfied = run.evidence.some(
+        (item) => item.stepId === activeStepId && item.checkId === check.id
+      );
+      if (!satisfied) required.add(check.ref);
+      continue;
+    }
     if (check.kind !== "tool_result") continue;
     const evidence = run.evidence.find(
       (item) => item.stepId === activeStepId && item.checkId === check.id
@@ -354,6 +585,7 @@ function kindOf(kind: "input" | "invocation" | "evidence" | "event" | "artifact"
 }
 
 function kindOfPrefix(ref: string): RehydratedFact["kind"] {
+  if (ref.startsWith("memory:")) return "memory";
   if (ref.startsWith("input:")) return "input";
   if (ref.startsWith("event:")) return "event";
   if (ref.startsWith("evidence:")) return "evidence";

@@ -12,6 +12,8 @@ export type {
   CompactionStatement,
   CompactionSummary,
   ContextCheckpoint,
+  HistoryCandidate,
+  HistoryCandidateReason,
   JsonValue,
   ModelCallPhase,
   ModelDecisionContext,
@@ -23,6 +25,9 @@ export type {
   ReasoningPolicy,
   RuntimeOperationContext,
   RuntimeProvider,
+  SessionArchive,
+  SessionArchiveMilestone,
+  SessionArchiveRange,
   SemanticValidationContext,
   SemanticValidationVerdict,
   ToolObservation
@@ -43,6 +48,7 @@ export {
 export {
   COMPACTION_SYSTEM_PROMPT,
   DECISION_SYSTEM_PROMPT,
+  MEMORY_SECURITY_SYSTEM_PROMPT,
   VALIDATION_SYSTEM_PROMPT
 } from "./adapter.js";
 

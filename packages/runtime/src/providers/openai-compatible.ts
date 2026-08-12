@@ -10,6 +10,7 @@ import {
   type ProviderCompletionRequest,
   type ProviderRequestTokenMeter
 } from "./adapter.js";
+import { estimateTextTokens } from "../context/budget.js";
 import { RuntimeError } from "../runtime-error.js";
 
 export type OpenAICompatibleProviderOptions = {
@@ -44,6 +45,11 @@ export type OpenAICompatibleProviderOptions = {
   readonly fetch?: typeof globalThis.fetch;
 };
 
+export type OpenAICompatibleProviderEnvironmentOptions = {
+  /** Test/Canary-only effective window; production capability still resolves from model. */
+  readonly contextWindowTokensOverride?: number;
+};
+
 export class ModelConfigError extends RuntimeError {
   constructor(message: string) {
     super({ code: "INVALID_CONFIGURATION", message });
@@ -53,13 +59,37 @@ export class ModelConfigError extends RuntimeError {
 
 class RetryableProviderError extends Error {}
 
-export function openAICompatibleProviderFromEnv(environment: Record<string, string | undefined> = process.env): RuntimeProvider {
+const MODEL_CAPABILITIES: Readonly<Record<string, {
+  readonly contextWindowTokens: number;
+  readonly maxOutputTokens: number;
+  readonly estimatedInputMultiplier: Readonly<Record<ProviderCompletionRequest["phase"], number>>;
+}>> = Object.freeze({
+  "qwen3.7-flash": Object.freeze({
+    contextWindowTokens: 1_000_000,
+    maxOutputTokens: 131_072,
+    // E101 fixed Provider baseline (227 decision / 14 validation samples):
+    // max actual-to-UTF8/4 ratios were 1.66 and 1.08. The calibrated
+    // estimates retain roughly 8% / 11% headroom. Compaction had no E101
+    // sample, so it inherits the conservative decision multiplier.
+    estimatedInputMultiplier: Object.freeze({
+      decision: 1.8,
+      validation: 1.2,
+      compaction: 1.8
+    })
+  })
+});
+
+export function openAICompatibleProviderFromEnv(
+  environment: Record<string, string | undefined> = process.env,
+  environmentOptions: OpenAICompatibleProviderEnvironmentOptions = {}
+): RuntimeProvider {
   if (environment.NEXORA_MODEL_PROVIDER?.trim() !== "openai-compatible") {
     throw new ModelConfigError('NEXORA_MODEL_PROVIDER must be "openai-compatible".');
   }
   const baseUrl = required(environment, "NEXORA_MODEL_BASE_URL");
   const apiKey = required(environment, "NEXORA_MODEL_API_KEY");
   const model = required(environment, "NEXORA_MODEL_NAME");
+  const modelCapability = resolveModelCapability(model);
   const timeoutRaw = environment.NEXORA_MODEL_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutRaw ? Number(timeoutRaw) : 60_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) throw new ModelConfigError("NEXORA_MODEL_TIMEOUT_MS must be a positive integer.");
@@ -73,8 +103,40 @@ export function openAICompatibleProviderFromEnv(environment: Record<string, stri
     throw new ModelConfigError('NEXORA_MODEL_REASONING must be "off", "on" or "dynamic".');
   }
   const thinkingToggleParam = environment.NEXORA_MODEL_THINKING_PARAM?.trim() || undefined;
-  const contextWindowRaw = environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS?.trim();
-  const contextWindowTokens = contextWindowRaw ? Number(contextWindowRaw) : undefined;
+  if (environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS?.trim()) {
+    throw new ModelConfigError(
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS is not supported; context capacity is resolved from NEXORA_MODEL_NAME."
+    );
+  }
+  const contextWindowTokens = environmentOptions.contextWindowTokensOverride === undefined
+    ? modelCapability.contextWindowTokens
+    : positiveInteger(
+        environmentOptions.contextWindowTokensOverride,
+        "contextWindowTokensOverride"
+      );
+  const decisionOutputTokens = requiredPositiveInteger(
+    environment,
+    "NEXORA_MODEL_DECISION_OUTPUT_TOKENS"
+  );
+  const validationOutputTokens = requiredPositiveInteger(
+    environment,
+    "NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS"
+  );
+  const compactionOutputTokens = requiredPositiveInteger(
+    environment,
+    "NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS"
+  );
+  for (const [phase, tokens] of Object.entries({
+    decision: decisionOutputTokens,
+    validation: validationOutputTokens,
+    compaction: compactionOutputTokens
+  })) {
+    if (tokens > modelCapability.maxOutputTokens) {
+      throw new ModelConfigError(
+        `NEXORA_MODEL_${phase.toUpperCase()}_OUTPUT_TOKENS must not exceed the ${modelCapability.maxOutputTokens}-token output capability of ${model}.`
+      );
+    }
+  }
   return createOpenAICompatibleProvider({
     baseUrl,
     apiKey,
@@ -83,7 +145,12 @@ export function openAICompatibleProviderFromEnv(environment: Record<string, stri
     temperature,
     ...(reasoningRaw === undefined ? {} : { reasoning: reasoningRaw as ReasoningPolicy }),
     ...(thinkingToggleParam === undefined ? {} : { thinkingToggleParam }),
-    ...(contextWindowTokens === undefined ? {} : { contextWindowTokens })
+    contextWindowTokens,
+    reservedOutputTokens: {
+      decision: decisionOutputTokens,
+      validation: validationOutputTokens,
+      compaction: compactionOutputTokens
+    }
   });
 }
 
@@ -100,6 +167,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let validationOutputTokens: number;
   let compactionOutputTokens: number;
   let softLimitRatio: number;
+  let tokenMeter: ProviderRequestTokenMeter | undefined;
   let fetchImplementation: typeof globalThis.fetch;
   try {
     baseUrl = z.string().url().parse(options.baseUrl).replace(/\/$/, "");
@@ -128,6 +196,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     softLimitRatio = z.number().positive().max(1).parse(
       options.softLimitRatio ?? 0.8
     );
+    tokenMeter = options.tokenMeter ?? calibratedTokenMeter(model);
     if (
       decisionOutputTokens >= contextWindowTokens
       || validationOutputTokens >= contextWindowTokens
@@ -162,9 +231,9 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       if (request.phase !== "decision") return request;
       return { ...request, input: projectDecisionRequest(request.input) };
     },
-    ...(options.tokenMeter === undefined
+    ...(tokenMeter === undefined
       ? {}
-      : { measureTokens: options.tokenMeter }),
+      : { measureTokens: tokenMeter }),
     async complete(request, operation) {
       let lastError: unknown;
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -292,9 +361,13 @@ function resolveThinkingToggle(
 function decisionNeedsPlanning(input: string): boolean {
   try {
     const payload = JSON.parse(input) as {
-      readonly context?: { readonly run?: { readonly currentPlan?: unknown } };
+      readonly context?: {
+        readonly phase?: unknown;
+        readonly allowedIntents?: readonly string[];
+      };
     };
-    return payload?.context?.run?.currentPlan === null;
+    return payload?.context?.phase === "plan"
+      || payload?.context?.allowedIntents?.includes("plan_tasks") === true;
   } catch {
     return false;
   }
@@ -312,32 +385,85 @@ function projectDecisionRequest(input: string): string {
       (tool) => tool.execution.inputExample !== undefined
     );
     const run = context.run;
+    const taskContract = run.taskContract === null
+      ? null
+      : {
+          goal: run.taskContract.goal,
+          constraints: run.taskContract.constraints,
+          acceptanceCriteria: run.taskContract.acceptanceCriteria
+        };
+    const tasks = (run.currentPlan?.orderedSteps ?? []).map((step) => ({
+      objective: step.objective,
+      status: run.stepProgress.find((item) => item.stepId === step.id)?.status ?? "pending",
+      completionRequirements: step.acceptanceChecks.map((check) => ({
+        ...semanticRequirement(check),
+        satisfied: run.evidence.some((evidence) => (
+          evidence.stepId === step.id && evidence.checkId === check.id
+        ))
+      }))
+    }));
+    const planning = run.currentPlan === null || context.allowedIntents.includes("plan_tasks");
+    const executing = context.allowedIntents.includes("use_capabilities");
+    const rehydratedFacts = context.rehydratedFacts.map((fact) => ({
+      ref: fact.ref,
+      kind: fact.kind,
+      content: fact.content,
+      error: fact.error,
+      ...(fact.trust === undefined ? {} : { trust: fact.trust })
+    }));
+    const memoryCandidates = context.memoryCandidates.map((candidate) => ({
+      ref: candidate.ref,
+      memoryType: candidate.memoryType,
+      hint: candidate.hint,
+      trust: candidate.trust
+    }));
+    const historyCandidates = context.historyCandidates.map((candidate) => ({
+      ref: candidate.ref,
+      category: candidate.category,
+      hint: candidate.hint
+    }));
     return JSON.stringify({
       mode: "decide",
       context: {
-        workspace: context.workspace,
-        projection: context.projection,
+        phase: planning
+          ? "plan"
+          : executing
+            ? "execute"
+            : context.allowedIntents.includes("finish") ? "finish" : "input",
         run: {
-          inputCount: run.inputCount,
-          coveredInputCount: run.coveredInputCount,
           inputs: run.inputHistory.map((entry) => entry.text),
-          taskContract: run.taskContract,
-          currentPlan: run.currentPlan,
-          stepProgress: run.stepProgress,
-          evidence: run.evidence,
-          lastError: run.lastError === null
-            ? null
-            : { code: run.lastError.code, message: run.lastError.message }
+          taskContract,
+          tasks
         },
-        allowedActions: context.allowedActions,
-        actionContract: context.actionContract,
-        toolObservations: context.toolObservations,
-        toolCatalog: context.tools.map((tool) => ({
-          name: tool.identity.name,
-          purpose: tool.capability.purpose,
-          produces: tool.evidence.produces
-        })),
-        tools: callableTools
+        providerContractVersion: context.providerContractVersion,
+        allowedIntents: context.allowedIntents,
+        intentContract: context.intentContract,
+        ...(context.repair === null || context.repair === undefined ? {} : { repair: context.repair }),
+        ...(rehydratedFacts.length === 0 ? {} : { rehydratedFacts }),
+        ...(context.toolObservations.length === 0 ? {} : {
+          toolObservations: projectDecisionToolObservations(context.toolObservations)
+        }),
+        ...(context.contextCheckpoint === null ? {} : { contextCheckpoint: context.contextCheckpoint.summary }),
+        ...(historyCandidates.length === 0 ? {} : { historyCandidates }),
+        ...(memoryCandidates.length === 0 ? {} : { memoryCandidates }),
+        ...(rehydratedFacts.some((fact) => fact.kind === "input" || fact.kind === "event")
+          || context.sessionArchive === undefined
+          ? {}
+          : { sessionArchive: context.sessionArchive }),
+        ...(planning ? {
+          toolCatalog: context.tools.map((tool) => ({
+            name: tool.identity.name,
+            purpose: tool.capability.purpose,
+            produces: tool.evidence.produces
+          }))
+        } : {}),
+        ...(executing ? {
+          tools: callableTools.map((tool) => ({
+            name: tool.identity.name,
+            purpose: tool.capability.purpose,
+            inputExample: tool.execution.inputExample
+          }))
+        } : {})
       }
     });
   } catch {
@@ -345,8 +471,78 @@ function projectDecisionRequest(input: string): string {
   }
 }
 
+/**
+ * The Runtime retains projection provenance for eviction, rehydration and the
+ * model-call ledger. The decision model only needs the fact-bearing portion
+ * of each observation plus its published source references.
+ */
+function projectDecisionToolObservations(
+  observations: ModelDecisionContext["toolObservations"]
+): readonly Record<string, unknown>[] {
+  return observations.map((observation) => ({
+    toolName: observation.toolName,
+    status: observation.status,
+    facts: observation.facts,
+    error: observation.error,
+    payloadFragment: observation.payloadFragment,
+    payloadMode: observation.payloadMode
+  }));
+}
+
+function semanticRequirement(
+  check: NonNullable<ModelDecisionContext["run"]["currentPlan"]>["orderedSteps"][number]["acceptanceChecks"][number]
+): Record<string, unknown> {
+  if (check.kind === "tool_result") return { kind: "capability_result", capability: check.toolName };
+  if (check.kind === "state_assertion") return { kind: check.kind, capability: check.toolName, arguments: check.input, assertion: check.assertion };
+  if (check.kind === "artifact_schema") return { kind: check.kind, schemaName: check.schemaName };
+  if (check.kind === "user_confirmation") return { kind: check.kind, prompt: check.prompt };
+  if (check.kind === "semantic_review") return { kind: check.kind, criterion: check.criterion };
+  return { kind: check.kind, ref: check.ref };
+}
+
 function required(environment: Record<string, string | undefined>, name: string): string {
   const value = environment[name]?.trim();
   if (!value) throw new ModelConfigError(`${name} is required.`);
   return value;
+}
+
+function requiredPositiveInteger(
+  environment: Record<string, string | undefined>,
+  name: string
+): number {
+  const raw = required(environment, name);
+  return positiveInteger(Number(raw), name);
+}
+
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new ModelConfigError(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+function calibratedTokenMeter(model: string): ProviderRequestTokenMeter | undefined {
+  const calibration = MODEL_CAPABILITIES[model]?.estimatedInputMultiplier;
+  if (calibration === undefined) return undefined;
+  return (request) => {
+    const baseline = estimateTextTokens(`${request.system}\n${request.input}`);
+    const multiplier = calibration[request.phase];
+    return {
+      inputTokens: Math.ceil(baseline.inputTokens * multiplier),
+      method: "estimated",
+      meter: `nexora:${model}:utf8-bytes/4*x${multiplier}:e101-v1`
+    };
+  };
+}
+
+function resolveModelCapability(model: string): {
+  readonly contextWindowTokens: number;
+  readonly maxOutputTokens: number;
+  readonly estimatedInputMultiplier: Readonly<Record<ProviderCompletionRequest["phase"], number>>;
+} {
+  const capability = MODEL_CAPABILITIES[model];
+  if (capability !== undefined) return capability;
+  throw new ModelConfigError(
+    `Model capabilities are unknown for ${model}; add a verified Provider capability before using the environment entry.`
+  );
 }

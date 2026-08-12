@@ -18,7 +18,7 @@ function tempRoot(): string {
 }
 
 describe("E049 single Structured Plan authority", () => {
-  it("persists the Provider plan directly and completes from bound Tool evidence", async () => {
+  it("compiles the semantic Provider plan and completes from bound Tool evidence", async () => {
     const workspace = tempRoot();
     const calls = { calls: 0 };
     const provider = new ScriptedRuntimeProvider([
@@ -37,7 +37,12 @@ describe("E049 single Structured Plan authority", () => {
     expect(provider.contexts).toHaveLength(3);
     expect(view.snapshot.currentPlan).toEqual(expect.objectContaining({ version: 1, basedOnVersion: null }));
     expect(view.snapshot.currentPlan?.goalDigest).toMatch(/^sha256:/);
-    expect(view.snapshot.stepProgress).toEqual([{ stepId: "inspect", status: "completed", evidenceIds: [result.evidence[0]!.id] }]);
+    expect(view.snapshot.stepProgress).toEqual([{
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+      status: "completed",
+      evidenceIds: [result.evidence[0]!.id]
+    }]);
+    expect(view.snapshot.currentPlan!.orderedSteps[0]!.id).toMatch(/^step-/);
     expect(view.events.map((event) => event.type)).toEqual(expect.arrayContaining([
       "run.created",
       "plan.set",
@@ -50,7 +55,7 @@ describe("E049 single Structured Plan authority", () => {
     runtime.close();
   });
 
-  it("rejects stale plan revisions and keeps one current plan", async () => {
+  it("keeps Runtime ownership of versions across semantic plan revisions", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -64,14 +69,14 @@ describe("E049 single Structured Plan authority", () => {
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("waiting");
-    expect(view.snapshot.currentPlan?.version).toBe(2);
-    expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.id)).toEqual(["revised"]);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
-    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
+    expect(view.snapshot.currentPlan?.version).toBe(3);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.id).toMatch(/^step-/);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(3);
     runtime.close();
   });
 
-  it("rejects a verbatim unchanged Plan revision as a no-op", async () => {
+  it("does not accept Provider-supplied Plan identity for a repeated semantic proposal", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -84,13 +89,9 @@ describe("E049 single Structured Plan authority", () => {
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("waiting");
-    expect(view.snapshot.currentPlan?.version).toBe(1);
-    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(1);
-    const rejected = view.events.find((event) => event.type === "action.rejected");
-    expect(rejected?.payload.diagnostic).toEqual(expect.objectContaining({
-      kind: "state",
-      issues: [expect.objectContaining({ message: "Plan is unchanged; execute the active Step instead." })]
-    }));
+    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
     runtime.close();
   });
 
@@ -136,7 +137,11 @@ describe("E049 single Structured Plan authority", () => {
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan?.version).toBe(2);
     expect(view.snapshot.evidence).toEqual([]);
-    expect(view.snapshot.stepProgress).toEqual([{ stepId: "inspect", status: "active", evidenceIds: [] }]);
+    expect(view.snapshot.stepProgress).toEqual([{
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+      status: "active",
+      evidenceIds: []
+    }]);
     runtime.close();
   });
 
@@ -204,17 +209,21 @@ describe("E049 single Structured Plan authority", () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       {
-        type: "set_plan",
-        basedOnVersion: null,
-        taskContract: {
-          version: 1,
-          inputVersion: 1,
-          goal: "Inspect the target",
-          workspace,
-          constraints: [],
-          acceptanceCriteria: ["The target is inspected"]
-        },
-        orderedSteps: [readStep()]
+        intent: {
+          kind: "plan_tasks",
+          taskContract: {
+            version: 1,
+            inputVersion: 1,
+            goal: "Inspect the target",
+            workspace,
+            constraints: [],
+            acceptanceCriteria: ["The target is inspected"]
+          },
+          tasks: [{
+            objective: "Read the target",
+            completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }]
+          }]
+        }
       },
       { type: "request_input", question: "Continue?", reason: "test stop" }
     ]);

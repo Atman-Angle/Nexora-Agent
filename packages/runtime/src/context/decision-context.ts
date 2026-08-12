@@ -1,20 +1,24 @@
 import {
-  runtimeActionContract,
   type ForkContext,
   type RunSnapshot,
   type ToolInvocation
 } from "../contracts.js";
 import {
-  allowedActions,
+  allowedProviderIntents,
   deepFreeze,
   digestJson
 } from "../runtime-helpers.js";
 import type {
-  ModelAction,
   ModelDecisionContext,
+  RepairContext,
   RehydratedFact
 } from "../providers/model-client.js";
-import type { RuntimeTool } from "../runtime-types.js";
+import {
+  providerIntentContract,
+  ValidationIssueKindSchema
+} from "../providers/intent-contract.js";
+import type { RuntimeMemoryOptions, RuntimeTool } from "../runtime-types.js";
+import { projectMemoryCandidates } from "../memory/recall.js";
 import { ArtifactStore } from "../store/artifacts.js";
 import type { RunStore } from "../store/run-store.js";
 import {
@@ -29,10 +33,12 @@ import {
   projectRelevantToolObservations,
   projectRunContext
 } from "./projection.js";
+import { projectHistoryCandidates } from "./history-candidates.js";
 import {
   admitRehydratedFacts,
   autoRehydrateForActiveStep,
   buildAvailableContextRefs,
+  projectSessionArchive,
   resolveRehydratedFact
 } from "./rehydration.js";
 
@@ -61,10 +67,14 @@ export function buildDecisionContext(args: {
   readonly tools: ReadonlyMap<string, RuntimeTool>;
   readonly artifactDir: string;
   readonly rehydrateRequests?: readonly string[];
+  readonly rehydrateMemoryDigests?: Readonly<Record<string, string>>;
   readonly forkContext?: ForkContext | null;
+  readonly memory?: RuntimeMemoryOptions;
+  readonly now?: string;
 }): DecisionContextResult {
   const { run, store, workspace, tools, artifactDir } = args;
   const invocations = store.listToolInvocations(run.runId);
+  const events = store.listEvents(run.runId);
   const observations = projectRelevantToolObservations(run, invocations);
   const checkpoint = findActiveCheckpoint({
     run,
@@ -92,31 +102,43 @@ export function buildDecisionContext(args: {
           : { parentRun, refs: args.forkContext!.forkBase.inheritedRefs };
       })();
 
+  const historyCandidates = projectHistoryCandidates({
+    run,
+    invocations,
+    events,
+    ...(inherited === undefined
+      ? {}
+      : {
+          inherited: {
+            parentRun: inherited.parentRun,
+            refs: inherited.refs,
+            facts: args.forkContext!.forkBase.inheritedFacts
+          }
+        })
+  });
+  const memoryCandidates = args.memory === undefined || !args.memory.store.isRecallEnabled(args.memory.scope)
+    ? []
+    : projectMemoryCandidates({
+        run,
+        records: args.memory.store.list({ scope: args.memory.scope, status: "active", limit: 500 }),
+        asOf: args.now ?? new Date().toISOString()
+      });
+
   const manifest = buildAvailableContextRefs({
     run,
     observations,
     checkpoint,
     store,
     artifactDir,
+    historyCandidates,
+    memoryCandidates,
     ...(inherited === undefined ? {} : { inheritedRefs: inherited.refs })
   });
-  const hasAvailableRefs = manifest.size > 0 && run.currentPlan !== null;
-  const actions = allowedActions(run, hasAvailableRefs);
 
   const autoCandidates = autoRehydrateForActiveStep({ run, observations, invocations });
+  const automaticRefs = automaticPublishedRefs(run, manifest, memoryCandidates);
   const modelRequests = args.rehydrateRequests ?? [];
   const candidates: RehydratedFact[] = [];
-  for (const ref of autoCandidates.required) {
-    candidates.push(resolveRehydratedFact({
-      ref,
-      run,
-      store,
-      artifactDir,
-      manifest,
-      origin: "harness_required",
-      ...(inherited === undefined ? {} : { inherited })
-    }));
-  }
   for (const ref of modelRequests) {
     if (!candidates.some((candidate) => candidate.ref === ref)) {
       candidates.push(resolveRehydratedFact({
@@ -126,9 +148,28 @@ export function buildDecisionContext(args: {
         artifactDir,
         manifest,
         origin: "model_request",
+        ...(args.rehydrateMemoryDigests?.[ref] === undefined
+          ? {}
+          : { expectedMemoryDigest: args.rehydrateMemoryDigests[ref] }),
+        ...(args.memory === undefined ? {} : { memory: args.memory, asOf: args.now ?? new Date().toISOString() }),
         ...(inherited === undefined ? {} : { inherited })
       }));
     }
+  }
+  for (const ref of [...automaticRefs, ...autoCandidates.required]) {
+    if (candidates.some((candidate) => candidate.ref === ref)) continue;
+    const memoryDigest = memoryCandidates.find((candidate) => candidate.ref === ref)?.digest;
+    candidates.push(resolveRehydratedFact({
+      ref,
+      run,
+      store,
+      artifactDir,
+      manifest,
+      origin: "harness_required",
+      ...(memoryDigest === undefined ? {} : { expectedMemoryDigest: memoryDigest }),
+      ...(args.memory === undefined ? {} : { memory: args.memory, asOf: args.now ?? new Date().toISOString() }),
+      ...(inherited === undefined ? {} : { inherited })
+    }));
   }
   for (const ref of autoCandidates.helpful) {
     if (!candidates.some((candidate) => candidate.ref === ref)) {
@@ -153,29 +194,11 @@ export function buildDecisionContext(args: {
   const injectedRehydratedRefs = rehydratedFacts
     .filter((fact) => fact.error === null)
     .map((fact) => fact.ref);
+  const intents = allowedProviderIntents(run, manifest.size > 0);
 
   const includeTaskContract = run.currentPlan === null || run.taskContract === null
     || run.taskContract.inputVersion < run.inputHistory.length;
-  const allStepsCompleted = run.currentPlan !== null
-    && run.stepProgress.length === run.currentPlan.orderedSteps.length
-    && run.stepProgress.every((item) => item.status === "completed");
-  const baseContract = runtimeActionContract(
-    actions.filter((item): item is "set_plan" | "call_tool" | "execute_step" | "request_input" | "propose_finish" => item !== "request_context"),
-    {
-      workspace,
-      inputVersion: run.inputHistory.length,
-      basedOnVersion: run.currentPlan?.version ?? null,
-      includeTaskContract,
-      currentPlan: run.currentPlan,
-      finishEvidenceIds: allStepsCompleted ? run.evidence.map((item) => item.id) : []
-    }
-  );
-  const actionContract: readonly ModelAction[] = hasAvailableRefs
-    ? [
-        ...baseContract,
-        Object.freeze({ type: "request_context" as const, refs: ["<source-ref>"] })
-      ]
-    : baseContract;
+  const intentContract = providerIntentContract(intents, includeTaskContract);
 
   const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
   const activeStep = run.currentPlan?.orderedSteps.find((step) => step.id === activeStepId);
@@ -185,20 +208,25 @@ export function buildDecisionContext(args: {
   const projection = deepFreeze(structuredClone({
     workspace,
     run: projectRunContext(run),
-    allowedActions: actions,
-    actionContract,
+    providerContractVersion: 2 as const,
+    allowedIntents: intents,
+    intentContract,
     toolObservations: checkpoint === null
       ? observations
       : observations.filter((item) => !covered.has(item.invocationId)),
     contextCheckpoint: checkpointView,
     rehydratedFacts,
+    historyCandidates,
+    memoryCandidates,
+    sessionArchive: projectSessionArchive({ run, events }),
+    repair: projectRepairContext(run),
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
       capability: tool.contract.capability,
       decision: tool.contract.decision,
       execution: {
         effect: tool.contract.execution.effect,
-        ...((actions.includes("call_tool") || actions.includes("execute_step")) && callableTools.has(tool.contract.identity.name)
+        ...(intents.includes("use_capabilities") && callableTools.has(tool.contract.identity.name)
           ? { inputExample: tool.contract.execution.inputExample }
           : {})
       },
@@ -206,20 +234,101 @@ export function buildDecisionContext(args: {
     }))
   }));
   const context = deepFreeze({
+    providerContractVersion: projection.providerContractVersion,
     workspace: projection.workspace,
     run: projection.run,
     projection: {
       schemaVersion: 1 as const,
       digest: digestJson(projection)
     },
-    allowedActions: projection.allowedActions,
-    actionContract: projection.actionContract,
+    allowedIntents: projection.allowedIntents,
+    intentContract: projection.intentContract,
     toolObservations: projection.toolObservations,
     contextCheckpoint: projection.contextCheckpoint,
     rehydratedFacts: projection.rehydratedFacts,
+    historyCandidates: projection.historyCandidates,
+    memoryCandidates: projection.memoryCandidates,
+    sessionArchive: projection.sessionArchive,
+    repair: projection.repair,
     tools: projection.tools
   });
   return { context, injectedRehydratedRefs };
+}
+
+function automaticPublishedRefs(
+  run: RunSnapshot,
+  manifest: ReadonlyMap<string, string>,
+  memoryCandidates: readonly ModelDecisionContext["memoryCandidates"][number][]
+): string[] {
+  const latestInput = run.inputHistory.at(-1)?.text ?? "";
+  const explicit = [...manifest.keys()].filter((ref) => latestInput.includes(ref));
+  const highestRankedMemory = memoryCandidates[0]?.ref;
+  return [...new Set([
+    ...(highestRankedMemory === undefined ? [] : [highestRankedMemory]),
+    ...explicit
+  ])];
+}
+
+function projectRepairContext(run: RunSnapshot): RepairContext | null {
+  const error = run.lastError;
+  if (error === null) return null;
+  return {
+    kind: repairKind(error.code),
+    code: error.code,
+    issues: repairIssues(error.code, error.message),
+    retry: {
+      used: run.budgetsUsed.retries,
+      remaining: Math.max(0, run.budgets.maxRetries - run.budgetsUsed.retries)
+    }
+  };
+}
+
+function repairKind(code: string): RepairContext["kind"] {
+  if (code === "INVALID_MODEL_ACTION") return "invalid_action";
+  if (code === "VALIDATION_FAILED") return "validation_failed";
+  if (code === "APPROVAL_DENIED") return "approval_denied";
+  if (/TOOL|READ|SEARCH|PATCH|COMMAND|EXECUTE/.test(code)) return "tool_failure";
+  return "runtime_error";
+}
+
+function repairIssues(code: string, message: string): RepairContext["issues"] {
+  try {
+    const parsed = JSON.parse(message) as { readonly issues?: unknown };
+    if (Array.isArray(parsed.issues)) {
+      const issues = parsed.issues
+        .map((item) => (
+          item !== null
+          && typeof item === "object"
+          && typeof (item as { readonly message?: unknown }).message === "string"
+            ? {
+                kind: parsedRepairIssueKind(
+                  (item as { readonly kind?: unknown }).kind,
+                  code === "INVALID_MODEL_ACTION"
+                  ? "plan_mismatch" as const
+                  : "unresolved_failure" as const
+                ),
+                message: (item as { readonly message: string }).message
+              }
+            : null
+        ))
+        .filter((item): item is RepairContext["issues"][number] => item !== null);
+      if (issues.length > 0) return issues;
+    }
+  } catch {
+    // Keep the persisted message as bounded fallback feedback.
+  }
+  return [{
+    kind: code === "INVALID_MODEL_ACTION" ? "plan_mismatch" : "unresolved_failure",
+    message
+  }];
+}
+
+function parsedRepairIssueKind(
+  value: unknown,
+  fallback: RepairContext["issues"][number]["kind"]
+): RepairContext["issues"][number]["kind"] {
+  const parsed = ValidationIssueKindSchema.safeParse(value);
+  return parsed.success ? parsed.data : fallback;
 }
 
 /**

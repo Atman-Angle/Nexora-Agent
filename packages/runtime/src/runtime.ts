@@ -12,6 +12,7 @@ import {
   JsonValueSchema,
   createInitialRunSnapshot,
   type BranchRecord,
+  type Evidence,
   type PlanTaskContract,
   type RunSnapshot,
   type RuntimeAction,
@@ -34,10 +35,12 @@ import type { ForkContext } from "./contracts.js";
 import {
   buildForkBaseInheritedFacts,
   buildForkBaseInheritedRefs,
-  parseRequestContextAction,
   type RequestContextAction
 } from "./context/rehydration.js";
+import { ProviderDecisionSchema } from "./providers/intent-contract.js";
+import { compileProviderDecision } from "./providers/intent-compiler.js";
 import type {
+  RehydratedFact,
   RuntimeProvider
 } from "./providers/model-client.js";
 import {
@@ -45,11 +48,13 @@ import {
 } from "./context/budget.js";
 import { openRunStore, type RunStore } from "./store/run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
+import { MemoryScopeSchema } from "./memory/index.js";
 import { digestTaskContract, proposeFinish } from "./validation.js";
 import {
   ActionRejectedError,
   allowedActions,
   assertCompletedStepsUnchanged,
+  completeSatisfiedSteps,
   deepFreeze,
   digestJson,
   errorMessage,
@@ -131,6 +136,7 @@ export type {
   RunResult,
   RunView,
   RuntimeObserver,
+  RuntimeMemoryOptions,
   RuntimeEvent,
   RuntimeEventListener,
   RuntimeSubscription,
@@ -139,6 +145,7 @@ export type {
   RuntimeToolResult,
   StartInput
 } from "./runtime-types.js";
+export type { FailureHandoff } from "./runtime-types.js";
 export {
   RunControlError,
   type RunControlErrorCode
@@ -154,6 +161,7 @@ export class RuntimeEngine {
   readonly #provider: RuntimeProvider;
   readonly #tools: Map<string, RuntimeTool>;
   readonly #store: RunStore;
+  readonly #memory: CreateRuntimeOptions["memory"];
   readonly #now: () => string;
   readonly #createId: () => string;
   readonly #artifactDir: string;
@@ -175,8 +183,13 @@ export class RuntimeEngine {
    */
   readonly #rehydrationRequests = new Map<
     string,
-    { readonly requestId: string; readonly refs: readonly string[] }
+    {
+      readonly requestId: string;
+      readonly refs: readonly string[];
+      readonly memoryDigests: Readonly<Record<string, string>>;
+    }
   >();
+  readonly #publishedMemoryDigests = new Map<string, Readonly<Record<string, string>>>();
   #closed = false;
   #closePromise: Promise<void> | null = null;
 
@@ -217,6 +230,23 @@ export class RuntimeEngine {
       this.#workspace = workspace;
       this.#dataDir = dataDir;
       this.#provider = options.provider;
+      if (options.memory !== undefined) {
+        if (
+          options.memory.store === null
+          || typeof options.memory.store !== "object"
+          || typeof options.memory.store.get !== "function"
+          || typeof options.memory.store.list !== "function"
+          || typeof options.memory.store.isRecallEnabled !== "function"
+        ) {
+          throw new Error("Runtime Memory Store must implement get(), list() and isRecallEnabled().");
+        }
+        this.#memory = {
+          store: options.memory.store,
+          scope: MemoryScopeSchema.parse(options.memory.scope)
+        };
+      } else {
+        this.#memory = undefined;
+      }
       resolveProviderModelProfile(options.provider);
       this.#now = now;
       this.#createId = createId;
@@ -1111,15 +1141,39 @@ export class RuntimeEngine {
       }
 
       const pendingRequest = this.#rehydrationRequests.get(run.runId);
-      const decisionResult = buildDecisionContext({
+      let decisionResult = buildDecisionContext({
         run,
         store: this.#store,
         workspace: this.#workspaceFor(run.runId),
         tools: this.#tools,
         artifactDir: this.#artifactDir,
+        ...(this.#memory === undefined ? {} : { memory: this.#memory, now: this.#now() }),
         ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs }),
+        ...(pendingRequest === undefined ? {} : { rehydrateMemoryDigests: pendingRequest.memoryDigests }),
         forkContext: this.#forkContextFor(run.runId)
       });
+      const runWithContextEvidence = this.#recordContextRefEvidence(
+        run,
+        decisionResult.context.rehydratedFacts,
+        observer
+      );
+      if (runWithContextEvidence !== run) {
+        run = runWithContextEvidence;
+        decisionResult = buildDecisionContext({
+          run,
+          store: this.#store,
+          workspace: this.#workspaceFor(run.runId),
+          tools: this.#tools,
+          artifactDir: this.#artifactDir,
+          ...(this.#memory === undefined ? {} : { memory: this.#memory, now: this.#now() }),
+          ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs }),
+          ...(pendingRequest === undefined ? {} : { rehydrateMemoryDigests: pendingRequest.memoryDigests }),
+          forkContext: this.#forkContextFor(run.runId)
+        });
+      }
+      this.#publishedMemoryDigests.set(run.runId, Object.fromEntries(
+        decisionResult.context.memoryCandidates.map((candidate) => [candidate.ref, candidate.digest])
+      ));
       const modelCall = await requestModel(
         {
           provider: this.#provider,
@@ -1132,24 +1186,17 @@ export class RuntimeEngine {
           requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
           withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
           notify: (runId, obs) => this.#notify(runId, obs),
-          forkContext: this.#forkContextFor(run.runId)
+          forkContext: this.#forkContextFor(run.runId),
+          ...(this.#memory === undefined ? {} : { memory: this.#memory })
         },
         run,
         "decision",
         decisionResult.context,
-        { allowedActions: decisionResult.context.allowedActions },
+        { allowedIntents: decisionResult.context.allowedIntents },
         signal,
         observer,
         true
       );
-      if (pendingRequest !== undefined && modelCall.outcome === "succeeded") {
-        this.#completeRehydrationRequest(
-          run.runId,
-          pendingRequest.requestId,
-          pendingRequest.refs,
-          observer
-        );
-      }
       run = modelCall.run;
       if (modelCall.outcome === "budget_exceeded") break;
       if (modelCall.outcome === "failed") {
@@ -1175,18 +1222,50 @@ export class RuntimeEngine {
         break;
       }
 
-      // ModelAction dispatch: request_context is a Harness control action and
-      // never reaches the Core state machine / #handleAction.
-      const requestContextAction = parseRequestContextAction(rawAction);
-      if (requestContextAction !== null) {
-        run = await this.#handleRequestContext(run, requestContextAction, signal, observer);
-        continue;
-      }
-
-      let action: RuntimeAction;
       try {
-        action = RuntimeActionSchema.parse(rawAction);
+        const decision = ProviderDecisionSchema.parse(rawAction);
+        const compiled = compileProviderDecision({
+          decision,
+          run,
+          createId: () => this.#createId(),
+          rehydratedRefs: decisionResult.injectedRehydratedRefs
+        });
+        this.#store.recordRunEvent({
+          runId: run.runId,
+          event: {
+            type: "intent.compiled",
+            occurredAt: this.#now(),
+            payload: {
+              intentKind: decision.intent.kind,
+              compiledActionType: compiled.type,
+              reasoningSummaryPresent: decision.reasoningSummary !== undefined
+            }
+          },
+          fencingToken: this.#leases.requireFencingToken(run.runId)
+        });
+        this.#notify(run.runId, observer);
+        if (compiled.type === "request_context") {
+          run = await this.#handleRequestContext(run, compiled, signal, observer);
+          continue;
+        }
+        const action: RuntimeAction = RuntimeActionSchema.parse(compiled);
         run = await this.#handleAction(run, action, signal, observer);
+        if (action.type === "set_plan" && decisionResult.context.rehydratedFacts.length > 0) {
+          run = this.#recordContextRefEvidence(
+            run,
+            decisionResult.context.rehydratedFacts,
+            observer
+          );
+        }
+        const consumedRehydration = action.type !== "propose_finish" || run.status === "succeeded";
+        if (pendingRequest !== undefined && consumedRehydration) {
+          this.#completeRehydrationRequest(
+            run.runId,
+            pendingRequest.requestId,
+            pendingRequest.refs,
+            observer
+          );
+        }
       } catch (error) {
         if (
           error instanceof RuntimeError
@@ -1221,23 +1300,72 @@ export class RuntimeEngine {
     observer?: RuntimeObserver
   ): Promise<RunSnapshot> {
     signal.throwIfAborted();
+    const pending = this.#rehydrationRequests.get(run.runId);
+    if (pending !== undefined && action.refs.every((ref) => pending.refs.includes(ref))) {
+      const reusedCount = this.#store.listEvents(run.runId).filter((event) => (
+        event.type === "context.request_reused"
+        && JSON.stringify(event.payload.refs) === JSON.stringify(action.refs)
+      )).length;
+      if (reusedCount >= run.budgets.maxRetries) {
+        return this.#fail({
+          ...run,
+          lastError: {
+            code: "CONTEXT_INTENT_STALLED",
+            message: `Provider repeatedly requested already-visible Context refs: ${action.refs.join(", ")}`,
+            retryable: false,
+            detailsArtifact: null
+          }
+        }, "CONTEXT_INTENT_STALLED", "CONTEXT_INTENT_STALLED", observer);
+      }
+      // Contract v2 normalization: the exact facts are already visible. Keep
+      // the pending fact projection alive, perform no Store read and consume no
+      // Action-repair budget. The next decision can use the existing facts.
+      this.#store.recordRunEvent({
+        runId: run.runId,
+        event: {
+          type: "context.request_reused",
+          occurredAt: this.#now(),
+          payload: { refs: action.refs }
+        },
+        fencingToken: this.#leases.requireFencingToken(run.runId)
+      });
+      this.#notify(run.runId, observer);
+      return run;
+    }
     // Every requested ref is queued; the next decision turn resolves each one
     // against that turn's manifest (ref already published + digest matches) and
     // reports the outcome back in rehydratedFacts. Refs that were never
     // published, belong to another Run, or drifted resolve to REF_UNAVAILABLE
     // without disclosing whether the object exists.
     const requestId = this.#createId();
+    const publishedMemoryDigests = this.#publishedMemoryDigests.get(run.runId) ?? {};
+    const refs = [...new Set([...(pending?.refs ?? []), ...action.refs])];
+    const memoryDigests = {
+      ...(pending?.memoryDigests ?? {}),
+      ...Object.fromEntries(action.refs.flatMap((ref) => (
+      publishedMemoryDigests[ref] === undefined ? [] : [[ref, publishedMemoryDigests[ref]]]
+      )))
+    };
     this.#store.recordRunEvent({
       runId: run.runId,
       event: {
         type: "context.rehydrate_requested",
         occurredAt: this.#now(),
-        payload: { requestId, refs: action.refs }
+        payload: { requestId, refs, memoryDigests }
       },
       fencingToken: this.#leases.requireFencingToken(run.runId)
     });
     this.#notify(run.runId, observer);
-    this.#rehydrationRequests.set(run.runId, { requestId, refs: action.refs });
+    if (pending !== undefined) {
+      this.#completeRehydrationRequest(
+        run.runId,
+        pending.requestId,
+        pending.refs,
+        observer,
+        false
+      );
+    }
+    this.#rehydrationRequests.set(run.runId, { requestId, refs, memoryDigests });
     return run;
   }
 
@@ -1245,7 +1373,8 @@ export class RuntimeEngine {
     runId: string,
     requestId: string,
     refs: readonly string[],
-    observer?: RuntimeObserver
+    observer?: RuntimeObserver,
+    clearPending = true
   ): void {
     this.#store.recordRunEvent({
       runId,
@@ -1256,15 +1385,62 @@ export class RuntimeEngine {
       },
       fencingToken: this.#leases.requireFencingToken(runId)
     });
-    this.#rehydrationRequests.delete(runId);
+    if (clearPending) this.#rehydrationRequests.delete(runId);
     this.#notify(runId, observer);
+  }
+
+  #recordContextRefEvidence(
+    run: RunSnapshot,
+    facts: readonly RehydratedFact[],
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    const plan = run.currentPlan;
+    if (plan === null) return run;
+    const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+    const activeStep = plan.orderedSteps.find((item) => item.id === activeStepId);
+    if (activeStep === undefined) return run;
+    const available = new Map(facts.filter((fact) => fact.error === null).map((fact) => [fact.ref, fact]));
+    const existingChecks = new Set(run.evidence.filter((item) => (
+      item.planVersion <= plan.version && item.stepId === activeStep.id
+    )).map((item) => item.checkId));
+    const newEvidence: Evidence[] = activeStep.acceptanceChecks.flatMap((check) => {
+      if (check.kind !== "context_ref" || existingChecks.has(check.id)) return [];
+      const fact = available.get(check.ref);
+      if (fact === undefined) return [];
+      return [{
+        id: this.#createId(),
+        kind: "context_ref" as const,
+        source: "context" as const,
+        producedAt: this.#now(),
+        planVersion: plan.version,
+        stepId: activeStep.id,
+        checkId: check.id,
+        subjectRef: fact.ref,
+        invocationId: null,
+        artifactRef: null,
+        digest: fact.digest
+      }];
+    });
+    if (newEvidence.length === 0) return run;
+    const evidence = [...run.evidence, ...newEvidence];
+    const next = RunSnapshotSchema.parse({
+      ...run,
+      evidence,
+      stepProgress: completeSatisfiedSteps(plan, run.stepProgress, evidence),
+      updatedAt: this.#now()
+    });
+    return this.#commit(run, next, "context.evidence_recorded", {
+      evidenceIds: newEvidence.map((item) => item.id),
+      refs: newEvidence.map((item) => item.subjectRef)
+    }, observer);
   }
 
   /**
    * Rebuilds transient rehydration requests from the audit event stream on
    * resume: a context.rehydrate_requested event without a matching
-   * context.rehydrated event was never consumed, so its accepted refs are
-   * queued for the next decision turn. No authority table is involved.
+   * context.rehydrated event was not yet consumed by an accepted follow-up
+   * action, so its accepted refs are queued for the next decision turn. No
+   * authority table is involved.
    */
   #rebuildRehydrationRequests(runId: string): void {
     const events = this.#store.listEvents(runId);
@@ -1281,8 +1457,15 @@ export class RuntimeEngine {
       const refs = Array.isArray(event.payload.refs)
         ? event.payload.refs.filter((item): item is string => typeof item === "string")
         : [];
+      const memoryDigests = event.payload.memoryDigests !== null
+        && typeof event.payload.memoryDigests === "object"
+        && !Array.isArray(event.payload.memoryDigests)
+        ? Object.fromEntries(Object.entries(event.payload.memoryDigests).filter(
+            (entry): entry is [string, string] => typeof entry[1] === "string"
+          ))
+        : {};
       if (refs.length > 0) {
-        this.#rehydrationRequests.set(runId, { requestId, refs });
+        this.#rehydrationRequests.set(runId, { requestId, refs, memoryDigests });
       }
     }
   }
@@ -1556,6 +1739,7 @@ export class RuntimeEngine {
       provider: this.#provider,
       tools: this.#tools,
       store: this.#store,
+      ...(this.#memory === undefined ? {} : { memory: this.#memory }),
       now: () => this.#now(),
       createId: () => this.#createId(),
       signal,
@@ -1585,7 +1769,8 @@ export class RuntimeEngine {
               requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
               withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
               notify: (runId, obs) => this.#notify(runId, obs),
-              forkContext: this.#forkContextFor(run.runId)
+              forkContext: this.#forkContextFor(run.runId),
+              ...(this.#memory === undefined ? {} : { memory: this.#memory })
             },
           run,
           phase,

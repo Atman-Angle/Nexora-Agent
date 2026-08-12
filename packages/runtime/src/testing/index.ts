@@ -305,25 +305,20 @@ function materializeDecision(
   if (descriptor.kind === "raw") return descriptor.value;
   if (descriptor.kind === "tool") {
     return {
-      type: "call_tool",
-      stepId: descriptor.stepId,
-      checkIds: descriptor.checkIds,
-      toolName: descriptor.toolName,
-      input: descriptor.input
+      intent: {
+        kind: "use_capabilities",
+        calls: [{ capability: descriptor.toolName, arguments: descriptor.input }]
+      }
     };
   }
   if (descriptor.kind === "input") {
     return {
-      type: "request_input",
-      question: descriptor.question,
-      reason: descriptor.reason
+      intent: { kind: "request_input", question: descriptor.question, reason: descriptor.reason }
     };
   }
   if (descriptor.kind === "finish") {
     return {
-      type: "propose_finish",
-      summary: descriptor.summary,
-      evidenceIds: context.run.evidence.map((item) => item.id)
+      intent: { kind: "finish", summary: descriptor.summary }
     };
   }
 
@@ -331,28 +326,23 @@ function materializeDecision(
     || context.run.taskContract === null
     || context.run.taskContract.inputVersion < context.run.inputCount;
   return {
-    type: "set_plan",
-    basedOnVersion: context.run.currentPlan?.version ?? null,
-    ...(includeTaskContract
-      ? {
-          taskContract: {
+    intent: {
+      kind: "plan_tasks",
+      ...(includeTaskContract
+        ? { taskContract: {
             goal: descriptor.goal,
             constraints: [],
             acceptanceCriteria: descriptor.acceptanceCriteria
-          }
-        }
-      : {}),
-    orderedSteps: descriptor.steps.map((step) => ({
-      id: step.id,
-      objective: step.objective,
-      acceptanceChecks: step.checks.map((check) => ({
-        id: check.id,
-        kind: "tool_result",
-        required: true,
-        toolName: check.toolName,
-        expectedStatus: "success"
+          } }
+        : {}),
+      tasks: descriptor.steps.map((step) => ({
+        objective: step.objective,
+        completionRequirements: step.checks.map((check) => ({
+          kind: "capability_result",
+          capability: check.toolName
+        }))
       }))
-    }))
+    }
   };
 }
 

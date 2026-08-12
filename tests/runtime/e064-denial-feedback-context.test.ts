@@ -45,6 +45,12 @@ describe("E064 denial feedback context", () => {
     expect(provider.contexts[2]!.run.inputHistory.at(-2)?.text).toBe("Use an ESM-compatible command instead.");
     expect(provider.contexts[2]!.run.inputHistory.at(-1)?.text).toBe("Continue without writing.");
     expect(provider.contexts[2]!.run.lastError?.message).toBe("Use an ESM-compatible command instead.");
+    expect(provider.contexts[2]!.repair).toEqual({
+      kind: "approval_denied",
+      code: "APPROVAL_DENIED",
+      issues: [{ kind: "unresolved_failure", message: "Use an ESM-compatible command instead." }],
+      retry: { used: 0, remaining: 10 }
+    });
     expect(view.snapshot.inputHistory).toHaveLength(3);
     expect(view.events.find((event) => event.type === "approval.denied")?.payload).toEqual(expect.objectContaining({
       requestId: request.id,

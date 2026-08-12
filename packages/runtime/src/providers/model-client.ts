@@ -1,13 +1,18 @@
-import { z } from "zod";
+import type { z } from "zod";
 
 import type {
   Evidence,
   RunSnapshot,
-  RuntimeAction,
   StructuredPlan,
   TaskContract,
   ToolInvocation
 } from "../contracts.js";
+import {
+  SemanticValidationVerdictV2Schema,
+  type ProviderDecision,
+  type ProviderIntentKind,
+  type SemanticValidationIssue
+} from "./intent-contract.js";
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
@@ -54,17 +59,41 @@ export type ProjectedRunContext = {
 };
 
 export type ModelDecisionContext = {
+  readonly providerContractVersion: 2;
   readonly workspace: string;
   readonly run: ProjectedRunContext;
   readonly projection: {
     readonly schemaVersion: 1;
     readonly digest: string;
   };
-  readonly allowedActions: readonly ("set_plan" | "call_tool" | "execute_step" | "request_input" | "propose_finish" | "request_context")[];
-  readonly actionContract: readonly ModelAction[];
+  readonly allowedIntents: readonly ProviderIntentKind[];
+  readonly intentContract: readonly ProviderDecision[];
   readonly toolObservations: readonly ToolObservation[];
   readonly contextCheckpoint: ContextCheckpoint | null;
   readonly rehydratedFacts: readonly RehydratedFact[];
+  /**
+   * Bounded, deterministic navigation metadata derived from current-Run
+   * Authority and an explicit Fork Base. Candidates never contain historical
+   * fact content. Runtime automatically restores an exact published ref when
+   * the latest Input names it or an active context_ref Check requires it.
+   */
+  readonly historyCandidates: readonly HistoryCandidate[];
+  /** Scoped active Memory navigation; Runtime restores the highest-ranked candidate. */
+  readonly memoryCandidates: readonly MemoryCandidate[];
+  /**
+   * A bounded index over exact Input and Event facts already persisted for
+   * this Run. The archive publishes addressable sequence ranges, not the
+   * history content itself. Exact refs named by the latest Input are resolved
+   * from the Authority Store under the normal rehydration budget.
+   */
+  readonly sessionArchive?: SessionArchive;
+  /**
+   * The current actionable feedback from the Runtime. This is separate from
+   * the projected Run so a model can distinguish repair work from task facts.
+   * `run.lastError` remains in the provider-neutral context for compatibility
+   * with existing custom adapters; production wire projections may omit it.
+   */
+  readonly repair?: RepairContext | null;
   readonly tools: readonly {
     readonly identity: { readonly name: string };
     readonly capability: {
@@ -86,19 +115,82 @@ export type ModelDecisionContext = {
   }[];
 };
 
-/**
- * Harness control action: the model asks the Runtime to rehydrate selected
- * sourceRefs that were already exposed in the current context. Unlike the
- * Core RuntimeActions, request_context is handled by the Harness (the run
- * loop) and never reaches the state machine or the Core #handleAction.
- */
-export type RequestContextAction = {
-  readonly type: "request_context";
-  readonly refs: readonly string[];
+export type HistoryCandidateReason =
+  | "same_check"
+  | "same_step"
+  | "same_tool"
+  | "same_input"
+  | "same_path"
+  | "same_error_code"
+  | "linked_evidence"
+  | "linked_artifact"
+  | "approval_history"
+  | "fork_base";
+
+export type HistoryCandidate = {
+  readonly ref: string;
+  readonly relatedRefs: readonly string[];
+  readonly category: "failure" | "evidence" | "approval" | "branch";
+  readonly reasons: readonly HistoryCandidateReason[];
+  readonly hint: string;
+  readonly occurredAt: string;
 };
 
-/** Every action a model may return in one decision call. */
-export type ModelAction = RuntimeAction | RequestContextAction;
+export type MemoryCandidateReason = "exact_phrase" | "term_overlap" | "memory_type" | "verified";
+
+export type MemoryCandidate = {
+  readonly ref: `memory:${string}`;
+  readonly memoryType: string;
+  readonly reasons: readonly MemoryCandidateReason[];
+  readonly hint: string;
+  readonly source: {
+    readonly sourceRunId: string;
+    readonly ref: string;
+    readonly digest: string;
+  };
+  readonly verification: {
+    readonly state: "unverified" | "verified";
+    readonly verifiedAt?: string;
+    readonly evidenceRefs: readonly string[];
+  };
+  readonly lifecycle: { readonly status: "active"; readonly updatedAt: string };
+  readonly sensitivity: "normal";
+  /** Memory content is persisted user data, never Provider instructions. */
+  readonly trust: "untrusted_memory_data";
+  /** Digest of the complete MemoryRecord at candidate publication time. */
+  readonly digest: string;
+};
+
+export type SessionArchiveRange = {
+  readonly firstSequence: number;
+  readonly lastSequence: number;
+  readonly count: number;
+  readonly refFormat: "input:<sequence>" | "event:<sequence>";
+};
+
+export type SessionArchiveMilestone = {
+  readonly ref: string;
+  readonly category: "input" | "plan" | "failure" | "approval" | "checkpoint" | "branch";
+  readonly label: string;
+};
+
+export type SessionArchive = {
+  readonly schemaVersion: 1;
+  readonly inputs: SessionArchiveRange | null;
+  readonly events: SessionArchiveRange | null;
+  readonly milestones: readonly SessionArchiveMilestone[];
+  readonly truncated: boolean;
+};
+
+export type RepairContext = {
+  readonly kind: "invalid_action" | "validation_failed" | "tool_failure" | "approval_denied" | "runtime_error";
+  readonly code: string;
+  readonly issues: readonly SemanticValidationIssue[];
+  readonly retry: {
+    readonly used: number;
+    readonly remaining: number;
+  };
+};
 
 export type RehydrationError = "INVALID_REF" | "REF_UNAVAILABLE" | "REHYDRATION_BUDGET_EXCEEDED";
 export type RehydrationOrigin = "harness_required" | "model_request" | "harness_helpful";
@@ -110,11 +202,13 @@ export type RehydrationOrigin = "harness_required" | "model_request" | "harness_
  */
 export type RehydratedFact = {
   readonly ref: string;
-  readonly kind: "invocation" | "evidence" | "artifact" | "input" | "event";
+  readonly kind: "invocation" | "evidence" | "artifact" | "input" | "event" | "memory";
   readonly origin: RehydrationOrigin;
   readonly digest: string;
   readonly content: JsonValue | null;
   readonly error: RehydrationError | null;
+  /** Present for Memory facts so adapters cannot confuse exactness with instruction authority. */
+  readonly trust?: "untrusted_memory_data";
 };
 
 /**
@@ -151,6 +245,16 @@ export type CompactionContext = {
   readonly workspace: string;
   readonly run: ProjectedRunContext;
   readonly toolObservations: readonly ToolObservation[];
+  /**
+   * The latest Checkpoint after full revalidation against current Authority.
+   * It is a bounded carry-forward candidate only: the Provider must emit a
+   * complete replacement Summary whose original SourceRefs are revalidated.
+   * Runtime-only checkpoint identity and derived coverage maps stay hidden.
+   */
+  readonly previousCheckpoint: {
+    readonly digest: string;
+    readonly summary: CompactionSummary;
+  } | null;
   readonly budgetDecision: "soft_limit_exceeded" | "hard_limit_exceeded";
 };
 
@@ -165,10 +269,7 @@ export type SemanticValidationContext = {
   }[];
 };
 
-export const SemanticValidationVerdictSchema = z.object({
-  passed: z.boolean(),
-  issues: z.array(z.string().trim().min(1))
-}).strict();
+export const SemanticValidationVerdictSchema = SemanticValidationVerdictV2Schema;
 export type SemanticValidationVerdict = z.infer<typeof SemanticValidationVerdictSchema>;
 
 export type ModelCallPhase = "decision" | "validation" | "compaction";
@@ -181,9 +282,9 @@ export type ModelCallPhase = "decision" | "validation" | "compaction";
  *
  * - `"off"`     — never enable internal reasoning.
  * - `"on"`      — always enable it for decision calls.
- * - `"dynamic"` — enable reasoning only when the model must establish a
- *   first Plan (`context.run.currentPlan === null`); keep ordinary
- *   execution and finish decisions off. Recommended default.
+ * - `"dynamic"` — enable reasoning only during the Runtime-directed planning
+ *   phase; keep ordinary execution and finish decisions off. Recommended
+ *   default.
  *
  * Validation and compaction calls are always non-reasoning: they are short
  * structured outputs where internal reasoning adds latency without value.

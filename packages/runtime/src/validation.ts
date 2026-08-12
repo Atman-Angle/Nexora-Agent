@@ -15,6 +15,7 @@ import {
   SemanticValidationVerdictSchema,
   type JsonValue
 } from "./providers/model-client.js";
+import type { SemanticValidationIssue } from "./providers/intent-contract.js";
 import {
   type RuntimeObserver,
   type RuntimeServices
@@ -177,13 +178,18 @@ export async function proposeFinish(
     unresolved
   );
   if (!deterministic.passed) {
-    return validationFailed(services, runInput, deterministic.issues, observer);
+    return validationFailed(
+      services,
+      runInput,
+      classifyDeterministicIssues(runInput, deterministic.issues),
+      observer
+    );
   }
   if (runInput.taskContract === null || runInput.currentPlan === null) {
     return validationFailed(
       services,
       runInput,
-      ["TASK_OR_PLAN_MISSING"],
+      [{ kind: "plan_mismatch", message: "TASK_OR_PLAN_MISSING" }],
       observer
     );
   }
@@ -208,6 +214,18 @@ export async function proposeFinish(
     );
     const inheritedFacts = services.forkContext?.forkBase.inheritedFacts ?? {};
     const facts = citedEvidence.map((evidence) => {
+      if (evidence.kind === "context_ref" && evidence.source === "context") {
+        return {
+          toolName: "context.rehydrate",
+          subjectRef: evidence.subjectRef,
+          input: { ref: evidence.subjectRef },
+          facts: {
+            kind: "context_ref",
+            ref: evidence.subjectRef,
+            digest: evidence.digest
+          }
+        };
+      }
       const invocation = evidence.invocationId === null
         ? undefined
         : invocationById.get(evidence.invocationId);
@@ -312,7 +330,7 @@ function throwIfCancelled(services: RuntimeServices, runId: string): void {
 function validationFailed(
   services: RuntimeServices,
   run: RunSnapshot,
-  issues: readonly string[],
+  issues: readonly SemanticValidationIssue[],
   observer?: RuntimeObserver
 ): RunSnapshot {
   const retries = run.budgetsUsed.retries + 1;
@@ -329,7 +347,7 @@ function validationFailed(
     budgetsUsed: { ...run.budgetsUsed, retries },
     lastError: {
       code: "VALIDATION_FAILED",
-      message: issues.join(", "),
+      message: JSON.stringify({ issues }),
       retryable: true,
       detailsArtifact: null
     },
@@ -342,4 +360,40 @@ function validationFailed(
     { issues: [...issues] },
     observer
   );
+}
+
+function classifyDeterministicIssues(
+  run: RunSnapshot,
+  issues: readonly string[]
+): SemanticValidationIssue[] {
+  return issues.map((message) => {
+    if (
+      message === "TASK_CONTRACT_MISSING"
+      || message === "STRUCTURED_PLAN_MISSING"
+      || message === "PLAN_GOAL_DIGEST_MISMATCH"
+      || message.startsWith("STEP_INCOMPLETE:")
+      || message.startsWith("DUPLICATE_EVIDENCE:")
+    ) {
+      return { kind: "plan_mismatch" as const, message };
+    }
+    if (message === "TOOL_INVOCATION_UNRESOLVED") {
+      return { kind: "unresolved_failure" as const, message };
+    }
+    if (message.startsWith("UNKNOWN_EVIDENCE:")) {
+      return { kind: "missing_fact" as const, message };
+    }
+    const match = /^(?:CHECK_UNSATISFIED|CHECK_EVIDENCE_NOT_CITED):([^:]+):([^:]+)$/.exec(message);
+    if (match !== null) {
+      const check = run.currentPlan?.orderedSteps
+        .find((step) => step.id === match[1])
+        ?.acceptanceChecks.find((candidate) => candidate.id === match[2]);
+      if (check?.kind === "context_ref") {
+        return { kind: "missing_context_evidence" as const, message };
+      }
+      if (check?.kind === "tool_result" || check?.kind === "state_assertion") {
+        return { kind: "missing_tool_evidence" as const, message };
+      }
+    }
+    return { kind: "missing_fact" as const, message };
+  });
 }

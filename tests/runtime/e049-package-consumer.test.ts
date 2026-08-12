@@ -23,11 +23,11 @@ import { createBuiltInTools, createRuntime } from "@nexora/runtime";
 let call = 0;
 const workspace = ${JSON.stringify(root)};
 const provider = {
-  async decide(context) {
+  async decide() {
     call += 1;
-    if (call === 1) return { type: "set_plan", basedOnVersion: null, taskContract: { goal: "Search target", constraints: [], acceptanceCriteria: ["search"] }, orderedSteps: [{ id: "search", objective: "Search", acceptanceChecks: [{ id: "check", kind: "tool_result", required: true, toolName: "filesystem.search", expectedStatus: "success" }] }] };
-    if (call === 2) return { type: "call_tool", stepId: "search", checkIds: ["check"], toolName: "filesystem.search", input: { query: "external consumer", path: "." } };
-    return { type: "propose_finish", summary: "Verified", evidenceIds: context.run.evidence.map((item) => item.id) };
+    if (call === 1) return { intent: { kind: "plan_tasks", taskContract: { goal: "Search target", constraints: [], acceptanceCriteria: ["search"] }, tasks: [{ objective: "Search", completionRequirements: [{ kind: "capability_result", capability: "filesystem.search" }] }] } };
+    if (call === 2) return { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.search", arguments: { query: "external consumer", path: "." } }] } };
+    return { intent: { kind: "finish", summary: "Verified" } };
   },
   async validate() { return { passed: true, issues: [] }; }
 };

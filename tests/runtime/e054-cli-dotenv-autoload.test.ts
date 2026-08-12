@@ -46,7 +46,8 @@ describe("E054 CLI dotenv autoload", () => {
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: provider.baseUrl,
       NEXORA_MODEL_API_KEY: "explicit-secret",
-      NEXORA_MODEL_NAME: "explicit-model"
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      ...explicitBudgetEnvironment()
     });
 
     expect(result.code).toBe(2);
@@ -103,7 +104,7 @@ async function providerStub(): Promise<{ readonly baseUrl: string; readonly call
   const server = createServer(async (request, response) => {
     for await (const _chunk of request) { /* consume request */ }
     calls += 1;
-    const content = { type: "request_input", question: "Stop after Provider configuration is proven.", reason: "Provider configuration loaded" };
+    const content = { intent: { kind: "request_input", question: "Stop after Provider configuration is proven.", reason: "Provider configuration loaded" } };
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
   });
@@ -122,7 +123,10 @@ function providerEnvFile(baseUrl: string, apiKey: string): string {
     "NEXORA_MODEL_PROVIDER=openai-compatible",
     `NEXORA_MODEL_BASE_URL=${baseUrl}`,
     `NEXORA_MODEL_API_KEY=${apiKey}`,
-    "NEXORA_MODEL_NAME=e054-model",
+    "NEXORA_MODEL_NAME=qwen3.7-flash",
+    "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+    "NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS=1024",
+    "NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS=4096",
     "NEXORA_MODEL_TIMEOUT_MS=10000",
     ""
   ].join("\n");
@@ -134,7 +138,18 @@ function clearedProviderEnvironment(): Record<string, undefined> {
     NEXORA_MODEL_BASE_URL: undefined,
     NEXORA_MODEL_API_KEY: undefined,
     NEXORA_MODEL_NAME: undefined,
-    NEXORA_MODEL_TIMEOUT_MS: undefined
+    NEXORA_MODEL_TIMEOUT_MS: undefined,
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: undefined,
+    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: undefined,
+    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: undefined
+  };
+}
+
+function explicitBudgetEnvironment(): Record<string, string> {
+  return {
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
+    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
+    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
   };
 }
 

@@ -12,11 +12,14 @@ const context = {
   workspace: "D:\\fixture",
   run: {} as never,
   projection: { schemaVersion: 1 as const, digest: "sha256:test" },
-  allowedActions: [],
-  actionContract: [],
+  providerContractVersion: 2 as const,
+  allowedIntents: [],
+  intentContract: [],
   toolObservations: [],
   contextCheckpoint: null,
   rehydratedFacts: [],
+  historyCandidates: [],
+  memoryCandidates: [],
   tools: []
 };
 const operation = { signal: new AbortController().signal };
@@ -146,7 +149,7 @@ describe("E065 Provider transient failure recovery", () => {
         mode: "decide" | "validate";
         context: {
           workspace?: string;
-          actionContract?: Array<Record<string, unknown>>;
+          intentContract?: Record<string, unknown>;
         };
       };
       if (payload.mode === "validate") {
@@ -159,37 +162,26 @@ describe("E065 Provider transient failure recovery", () => {
       decisions += 1;
       if (decisions === 1) {
         return providerResponse({
-          type: "set_plan",
-          basedOnVersion: null,
-          taskContract: {
-            goal: "Read the item once.",
-            constraints: [],
-            acceptanceCriteria: ["The persisted read result is cited."]
-          },
-          orderedSteps: [{
-            id: "read",
-            objective: "Read the item once.",
-            acceptanceChecks: [{
-              id: "read-ok",
-              kind: "tool_result",
-              required: true,
-              toolName: "counter.read",
-              expectedStatus: "success"
+          intent: {
+            kind: "plan_tasks",
+            taskContract: {
+              goal: "Read the item once.",
+              constraints: [],
+              acceptanceCriteria: ["The persisted read result is cited."]
+            },
+            tasks: [{
+              objective: "Read the item once.",
+              completionRequirements: [{ kind: "capability_result", capability: "counter.read" }]
             }]
-          }]
+          }
         });
       }
       if (decisions === 2 || decisions === 4) {
         return providerResponse({
-          type: "call_tool",
-          stepId: "read",
-          checkIds: ["read-ok"],
-          toolName: "counter.read",
-          input: { key: "item" }
+          intent: { kind: "use_capabilities", calls: [{ capability: "counter.read", arguments: { key: "item" } }] }
         });
       }
-      const finish = payload.context.actionContract?.find((action) => action.type === "propose_finish");
-      return providerResponse({ ...finish, summary: "The persisted item was read once." });
+      return providerResponse({ intent: { kind: "finish", summary: "The persisted item was read once." } });
     });
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example",

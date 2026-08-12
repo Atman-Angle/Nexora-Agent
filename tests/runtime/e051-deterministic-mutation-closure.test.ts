@@ -41,7 +41,12 @@ describe("E051 deterministic mutation closure", () => {
       expect(result.status).toBe("succeeded");
       expect(readFileSync(fixture.path, "utf8")).toBe("after\n");
       expect(view.snapshot.status).toBe("succeeded");
-      expect(view.snapshot.evidence.map((item) => item.stepId)).toEqual(["read", "patch", "validate"]);
+      const objectivesByStep = new Map(view.snapshot.currentPlan?.orderedSteps.map((step) => [step.id, step.objective]));
+      expect(view.snapshot.evidence.map((item) => objectivesByStep.get(item.stepId))).toEqual([
+        "Read note.txt before mutation",
+        "Patch note.txt",
+        "Run the validation command"
+      ]);
       expect(view.snapshot.result?.evidenceIds).toEqual(view.snapshot.evidence.map((item) => item.id));
       expect(view.toolInvocations.map((item) => [item.toolName, item.status])).toEqual([
         ["filesystem.read", "succeeded"],
@@ -80,7 +85,7 @@ describe("E051 deterministic mutation closure", () => {
     const environment = providerEnvironment(stub.baseUrl);
 
     const started = await spawnCli(["Change note.txt from before to after and validate it.", "--cwd", fixture.workspace], environment);
-    expect(started.code).toBe(2);
+    expect(started.code, started.stderr).toBe(2);
     const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
 
     let view = await inspectCli(runId, fixture.workspace);
@@ -119,7 +124,7 @@ describe("E051 deterministic mutation closure", () => {
     const environment = providerEnvironment(stub.baseUrl);
 
     const started = await spawnCli(["Change note.txt from before to after and validate it.", "--cwd", fixture.workspace], environment);
-    expect(started.code).toBe(2);
+    expect(started.code, started.stderr).toBe(2);
     const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
     const beforeDenial = await inspectCli(runId, fixture.workspace);
     const request = beforeDenial.snapshot.pendingRequest!;
@@ -151,16 +156,16 @@ describe("E051 deterministic mutation closure", () => {
     const releasePromise = new Promise<void>((resolve) => { release = resolve; });
     const stub = await providerStub(async (_context, index) => {
       if (index === 0) {
-        return { type: "request_input", question: "First input?", reason: "Set up the persisted wait." };
+        return { intent: { kind: "request_input", question: "First input?", reason: "Set up the persisted wait." } };
       }
       entered();
       await releasePromise;
-      return { type: "request_input", question: "Next input?", reason: "Keep the Run waiting." };
+      return { intent: { kind: "request_input", question: "Next input?", reason: "Keep the Run waiting." } };
     });
     const environment = providerEnvironment(stub.baseUrl);
 
     const started = await spawnCli(["Wait for input.", "--cwd", fixture.workspace], environment);
-    expect(started.code).toBe(2);
+    expect(started.code, started.stderr).toBe(2);
     const runId = (JSON.parse(started.stdout) as { runId: string }).runId;
     const firstResume = spawnCli([
       "resume", runId, "--cwd", fixture.workspace, "--input", "accepted input"
@@ -186,7 +191,7 @@ describe("E051 deterministic mutation closure", () => {
     expect(view.events.filter((event) => event.type === "model.requested")).toHaveLength(2);
   }, 60_000);
 
-  it("does not replace partial finish citations with all persisted Run Evidence", async () => {
+  it("derives finish citations from every required persisted Check", async () => {
     const fixture = mutationFixture();
     const stub = await providerStub(mutationDecision(fixture, { validationExitCode: 0, citations: "read-only" }));
     const runtime = createRuntime({
@@ -200,14 +205,11 @@ describe("E051 deterministic mutation closure", () => {
       const result = await completeApprovedMutation(runtime, "Change note.txt and prove every required check.");
       const view = await runtime.inspect(result.runId);
 
-      expect(result.status).toBe("waiting");
-      expect(view.snapshot.result).toBeNull();
-      expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
-      expect(view.events.find((event) => event.type === "validation.failed")?.payload.issues).toEqual([
-        "CHECK_EVIDENCE_NOT_CITED:patch:patch-note",
-        "CHECK_EVIDENCE_NOT_CITED:validate:validation-zero"
-      ]);
-      expect(stub.validationContexts).toHaveLength(0);
+      expect(result.status).toBe("succeeded");
+      expect(view.snapshot.result?.evidenceIds).toEqual(
+        view.snapshot.evidence.map((item) => item.id)
+      );
+      expect(stub.validationContexts).toHaveLength(1);
     } finally {
       runtime.close();
     }
@@ -297,48 +299,19 @@ function mutationFixture(): MutationFixture {
 
 function mutationPlan(_fixture: MutationFixture) {
   return {
-    type: "set_plan" as const,
-    basedOnVersion: null,
-    taskContract: {
-      goal: "Change note.txt from before to after and validate it",
-      constraints: ["Only change note.txt"],
-      acceptanceCriteria: ["note.txt contains after", "the validation command exits zero"]
-    },
-    orderedSteps: [
-      {
-        id: "read",
-        objective: "Read note.txt before mutation",
-        acceptanceChecks: [{
-          id: "read-note",
-          kind: "tool_result" as const,
-          required: true,
-          toolName: "filesystem.read",
-          expectedStatus: "success" as const
-        }]
+    intent: {
+      kind: "plan_tasks" as const,
+      taskContract: {
+        goal: "Change note.txt from before to after and validate it",
+        constraints: ["Only change note.txt"],
+        acceptanceCriteria: ["note.txt contains after", "the validation command exits zero"]
       },
-      {
-        id: "patch",
-        objective: "Patch note.txt",
-        acceptanceChecks: [{
-          id: "patch-note",
-          kind: "tool_result" as const,
-          required: true,
-          toolName: "filesystem.patch",
-          expectedStatus: "success" as const
-        }]
-      },
-      {
-        id: "validate",
-        objective: "Run the validation command",
-        acceptanceChecks: [{
-          id: "validation-zero",
-          kind: "tool_result" as const,
-          required: true,
-          toolName: "shell.execute",
-          expectedStatus: "success" as const
-        }]
-      }
-    ]
+      tasks: [
+        { objective: "Read note.txt before mutation", completionRequirements: [{ kind: "capability_result" as const, capability: "filesystem.read" }] },
+        { objective: "Patch note.txt", completionRequirements: [{ kind: "capability_result" as const, capability: "filesystem.patch" }] },
+        { objective: "Run the validation command", completionRequirements: [{ kind: "capability_result" as const, capability: "shell.execute" }] }
+      ]
+    }
   };
 }
 
@@ -346,36 +319,25 @@ function mutationDecision(
   fixture: MutationFixture,
   options: { readonly validationExitCode: number; readonly citations: "all" | "read-only" }
 ): (context: DecisionContext, index: number) => unknown {
-  return (context, index) => {
+  return (_context, index) => {
     if (index === 0) return mutationPlan(fixture);
     if (index === 1) {
-      return { type: "call_tool", stepId: "read", checkIds: ["read-note"], toolName: "filesystem.read", input: { path: "note.txt" } };
+      return { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: "note.txt" } }] } };
     }
     if (index === 2) {
       return {
-        type: "call_tool",
-        stepId: "patch",
-        checkIds: ["patch-note"],
-        toolName: "filesystem.patch",
-        input: { path: "note.txt", expectedDigest: fixture.beforeDigest, find: "before", replace: "after" }
+        intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: fixture.beforeDigest, find: "before", replace: "after" } }] }
       };
     }
     if (index === 3) {
       return {
-        type: "call_tool",
-        stepId: "validate",
-        checkIds: ["validation-zero"],
-        toolName: "shell.execute",
-        input: { command: process.execPath, args: ["-e", `process.exit(${options.validationExitCode})`], cwd: "." }
+        intent: { kind: "use_capabilities", calls: [{ capability: "shell.execute", arguments: { command: process.execPath, args: ["-e", `process.exit(${options.validationExitCode})`], cwd: "." } }] }
       };
     }
     if (index === 4) {
-      const evidenceIds = options.citations === "read-only"
-        ? context.run.evidence.filter((item) => item.stepId === "read").map((item) => item.id)
-        : context.run.evidence.map((item) => item.id);
-      return { type: "propose_finish", summary: "Changed note.txt and ran validation.", evidenceIds };
+      return { intent: { kind: "finish", summary: "Changed note.txt and ran validation." } };
     }
-    return { type: "request_input", question: "Required completion evidence is missing. Continue?", reason: "completion rejected" };
+    return { intent: { kind: "request_input", question: "Required completion evidence is missing. Continue?", reason: "completion rejected" } };
   };
 }
 
@@ -429,7 +391,10 @@ function providerEnvironment(baseUrl: string): Record<string, string> {
     NEXORA_MODEL_PROVIDER: "openai-compatible",
     NEXORA_MODEL_BASE_URL: baseUrl,
     NEXORA_MODEL_API_KEY: "test-key",
-    NEXORA_MODEL_NAME: "test-model"
+    NEXORA_MODEL_NAME: "qwen3.7-flash",
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
+    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
+    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
   };
 }
 

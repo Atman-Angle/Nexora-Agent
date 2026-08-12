@@ -6,6 +6,16 @@ import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRuntime } from "../../packages/runtime/src/index.js";
+import {
+  createInitialRunSnapshot,
+  type RunEvent,
+  type RunSnapshot
+} from "../../packages/runtime/src/contracts.js";
+import {
+  MAX_SESSION_ARCHIVE_MILESTONES,
+  MAX_SESSION_MILESTONE_LABEL_LENGTH,
+  projectSessionArchive
+} from "../../packages/runtime/src/context/rehydration.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import type { ModelDecisionContext } from "../../packages/runtime/src/providers/model-client.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
@@ -19,6 +29,44 @@ afterEach(() => {
 });
 
 describe("E082 rehydration", () => {
+  it("keeps the Session Archive milestone index bounded while retaining the first input anchor", () => {
+    const now = "2026-08-10T00:00:00.000Z";
+    const initial = createInitialRunSnapshot({
+      runId: "run-session-archive",
+      input: "Initial goal",
+      workspace: "D:/workspace",
+      now
+    });
+    const inputHistory = Array.from({ length: 40 }, (_, index) => ({
+      id: `input-${index + 1}`,
+      sequence: index + 1,
+      text: `Input ${index + 1} ${"x".repeat(2_000)}`,
+      receivedAt: new Date(Date.UTC(2026, 7, 10, 0, 0, index)).toISOString()
+    }));
+    const run = { ...initial, inputHistory } as RunSnapshot;
+    const events = Array.from({ length: 40 }, (_, index) => ({
+      runId: initial.runId,
+      sequence: index + 1,
+      type: index % 2 === 0 ? "plan.set" : "validation.failed",
+      occurredAt: new Date(Date.UTC(2026, 7, 10, 1, 0, index)).toISOString(),
+      payload: index % 2 === 0
+        ? { version: index + 1 }
+        : { code: "VALIDATION_FAILED", message: `Failure ${index + 1}` }
+    })) as RunEvent[];
+
+    const archive = projectSessionArchive({ run, events });
+
+    expect(archive.inputs).toEqual(expect.objectContaining({ count: 40, lastSequence: 40 }));
+    expect(archive.events).toEqual(expect.objectContaining({ count: 40, lastSequence: 40 }));
+    expect(archive.milestones).toHaveLength(MAX_SESSION_ARCHIVE_MILESTONES);
+    expect(archive.milestones.some((milestone) => milestone.ref === "input:1")).toBe(true);
+    expect(archive.milestones.every(
+      (milestone) => milestone.label.length <= MAX_SESSION_MILESTONE_LABEL_LENGTH
+    )).toBe(true);
+    expect(archive.truncated).toBe(true);
+    expect(JSON.stringify(archive)).not.toContain("x".repeat(2_000));
+  });
+
   it("auto-rehydrates the full error of an unresolved safety failure as harness_required", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
@@ -97,6 +145,110 @@ describe("E082 rehydration", () => {
     await runtime.close();
   });
 
+  it("publishes the persisted session archive and restores covered input and event facts exactly", async () => {
+    const workspace = fixture();
+    const earlyConstraint = `Preserve this exact early constraint: ${"x".repeat(1_000)}`;
+    const provider = new ScriptedRuntimeProvider([
+      plan(workspace, [step(1)]),
+      { type: "request_context", refs: ["input:1", "event:1"] },
+      { type: "request_input", question: "Stop.", reason: "Inspect session recall." }
+    ]);
+    const runtime = createRuntime({
+      workspace,
+      provider,
+      tools: [largeTool({ payloadBytes: 100 })]
+    });
+
+    const result = await runtime.start({ input: earlyConstraint });
+    const archiveContext = provider.contexts[1]!;
+    const restoredContext = provider.contexts.find((context) => (
+      context.rehydratedFacts.some((fact) => fact.ref === "input:1")
+    ));
+
+    expect(result.status).toBe("waiting");
+    expect(archiveContext.intentContract.map((decision) => decision.intent.kind)).toEqual(["use_capabilities"]);
+    expect(archiveContext.sessionArchive).toEqual(expect.objectContaining({
+      schemaVersion: 1,
+      inputs: {
+        firstSequence: 1,
+        lastSequence: 1,
+        count: 1,
+        refFormat: "input:<sequence>"
+      },
+      events: expect.objectContaining({
+        firstSequence: 1,
+        count: expect.any(Number),
+        refFormat: "event:<sequence>"
+      }),
+      milestones: expect.arrayContaining([
+        expect.objectContaining({ ref: "input:1", category: "input" }),
+        expect.objectContaining({ category: "plan" })
+      ]),
+      truncated: false
+    }));
+    expect(JSON.stringify(archiveContext.sessionArchive)).not.toContain(earlyConstraint);
+    expect(restoredContext).toBeDefined();
+    expect(restoredContext!.rehydratedFacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ref: "input:1",
+        kind: "input",
+        error: null,
+        content: { sequence: 1, text: earlyConstraint }
+      }),
+      expect.objectContaining({
+        ref: "event:1",
+        kind: "event",
+        error: null,
+        content: expect.objectContaining({ type: "run.created" })
+      })
+    ]));
+    await runtime.close();
+  });
+
+  it("resolves Session Archive sequence refs only inside the current Run", async () => {
+    const workspace = fixture();
+    const dataDir = join(workspace, ".nexora");
+    const firstProvider = new ScriptedRuntimeProvider([
+      plan(workspace, [step(1)]),
+      { type: "request_input", question: "Stop A.", reason: "Keep Run A persisted." }
+    ]);
+    const firstRuntime = createRuntime({
+      workspace,
+      dataDir,
+      provider: firstProvider,
+      tools: [largeTool()]
+    });
+    await firstRuntime.start({ input: "Run A private input." });
+    await firstRuntime.close();
+
+    const secondProvider = new ScriptedRuntimeProvider([
+      plan(workspace, [step(1)]),
+      { type: "request_context", refs: ["input:1"] },
+      { type: "request_input", question: "Stop B.", reason: "Inspect Run B recall." }
+    ]);
+    const secondRuntime = createRuntime({
+      workspace,
+      dataDir,
+      provider: secondProvider,
+      tools: [largeTool()]
+    });
+    const result = await secondRuntime.start({ input: "Run B own input." });
+    const recalled = secondProvider.contexts.find((context) => (
+      context.rehydratedFacts.some((fact) => fact.ref === "input:1")
+    ));
+
+    expect(result.status).toBe("waiting");
+    expect(recalled?.rehydratedFacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ref: "input:1",
+        error: null,
+        content: { sequence: 1, text: "Run B own input." }
+      })
+    ]));
+    expect(JSON.stringify(recalled?.rehydratedFacts)).not.toContain("Run A private input.");
+    await secondRuntime.close();
+  });
+
   it("refuses an unexposed ref as REF_UNAVAILABLE and a malformed ref as INVALID_REF", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
@@ -104,7 +256,7 @@ describe("E082 rehydration", () => {
       call(step(1), 1),
       {
         type: "request_context",
-        refs: ["invocation:never-published-id", "garbage-not-a-ref"]
+        refs: ["invocation:never-published-id", "input:999", "event:999", "garbage-not-a-ref"]
       },
       { type: "request_input", question: "Stop.", reason: "Inspect refusal." }
     ]);
@@ -126,6 +278,14 @@ describe("E082 rehydration", () => {
       feedbackContext!.rehydratedFacts.map((fact) => [fact.ref, fact])
     );
     expect(byRef.get("invocation:never-published-id")).toEqual(expect.objectContaining({
+      error: "REF_UNAVAILABLE",
+      content: null
+    }));
+    expect(byRef.get("input:999")).toEqual(expect.objectContaining({
+      error: "REF_UNAVAILABLE",
+      content: null
+    }));
+    expect(byRef.get("event:999")).toEqual(expect.objectContaining({
       error: "REF_UNAVAILABLE",
       content: null
     }));
@@ -181,7 +341,7 @@ describe("E082 rehydration", () => {
       call(step(1), 1),
       (context: ModelDecisionContext) => {
         const ref = context.toolObservations[0]?.sourceRefs.find((item) => item.startsWith("invocation:"));
-        return { type: "request_context", refs: ref === undefined ? [] : [ref] };
+        return { type: "request_context", refs: ref === undefined ? ["input:1"] : [ref, "input:1"] };
       }
     ]);
     const runtime = createRuntime({
@@ -213,6 +373,13 @@ describe("E082 rehydration", () => {
       context.rehydratedFacts.some((fact) => fact.origin === "model_request" && fact.error === null)
     ));
     expect(restored).toBeDefined();
+    expect(restored!.rehydratedFacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        ref: "input:1",
+        error: null,
+        content: { sequence: 1, text: "Request a context restoration before a crash." }
+      })
+    ]));
     await reopened.close();
   });
 

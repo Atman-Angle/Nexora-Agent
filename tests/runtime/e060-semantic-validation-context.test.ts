@@ -60,16 +60,13 @@ describe("E060 semantic validation boundary", () => {
 
     await runtime.start({ input: "Inspect a target." });
 
-    expect(systemPrompt).toContain("single Capability");
-    expect(systemPrompt).toContain("Use discovery only");
-    expect(systemPrompt).toContain("unnecessary");
-    expect(systemPrompt).toContain("never for Tool permission or approval");
-    expect(systemPrompt).toContain("let Runtime request Approval");
-    expect(systemPrompt).toContain("Never use shell.execute to emulate a registered Tool");
-    expect(systemPrompt).toContain("without substituting context.workspace for relative values");
-    expect(systemPrompt).toContain("execute the active Step instead");
-    expect(systemPrompt).toContain("ONE Step with one acceptanceCheck per target");
-    expect(systemPrompt).toContain("while the active Step remains executable");
+    expect(systemPrompt).toContain("Provider Contract v2");
+    expect(systemPrompt).toContain("Use only context.allowedIntents");
+    expect(systemPrompt).toContain("complete business arguments");
+    expect(systemPrompt).toContain("Runtime owns all IDs, versions, bindings, Approval");
+    expect(systemPrompt).toContain("never output those fields or RuntimeAction DSL");
+    expect(systemPrompt).toContain("Batch independent calls with complete arguments");
+    expect(systemPrompt).toContain("Follow the current phase");
     expect(systemPrompt).not.toMatch(/README|filesystem\.read|filesystem\.search/);
     runtime.close();
   });

@@ -4,22 +4,20 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
-import type { Evidence, RunSnapshot } from "./contracts.js";
-import type { ModelDecisionContext } from "./providers/model-client.js";
+import type { Evidence, RunSnapshot, RuntimeActionType } from "./contracts.js";
+import type { ProviderIntentKind } from "./providers/intent-contract.js";
 import type { RunResult, RuntimeTool } from "./runtime-types.js";
+import { deriveFailureHandoff } from "./failure-handoff.js";
 
 export class ActionRejectedError extends Error {
   constructor(message: string) { super(message); this.name = "ActionRejectedError"; }
 }
 
-export function allowedActions(
-  run: RunSnapshot,
-  hasAvailableRefs = false
-): ModelDecisionContext["allowedActions"] {
+export function allowedActions(run: RunSnapshot): readonly RuntimeActionType[] {
   if (run.currentPlan === null) return ["set_plan", "request_input"];
   const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
     && run.stepProgress.every((item) => item.status === "completed");
-  const base: ModelDecisionContext["allowedActions"] = allStepsCompleted
+  const base: readonly RuntimeActionType[] = allStepsCompleted
     ? ["set_plan", "request_input", "propose_finish"]
     : (() => {
         const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
@@ -34,9 +32,32 @@ export function allowedActions(
   // request_context is a Harness control action, not a Core RuntimeAction. It
   // is exposed whenever the model is still deciding and there is at least one
   // sourceRef published this turn that could be rehydrated.
-  return hasAvailableRefs
-    ? [...base, "request_context"]
-    : base;
+  return base;
+}
+
+export function allowedProviderIntents(
+  run: RunSnapshot,
+  _hasAvailableRefs = false
+): readonly ProviderIntentKind[] {
+  if (
+    run.currentPlan === null
+    || run.taskContract === null
+    || run.taskContract.inputVersion < run.inputHistory.length
+  ) {
+    return ["plan_tasks", "request_input"];
+  }
+  const allStepsCompleted = run.stepProgress.length === run.currentPlan.orderedSteps.length
+    && run.stepProgress.every((item) => item.status === "completed");
+  if (allStepsCompleted) return ["finish"];
+  const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+  const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
+  if (activeStep?.acceptanceChecks.some((check) => check.kind === "tool_result") === true) {
+    return ["use_capabilities"];
+  }
+  if (activeStep?.acceptanceChecks.some((check) => check.kind === "user_confirmation") === true) {
+    return ["request_input"];
+  }
+  return ["plan_tasks", "request_input"];
 }
 
 export function completeSatisfiedSteps(plan: NonNullable<RunSnapshot["currentPlan"]>, progress: RunSnapshot["stepProgress"], evidence: readonly Evidence[]): RunSnapshot["stepProgress"] {
@@ -132,4 +153,4 @@ function planningRepairIssue(issue: z.ZodIssue): { path: string; code: string; m
   return { path, code: issue.code, message: issue.message.slice(0, 500) };
 }
 export function serializeRejectedAction(rawAction: unknown): string { try { const serialized = JSON.stringify(rawAction); return serialized ?? JSON.stringify({ unsupportedValueType: typeof rawAction }); } catch (error) { return JSON.stringify({ serializationError: errorMessage(error), receivedType: typeof rawAction }); } }
-export function toRunResult(run: RunSnapshot): RunResult { return { runId: run.runId, status: run.status, stopReason: run.stopReason, summary: run.result?.summary ?? null, resultArtifact: run.result?.resultArtifact ?? null, evidence: run.evidence, lastError: run.lastError }; }
+export function toRunResult(run: RunSnapshot): RunResult { return { runId: run.runId, status: run.status, stopReason: run.stopReason, summary: run.result?.summary ?? null, resultArtifact: run.result?.resultArtifact ?? null, evidence: run.evidence, lastError: run.lastError, failureHandoff: deriveFailureHandoff(run) }; }
