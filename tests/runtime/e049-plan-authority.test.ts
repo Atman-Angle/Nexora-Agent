@@ -71,7 +71,7 @@ describe("E049 single Structured Plan authority", () => {
     expect(view.snapshot.currentPlan?.version).toBe(3);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.id).toMatch(/^step-/);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Read the target");
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(3);
     runtime.close();
   });
@@ -91,7 +91,7 @@ describe("E049 single Structured Plan authority", () => {
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan?.version).toBe(2);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     runtime.close();
   });
 
@@ -111,7 +111,7 @@ describe("E049 single Structured Plan authority", () => {
     expect(view.snapshot.currentPlan?.version).toBe(2);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Read the revised target");
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     runtime.close();
   });
 
@@ -240,8 +240,8 @@ describe("E049 single Structured Plan authority", () => {
 
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan).toBeNull();
-    expect(view.events.map((event) => event.type)).toContain("action.rejected");
-    const rejected = view.events.find((event) => event.type === "action.rejected");
+    expect(view.events.map((event) => event.type)).toContain("response.rejected");
+    const rejected = view.events.find((event) => event.type === "response.rejected");
     expect((rejected?.payload.diagnostic as { kind?: string })?.kind).toBe("schema");
     runtime.close();
   });

@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import {
   type AcceptanceCheck,
   type RunSnapshot,
@@ -8,161 +6,37 @@ import {
   UNPLANNED_STEP_ID
 } from "@nexora/runtime/internal";
 import {
-  ModelTurnSchema,
+  ModelResponseSchema,
   ModelPlanUpdateSchema,
-  ModelTextSchema,
-  ModelToolCallSchema,
+  ModelInputRequestSchema,
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL,
   type ModelPlanTask,
   type ModelPlanUpdate,
-  type ModelToolCall,
-  type ModelTurn
-} from "./providers/model-turn.js";
+  type ModelInputRequest,
+  type ModelResponse,
+  type ProviderToolCall
+} from "./providers/model-response.js";
 import { ActionRejectedError } from "@nexora/runtime/internal";
 
 type ToolAction = Extract<RuntimeAction, { type: "call_tool" | "execute_step" }>;
 
-export function parseModelTurn(raw: unknown): ModelTurn {
-  return ModelTurnSchema.parse(raw);
+export function parseModelResponse(raw: unknown): ModelResponse {
+  return ModelResponseSchema.parse(raw);
 }
 
-export type RejectedModelTurnField = {
-  readonly field: string;
-  readonly issues: readonly string[];
-};
-
-export function parseModelTurnFields(raw: unknown): {
-  readonly turn: ModelTurn;
-  readonly rejectedFields: readonly RejectedModelTurnField[];
-} {
-  const record = z.record(z.unknown()).parse(raw);
-  const rejectedFields: RejectedModelTurnField[] = [];
-  const rejectedIssues: z.ZodIssue[] = [];
-  const action = z.enum(["continue", "request_input", "finish"]).safeParse(record.action);
-  if (!action.success) throw action.error;
-
-  let candidate: unknown;
-  if (action.data === "finish") {
-    const text = parseRequiredField(record, "text", ModelTextSchema, rejectedFields, rejectedIssues);
-    rejectUnknownFields(record, ["action", "text"], rejectedFields);
-    candidate = { action: "finish", ...(text === undefined ? {} : { text }) };
-  } else if (action.data === "request_input") {
-    const question = parseRequiredField(record, "question", z.string().trim().min(1), rejectedFields, rejectedIssues);
-    const reason = parseRequiredField(record, "reason", z.string().trim().min(1), rejectedFields, rejectedIssues);
-    rejectUnknownFields(record, ["action", "question", "reason"], rejectedFields);
-    candidate = {
-      action: "request_input",
-      ...(question === undefined ? {} : { question }),
-      ...(reason === undefined ? {} : { reason })
-    };
-  } else {
-    const plan = parseOptionalField(record, "plan", ModelPlanUpdateSchema, rejectedFields, rejectedIssues);
-    const toolCalls = parseToolCallFields(record.toolCalls, rejectedFields, rejectedIssues);
-    rejectUnknownFields(record, ["action", "plan", "toolCalls"], rejectedFields);
-    candidate = {
-      action: "continue",
-      ...(plan === undefined ? {} : { plan }),
-      ...(toolCalls.length === 0 ? {} : { toolCalls })
-    };
+export function parsePlanControl(call: ProviderToolCall): ModelPlanUpdate {
+  if (call.name !== UPDATE_PLAN_CONTROL) {
+    throw new ActionRejectedError(`Expected ${UPDATE_PLAN_CONTROL}, received ${call.name}.`);
   }
-
-  const parsedTurn = ModelTurnSchema.safeParse(candidate);
-  if (!parsedTurn.success) {
-    if (rejectedIssues.length > 0) throw new z.ZodError(rejectedIssues);
-    throw parsedTurn.error;
-  }
-  return { turn: parsedTurn.data, rejectedFields };
+  return ModelPlanUpdateSchema.parse(call.arguments);
 }
 
-function parseOptionalField<Value>(
-  record: Record<string, unknown>,
-  key: string,
-  schema: z.ZodType<Value>,
-  rejectedFields: RejectedModelTurnField[],
-  rejectedIssues: z.ZodIssue[]
-): Value | undefined {
-  if (record[key] === undefined) return undefined;
-  const parsed = schema.safeParse(record[key]);
-  if (parsed.success) return parsed.data;
-  rejectedFields.push({
-    field: key,
-    issues: parsed.error.issues.map((issue) => issue.message)
-  });
-  rejectedIssues.push(...parsed.error.issues.map((issue) => ({
-    ...issue,
-    path: [key, ...issue.path]
-  })));
-  return undefined;
-}
-
-function parseRequiredField<Value>(
-  record: Record<string, unknown>,
-  key: string,
-  schema: z.ZodType<Value>,
-  rejectedFields: RejectedModelTurnField[],
-  rejectedIssues: z.ZodIssue[]
-): Value | undefined {
-  if (record[key] !== undefined) {
-    return parseOptionalField(record, key, schema, rejectedFields, rejectedIssues);
+export function parseInputControl(call: ProviderToolCall): ModelInputRequest {
+  if (call.name !== REQUEST_INPUT_CONTROL) {
+    throw new ActionRejectedError(`Expected ${REQUEST_INPUT_CONTROL}, received ${call.name}.`);
   }
-  const issue: z.ZodIssue = {
-    code: z.ZodIssueCode.invalid_type,
-    expected: "string",
-    received: "undefined",
-    path: [key],
-    message: "Required"
-  };
-  rejectedFields.push({ field: key, issues: [issue.message] });
-  rejectedIssues.push(issue);
-  return undefined;
-}
-
-function parseToolCallFields(
-  value: unknown,
-  rejectedFields: RejectedModelTurnField[],
-  rejectedIssues: z.ZodIssue[]
-): ModelToolCall[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) {
-    const issue: z.ZodIssue = {
-      code: z.ZodIssueCode.invalid_type,
-      expected: "array",
-      received: z.getParsedType(value),
-      path: ["toolCalls"],
-      message: "Expected an array."
-    };
-    rejectedFields.push({ field: "toolCalls", issues: [issue.message] });
-    rejectedIssues.push(issue);
-    return [];
-  }
-  const valid = value.flatMap((call, index): ModelToolCall[] => {
-    const parsed = ModelToolCallSchema.safeParse(call);
-    if (parsed.success) return [parsed.data];
-    rejectedFields.push({
-      field: `toolCalls.${index}`,
-      issues: parsed.error.issues.map((issue) => issue.message)
-    });
-    rejectedIssues.push(...parsed.error.issues.map((issue) => ({
-      ...issue,
-      path: ["toolCalls", index, ...issue.path]
-    })));
-    return [];
-  });
-  if (valid.length > 8) {
-    rejectedFields.push({ field: "toolCalls", issues: ["Only the first 8 valid Tool calls were accepted."] });
-  }
-  return valid.slice(0, 8);
-}
-
-function rejectUnknownFields(
-  record: Record<string, unknown>,
-  allowed: readonly string[],
-  rejectedFields: RejectedModelTurnField[]
-): void {
-  for (const field of Object.keys(record)) {
-    if (!allowed.includes(field)) {
-      rejectedFields.push({ field, issues: ["Unknown Model Turn field."] });
-    }
-  }
+  return ModelInputRequestSchema.parse(call.arguments);
 }
 
 export function compileModelPlan(
@@ -178,11 +52,11 @@ export function compileModelPlan(
   });
 }
 
-export function compileModelToolCalls(
+export function compileProviderToolCalls(
   run: RunSnapshot,
-  calls: readonly ModelToolCall[]
+  calls: readonly ProviderToolCall[]
 ): ToolAction {
-  if (calls.length === 0) throw new ActionRejectedError("A Model Turn Tool batch cannot be empty.");
+  if (calls.length === 0) throw new ActionRejectedError("A Provider Tool batch cannot be empty.");
   const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
   const step = run.currentPlan?.orderedSteps.find((item) => item.id === activeStepId);
   const remaining = step?.acceptanceChecks.filter(

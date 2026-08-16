@@ -291,7 +291,7 @@ export const RunSnapshotSchema = z.object({
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
 
 export const AuditRecordTypeSchema = z.enum([
-  "action.rejected",
+  "response.rejected",
   "approval.denied",
   "approval.granted",
   "approval.requested",
@@ -309,12 +309,11 @@ export const AuditRecordTypeSchema = z.enum([
   "execute_step.completed",
   "input.received",
   "input.required",
-  "model.action_rejected",
+  "model.response_rejected",
   "model.completed",
   "model.interrupted",
   "model.requested",
   "model.turn",
-  "model.turn.field_rejected",
   "plan.set",
   "provider.attempt.cancelled",
   "provider.attempt.failed",

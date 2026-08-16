@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 
 import {
-  defineProviderAdapter
+  defineProviderAdapter,
+  modelResponses
 } from "@nexora/harness";
 
 const INITIAL_DIGEST = `sha256:${createHash("sha256")
@@ -10,7 +11,7 @@ const INITIAL_DIGEST = `sha256:${createHash("sha256")
 
 export function createAcceptanceProvider() {
   return defineProviderAdapter({
-    transport: { kind: "json_actions", promptCache: { mode: "automatic" } },
+    transport: { kind: "structured_output", promptCache: { mode: "automatic" } },
     async complete(request, operation) {
       const payload = JSON.parse(request.input) as {
         readonly originalTaskContract: {
@@ -48,56 +49,45 @@ export function createAcceptanceProvider() {
         && payload.originalTaskContract.userInputs.length === 1
         && payload.currentPlanAndChecks.plan === null
       ) {
-        return JSON.stringify({ action: "request_input", question: "Confirm the mutation.", reason: "The external caller must provide one input." });
+        return modelResponses.input({
+          question: "Confirm the mutation.",
+          reason: "The external caller must provide one input."
+        });
       }
 
       const file = /\bnote(?:-[a-z])?\.txt\b/i.exec(semanticInput)?.[0]
         ?? "note.txt";
       if (payload.currentPlanAndChecks.plan === null) {
-        return JSON.stringify(plan(file));
+        return plan(file);
       }
 
       const completedTools = payload.observationsAndRepair.toolObservations.filter(
         (observation) => observation.status === "succeeded"
       ).map((observation) => observation.toolName);
       if (completedTools.length === 0) {
-        return JSON.stringify({
-          action: "continue",
-          toolCalls: [{ name: "filesystem.read", arguments: { path: file } }]
-        });
+        return modelResponses.tool({ name: "filesystem.read", arguments: { path: file } });
       }
       if (completedTools.length === 1) {
-        return JSON.stringify({
-          action: "continue",
-          toolCalls: [{
-              name: "filesystem.patch",
-              arguments: {
+        return modelResponses.tool({
+          name: "filesystem.patch",
+          arguments: {
                 path: file,
                 expectedDigest: INITIAL_DIGEST,
                 find: "before",
                 replace: "after"
               }
-            }]
         });
       }
       if (completedTools.length === 2) {
-        return JSON.stringify({
-          action: "continue",
-          toolCalls: [{ name: "filesystem.read", arguments: { path: file } }]
-        });
+        return modelResponses.tool({ name: "filesystem.read", arguments: { path: file } });
       }
-      return JSON.stringify({
-        action: "finish",
-        text: `Changed and verified ${file}.`
-      });
+      return modelResponses.text(`Changed and verified ${file}.`);
     }
   });
 }
 
 function plan(file: string) {
-  return {
-    action: "continue",
-    plan: {
+  return modelResponses.plan({
       goal: `Change ${file} from before to after and verify it`,
       tasks: [
         {
@@ -110,6 +100,5 @@ function plan(file: string) {
           objective: `Read ${file} after mutation`
         }
       ]
-    }
-  };
+    });
 }

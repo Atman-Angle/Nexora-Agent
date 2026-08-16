@@ -39,18 +39,21 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       decisions += 1;
       if (decisions === 1) return response(stressPlan());
       if (decisions === 2) return response({
-        action: "continue",
-        toolCalls: SHARD_PATHS.map((path) => ({ name: "filesystem.read", arguments: { path } }))
+        text: null,
+        toolCalls: SHARD_PATHS.map((path) => ({ name: "filesystem.read", arguments: { path } })),
+        finishReason: "tool_calls"
       });
       if (decisions === 3) return response({
-        action: "continue",
-        toolCalls: [{ name: "filesystem.read", arguments: { path: SHARD_PATHS[0] } }]
+        text: null,
+        toolCalls: [{ name: "filesystem.read", arguments: { path: SHARD_PATHS[0] } }],
+        finishReason: "tool_calls"
       });
       return response({
-        action: "finish",
         text: `Verified ordered ORCHID codes ${Array.from({ length: 8 }, (_, index) => (
           `ORCHID-${String(index + 1).padStart(2, "0")}-A${String(17 + index).padStart(2, "0")}`
-        )).join(", ")} from all eight file Evidence records.`
+        )).join(", ")} from all eight file Evidence records.`,
+        toolCalls: [],
+        finishReason: "stop"
       });
     };
     const provider = createOpenAICompatibleProvider({
@@ -60,7 +63,7 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       contextWindowTokens: 25_000,
       reservedOutputTokens: { decision: 16_384 },
       softLimitRatio: 0.8,
-      transport: "json_actions",
+      transport: "structured_output",
       fetch
     });
     const declaredProfile: ProviderModelProfile = {
@@ -140,14 +143,19 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
 
 function stressPlan() {
   return {
-    plan: {
-      goal: "Restore the preferred stream Memory and report all eight verified shard codes.",
-      tasks: [{
-        objective: "Restore Memory and read all eight exact shards."
-      }, {
-        objective: "Review and report the ordered preferred-stream codes."
-      }]
-    }
+    text: null,
+    toolCalls: [{
+      name: "nexora_update_plan",
+      arguments: {
+        goal: "Restore the preferred stream Memory and report all eight verified shard codes.",
+        tasks: [{
+          objective: "Restore Memory and read all eight exact shards."
+        }, {
+          objective: "Review and report the ordered preferred-stream codes."
+        }]
+      }
+    }],
+    finishReason: "tool_calls"
   };
 }
 

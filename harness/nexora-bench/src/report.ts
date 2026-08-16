@@ -40,7 +40,7 @@ export type PromptStrategyCallReport = {
   readonly projectInstructions: readonly { readonly sourceRef: string; readonly digest: string }[];
   readonly toolContractDigest: string | null;
   readonly transport: {
-    readonly kind: "native_tools" | "json_actions";
+    readonly kind: "native_tools" | "structured_output";
     readonly promptCacheMode: "disabled" | "automatic" | "explicit_breakpoints";
   } | null;
   readonly authorityContextDigest: string | null;
@@ -109,12 +109,12 @@ export type TaskReport = {
     readonly runErrorCode: string | null;
     readonly failedToolCodes: readonly string[];
     readonly failedModelCallCodes: readonly string[];
-    readonly actionRejectedCount: number;
+    readonly responseRejectedCount: number;
     readonly providerFailureCount: number;
     readonly exactFailedReplayCount: number;
     readonly persistedProgressCount: number;
     readonly effectiveToolRatio: number;
-    readonly actionRejectionRate: number;
+    readonly responseRejectionRate: number;
     readonly repairRecoveryCount: number;
     readonly firstPersistedProgressMs: number | null;
     readonly progressAcrossRestartCount: number;
@@ -140,7 +140,7 @@ export type EvalReport = {
   readonly hardGateFailures: readonly string[];
   readonly telemetryErrors: readonly string[];
   readonly convergence: {
-    readonly actionRejectionRate: number;
+    readonly responseRejectionRate: number;
     readonly exactFailedReplayRate: number;
     readonly repairRecoveryRate: number;
     readonly effectiveToolRatio: number;
@@ -228,10 +228,10 @@ export function createTaskReport(input: {
 }
 
 function diagnostics(view: RunView): TaskReport["diagnostics"] {
-  const actionRejectedCount = view.events.filter((item) => item.type === "action.rejected").length;
+  const responseRejectedCount = view.events.filter((item) => item.type === "response.rejected").length;
   const progressEvents = view.events.filter((item) => isProgressEvent(item.type));
   const repairFailureSequences = view.events
-    .filter((item) => item.type === "action.rejected" || item.type === "validation.failed" || item.type === "tool.failed")
+    .filter((item) => item.type === "response.rejected" || item.type === "validation.failed" || item.type === "tool.failed")
     .map((item) => item.sequence);
   const repairedFailures = repairFailureSequences.filter((sequence) => (
     progressEvents.some((event) => event.sequence > sequence)
@@ -252,15 +252,15 @@ function diagnostics(view: RunView): TaskReport["diagnostics"] {
     failedModelCallCodes: view.modelCalls
       .filter((item) => item.status !== "succeeded")
       .map((item) => item.errorCode ?? item.status),
-    actionRejectedCount,
+    responseRejectedCount,
     providerFailureCount: view.events.filter((item) => item.type.startsWith("provider.")).length,
     exactFailedReplayCount: view.events.filter((item) => (
-      item.type === "action.rejected"
+      item.type === "response.rejected"
       && JSON.stringify(item.payload).includes("exactly repeats a previous failed Invocation")
     )).length,
     persistedProgressCount: segmentSequences.length,
     effectiveToolRatio: invocations === 0 ? 0 : view.toolInvocations.filter((item) => item.status === "succeeded").length / invocations,
-    actionRejectionRate: modelCalls === 0 ? 0 : actionRejectedCount / modelCalls,
+    responseRejectionRate: modelCalls === 0 ? 0 : responseRejectedCount / modelCalls,
     repairRecoveryCount: repairedFailures,
     firstPersistedProgressMs: firstEventAt === undefined || firstProgressAt === undefined
       ? null
@@ -300,14 +300,14 @@ export function createEvalReport(input: {
   const totals = input.tasks.reduce((result, task) => ({
     modelCalls: result.modelCalls + task.authorityGrade.metrics.modelCalls,
     invocations: result.invocations + task.authorityGrade.metrics.invocations,
-    actionRejected: result.actionRejected + task.diagnostics.actionRejectedCount,
+    responseRejected: result.responseRejected + task.diagnostics.responseRejectedCount,
     exactReplays: result.exactReplays + task.diagnostics.exactFailedReplayCount,
     recovered: result.recovered + task.diagnostics.repairRecoveryCount,
-    repairFailures: result.repairFailures + task.diagnostics.actionRejectedCount + task.diagnostics.failedToolCodes.length,
+    repairFailures: result.repairFailures + task.diagnostics.responseRejectedCount + task.diagnostics.failedToolCodes.length,
     successfulTools: result.successfulTools + Math.round(
       task.diagnostics.effectiveToolRatio * task.authorityGrade.metrics.invocations
     )
-  }), { modelCalls: 0, invocations: 0, actionRejected: 0, exactReplays: 0, recovered: 0, repairFailures: 0, successfulTools: 0 });
+  }), { modelCalls: 0, invocations: 0, responseRejected: 0, exactReplays: 0, recovered: 0, repairFailures: 0, successfulTools: 0 });
   const firstProgress = input.tasks
     .map((task) => task.diagnostics.firstPersistedProgressMs)
     .filter((value): value is number => value !== null)
@@ -329,7 +329,7 @@ export function createEvalReport(input: {
     hardGateFailures,
     telemetryErrors: [...(input.telemetryErrors ?? [])],
     convergence: {
-      actionRejectionRate: totals.modelCalls === 0 ? 0 : totals.actionRejected / totals.modelCalls,
+      responseRejectionRate: totals.modelCalls === 0 ? 0 : totals.responseRejected / totals.modelCalls,
       exactFailedReplayRate: totals.modelCalls === 0 ? 0 : totals.exactReplays / totals.modelCalls,
       repairRecoveryRate: totals.repairFailures === 0 ? 1 : totals.recovered / totals.repairFailures,
       effectiveToolRatio: totals.invocations === 0 ? 0 : totals.successfulTools / totals.invocations,
@@ -405,7 +405,7 @@ function promptStrategyCall(trace: ModelCallTrace): PromptStrategyCallReport {
   const transportKind = transport?.kind;
   const promptCacheMode = promptCache?.mode;
   const parsedTransport: PromptStrategyCallReport["transport"] = (
-    transportKind === "native_tools" || transportKind === "json_actions"
+    transportKind === "native_tools" || transportKind === "structured_output"
   ) && (
     promptCacheMode === "disabled"
     || promptCacheMode === "automatic"

@@ -7,7 +7,7 @@ import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
-import { createRuntime, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import { createRuntime, modelResponses, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import {
   canonicalJson,
   digestCanonicalJson
@@ -802,11 +802,7 @@ function fixture(): string {
 function requestInputStub(): RuntimeProvider {
   return {
     async decide() {
-      return {
-        type: "request_input",
-        question: "Provide more input.",
-        reason: "Input is required."
-      };
+      return modelResponses.input({ question: "Provide more input.", reason: "Input is required." });
     }
   };
 }

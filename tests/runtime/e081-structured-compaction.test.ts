@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   createRuntime,
+  modelResponses,
   type ModelDecisionContext,
   type RuntimeProvider
 } from "../../packages/harness/src/index.js";
@@ -38,7 +39,7 @@ describe("E081 deterministic Context convergence", () => {
       async decide(context) {
         calls += 1;
         received = context;
-        return { action: "request_input", question: "Provide the missing target.", reason: "The fixture intentionally stops after Context convergence." };
+        return modelResponses.input({ question: "Provide the missing target.", reason: "The fixture intentionally stops after Context convergence." });
       }
     };
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -49,7 +50,7 @@ describe("E081 deterministic Context convergence", () => {
 
     expect(result.status).toBe("waiting");
     expect(calls).toBe(1);
-    expect(received?.providerContractVersion).toBe(4);
+    expect(received?.providerContractVersion).toBe(5);
     expect(view.modelCalls).toHaveLength(1);
     expect(view.modelCalls[0]?.budgetDecision).toBe("hard_limit_exceeded");
     expect(view.events.some((event) => event.type === "run.failed")).toBe(false);
@@ -58,7 +59,7 @@ describe("E081 deterministic Context convergence", () => {
 
   it("never exposes a model compaction operation", () => {
     const provider: RuntimeProvider = {
-      async decide() { return { action: "finish", text: "done" }; }
+      async decide() { return modelResponses.text("done"); }
     };
     expect(provider).not.toHaveProperty("compact");
   });

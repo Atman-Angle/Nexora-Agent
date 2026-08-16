@@ -80,7 +80,7 @@ describe("E102 rehydration action continuity", () => {
       expect(restoredTurns).toBe(3);
       expect(view.events.filter((event) => event.type === "context.rehydrate_requested")).toHaveLength(0);
       expect(view.events.filter((event) => event.type === "context.rehydrated")).toHaveLength(0);
-      const rejected = view.events.filter((event) => event.type === "action.rejected");
+      const rejected = view.events.filter((event) => event.type === "response.rejected");
       expect(rejected).toHaveLength(1);
       expect(view.toolInvocations).toHaveLength(1);
       expect(view.snapshot.evidence).toHaveLength(1);

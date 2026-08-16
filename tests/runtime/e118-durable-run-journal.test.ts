@@ -5,7 +5,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createAgent } from "../../packages/harness/src/index.js";
+import { createAgent, modelResponses } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
@@ -163,7 +163,7 @@ describe("E118 Durable Run Journal", () => {
       async decide() {
         calls += 1;
         if (calls < 3) throw Object.assign(new Error("transient"), { retryable: true, code: "TRANSIENT" });
-        return { action: "request_input", question: "Continue?", reason: "Retry audit complete"  };
+        return modelResponses.input({ question: "Continue?", reason: "Retry audit complete" });
       }
     };
     const dataDir = join(workspace, ".nexora");

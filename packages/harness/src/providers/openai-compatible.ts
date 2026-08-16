@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { RuntimeError } from "@nexora/runtime/internal";
@@ -15,7 +16,7 @@ import type {
   ReasoningPolicy,
   RuntimeProvider
 } from "./model-client.js";
-import { ModelPlanUpdateSchema, type ModelToolCall } from "./model-turn.js";
+import type { ModelResponse, ProviderToolCall } from "./model-response.js";
 
 export type OpenAICompatibleProviderOptions = {
   readonly baseUrl: string;
@@ -91,8 +92,8 @@ export function openAICompatibleProviderFromEnv(
     throw new ModelConfigError('NEXORA_MODEL_REASONING must be "off", "on" or "dynamic".');
   }
   const transportRaw = environment.NEXORA_MODEL_TOOL_TRANSPORT?.trim() ?? "native_tools";
-  if (transportRaw !== "native_tools" && transportRaw !== "json_actions") {
-    throw new ModelConfigError('NEXORA_MODEL_TOOL_TRANSPORT must be "native_tools" or "json_actions".');
+  if (transportRaw !== "native_tools" && transportRaw !== "structured_output") {
+    throw new ModelConfigError('NEXORA_MODEL_TOOL_TRANSPORT must be "native_tools" or "structured_output".');
   }
   const cacheRaw = environment.NEXORA_MODEL_PROMPT_CACHE?.trim() ?? "automatic";
   if (cacheRaw !== "automatic" && cacheRaw !== "disabled") {
@@ -199,22 +200,34 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
             model,
             temperature,
             max_tokens: decisionOutputTokens,
-            response_format: { type: "json_object" },
             messages: [
               { role: "system", content: request.system },
               { role: "user", content: request.input }
             ],
+            ...(request.responseFormat.kind === "json_schema"
+              ? {
+                  response_format: {
+                    type: "json_schema",
+                    json_schema: {
+                      name: request.responseFormat.name,
+                      strict: true,
+                      schema: request.responseFormat.schema
+                    }
+                  }
+                }
+              : {}),
             ...(request.transport.kind === "native_tools" && request.tools !== undefined
               ? {
-                  tools: request.tools.map((tool, index) => ({
+                  tools: providerToolBindings(request.tools).map(({ providerName, tool }) => ({
                     type: "function",
                     function: {
-                      name: nativeToolName(index),
+                      name: providerName,
                       description: toolDescription(tool),
                       parameters: tool.inputSchema
                     }
                   })),
-                  tool_choice: "auto"
+                  tool_choice: "auto",
+                  parallel_tool_calls: false
                 }
               : {}),
             ...resolveThinkingToggle(thinkingToggleParam, reasoning, request)
@@ -230,7 +243,11 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         const body = ProviderResponseSchema.parse(await response.json());
         const usage = normalizeUsage(body.usage, request.transport.promptCache?.mode ?? "automatic");
         if (usage !== null) operation.reportTokenUsage?.(usage);
-        return normalizeAssistantMessage(body.choices[0]!.message, request);
+        return normalizeAssistantMessage(
+          body.choices[0]!.message,
+          request,
+          body.choices[0]!.finish_reason
+        );
       } catch (error) {
         if (
           !operation.signal.aborted
@@ -249,9 +266,11 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
 
 const ProviderResponseSchema = z.object({
   choices: z.array(z.object({
+    finish_reason: z.string().nullable().optional(),
     message: z.object({
       content: z.string().nullable().optional(),
       tool_calls: z.array(z.object({
+        id: z.string().trim().min(1),
         type: z.literal("function"),
         function: z.object({
           name: z.string().trim().min(1),
@@ -280,39 +299,44 @@ const ProviderResponseSchema = z.object({
 
 function normalizeAssistantMessage(
   message: z.infer<typeof ProviderResponseSchema>["choices"][number]["message"],
-  request: ProviderCompletionRequest
-): unknown {
-  const content = message.content?.trim();
-  const parsedContent = content === undefined || content.length === 0
-    ? {}
-    : parseJsonObject(content) ?? { invalidTextResponse: content };
+  request: ProviderCompletionRequest,
+  finishReason?: string | null
+): ModelResponse {
+  const content = nonEmptyText(message.content);
   const nativeCalls = message.tool_calls ?? [];
-  if (request.transport.kind === "json_actions") {
-    return nativeCalls.length === 0
-      ? parsedContent
-      : { action: "continue", transportViolation: "json_actions does not accept native Tool calls." };
+  if (request.transport.kind === "structured_output") {
+    if (nativeCalls.length > 0) {
+      throw new Error("Provider returned native Tool calls for structured_output transport.");
+    }
+    if (content === null) throw new Error("Provider returned an empty structured response.");
+    const parsed = parseStructuredResponse(content);
+    const availableNames = new Set((request.tools ?? []).map((tool) => tool.name));
+    const unsupported = parsed.toolCalls.find((call) => !availableNames.has(call.name));
+    if (unsupported !== undefined) {
+      throw new Error(`Provider returned an unknown structured Tool: ${unsupported.name}`);
+    }
+    return {
+      text: parsed.text,
+      toolCalls: parsed.toolCalls.map((call, index) => ({
+        callId: structuredCallId(content, index),
+        name: call.name,
+        arguments: call.arguments
+      })),
+      finishReason: parsed.finishReason ?? finishReason ?? null
+    };
   }
   if (nativeCalls.length === 0) {
-    return "toolCalls" in parsedContent
-      ? { action: "continue", transportViolation: "native_tools requires Provider-native Tool calls." }
-      : parsedContent;
+    return { text: content, toolCalls: [], finishReason: finishReason ?? null };
   }
-  const tools = request.tools ?? [];
-  const toolCalls = nativeCalls.map((call): ModelToolCall => {
-    const match = /^nexora_tool_(\d+)$/.exec(call.function.name);
-    const index = match === null ? Number.NaN : Number(match[1]);
-    const tool = Number.isInteger(index) ? tools[index] : undefined;
-    if (tool === undefined) throw new Error(`Provider returned an unknown native Tool: ${call.function.name}`);
+  const bindings = providerToolBindings(request.tools ?? []);
+  const toolCalls = nativeCalls.map((call): ProviderToolCall => {
+    const binding = bindings.find((item) => item.providerName === call.function.name);
+    if (binding === undefined) throw new Error(`Provider returned an unknown native Tool: ${call.function.name}`);
     const args = parseJsonObject(call.function.arguments);
-    if (args === null) throw new Error(`Provider returned invalid JSON arguments for ${tool.name}.`);
-    return { name: tool.name, arguments: args };
+    if (args === null) throw new Error(`Provider returned invalid JSON arguments for ${binding.tool.name}.`);
+    return { callId: call.id, name: binding.tool.name, arguments: args };
   });
-  const plan = ModelPlanUpdateSchema.safeParse(parsedContent.plan);
-  return {
-    action: "continue",
-    ...(plan.success ? { plan: plan.data } : {}),
-    toolCalls
-  };
+  return { text: content, toolCalls, finishReason: finishReason ?? null };
 }
 
 function normalizeUsage(
@@ -389,8 +413,46 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
-function nativeToolName(index: number): string {
-  return `nexora_tool_${index}`;
+function nonEmptyText(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? null : trimmed;
+}
+
+const StructuredResponseSchema = z.object({
+  text: z.string().trim().min(1).nullable(),
+  toolCalls: z.array(z.object({
+    name: z.string().trim().min(1),
+    arguments: z.record(z.unknown())
+  }).strict()).max(8),
+  finishReason: z.string().trim().min(1).nullable()
+}).strict();
+
+function parseStructuredResponse(value: string): z.infer<typeof StructuredResponseSchema> {
+  const parsed = parseJsonObject(value);
+  if (parsed === null) throw new Error("Provider returned invalid JSON for structured_output transport.");
+  return StructuredResponseSchema.parse(parsed);
+}
+
+function structuredCallId(content: string, index: number): string {
+  const digest = createHash("sha256").update(content).digest("hex").slice(0, 16);
+  return `structured_${digest}_${index}`;
+}
+
+function providerToolBindings(tools: readonly NonNullable<ProviderCompletionRequest["tools"]>[number][]): readonly {
+  readonly providerName: string;
+  readonly tool: NonNullable<ProviderCompletionRequest["tools"]>[number];
+}[] {
+  const used = new Set<string>();
+  return tools.map((tool) => {
+    const base = tool.name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64) || "tool";
+    let providerName = base;
+    if (used.has(providerName)) {
+      const suffix = createHash("sha256").update(tool.name).digest("hex").slice(0, 8);
+      providerName = `${base.slice(0, 55)}_${suffix}`;
+    }
+    used.add(providerName);
+    return { providerName, tool };
+  });
 }
 
 function required(environment: Record<string, string | undefined>, name: string): string {

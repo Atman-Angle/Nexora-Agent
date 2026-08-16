@@ -6,7 +6,7 @@ import {
   type RunSnapshot
 } from "../../packages/runtime/src/contracts.js";
 import { automaticPublishedRefs } from "../../packages/harness/src/memory-policy.js";
-import { compileModelToolCalls } from "../../packages/harness/src/planning.js";
+import { compileProviderToolCalls } from "../../packages/harness/src/planning.js";
 import {
   GENERAL_AGENT_SYSTEM_KERNEL
 } from "../../packages/harness/src/prompt.js";
@@ -49,11 +49,11 @@ describe("E116 Agent / Runtime strategy parity baseline", () => {
     ]);
   });
 
-  it("freezes ModelTurn compilation into Runtime-owned Actions", () => {
+  it("freezes Provider Tool Call compilation into Runtime-owned Actions", () => {
     const run = activeRun();
-    const action = compileModelToolCalls(run, [
-      { name: "filesystem.read", arguments: { path: "a.txt" } },
-      { name: "filesystem.patch", arguments: { path: "a.txt", find: "A", replace: "B" } }
+    const action = compileProviderToolCalls(run, [
+      { callId: "call-read", name: "filesystem.read", arguments: { path: "a.txt" } },
+      { callId: "call-patch", name: "filesystem.patch", arguments: { path: "a.txt", find: "A", replace: "B" } }
     ]);
 
     expect(action).toEqual({

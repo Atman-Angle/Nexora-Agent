@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createRuntime,
   defineProviderAdapter,
+  REQUEST_INPUT_CONTROL,
+  type ModelResponse,
   type ProviderCompletionRequest,
   type RuntimeEvent
 } from "../../packages/harness/src/index.js";
@@ -25,15 +27,11 @@ describe("D4 Provider Adapter", () => {
     const signals: AbortSignal[] = [];
     let disposed = 0;
     const provider = defineProviderAdapter({
-      transport: { kind: "json_actions", promptCache: { mode: "disabled" } },
+      transport: { kind: "structured_output", promptCache: { mode: "disabled" } },
       async complete(request, operation) {
         requests.push(request);
         signals.push(operation.signal);
-        return JSON.stringify({
-          action: "request_input",
-          question: "Which target?",
-          reason: "The target is required."
-        });
+        return inputResponse("Which target?", "The target is required.");
       },
       async dispose() {
         disposed += 1;
@@ -50,7 +48,7 @@ describe("D4 Provider Adapter", () => {
       JSON.parse(request.input) as { currentRuntimeDirective: { kind: string } }
     ).currentRuntimeDirective.kind)).toEqual(["normal"]);
     expect(requests.every((request) => (
-      request.responseFormat === "json"
+      request.responseFormat.kind === "json_schema"
       && request.system.length > 0
       && JSON.parse(request.input) !== null
     ))).toBe(true);
@@ -67,20 +65,16 @@ describe("D4 Provider Adapter", () => {
     expect(disposed).toBe(1);
   });
 
-  it("returns malformed decision content to the existing Action repair path", async () => {
+  it("fails malformed normalized Adapter content as a Provider protocol error", async () => {
     const workspace = temporaryWorkspace();
     let calls = 0;
     const provider = defineProviderAdapter({
-      transport: { kind: "json_actions", promptCache: { mode: "disabled" } },
+      transport: { kind: "structured_output", promptCache: { mode: "disabled" } },
       async complete(_request) {
         calls += 1;
         return calls === 1
-          ? JSON.stringify({ invalid: "turn" })
-          : JSON.stringify({
-              action: "request_input",
-              question: "Repair complete. Continue?",
-              reason: "Stop after proving repair."
-            });
+          ? { invalid: "response" } as unknown as ModelResponse
+          : inputResponse("Repair complete. Continue?", "Stop after proving repair.");
       }
     });
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -92,10 +86,10 @@ describe("D4 Provider Adapter", () => {
 
     const inspection = await run.wait();
 
-    expect(inspection.status).toBe("waiting_for_input");
-    expect(inspection.error?.code).toBe("INVALID_MODEL_ACTION");
-    await until(() => events.some((event) => event.type === "model.action_rejected"));
-    expect(events.some((event) => event.type === "run.blocked")).toBe(false);
+    expect(inspection.status).toBe("blocked");
+    expect(inspection.error?.code).toBe("PROVIDER_UNAVAILABLE");
+    await until(() => events.some((event) => event.type === "run.blocked"));
+    expect(events.some((event) => event.type === "model.response_rejected")).toBe(false);
     await subscription.close();
     await runtime.close();
   });
@@ -104,7 +98,7 @@ describe("D4 Provider Adapter", () => {
     const blockedRuntime = createRuntime({
       workspace: temporaryWorkspace(),
       provider: defineProviderAdapter({
-        transport: { kind: "json_actions", promptCache: { mode: "disabled" } },
+        transport: { kind: "structured_output", promptCache: { mode: "disabled" } },
         async complete() {
           throw new Error("transport offline");
         }
@@ -123,7 +117,7 @@ describe("D4 Provider Adapter", () => {
     const runtime = createRuntime({
       workspace: temporaryWorkspace(),
       provider: defineProviderAdapter({
-        transport: { kind: "json_actions", promptCache: { mode: "disabled" } },
+        transport: { kind: "structured_output", promptCache: { mode: "disabled" } },
         async complete(_request, operation) {
           entered.resolve(operation.signal);
           await aborted(operation.signal);
@@ -172,4 +166,16 @@ async function until(predicate: () => boolean): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("Condition was not reached.");
+}
+
+function inputResponse(question: string, reason: string): ModelResponse {
+  return {
+    text: null,
+    toolCalls: [{
+      callId: "request-input",
+      name: REQUEST_INPUT_CONTROL,
+      arguments: { question, reason }
+    }],
+    finishReason: "tool_calls"
+  };
 }

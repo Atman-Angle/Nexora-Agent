@@ -2,6 +2,8 @@
 
 状态：`DRAFT / REVIEW_REQUIRED`
 
+历史说明：本 Spec 的 Prompt/Profile 部分已实现；其中 `ModelTurn`、`json_actions` 和 Action repair 设计已由 `PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md` 取代，不描述当前生产协议。
+
 Feature mode：`PLAN`
 
 建议 Feature：`general-agent-prompt-profile`

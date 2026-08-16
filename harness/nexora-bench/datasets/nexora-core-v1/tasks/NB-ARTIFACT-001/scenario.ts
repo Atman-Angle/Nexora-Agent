@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { modelResponses } from "@nexora/harness";
 import { join } from "node:path";
 
 import {
@@ -34,9 +35,7 @@ function provider(): RuntimeProvider {
   return {
     async decide(context: ModelDecisionContext) {
       if (context.run.currentPlan === null) {
-        return {
-          action: "continue",
-          plan: {
+        return modelResponses.plan({
             goal: "Research the supplied source and produce a long auditable report without a mechanical verifier.",
             tasks: [
               {
@@ -48,16 +47,15 @@ function provider(): RuntimeProvider {
 
               }
             ]
-          }
-        };
+          });
       }
       if (!context.toolObservations.some((item) => item.toolName === "fixture.long_research" && item.status === "succeeded")) {
-        return { action: "continue", toolCalls: [{ name: "fixture.long_research", arguments: { path: "seed.txt" } }] };
+        return modelResponses.tool({ name: "fixture.long_research", arguments: { path: "seed.txt" } });
       }
       if (!context.toolObservations.some((item) => item.toolName === "filesystem.write" && item.status === "succeeded")) {
-        return { action: "continue", toolCalls: [{ name: "filesystem.write", arguments: { path: "review.md", content: report } }] };
+        return modelResponses.tool({ name: "filesystem.write", arguments: { path: "review.md", content: report } });
       }
-      return { action: "finish", text: "Produced the long Runtime/Harness boundary review from archived research facts." };
+      return modelResponses.text("Produced the long Runtime/Harness boundary review from archived research facts.");
     }
   };
 }

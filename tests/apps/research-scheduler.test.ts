@@ -17,7 +17,7 @@ import {
 } from "../../apps/research-agent/src/scheduler.js";
 import {
   createScriptedProvider,
-  modelTurns
+  modelResponses
 } from "../../packages/harness/src/testing/index.js";
 
 const roots: string[] = [];
@@ -130,8 +130,8 @@ describe("Research Agent application scheduler", () => {
 
 function createSuccessfulAgent(profile: ResearchProfile, workspace: string) {
   const provider = createScriptedProvider({
-    modelTurns: [
-      modelTurns.plan({
+    modelResponses: [
+      modelResponses.plan({
         goal: "Generate one scheduled daily article.",
         steps: [
           { objective: "Discover." },
@@ -139,21 +139,21 @@ function createSuccessfulAgent(profile: ResearchProfile, workspace: string) {
           { objective: "Validate." }
         ]
       }),
-      modelTurns.tool({
+      modelResponses.tool({
         toolName: "news.discover",
         input: { query: "AI", since: "2026-08-01T00:00:00.000Z", limit: 10, excludeKeywords: [] }
       }),
-      modelTurns.tool({
+      modelResponses.tool({
         toolName: "news.analyze_selection",
         input: { items: newsItems }
       }),
-      modelTurns.tool({
+      modelResponses.tool({
         toolName: "news.validate_output",
         input: {
           deliverables
         }
       }),
-      modelTurns.finish({ summary: "All four configured daily research outputs were validated and archived." })
+      modelResponses.finish({ summary: "All four configured daily research outputs were validated and archived." })
     ]
   });
   return createResearchAgent({ workspace, profile, provider, sources: [newsSource] });

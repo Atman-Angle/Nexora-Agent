@@ -13,7 +13,12 @@ import {
   type ModelDecisionContext,
   type RuntimeTool
 } from "../../packages/harness/src/index.js";
-import { ScriptedRuntimeProvider, finishFromEvidence } from "./runtime-testkit.js";
+import {
+  ScriptedRuntimeProvider,
+  finishFromEvidence,
+  responseCall,
+  responsePlan
+} from "./runtime-testkit.js";
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -62,8 +67,8 @@ describe("E053 Tool capability and Approval input convergence", () => {
     let effects = 0;
     const provider = new ScriptedRuntimeProvider([
       plan([{ id: "write", objective: "Write output", toolName: "example.write", checkId: "write-ok" }]),
-      { type: "call_tool", stepId: "write", checkIds: ["write-ok"], toolName: "example.write", input: { path: 42 } },
-      { type: "request_input", question: "Provide a valid path.", reason: "Tool input was rejected" }
+      responseCall("example.write", { path: 42 }),
+      responseCall("example.write", { path: "output.txt" })
     ]);
     const tool: RuntimeTool = {
       contract: testContract("example.write", "write", z.object({ path: z.string().min(1) }).strict(), { path: "output.txt" }, z.object({ written: z.boolean() }).strict()),
@@ -79,9 +84,9 @@ describe("E053 Tool capability and Approval input convergence", () => {
       const view = await runtime.inspect(result.runId);
 
       expect(result.status).toBe("waiting");
-      expect(result.stopReason).toBe("INPUT_REQUIRED");
-      expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
-      expect(view.events.filter((event) => event.type === "approval.requested")).toHaveLength(0);
+      expect(result.stopReason).toBe("APPROVAL_REQUIRED");
+      expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
+      expect(view.events.filter((event) => event.type === "approval.requested")).toHaveLength(1);
       expect(view.toolInvocations).toEqual([]);
       expect(effects).toBe(0);
     } finally {
@@ -142,7 +147,7 @@ describe("E053 Tool capability and Approval input convergence", () => {
         baseUrl: stub.baseUrl,
         apiKey: "test-key",
         model: "test-model",
-        transport: "json_actions"
+        transport: "structured_output"
       }),
       tools: createBuiltInTools()
     });
@@ -227,13 +232,10 @@ function fixture(content = "fixture\n"): string {
 function plan(
   steps: readonly { readonly id: string; readonly objective: string; readonly toolName: string; readonly checkId: string }[]
 ) {
-  return {
-    action: "continue",
-    plan: {
-      goal: "Complete the Tool-backed task",
-      tasks: steps.map((step) => ({ objective: step.objective }))
-    }
-  };
+  return responsePlan({
+        goal: "Complete the Tool-backed task",
+        tasks: steps.map((step) => ({ objective: step.objective }))
+      });
 }
 
 type CapabilityStub = {
@@ -268,7 +270,7 @@ async function capabilityProviderStub(): Promise<CapabilityStub> {
       decisionContexts.push(structuredClone(context));
       const decision = capabilityDecision(context, index);
       if (index === 0 && decision.selected) selectedByDescription = true;
-      const content = decision.action;
+      const content = structuredWireResponse(decision.response);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     } catch (error) {
@@ -290,7 +292,7 @@ async function capabilityProviderStub(): Promise<CapabilityStub> {
 function capabilityDecision(
   context: HttpContext,
   index: number
-): { readonly action: unknown; readonly selected: boolean } {
+): { readonly response: unknown; readonly selected: boolean } {
   if (index === 0) {
     const list = context.capabilities.find((tool) => tool.description.includes("file names and paths"));
     const read = context.capabilities.find((tool) => tool.description.includes("content from one known"));
@@ -298,12 +300,12 @@ function capabilityDecision(
     const execute = context.capabilities.find((tool) => tool.description.includes("executable"));
     if (list === undefined || read === undefined || patch === undefined || execute === undefined) {
       return {
-        action: requestInput("Tool capabilities are unavailable.", "Missing Tool descriptions"),
+        response: requestInput("Tool capabilities are unavailable.", "Missing Tool descriptions"),
         selected: false
       };
     }
     return {
-      action: plan([
+      response: plan([
         { id: "discover", objective: "Discover files", toolName: list.name, checkId: "listed" },
         { id: "read", objective: "Read discovered file", toolName: read.name, checkId: "read" },
         { id: "patch", objective: "Patch file", toolName: patch.name, checkId: "patched" },
@@ -318,7 +320,7 @@ function capabilityDecision(
     .map((item) => item.toolName));
   if (completedTools.has("shell.execute")) {
     return {
-      action: { action: "finish", text: "Discovered, read, patched, and validated the file." },
+      response: { text: "Discovered, read, patched, and validated the file.", toolCalls: [], finishReason: "stop" },
       selected: false
     };
   }
@@ -338,27 +340,27 @@ function capabilityDecision(
         ? "filesystem.patch"
         : "shell.execute";
   if (objective === "Discover files") {
-    return { action: useCapability(toolName, { path: "." }), selected: false };
+    return { response: useCapability(toolName, { path: "." }), selected: false };
   }
   if (objective === "Read discovered file") {
     const listed = context.workingSet.observations.find((item) => item.toolName === "filesystem.list")?.facts as { entries?: unknown } | undefined;
     const path = Array.isArray(listed?.entries) ? listed.entries.find((item): item is string => typeof item === "string" && item.endsWith(".txt")) : undefined;
-    if (path === undefined) return { action: requestInput("No text file was discovered.", "Missing list observation"), selected: false };
-    return { action: useCapability(toolName, { path }), selected: false };
+    if (path === undefined) return { response: requestInput("No text file was discovered.", "Missing list observation"), selected: false };
+    return { response: useCapability(toolName, { path }), selected: false };
   }
   if (objective === "Patch file") {
     const read = context.workingSet.observations.find((item) => item.toolName === "filesystem.read")?.facts as { path?: unknown; content?: unknown; digest?: unknown } | undefined;
     if (typeof read?.path !== "string" || read.content !== "before\n" || typeof read.digest !== "string") {
-      return { action: requestInput("Read observation is incomplete.", "Missing patch facts"), selected: false };
+      return { response: requestInput("Read observation is incomplete.", "Missing patch facts"), selected: false };
     }
     return {
-      action: useCapability(toolName, { path: read.path, expectedDigest: read.digest, find: "before", replace: "after" }),
+      response: useCapability(toolName, { path: read.path, expectedDigest: read.digest, find: "before", replace: "after" }),
       selected: false
     };
   }
   if (objective === "Validate result") {
     return {
-      action: useCapability(toolName, {
+      response: useCapability(toolName, {
           command: process.execPath,
           args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"],
           cwd: ".",
@@ -367,15 +369,33 @@ function capabilityDecision(
       selected: false
     };
   }
-  return { action: requestInput("Unknown active Step.", "Unsupported test plan"), selected: false };
+  return { response: requestInput("Unknown active Step.", "Unsupported test plan"), selected: false };
 }
 
 function useCapability(capability: string, args: unknown): unknown {
-  return { action: "continue", toolCalls: [{ name: capability, arguments: args }] };
+  return { text: null, toolCalls: [{ name: capability, arguments: args }], finishReason: "tool_calls" };
 }
 
 function requestInput(question: string, reason: string): unknown {
-  return { action: "request_input", question, reason };
+  return {
+    text: null,
+    toolCalls: [{ name: "nexora_request_input", arguments: { question, reason } }],
+    finishReason: "tool_calls"
+  };
+}
+
+function structuredWireResponse(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  const response = value as { text?: unknown; toolCalls?: unknown; finishReason?: unknown };
+  if (!Array.isArray(response.toolCalls)) return value;
+  return {
+    text: response.text ?? null,
+    toolCalls: response.toolCalls.map((item) => {
+      const call = item as { name: unknown; arguments: unknown };
+      return { name: call.name, arguments: call.arguments };
+    }),
+    finishReason: response.finishReason ?? null
+  };
 }
 
 function closeServer(server: Server): Promise<void> {

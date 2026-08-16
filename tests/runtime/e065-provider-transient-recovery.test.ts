@@ -21,7 +21,7 @@ const context = {
     lastError: null
   },
   projection: { schemaVersion: 1 as const, digest: "sha256:test" },
-  providerContractVersion: 4 as const,
+  providerContractVersion: 5 as const,
   activeInvocations: [],
   toolObservations: [],
   contextCheckpoint: null,
@@ -153,20 +153,23 @@ describe("E065 Provider transient failure recovery", () => {
       if (decisions === 0) {
         decisions += 1;
         return providerResponse({
-          action: "continue",
-          plan: {
-            goal: "Read the item once.",
-            tasks: [{
-              objective: "Read the item once."
-            }]
-          }
+          text: null,
+          toolCalls: [{
+            name: "nexora_update_plan",
+            arguments: {
+              goal: "Read the item once.",
+              tasks: [{ objective: "Read the item once." }]
+            }
+          }],
+          finishReason: "tool_calls"
         });
       }
       if (decisions === 1) {
         decisions += 1;
         return providerResponse({
-          action: "continue",
-          toolCalls: [{ name: "counter.read", arguments: { key: "item" } }]
+          text: null,
+          toolCalls: [{ name: "counter.read", arguments: { key: "item" } }],
+          finishReason: "tool_calls"
         });
       }
       if (transientFailures < 3) {
@@ -174,13 +177,13 @@ describe("E065 Provider transient failure recovery", () => {
         return new Response("unavailable", { status: 503 });
       }
       decisions += 1;
-      return providerResponse({ action: "finish", text: "The persisted item was read once." });
+      return providerResponse({ text: "The persisted item was read once.", toolCalls: [], finishReason: "stop" });
     });
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example",
       apiKey: "test",
       model: "test",
-      transport: "json_actions",
+      transport: "structured_output",
       fetch
     });
     const runtime = createRuntime({
@@ -218,7 +221,7 @@ describe("E065 Provider transient failure recovery", () => {
       expect(resumed.stopReason).toBe("COMPLETED");
       expect(effect.calls).toBe(1);
       expect(completedView.toolInvocations).toHaveLength(1);
-      expect(completedView.events.some((event) => event.type === "action.rejected")).toBe(false);
+      expect(completedView.events.some((event) => event.type === "response.rejected")).toBe(false);
       expect(completedView.events.filter((event) => event.type === "tool.succeeded")).toHaveLength(1);
       expect(completedView.events.filter((event) => event.type === "run.succeeded")).toHaveLength(1);
       expect(completedView.modelCalls.every((call) => call.phase === "decision")).toBe(true);

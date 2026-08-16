@@ -122,7 +122,7 @@ import {
   assertSucceeded,
   createAgentHarness,
   createScriptedProvider,
-  modelTurns
+  modelResponses
 } from "@nexora/harness/testing";
 // @ts-expect-error package internals remain blocked
 import type { RunStore } from "@nexora/harness/dist/run-store.js";
@@ -149,18 +149,18 @@ const tool = defineTool({
 });
 
 const provider = createScriptedProvider({
-  modelTurns: [
-    modelTurns.plan({
+  modelResponses: [
+    modelResponses.plan({
       goal: "Lookup external value",
       steps: [{
         objective: "Lookup value"
       }]
     }),
-    modelTurns.tool({
+    modelResponses.tool({
       toolName: "external.lookup",
       input: { key: "example" }
     }),
-    modelTurns.finish({ summary: "External lookup completed." })
+    modelResponses.finish({ summary: "External lookup completed." })
   ]
 });
 const harness = await createAgentHarness({ provider, tools: [tool] });

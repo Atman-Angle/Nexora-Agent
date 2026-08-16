@@ -8,7 +8,9 @@ import { z } from "zod";
 
 import {
   createAgent,
+  modelResponses,
   type ModelDecisionContext,
+  type ModelResponse,
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/harness/src/index.js";
@@ -43,20 +45,15 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
         contexts.push(structuredClone(context));
         turn += 1;
         if (turn === 1) {
-          return {
-            action: "continue",
-            plan: {
-              goal: "Read a long deterministic sequence.",
-              tasks: [{
-                objective: "Read sequence facts."
-              }]
-            }
-          };
+          return modelResponses.plan({
+            goal: "Read a long deterministic sequence.",
+            tasks: [{ objective: "Read sequence facts." }]
+          });
         }
         if (turn <= 102) {
-          return { action: "continue", toolCalls: [{ name: "test.sequence.read", arguments: { index: turn - 1 } }] };
+          return modelResponses.tool({ name: "test.sequence.read", arguments: { index: turn - 1 } });
         }
-        return { action: "finish", text: "Completed the bounded 101-read sequence." };
+        return modelResponses.text("Completed the bounded 101-read sequence.");
       }
     };
     const agent = createAgent({ workspace, provider, tools: [sequenceTool()] });
@@ -92,7 +89,7 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
       dataDir,
       provider: queuedProvider([
         planTurn(),
-        { action: "request_input", question: "Continue after reopen?", reason: "Exercise durable continuation."  }
+        modelResponses.input({ question: "Continue after reopen?", reason: "Exercise durable continuation." })
       ]),
       tools: [sequenceTool()]
     });
@@ -107,8 +104,8 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
         async decide(context) {
           captured.value ??= structuredClone(context);
           return context.run.evidence.length === 0
-            ? { action: "continue", toolCalls: [{ name: "test.sequence.read", arguments: { index: 1 } }] }
-            : { action: "finish", text: "Read sequence fact 1 after reopen." };
+            ? modelResponses.tool({ name: "test.sequence.read", arguments: { index: 1 } })
+            : modelResponses.text("Read sequence fact 1 after reopen.");
         }
       },
       tools: [sequenceTool()]
@@ -159,19 +156,16 @@ function sequenceTool(): RuntimeTool {
   };
 }
 
-function planTurn(): unknown {
-  return {
-    action: "continue",
-    plan: {
+function planTurn(): ModelResponse {
+  return modelResponses.plan({
       goal: "Read one sequence fact.",
       tasks: [{
         objective: "Read one sequence fact."
       }]
-    }
-  };
+  });
 }
 
-function queuedProvider(turns: readonly unknown[]): RuntimeProvider {
+function queuedProvider(turns: readonly ModelResponse[]): RuntimeProvider {
   const queue = [...turns];
   return {
     async decide() {

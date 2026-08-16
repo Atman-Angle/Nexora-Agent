@@ -54,9 +54,9 @@ import {
   digestJson,
   digestCanonicalJson,
   errorMessage,
-  actionRejectionDiagnostic,
+  responseRejectionDiagnostic,
   requireWorkspace,
-  serializeRejectedAction,
+  serializeRejectedResponse,
   toRunResult,
   validateToolContract
 } from "./runtime-helpers.js";
@@ -1206,9 +1206,9 @@ export class RuntimeEngine {
       recordContextEvidence: (run, facts, observer) => (
         this.#recordContextRefEvidence(run, facts, observer)
       ),
-      rejectModelAction: (run, error, rawAction, observer) => {
+      rejectModelResponse: (run, error, rawResponse, observer) => {
         if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
-        return this.#rejectAction(run, error, rawAction, observer);
+        return this.#rejectResponse(run, error, rawResponse, observer);
       },
       cancel: (run, message, observer) => this.#cancelPersistedRun(run, message, observer),
       enforceBudget: (run, activeStartedAt, observer) => {
@@ -1750,16 +1750,16 @@ export class RuntimeEngine {
     });
   }
 
-  #rejectAction(run: RunSnapshot, error: z.ZodError | ActionRejectedError, rawAction: unknown, observer?: RuntimeObserver): RunSnapshot {
-    const diagnostic = actionRejectionDiagnostic(error, rawAction);
+  #rejectResponse(run: RunSnapshot, error: z.ZodError | ActionRejectedError, rawResponse: unknown, observer?: RuntimeObserver): RunSnapshot {
+    const diagnostic = responseRejectionDiagnostic(error, rawResponse);
     const message = JSON.stringify(diagnostic);
-    const detailsArtifact = new ArtifactStore(this.#artifactDir).putText(serializeRejectedAction(rawAction), "application/json").digest;
+    const detailsArtifact = new ArtifactStore(this.#artifactDir).putText(serializeRejectedResponse(rawResponse), "application/json").digest;
     const next = RunSnapshotSchema.parse({
       ...run,
-      lastError: { code: "INVALID_MODEL_ACTION", message, retryable: true, detailsArtifact },
+      lastError: { code: "INVALID_MODEL_RESPONSE", message, retryable: true, detailsArtifact },
       updatedAt: this.#now()
     });
-    return this.#commit(run, next, "action.rejected", { message, diagnostic, detailsArtifact }, observer);
+    return this.#commit(run, next, "response.rejected", { message, diagnostic, detailsArtifact }, observer);
   }
 
   #fail(

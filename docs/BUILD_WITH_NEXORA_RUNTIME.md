@@ -419,14 +419,23 @@ const view = await runtime.inspect(result.runId);
 import { defineProviderAdapter } from "@nexora/harness";
 
 const provider = defineProviderAdapter({
+  transport: { kind: "native_tools" },
   async complete(request, operation) {
     const response = await modelSdk.complete({
       system: request.system,
       input: request.input,
-      responseFormat: request.responseFormat,
+      tools: request.tools,
       signal: operation.signal
     });
-    return response.text;
+    return {
+      text: response.text ?? null,
+      toolCalls: response.toolCalls.map((call) => ({
+        callId: call.id,
+        name: call.name,
+        arguments: call.arguments
+      })),
+      finishReason: response.finishReason ?? null
+    };
   },
   async dispose() {
     await modelSdk.close();
@@ -434,11 +443,11 @@ const provider = defineProviderAdapter({
 });
 ```
 
-`request.phase` 固定为 `"decision"`，用于 transport 记录和模型参数选择。Adapter 负责 Nexora 的 prompt、bounded context、JSON parse 和 malformed response 语义。Provider 不能直接写 Run、Plan、Invocation、Evidence 或成功状态；`operation.signal` 只通知当前 completion 停止，不是 Run 状态 Authority。
+`request.phase` 固定为 `"decision"`，用于 transport 记录和模型参数选择。Adapter 负责 Nexora 的 prompt、bounded context、Provider Tool Call 归一化和 malformed response 语义。Provider 不能直接写 Run、Plan、Invocation、Evidence 或成功状态；`operation.signal` 只通知当前 completion 停止，不是 Run 状态 Authority。
 
 Decision Provider 接收 Harness 构建的 `AgentWorkingContext`，不是完整 `RunSnapshot`：
 
-- `providerContractVersion` 标识公开 Context 版本，输出边界是显式 `action` 判别的单一 `ModelTurn`；
+- `providerContractVersion` 标识公开 Context 版本，输出边界是 `{ text, toolCalls, finishReason }` 的单一 `ModelResponse`；
 - `run.inputCount` 是持久化输入总数；
 - `run.coveredInputCount` 是当前 Task Contract 已覆盖的输入数；
 - `run.inputHistory` 只包含尚未覆盖的 `{ sequence, text }`；
@@ -446,11 +455,11 @@ Decision Provider 接收 Harness 构建的 `AgentWorkingContext`，不是完整 
 - `toolObservations` 只包含 active Step/Check 和已完成前置 Evidence 所需的有界事实；
 - `projection.digest` 是当前完整决策投影的稳定摘要，可用于缓存键、日志关联和确定性测试，不能作为 Evidence。
 
-Provider 的 `ModelTurn.plan` 只提交可选 `goal` 与有序 `{ objective }` Task；Harness 编译 Plan/Step identity，Runtime 负责持久化、version/CAS 与完成前缀一致性。objective 默认没有 Acceptance Check。`ModelTurn.toolCalls` 可与 Plan 同轮出现，也可在没有 Plan 时调用已注册 Tool；任何内部 `set_plan/call_tool/execute_step/propose_finish` 输出都会在 Harness 边界拒绝。
+Provider 通过 `nexora_update_plan` control 提交可选 `goal` 与有序 `{ objective }` Task；Harness 编译 Plan/Step identity，Runtime 负责持久化、version/CAS 与完成前缀一致性。objective 默认没有 Acceptance Check。Plan control 可与 Runtime Tool Calls 同轮出现，也可在没有 Plan 时调用已注册 Tool；任何内部 `set_plan/call_tool/execute_step/propose_finish` 名称都会在 Harness 边界拒绝。
 
-生产 `ModelTurn` 只接受三种显式动作：`{ action: "continue", plan?, toolCalls? }`、`{ action: "request_input", question, reason }` 和 `{ action: "finish", text }`。任意普通文本、旧式顶层 `requestInput` 或混合 native/content Tool 协议都不会隐式完成或执行。
+生产 `ModelResponse` 不接受模型 Action。Harness 只按原生/strict-structured Tool Calls、`nexora_update_plan`、`nexora_request_input` 和无调用的非空文本确定性路由。native mode 的普通 JSON content 永远不会被解析或执行；空响应、未知 Tool、非法 batch 和旧 Action envelope 都会整体拒绝。
 
-`createAgent()` 还可接收 Host Policy、由 `createAgentProfileSnapshot()` 创建的版本化 Profile，以及 Host 授权的 Project Instructions。Prompt Compiler 以 Kernel/Transport/Host/Profile/Project/Tool 的稳定顺序编译请求，Profile 仅是 strategy-only 内容，不能改变 Tool、权限、Approval、Evidence、Completion Gate 或 Run Status。Provider Adapter 每个请求只选择 native tools 或 JSON actions 一种 Transport，并把实际 cache usage 按 Attempt 写入审计。
+`createAgent()` 还可接收 Host Policy、由 `createAgentProfileSnapshot()` 创建的版本化 Profile，以及 Host 授权的 Project Instructions。Prompt Compiler 以 Kernel/Transport/Host/Profile/Project/Tool 的稳定顺序编译请求，Profile 仅是 strategy-only 内容，不能改变 Tool、权限、Approval、Evidence、Completion Gate 或 Run Status。Provider Adapter 每个 Run 固定选择 `native_tools` 或 strict `structured_output`，并把实际 cache usage 按 Attempt 写入审计。
 
 Decision Context 的公开 `historyCandidates` 字段提供当前任务相关的历史导航。候选只来自 Runtime 提供的当前 Run Authority 或 Branch Fork Base；Harness 负责排序、预算和精确 Rehydration。其他 Run、sibling Branch 与 parent post-fork ref 不会成为候选。
 
@@ -512,22 +521,22 @@ import {
   assertSucceeded,
   createAgentHarness,
   createScriptedProvider,
-  modelTurns
+  modelResponses
 } from "@nexora/harness/testing";
 
 const provider = createScriptedProvider({
-  modelTurns: [
-    modelTurns.plan({
+  modelResponses: [
+    modelResponses.plan({
       goal: "读取一个值",
       steps: [{
         objective: "读取值并基于可信事实确认结果"
       }]
     }),
-    modelTurns.tool({
+    modelResponses.tool({
       toolName: "example.lookup",
       input: { key: "example" }
     }),
-    modelTurns.finish({ summary: "读取完成" })
+    modelResponses.finish({ summary: "读取完成" })
   ]
 });
 
@@ -576,7 +585,7 @@ Provider Contract v4 只提交显式 `finish.text`、`continue` 中的可选 goa
 
 Decision Context 中的 Tool Observation 使用确定性 Eviction：active Check、未解决错误和安全失败高于普通 predecessor；同 class 采用稳定的 Step/Invocation/ID tie-breaker。8 条是普通候选默认值，约 32 KiB 是保险丝，实际收缩会根据 Provider Token Meter 的 soft limit 反复重测。`payloadMode: "fragment"` 只含固定算法片段，`reference` 完全省略 payload；两者都不能推断成完整事实。大型 success/failure payload 会按 object key 规范化后的 canonical JSON digest 存入 Artifact，Invocation 保存 provenance；只有合法成功 Evidence 才引用同一 Artifact。收缩过程不调用 LLM、不写 Checkpoint，只改变可重建投影；恢复事实、History Candidates、Session Archive 和 `repair` 在每次重建中按预算重新纳入 digest。
 
-Rehydration 由 Harness 在构建 Context 时完成，恢复结果随后与其他字段一起进入确定性收缩。Harness 从 Runtime port 读取 published Run refs，从独立 Memory Store 读取 exact-scope eligible Memory，并执行既有 digest/预算校验；最新 Input 点名的 ref、active `context_ref`、最高相关 Memory 与关键 Tool facts 可自动触发恢复。匹配 required Check 时请求 Runtime 生成 Run-owned Context Evidence。错误语义和预算值保持不变，生产 Adapter 只携带当前决策必要的事实和 ModelTurn Contract。
+Rehydration 由 Harness 在构建 Context 时完成，恢复结果随后与其他字段一起进入确定性收缩。Harness 从 Runtime port 读取 published Run refs，从独立 Memory Store 读取 exact-scope eligible Memory，并执行既有 digest/预算校验；最新 Input 点名的 ref、active `context_ref`、最高相关 Memory 与关键 Tool facts 可自动触发恢复。匹配 required Check 时请求 Runtime 生成 Run-owned Context Evidence。错误语义和预算值保持不变，生产 Adapter 只携带当前决策必要的事实和 ModelResponse Contract。
 
 E090 在上述 `availableContextRefs` 并集中加入 `historyCandidates.ref` 与 `relatedRefs`。候选本身不进入 Rehydration 内容预算；只有最新 Input 明确点名或 active `context_ref` Check 要求的精确 ref 才自动读取，其他候选仍只是 Harness 内部导航。生产 OpenAI-compatible Adapter 不投影 `historyCandidates`、`memoryCandidates` 或 Session Archive；它们仍参与 Provider-neutral Context 的确定性构建、收缩和 digest。
 

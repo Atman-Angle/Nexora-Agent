@@ -8,10 +8,11 @@ import { z } from "zod";
 import {
   createRuntime,
   type ModelDecisionContext,
+  type ModelResponse,
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/harness/src/index.js";
-import { materializeTestTurn } from "./runtime-testkit.js";
+import { materializeTestResponse } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -207,11 +208,11 @@ class CapturingProvider implements RuntimeProvider {
     this.#decide = decide;
   }
 
-  async decide(context: ModelDecisionContext): Promise<unknown> {
+  async decide(context: ModelDecisionContext): Promise<ModelResponse> {
     const call = this.contexts.length;
     this.frozen.push(Object.isFrozen(context) && Object.isFrozen(context.run));
     this.contexts.push(structuredClone(context));
-    return materializeTestTurn(this.#decide(context, call), context);
+    return materializeTestResponse(this.#decide(context, call), context);
   }
 
 }

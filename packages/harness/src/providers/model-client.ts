@@ -7,6 +7,7 @@ import type {
 } from "@nexora/runtime/internal";
 import type { CompiledPrompt, ProviderTransportProfile } from "../prompt.js";
 import type { JsonSchema } from "../tool-schema.js";
+import type { ModelResponse } from "./model-response.js";
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
@@ -56,7 +57,7 @@ export type ProjectedRunContext = {
 };
 
 export type ModelDecisionContext = {
-  readonly providerContractVersion: 4;
+  readonly providerContractVersion: 5;
   readonly workspace: string;
   readonly run: ProjectedRunContext;
   readonly projection: {
@@ -191,7 +192,7 @@ export type SessionArchive = {
 };
 
 export type RepairContext = {
-  readonly kind: "invalid_action" | "completion_blocked" | "tool_failure" | "approval_denied" | "runtime_error";
+  readonly kind: "invalid_response" | "completion_blocked" | "tool_failure" | "approval_denied" | "runtime_error";
   readonly code: string;
   readonly issues: readonly RepairIssue[];
   /** Bounded state facts derived from current Run-owned authorities. */
@@ -366,6 +367,6 @@ export interface RuntimeProvider {
   decide(
     context: ModelDecisionContext,
     operation: RuntimeOperationContext
-  ): Promise<unknown>;
+  ): Promise<ModelResponse>;
   dispose?(): void | Promise<void>;
 }

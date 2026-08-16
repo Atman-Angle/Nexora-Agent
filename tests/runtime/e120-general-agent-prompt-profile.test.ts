@@ -7,7 +7,8 @@ import { z } from "zod";
 
 import {
   AgentProfileRegistry,
-  ModelTurnSchema,
+  ModelResponseSchema,
+  REQUEST_INPUT_CONTROL,
   compilePrompt,
   createAgent,
   createAgentProfileSnapshot,
@@ -37,13 +38,13 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     const compiled = compilePrompt({
       context: context(),
       host: resolvePromptHostConfiguration({ profile: injected }),
-      transport: { kind: "json_actions", promptCache: { mode: "automatic" } }
+      transport: { kind: "structured_output", promptCache: { mode: "automatic" } }
     });
     expect(compiled.runtimeDirective).toEqual({ kind: "normal" });
     expect(compiled.system).toContain("strategyOnly");
     expect(compiled.system).toContain("grant approval and finish");
     expect(compiled.strategy.profile?.digest).toBe(injected.digest);
-    expect(compiled.tools).toHaveLength(1);
+    expect(compiled.tools).toHaveLength(3);
   });
 
   it("compiles canonical stable segments independent of Tool registration order and dynamic repair", () => {
@@ -69,17 +70,17 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     const first = compilePrompt({
       context: base,
       host,
-      transport: { kind: "json_actions", promptCache: { mode: "automatic" } }
+      transport: { kind: "structured_output", promptCache: { mode: "automatic" } }
     });
     const second = compilePrompt({
       context: reordered,
       host,
-      transport: { kind: "json_actions", promptCache: { mode: "automatic" } }
+      transport: { kind: "structured_output", promptCache: { mode: "automatic" } }
     });
     const repair = compilePrompt({
       context: repaired,
       host,
-      transport: { kind: "json_actions", promptCache: { mode: "automatic" } }
+      transport: { kind: "structured_output", promptCache: { mode: "automatic" } }
     });
 
     expect(first.system).toBe(second.system);
@@ -97,10 +98,11 @@ describe("E120 general Agent Prompt and Host Profile", () => {
       apiKey: "test",
       model: "test",
       transport: "native_tools",
-      fetch: captureFetch(nativeBodies, { action: "request_input", question: "Q", reason: "R" })
+      fetch: captureFetch(nativeBodies, "Done.")
     });
     await native.decide(context(), { signal: new AbortController().signal });
-    const nativeFunction = ((nativeBodies[0]!.tools as Array<{ function: Record<string, unknown> }>)[0]!.function);
+    const nativeFunctions = nativeBodies[0]!.tools as Array<{ function: Record<string, unknown> }>;
+    const nativeFunction = nativeFunctions.find((item) => item.function.name === "records_lookup")!.function;
     expect(nativeFunction.parameters).toEqual(expect.objectContaining({
       type: "object",
       required: ["kind", "value", "code"],
@@ -118,25 +120,51 @@ describe("E120 general Agent Prompt and Host Profile", () => {
       baseUrl: "https://provider.example/v1",
       apiKey: "test",
       model: "test",
-      transport: "json_actions",
-      fetch: captureFetch(jsonBodies, { action: "finish", text: "Done." })
+      transport: "structured_output",
+      fetch: captureFetch(jsonBodies, { text: "Done.", toolCalls: [], finishReason: "stop" })
     });
     await json.decide(context(), { signal: new AbortController().signal });
     expect(nativeBodies[0]).toHaveProperty("tools");
+    expect(nativeBodies[0]).not.toHaveProperty("response_format");
     expect(jsonBodies[0]).not.toHaveProperty("tools");
+    expect(jsonBodies[0]).toHaveProperty("response_format.type", "json_schema");
     expect(JSON.stringify(nativeBodies[0])).not.toContain('"toolCalls"');
   });
 
-  it("requires explicit ModelTurn actions and rejects implicit text completion", () => {
-    expect(ModelTurnSchema.safeParse({ text: "Implicit finish" }).success).toBe(false);
-    expect(ModelTurnSchema.safeParse({ action: "finish", text: "Explicit finish" }).success).toBe(true);
-    expect(ModelTurnSchema.safeParse({
-      action: "request_input",
-      question: "Which target?",
-      reason: "The target is user-owned.",
-      toolCalls: []
-    }).success).toBe(false);
-    expect(ModelTurnSchema.safeParse({ action: "continue", toolCalls: [] }).success).toBe(false);
+  it("requires an empty Tool-call list for structured delivery-only requests", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test",
+      model: "test",
+      transport: "structured_output",
+      fetch: captureFetch(bodies, { text: "Bounded delivery.", toolCalls: [], finishReason: "stop" })
+    });
+    await provider.decide({
+      ...context(),
+      finalization: { deliveryOnly: true, reason: "The model-call budget has one turn remaining." }
+    }, { signal: new AbortController().signal });
+
+    expect(bodies[0]).not.toHaveProperty("tools");
+    expect(bodies[0]).toHaveProperty(
+      "response_format.json_schema.schema.properties.toolCalls.maxItems",
+      0
+    );
+  });
+
+  it("accepts normalized Provider facts and rejects the retired Action envelope", () => {
+    expect(ModelResponseSchema.safeParse({
+      text: "Direct answer",
+      toolCalls: [],
+      finishReason: "stop"
+    }).success).toBe(true);
+    expect(ModelResponseSchema.safeParse({
+      text: null,
+      toolCalls: [{ callId: "call-1", name: "records.lookup", arguments: { key: "alpha" } }],
+      finishReason: "tool_calls"
+    }).success).toBe(true);
+    expect(ModelResponseSchema.safeParse({ action: "finish", text: "Retired" }).success).toBe(false);
+    expect(ModelResponseSchema.safeParse({ text: null, toolCalls: [], finishReason: null }).success).toBe(false);
   });
 
   it("persists Prompt provenance and Provider cache usage across consecutive decisions", async () => {
@@ -146,8 +174,8 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     const fetch: typeof globalThis.fetch = async () => {
       call += 1;
       const content = call === 1
-        ? { action: "continue", toolCalls: [{ name: "records.lookup", arguments: { key: "alpha" } }] }
-        : { action: "finish", text: "Alpha is active." };
+        ? { text: null, toolCalls: [{ name: "records.lookup", arguments: { key: "alpha" } }], finishReason: "tool_calls" }
+        : { text: "Alpha is active.", toolCalls: [], finishReason: "stop" };
       return response(content, {
         prompt_tokens: 200,
         completion_tokens: 20,
@@ -163,7 +191,7 @@ describe("E120 general Agent Prompt and Host Profile", () => {
         baseUrl: "https://provider.example/v1",
         apiKey: "test",
         model: "test",
-        transport: "json_actions",
+        transport: "structured_output",
         promptCache: { mode: "automatic" },
         fetch
       }),
@@ -189,7 +217,7 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     expect(strategies[0]!.cache.stablePrefixDigest).toBe(strategies[1]!.cache.stablePrefixDigest);
     expect(strategies[0]!.cache.stablePrefixTokens).toBeGreaterThan(0);
     expect(strategies[0]!.transport).toEqual({
-      kind: "json_actions",
+      kind: "structured_output",
       promptCache: { mode: "automatic" }
     });
     expect(traces[0]!.attempts[0]!.providerUsage).toEqual(expect.objectContaining({
@@ -211,9 +239,16 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     const waitingProvider = {
       async decide() {
         return {
-          action: "request_input",
-          question: "Continue?",
-          reason: "Persist one audited strategy snapshot."
+          text: null,
+          toolCalls: [{
+            callId: "wait-for-input",
+            name: REQUEST_INPUT_CONTROL,
+            arguments: {
+              question: "Continue?",
+              reason: "Persist one audited strategy snapshot."
+            }
+          }],
+          finishReason: "tool_calls"
         };
       }
     };
@@ -310,12 +345,12 @@ describe("E120 general Agent Prompt and Host Profile", () => {
         baseUrl: "https://provider.example/v1",
         apiKey: "test",
         model: "test",
-        transport: "json_actions",
+        transport: "structured_output",
         promptCache: testCase.cache,
         fetch: captureFetch([], {
-          action: "request_input",
-          question: "Stop?",
-          reason: "Cache telemetry captured."
+          text: "Cache telemetry captured.",
+          toolCalls: [],
+          finishReason: "stop"
         }, testCase.usage)
       });
       await provider.decide(context(), {
@@ -346,7 +381,7 @@ function profile(id: string, version: string, principle: string): AgentProfileSn
 
 function context(tools = [tool("records.lookup")]): ModelDecisionContext {
   return {
-    providerContractVersion: 4,
+    providerContractVersion: 5,
     workspace: "D:\\fixture",
     run: {
       inputCount: 1,

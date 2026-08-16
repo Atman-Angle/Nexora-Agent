@@ -94,6 +94,7 @@ import {
   RunControlError,
   createBuiltInTools,
   createRuntime,
+  modelResponses,
   type ModelDecisionContext,
   type RuntimeEvent,
   type RuntimeProvider
@@ -104,26 +105,17 @@ let call = 0;
 const provider: RuntimeProvider = {
   async decide(_context: ModelDecisionContext) {
     call += 1;
-    if (call === 1) return {
-      action: "continue",
-      plan: {
+    if (call === 1) return modelResponses.plan({
         goal: "Write D2 output",
         tasks: [{
           objective: "Write output"
         }]
-      }
-    };
-    if (call === 2) return {
-      action: "continue",
-      toolCalls: [{
-          name: "filesystem.write",
-          arguments: { path: "d2-output.txt", content: "trusted D2 output" }
-        }]
-    };
-    return {
-      action: "finish",
-      text: "D2 write verified"
-    };
+      });
+    if (call === 2) return modelResponses.tool({
+      name: "filesystem.write",
+      arguments: { path: "d2-output.txt", content: "trusted D2 output" }
+    });
+    return modelResponses.text("D2 write verified");
   }
 };
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { modelResponses } from "@nexora/harness";
 
 import {
   createBenchTelemetry,
@@ -23,7 +24,7 @@ describe("NexoraBench component boundary", () => {
     const provider = observeProvider({
       transport,
       async decide() {
-        return { action: "finish", text: "done" };
+        return modelResponses.text("done");
       }
     }, observations);
 

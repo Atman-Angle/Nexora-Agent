@@ -14,7 +14,7 @@ import {
 import {
   assertSucceeded,
   createScriptedProvider,
-  modelTurns
+  modelResponses
 } from "../../packages/harness/src/testing/index.js";
 
 const roots: string[] = [];
@@ -54,8 +54,8 @@ describe("Automated Daily Research Agent", () => {
     roots.push(workspace);
     const profile = researchProfile();
     const provider = createScriptedProvider({
-      modelTurns: [
-        modelTurns.plan({
+      modelResponses: [
+        modelResponses.plan({
           goal: "Generate the configured daily media outputs.",
           steps: [
             { objective: "Discover daily candidates." },
@@ -63,15 +63,15 @@ describe("Automated Daily Research Agent", () => {
             { objective: "Validate configured outputs." }
           ]
         }),
-        modelTurns.tool({
+        modelResponses.tool({
           toolName: "news.discover",
           input: { query: "人工智能 模型", since: "2026-08-01T00:00:00.000Z", limit: 20, excludeKeywords: ["招聘"] }
         }),
-        modelTurns.tool({
+        modelResponses.tool({
           toolName: "news.analyze_selection",
           input: { items: [first, second] }
         }),
-        modelTurns.tool({
+        modelResponses.tool({
           toolName: "news.validate_output",
           input: {
             deliverables: [
@@ -80,7 +80,7 @@ describe("Automated Daily Research Agent", () => {
             ]
           }
         }),
-        modelTurns.finish({ summary: `${draftArticle}\n\n${draftScript}` })
+        modelResponses.finish({ summary: `${draftArticle}\n\n${draftScript}` })
       ]
     });
     const agent = createResearchAgent({
@@ -114,12 +114,12 @@ describe("Automated Daily Research Agent", () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-research-citation-"));
     roots.push(workspace);
     const provider = createScriptedProvider({
-      modelTurns: [
-        modelTurns.plan({
+      modelResponses: [
+        modelResponses.plan({
           goal: "Validate one generated article.",
           steps: [{ objective: "Validate citations." }]
         }),
-        modelTurns.tool({
+        modelResponses.tool({
           toolName: "news.validate_output",
           input: {
             deliverables: [{

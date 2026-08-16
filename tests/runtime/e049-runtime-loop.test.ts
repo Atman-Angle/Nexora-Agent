@@ -36,7 +36,7 @@ describe("E049 one persisted Runtime loop", () => {
       toolName: "filesystem.read",
       status: "succeeded"
     })]);
-    expect(view.events.map((event) => event.type)).not.toContain("action.rejected");
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
     runtime.close();
   });
 

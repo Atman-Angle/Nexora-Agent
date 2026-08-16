@@ -12,6 +12,12 @@ import {
   type RuntimeProvider
 } from "../../packages/harness/src/index.js";
 import { ToolResultSchema } from "../../packages/runtime/src/runtime-types.js";
+import {
+  materializeTestResponse,
+  responseCall,
+  responseInput,
+  responsePlan
+} from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -35,30 +41,24 @@ describe("E109 truthful Tool progress", () => {
 
   it("bounds semantic repair by the ordinary loop budgets without consuming Tool retry budget", async () => {
     const root = workspace();
-    const plan = {
-      action: "continue",
-      plan: {
+    const plan = responsePlan({
         goal: "Read a required file.",
         tasks: [{
           objective: "Read the required file."
         }]
-      }
-    };
-    const revisedPlan = {
-      action: "continue",
-      plan: {
+      });
+    const revisedPlan = responsePlan({
         tasks: [{
           objective: "Read the missing required file after revising the approach."
         }]
-      }
-    };
+      });
     const provider = scriptedProvider([
       plan,
-      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: {} }] },
+      responseCall("filesystem.read", {}),
       revisedPlan,
-      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
-      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: {} }] },
-      { action: "request_input", question: "Provide a valid path.", reason: "The known path failed."  }
+      responseCall("filesystem.read", { path: "missing.txt" }),
+      responseCall("filesystem.read", {}),
+      responseInput("Provide a valid path.", "The known path failed.")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -81,7 +81,7 @@ describe("E109 truthful Tool progress", () => {
     await runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(view.events.filter((item) => item.type === "action.rejected")).toHaveLength(2);
+    expect(view.events.filter((item) => item.type === "response.rejected")).toHaveLength(2);
     expect(view.events.filter((item) => item.type === "plan.set")).toHaveLength(2);
     expect(view.events.filter((item) => item.type === "tool.failed")).toHaveLength(1);
     expect(view.snapshot.budgetsUsed.retries).toBe(0);
@@ -95,28 +95,19 @@ describe("E109 truthful Tool progress", () => {
     const root = workspace();
     writeFileSync(join(root, "target.txt"), "VALUE\n", "utf8");
     const provider = scriptedProvider([
-      {
-        action: "continue",
-        plan: {
+      responsePlan({
           goal: "Change target.txt.",
           tasks: [{
             objective: "Patch the target."
           }]
-        }
-      },
-      {
-        action: "continue",
-        toolCalls: [{
-            name: "filesystem.patch",
-            arguments: {
+        }),
+      responseCall("filesystem.patch", {
               path: "target.txt",
               expectedDigest: digest("VALUE\n"),
               find: "VALUE",
               replace: "VALUE"
-            }
-          }]
-      },
-      { action: "request_input", question: "Provide a replacement that changes the file.", reason: "The proposed replacement was identical." }
+            }),
+      responseInput("Provide a replacement that changes the file.", "The proposed replacement was identical.")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -134,7 +125,7 @@ describe("E109 truthful Tool progress", () => {
     expect(view.toolInvocations).toHaveLength(0);
     expect(view.snapshot.evidence).toHaveLength(0);
     expect(view.events.some((item) => item.type === "approval.requested")).toBe(false);
-    expect(JSON.stringify(view.events.find((item) => item.type === "action.rejected")?.payload))
+    expect(JSON.stringify(view.events.find((item) => item.type === "response.rejected")?.payload))
       .toContain("must differ");
   });
 
@@ -142,20 +133,13 @@ describe("E109 truthful Tool progress", () => {
     const root = workspace();
     const contexts: ModelDecisionContext[] = [];
     const provider = scriptedProvider([
-      {
-        action: "continue",
-        plan: {
+      responsePlan({
           goal: "Run the verifier and diagnose failure.",
           tasks: [{
             objective: "Run the verifier."
           }]
-        }
-      },
-      {
-        action: "continue",
-        toolCalls: [{
-            name: "shell.execute",
-            arguments: {
+        }),
+      responseCall("shell.execute", {
               command: process.execPath,
               args: [
                 "-e",
@@ -164,10 +148,8 @@ describe("E109 truthful Tool progress", () => {
               ],
               cwd: ".",
               timeoutMs: 10_000
-            }
-          }]
-      },
-      { action: "request_input", question: "The verifier failed. Should I revise the implementation?", reason: "The process started and returned a non-zero exit." }
+            }),
+      responseInput("The verifier failed. Should I revise the implementation?", "The process started and returned a non-zero exit.")
     ], contexts);
     const runtime = createRuntime({
       workspace: root,
@@ -227,7 +209,7 @@ function scriptedProvider(
       contexts.push(context);
       const decision = decisions[index++];
       if (decision === undefined) throw new Error("E109 Provider decision queue exhausted.");
-      return decision;
+      return materializeTestResponse(decision, context);
     }
   };
 }

@@ -3,6 +3,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "@nexora/harness";
+import { modelResponses } from "@nexora/harness";
 import { z } from "zod";
 
 import type { ScenarioFactory } from "../../../../src/scenario.js";
@@ -16,24 +17,18 @@ function provider(): RuntimeProvider {
   return {
     async decide(context: ModelDecisionContext) {
       if (context.run.currentPlan === null) {
-        return {
-          action: "continue",
-          plan: {
+        return modelResponses.plan({
             goal: "Start four independent reads and preserve the first completed item when the Host cancels the remaining batch.",
             tasks: [{
               objective: "Read four independent items as one batch.",
 
             }]
-          }
-        };
+          });
       }
-      return {
-        action: "continue",
-        toolCalls: Array.from({ length: 4 }, (_, index) => ({
+      return modelResponses.tools({ calls: Array.from({ length: 4 }, (_, index) => ({
             name: "fixture.partial_batch_read",
             arguments: { index: index + 1 }
-          }))
-      };
+          })) });
     }
   };
 }

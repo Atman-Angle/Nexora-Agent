@@ -34,16 +34,16 @@ flowchart TD
     EVICT --> CONTEXT
     FIT -- "否" --> WIRE["最小 Provider Wire Projection<br/>Rehydrated Facts + Repair<br/>预算判定进入 Ledger"]
     WIRE --> MODEL["Harness → Provider.decide"]
-    MODEL --> TURNPARSE{"严格 ModelTurn Schema"}
-    TURNPARSE -- "非法" --> REJECT["结构化诊断 + 原始输出 Artifact<br/>action.rejected；统一 loop 预算有界"]
+    MODEL --> TURNPARSE{"严格 ModelResponse Schema<br/>Provider facts，不含 Runtime Action"}
+    TURNPARSE -- "非法" --> REJECT["结构化诊断 + 原始输出 Artifact<br/>response.rejected；统一 loop 预算有界"]
     REJECT --> LOOP
-    TURNPARSE -- "合法" --> COMPILE["Harness 唯一语义编译器<br/>生成 Plan/Command proposal"]
-    COMPILE -- "plan → set_plan" --> PLAN["Runtime 生成 identity + goalDigest<br/>version/CAS 保存唯一当前 Plan"]
+    TURNPARSE -- "合法" --> COMPILE["Harness 按 response shape/control name<br/>确定性生成 Runtime command"]
+    COMPILE -- "nexora_update_plan → set_plan" --> PLAN["Runtime 生成 identity + goalDigest<br/>version/CAS 保存唯一当前 Plan"]
     PLAN --> LOOP
-    COMPILE -- "request_input" --> INPUTCHECK{"无 Plan + 零 Tool + 有可用 Tool<br/>且尚未纠错？"}
+    COMPILE -- "nexora_request_input" --> INPUTCHECK{"无 Plan + 零 Tool + 有可用 Tool<br/>且尚未纠错？"}
     INPUTCHECK -- "是" --> REJECT
     INPUTCHECK -- "否：确需用户信息" --> WAIT["State Machine → waiting"]
-    COMPILE -- "toolCalls → call_tool/execute_step" --> BIND["匹配时关联 Step/Check provenance<br/>无 Plan 仍可安全执行"]
+    COMPILE -- "Runtime toolCalls → call_tool/execute_step" --> BIND["匹配时关联 Step/Check provenance<br/>无 Plan 仍可安全执行"]
     BIND --> PARSE{"Tool Schema parse<br/>默认值展开 + JSON canonicalize"}
     PARSE -- "非法" --> REJECT
     PARSE -- "合法" --> APPROVAL{"read 或已批准？"}
@@ -77,7 +77,7 @@ flowchart TD
 | Task Contract | Harness 从原始输入、可选 Plan goal 与 objective-only Tasks 派生，Runtime 补 workspace/version/inputVersion | Runtime 仅以 version/CAS 修订 | Plan digest、Harness Context、确定性完成边界 | Run snapshot；Zod 校验；不进入 Provider wire |
 | Structured Plan | Harness 将有序 objective-only Tasks 编译为导航 Step，默认不生成 Acceptance Check；Runtime 生成 identity | Runtime CAS 修订并保留完成前缀 | 方向、provenance、Step；不是 Capability 白名单或完成证明 | Run snapshot 唯一当前版本 |
 | Prompt Strategy | Host 选择 versioned Profile/Host Policy/Project Instructions，Harness 加入通用 Kernel、canonical Tool Schema 与单一 Transport | Compiler 固定语义优先级与 stable-prefix layout；Profile revision 必须显式 | Provider system/input/tools；只影响策略，不影响权限或完成 | 每次调用以 digest/manifest 写入 `model_call_audits.manifest_json.strategy`；正文按 capture policy |
-| ModelTurn Contract | Harness 用单一显式 `action` 判别联合校验 `continue/request_input/finish` | 每轮独立、字段局部修复；普通文本不触发完成 | Provider 表达语义下一步；不得携带 Runtime-owned 字段 | 进程内只读数据；不是第二权威 |
+| ModelResponse Contract | Adapter 归一化 `text/toolCalls/finishReason`；Harness 校验 call ID、名称、参数与 bounded batch | 每轮独立、整批先校验后执行；普通 native content 不解析为 Tool | Provider 表达文本或 Tool Call facts；不得携带 Runtime-owned Action/ID | 进程内只读数据；不是第二权威 |
 | Context Budget | Harness 使用 Provider Model Profile + Provider-aware Token Meter | 每次 decision 调用前对最终 wire 重算 | Harness 触发确定性收缩并发送最小合法投影；预算判定不直接失败 Run | 通过 Runtime port 写 `model_calls`；不写回 Context/Run task facts |
 | Context + Memory Benchmark | versioned scenario manifest + 生产 Adapter/Runtime + 本地确定性 Provider stub | runner 收集 Vitest 与持久化 Run/Evidence/Model Call 证据，缺失/failed/skipped 一律失败 | 验证 Eviction、恢复、完成与安全合同；不参与生产决策 | timestamped report；不是 Run、Context、Memory 或 Provider Authority，不能代替真实 Provider Eval |
 | Model Call Ledger | Harness 在 Provider 调用前请求 Runtime 创建 logical call | Harness 报告 success/failure/cancel/interrupted/refused 与 usage，Runtime 持久化 | `runtime.inspect(runId).modelCalls`、成本/诊断 | `model_calls`；只拥有调用审计，不参与 Plan/Evidence/完成判断 |
@@ -91,7 +91,7 @@ flowchart TD
 | Tool Invocation | Runtime 生成 ID/digest/key/token | result/unknown/recovery 原子更新 | 恢复、Observation、完成门 | `tool_invocations` |
 | Tool Observation | Harness 从 Runtime 提供的 completed Invocation 投影 | active Check/未解决错误/安全约束优先；稳定 tie-break；Token Meter 驱动收缩 | 下一轮 Provider 决策 | full/fragment/reference 都是可重建派生投影；8 项默认值、32 KiB 保险丝 |
 | Evidence | 成功 Tool、用户恢复确认或 required `context_ref` 的精确恢复 | Plan 修订仅保留有效 Check 证据；大型 facts 绑定内容寻址 Artifact；计划外 Tool 结果生成绑定 Invocation 的 `run-unplanned` Evidence，不伪造 Plan Check | Step、Completion Gate、Result、Observation ref | Run snapshot，绑定 provenance/可选 Invocation/Artifact；历史 validator Evidence 只读且不参与新完成判断 |
-| Finish provenance | Harness 从 `ModelTurn.text` 编译只含 summary 的 finish proposal；Runtime 从当前 Evidence、Invocation、Artifact 确定性派生 | Provider 不提供 ID；缺失、跨 Run、digest 漂移或未决 Effect 拒绝 | Runtime Completion Gate、Result、成功 Event | Gate 通过后与 Result 原子持久化；无第二次 Provider 调用 |
+| Finish provenance | Harness 仅在 `ModelResponse.toolCalls=[]` 且 text 非空时编译只含 summary 的 finish proposal；Runtime 从当前 Evidence、Invocation、Artifact 确定性派生 | Provider 不提供 Runtime ID；缺失、跨 Run、digest 漂移或未决 Effect 拒绝 | Runtime Completion Gate、Result、成功 Event | Gate 通过后与 Result 原子持久化；无第二次 Provider 调用 |
 | Delivery | 成功时使用已验证模型文本；失败、取消或外部阻塞时从权威事实确定性派生 | 终态或外部阻塞时随 Run 持久化，不改变真实 status | CLI、Host、用户最终说明 | `RunSnapshot.delivery`；不能把部分工作标记为成功 |
 | Event / Journal Record | Store 成功提交时追加 schema/actor/ref/payload/previous/record digest | 永不修改；旧记录明确 `legacy_partial` | observer、subscription、有界 history、完整性验证 | `run_events`；唯一过程时间线，不是 Run 状态源 |
 | Artifact | 大内容按 SHA-256 创建 | 不修改；读取和审计校验重新计算 digest | Tool result/ref、允许捕获的脱敏审计正文、人工审计 | `.nexora/artifacts` |
@@ -125,7 +125,7 @@ flowchart LR
 
     LARGE["大内容"] --> ART["Artifact Store<br/>内容寻址"]
     ART -->|"digest/ref"| INV
-    REJECTED["非法 ModelTurn 输出"] --> ART
+    REJECTED["非法 Provider Response"] --> ART
     ART -->|"detailsArtifact"| EVENTS
 ```
 
@@ -162,7 +162,7 @@ flowchart TD
 4. 在该边界写 RED；不要在下游增加补偿状态。
 5. 修复后同时验证正向路径和 Resume/失败分支，确保没有第二个真相源。
 
-`ModelTurn`、`AgentWorkingContext`、公共 Inspection 和 Runtime Event 都是从权威数据重新投影的对象，不能反写 Run。Harness 在交给 Provider 前解除投影与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 由 Runtime 持久化，但记录内容由 Harness 的 Provider Gateway 提交；它不保存或覆盖 Context 内容，也不参与完成判断。
+`ModelResponse`、`AgentWorkingContext`、公共 Inspection 和 Runtime Event 都是从边界事实或 Authority 重新投影的对象，不能反写 Run。Harness 在交给 Provider 前解除投影与 Run/Tool Contract 的对象引用并递归冻结。RunHandle 只保存 `runId`，活跃 Promise/AbortController map 只协调当前执行段，subscription cursor 只协调交付；它们都不保存状态或判断完成。取消必须由 State Machine 持久化 `cancelled`，未知非幂等 Effect 仍由 Invocation/Recovery 决定 blocked。Model Call Ledger 由 Runtime 持久化，但记录内容由 Harness 的 Provider Gateway 提交；它不保存或覆盖 Context 内容，也不参与完成判断。
 
 Tool Observation 采用同一原则：`tool_invocations.result_json/error_json` 保留完整 Tool Authority。价值 class 依次覆盖 active Check、未解决错误、安全/审批失败和 predecessor Evidence，同 class 使用 `stepOrder → invocationSequence → invocationId`。大型 success/failure payload 都以 canonical JSON 计算 digest 并写入 Artifact；Invocation 保存 payload provenance，只有合法绑定同一成功 Invocation 的既有 Evidence 才引用该 Artifact。critical 大 payload 保留明确标记的固定 fragment，普通大 payload 转 reference。Provider soft token limit 会触发继续收缩并重测；32 KiB 仅作保险丝。任何 fragment/reference 都不能冒充完整 facts。
 
@@ -228,7 +228,7 @@ SQLite、Revision、事务、Migration、Lease/Fencing
 
 Harness 只通过 `@nexora/runtime` 和 `@nexora/runtime/internal` ports 使用机械 Authority；Runtime 禁止导入 Harness、Provider、Memory 或 Provider-facing Context。两个 tarball 分别发布，外部消费者必须同时验证 Harness 的 `.`/`./testing` 与 Runtime 的 `.`/`./internal` exports。
 
-平行公开 Action API 和 Plan+首批 read 组合协议仍处于关闭 gate；现有 `RuntimeEngine`/`RunHandle`、scripted Provider、production Provider Adapter 和 Bench Runner 继续复用同一循环与 Authority 链。
+平行公开 Action API 仍处于关闭 gate；Plan control 与首批 Tool calls 可在同一 `ModelResponse` 中出现，但仍由 Harness 顺序编译并复用同一 Runtime Action、Approval、Invocation、Evidence 与 Completion Authority 链。
 
 `runtime-public.ts` 只投影并冻结 `RunInspection`/`RunFinalResult`；`result()` 必须先读取 State Machine 的 `failed/succeeded` 终态，waiting/blocked 不产生 Final。该 façade 不拥有持久化 Authority。
 

@@ -271,7 +271,7 @@ describe("E084 Model / Provider configuration", () => {
       decisions += 1;
       if (decisions === 1) return providerResponse(setPlan());
       if (decisions === 2) return providerResponse(callTool());
-      return providerResponse({ action: "finish", text: "Read the target file." });
+      return providerResponse({ text: "Read the target file.", toolCalls: [], finishReason: "stop" });
     };
     const runtime = createRuntime({
       workspace,
@@ -281,7 +281,7 @@ describe("E084 Model / Provider configuration", () => {
         apiKey: "test-key",
         model: "test-model",
         thinkingToggleParam: "enable_thinking",
-        transport: "json_actions",
+        transport: "structured_output",
         fetch
       }),
       tools: [readTool()]
@@ -334,7 +334,7 @@ function decisionContext(currentPlan: unknown, semanticPressure = false): ModelD
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:test" },
-    providerContractVersion: 4,
+    providerContractVersion: 5,
     activeInvocations: [],
     toolObservations: [],
     rehydratedFacts: [],
@@ -356,20 +356,23 @@ function decisionContext(currentPlan: unknown, semanticPressure = false): ModelD
 
 function setPlan(): unknown {
   return {
-    action: "continue",
-    plan: {
-      goal: "Read the target file",
-      tasks: [{
-        objective: "Read the target file"
-      }]
-    }
+    text: null,
+    toolCalls: [{
+      name: "nexora_update_plan",
+      arguments: {
+        goal: "Read the target file",
+        tasks: [{ objective: "Read the target file" }]
+      }
+    }],
+    finishReason: "tool_calls"
   };
 }
 
 function callTool(): unknown {
   return {
-    action: "continue",
-    toolCalls: [{ name: "test.read", arguments: { name: "target" } }]
+    text: null,
+    toolCalls: [{ name: "test.read", arguments: { name: "target" } }],
+    finishReason: "tool_calls"
   };
 }
 
@@ -420,7 +423,7 @@ function responseForBody(body: Record<string, unknown>): unknown {
   const _payload = messages?.[1] === undefined
     ? null
     : JSON.parse(messages[1].content) as { mode?: string };
-  return { action: "request_input", question: "Q", reason: "R" };
+  return { text: "Q", toolCalls: [], finishReason: "stop" };
 }
 
 function temporaryWorkspace(): string {

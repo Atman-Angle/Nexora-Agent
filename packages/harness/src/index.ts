@@ -83,6 +83,7 @@ export type {
   ProviderTokenMeter,
   ProviderTokenUsage,
   ReasoningPolicy,
+  RuntimeOperationContext,
   RuntimeProvider,
   SessionArchive,
   SessionArchiveMilestone,
@@ -123,17 +124,20 @@ export {
 } from "./prompt.js";
 
 export {
-  ModelTurnSchema,
+  ModelResponseSchema,
   ModelPlanUpdateSchema,
   ModelPlanTaskSchema,
-  ModelToolCallSchema,
+  ProviderToolCallSchema,
   ModelInputRequestSchema,
-  type ModelTurn,
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL,
+  modelResponses,
+  type ModelResponse,
   type ModelPlanUpdate,
   type ModelPlanTask,
-  type ModelToolCall,
+  type ProviderToolCall,
   type ModelInputRequest
-} from "./providers/model-turn.js";
+} from "./providers/model-response.js";
 
 export {
   ModelConfigError,
@@ -147,6 +151,7 @@ export {
   type ProviderAdapterDefinition,
   type ProviderCompletionOperation,
   type ProviderCompletionRequest,
+  type ProviderResponseFormat,
   type ProviderRequestTokenMeter
 } from "./providers/adapter.js";
 

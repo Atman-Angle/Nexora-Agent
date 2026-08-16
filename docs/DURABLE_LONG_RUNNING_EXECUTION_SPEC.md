@@ -2,6 +2,8 @@
 
 状态：`IMPLEMENTED / FEATURE_CORE_COMPLETE / RELEASE_GATES_PENDING`
 
+历史说明：本文的持久化、恢复与审计 Authority 仍有效；其中 `ModelTurn` 名称是历史协议，当前 Provider 边界以 `PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md` 为准。
+
 Foundation mode：`REPAIR`
 
 首个 Feature mode：`VERIFY / COMPLETE`

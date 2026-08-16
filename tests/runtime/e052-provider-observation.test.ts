@@ -43,7 +43,7 @@ describe("E052 Provider observation closure", () => {
         baseUrl: stub.baseUrl,
         apiKey: "test-key",
         model: "test-model",
-        transport: "json_actions"
+        transport: "structured_output"
       }),
       tools: createBuiltInTools()
     });
@@ -332,36 +332,49 @@ async function observationProviderStub(workspace: string): Promise<ProviderStub>
 
 function observationDecision(_workspace: string, context: ObservationContext, index: number): unknown {
   if (index === 0) {
-    return { action: "continue", plan: { goal: "Use real Tool results to complete the task", tasks: [
-      { objective: "Read note.txt" },
-      { objective: "Patch note.txt" },
-      { objective: "Validate note.txt" }
-    ] } };
+    return structuredPlan("Use real Tool results to complete the task", [
+      "Read note.txt",
+      "Patch note.txt",
+      "Validate note.txt"
+    ]);
   }
   if (index === 1) {
-    return { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "note.txt" } }] };
+    return structuredTool("filesystem.read", { path: "note.txt" });
   }
   if (index === 2) {
     const read = observations(context).find((item) => item.toolName === "filesystem.read" && item.status === "succeeded");
     const output = read?.facts as { content?: unknown; digest?: unknown } | undefined;
     if (output?.content !== "before\n" || typeof output.digest !== "string") {
-      return { action: "request_input", question: "The real read result is unavailable.", reason: "Missing Tool observation"  };
+      return structuredInput("The real read result is unavailable.", "Missing Tool observation");
     }
-    return {
-      action: "continue",
-      toolCalls: [{ name: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: output.digest, find: "before", replace: "after" } }]
-    };
+    return structuredTool("filesystem.patch", { path: "note.txt", expectedDigest: output.digest, find: "before", replace: "after" });
   }
   if (index === 3) {
-    return {
-      action: "continue",
-      toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"], cwd: "." } }]
-    };
+    return structuredTool("shell.execute", { command: process.execPath, args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"], cwd: "." });
   }
   if (index === 4) {
-    return { action: "finish", text: "Changed note.txt and validated the result." };
+    return structuredText("Changed note.txt and validated the result.");
   }
-  return { action: "request_input", question: "Unexpected Provider call.", reason: "Stop"  };
+  return structuredInput("Unexpected Provider call.", "Stop");
+}
+
+function structuredPlan(goal: string, objectives: readonly string[]): unknown {
+  return structuredTool("nexora_update_plan", {
+    goal,
+    tasks: objectives.map((objective) => ({ objective }))
+  });
+}
+
+function structuredTool(name: string, argumentsValue: unknown): unknown {
+  return { text: null, toolCalls: [{ name, arguments: argumentsValue }], finishReason: "tool_calls" };
+}
+
+function structuredInput(question: string, reason: string): unknown {
+  return structuredTool("nexora_request_input", { question, reason });
+}
+
+function structuredText(text: string): unknown {
+  return { text, toolCalls: [], finishReason: "stop" };
 }
 
 function closeServer(server: Server): Promise<void> {

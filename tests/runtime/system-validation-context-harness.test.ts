@@ -7,9 +7,17 @@ import { z } from "zod";
 
 import {
   createAgent,
+  type ModelDecisionContext,
+  type ModelResponse,
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/harness/src/index.js";
+import {
+  responseCall,
+  responseInput,
+  responsePlan,
+  responseText
+} from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -23,8 +31,8 @@ describe("Context Harness system validation", () => {
     const agent = createAgent({
       workspace,
       provider: queuedProvider([
-        { action: "continue", toolCalls: [{ name: "test.read", arguments: { key: "unplanned" } }] },
-        { action: "request_input", question: "Stop?", reason: "The unplanned read is complete."  }
+        responseCall("test.read", { key: "unplanned" }),
+        responseInput("Stop?", "The unplanned read is complete.")
       ]),
       tools: [readTool("test.read")]
     });
@@ -48,7 +56,7 @@ describe("Context Harness system validation", () => {
         invocationId: view.toolInvocations[0]!.id
       })
     ]);
-    expect(view.events.some((event) => event.type === "action.rejected")).toBe(false);
+    expect(view.events.some((event) => event.type === "response.rejected")).toBe(false);
   });
 
   it("returns an ordinary Tool failure to the Agent Loop and allows a different next path", async () => {
@@ -57,9 +65,9 @@ describe("Context Harness system validation", () => {
       workspace,
       provider: queuedProvider([
         planTurn("test.success"),
-        { action: "continue", toolCalls: [{ name: "test.fail", arguments: { key: "first" } }] },
-        { action: "continue", toolCalls: [{ name: "test.success", arguments: { key: "second" } }] },
-        { action: "finish", text: "Recovered through a different Tool and confirmed second." }
+        responseCall("test.fail", { key: "first" }),
+        responseCall("test.success", { key: "second" }),
+        responseText("Recovered through a different Tool and confirmed second.")
       ]),
       tools: [failingTool(), readTool("test.success")]
     });
@@ -73,7 +81,7 @@ describe("Context Harness system validation", () => {
       "failed",
       "succeeded"
     ]);
-    expect(view.events.some((event) => event.type === "action.rejected")).toBe(false);
+    expect(view.events.some((event) => event.type === "response.rejected")).toBe(false);
     expect(view.snapshot.evidence).toHaveLength(1);
   });
 
@@ -83,9 +91,9 @@ describe("Context Harness system validation", () => {
       workspace,
       provider: queuedProvider([
         planTurn("test.read"),
-        { action: "continue", toolCalls: [{ name: "test.read", arguments: { key: "work" } }] },
-        { action: "continue", toolCalls: [{ name: "test.verify", arguments: { key: "verify" } }] },
-        { action: "finish", text: "Completed work and then verified it." }
+        responseCall("test.read", { key: "work" }),
+        responseCall("test.verify", { key: "verify" }),
+        responseText("Completed work and then verified it.")
       ]),
       tools: [readTool("test.read"), readTool("test.verify")]
     });
@@ -135,7 +143,7 @@ describe("Context Harness system validation", () => {
       provider: {
         async decide() {
           decisions += 1;
-          return {};
+          return {} as ModelResponse;
         }
       },
       tools: []
@@ -157,7 +165,7 @@ describe("Context Harness system validation", () => {
     expect(decisions).toBe(4);
     expect(result).toMatchObject({ status: "failed", stopReason: "ITERATION_BUDGET_EXCEEDED" });
     expect(result.delivery).toMatchObject({ outcome: "failed" });
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(3);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(3);
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
   });
 });
@@ -168,27 +176,24 @@ function fixture(): string {
   return root;
 }
 
-function queuedProvider(turns: readonly unknown[]): RuntimeProvider {
-  const queue = [...turns];
+function queuedProvider(responses: readonly ModelResponse[]): RuntimeProvider {
+  const queue = [...responses];
   return {
-    async decide() {
-      const turn = queue.shift();
-      if (turn === undefined) throw new Error("Provider queue exhausted.");
-      return turn;
+    async decide(_context: ModelDecisionContext) {
+      const response = queue.shift();
+      if (response === undefined) throw new Error("Provider queue exhausted.");
+      return response;
     }
   };
 }
 
-function planTurn(_capability: string): unknown {
-  return {
-    action: "continue",
-    plan: {
+function planTurn(_capability: string): ModelResponse {
+  return responsePlan({
       goal: "Produce a confirmed fact.",
       tasks: [{
         objective: "Produce a confirmed fact."
       }]
-    }
-  };
+    });
 }
 
 function readTool(name: string): RuntimeTool {

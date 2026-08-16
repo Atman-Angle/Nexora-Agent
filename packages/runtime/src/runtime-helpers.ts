@@ -76,36 +76,25 @@ function requireToolTexts(values: readonly string[], field: string, name: string
 function requireToolText(value: string, field: string, name: string): void { if (!value.trim() || value.length > 240) throw new Error(`Runtime Tool ${name} ${field} must be non-empty and at most 240 characters.`); }
 export function requireWorkspace(value: string): string { const workspace = resolve(value); if (!existsSync(workspace) || !statSync(workspace).isDirectory()) throw new Error(`Runtime workspace does not exist or is not a directory: ${workspace}`); return workspace; }
 export function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-export function actionRejectionDiagnostic(error: z.ZodError | ActionRejectedError, rawAction: unknown) {
-  const actionType = typeof rawAction === "object" && rawAction !== null && "type" in rawAction && typeof (rawAction as { readonly type?: unknown }).type === "string" ? (rawAction as { readonly type: string }).type.slice(0, 100) : null;
-  if (error instanceof z.ZodError) return { kind: "schema" as const, actionType, issues: error.issues.slice(0, 4).map(planningRepairIssue) };
-  return { kind: "state" as const, actionType, issues: [{ path: "$", code: "action_rejected", message: error.message.slice(0, 500) }] };
+export function responseRejectionDiagnostic(error: z.ZodError | ActionRejectedError, rawResponse: unknown) {
+  const responseType = rawResponse === null
+    ? "null"
+    : Array.isArray(rawResponse)
+      ? "array"
+      : typeof rawResponse;
+  if (error instanceof z.ZodError) {
+    return { kind: "schema" as const, responseType, issues: error.issues.slice(0, 4).map(responseRepairIssue) };
+  }
+  return {
+    kind: "state" as const,
+    responseType,
+    issues: [{ path: "$", code: "response_rejected", message: error.message.slice(0, 500) }]
+  };
 }
 
-/**
- * Renders one Zod issue for the model. Empty acceptanceChecks on a Plan Step
- * gets a step-level, actionable repair hint ("Step N has no verifiable
- * completion condition. Revise Step N only.") instead of the raw Zod text, so
- * the model makes the minimal fix rather than rebuilding the whole Plan. The
- * original path is preserved for audit; the raw action is archived separately.
- */
-function planningRepairIssue(issue: z.ZodIssue): { path: string; code: string; message: string } {
+function responseRepairIssue(issue: z.ZodIssue): { path: string; code: string; message: string } {
   const path = issue.path.length === 0 ? "$" : issue.path.join(".").slice(0, 200);
-  if (
-    issue.path.length === 3
-    && issue.path[0] === "orderedSteps"
-    && typeof issue.path[1] === "number"
-    && issue.path[2] === "acceptanceChecks"
-    && issue.code === z.ZodIssueCode.too_small
-  ) {
-    const stepNumber = issue.path[1] + 1;
-    return {
-      path,
-      code: "empty_acceptance_checks",
-      message: `Step ${stepNumber} has no verifiable completion condition. Revise Step ${stepNumber} only.`
-    };
-  }
   return { path, code: issue.code, message: issue.message.slice(0, 500) };
 }
-export function serializeRejectedAction(rawAction: unknown): string { try { const serialized = JSON.stringify(rawAction); return serialized ?? JSON.stringify({ unsupportedValueType: typeof rawAction }); } catch (error) { return JSON.stringify({ serializationError: errorMessage(error), receivedType: typeof rawAction }); } }
+export function serializeRejectedResponse(rawResponse: unknown): string { try { const serialized = JSON.stringify(rawResponse); return serialized ?? JSON.stringify({ unsupportedValueType: typeof rawResponse }); } catch (error) { return JSON.stringify({ serializationError: errorMessage(error), receivedType: typeof rawResponse }); } }
 export function toRunResult(run: RunSnapshot): RunResult { return { runId: run.runId, status: run.status, stopReason: run.stopReason, summary: run.result?.summary ?? run.delivery?.summary ?? null, resultArtifact: run.result?.resultArtifact ?? null, evidence: run.evidence, lastError: run.lastError, delivery: run.delivery, failureHandoff: deriveFailureHandoff(run) }; }

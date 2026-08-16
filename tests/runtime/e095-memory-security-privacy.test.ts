@@ -18,7 +18,7 @@ import {
   type RuntimeTool
 } from "../../packages/harness/src/index.js";
 import { memoryIdFromRef, memoryRef } from "../../packages/harness/src/memory/recall.js";
-import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { ScriptedRuntimeProvider, responseCall } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 const BASE = "2026-08-11T00:00:00.000Z";
@@ -43,10 +43,7 @@ describe("E095 Memory security and privacy boundaries", () => {
         return writePlan();
       },
       (_context: ModelDecisionContext) => {
-        return {
-          action: "continue",
-          toolCalls: [{ name: "filesystem.write", arguments: { path: "note.txt", content: "unsafe" } }]
-        };
+        return responseCall("filesystem.write", { path: "note.txt", content: "unsafe" });
       }
     ]);
     const runtime = createRuntime({

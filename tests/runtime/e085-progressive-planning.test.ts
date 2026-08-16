@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createRuntime, type ModelDecisionContext, type RuntimeTool } from "../../packages/harness/src/index.js";
-import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import {
+  ScriptedRuntimeProvider,
+  responsePlan
+} from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -37,14 +40,11 @@ describe("E085 progressive planning", () => {
       { type: "call_tool", stepId: "discover", checkIds: ["check-list"], toolName: "filesystem.list", input: { path: "sources" } },
       // 3. Append the read Step directly from discovery facts. The completed
       //    discovery Step is preserved byte-identical.
-      {
-        action: "continue",
-        plan: {
+      responsePlan({
           tasks: [{
             objective: "Read every discovered source"
           }]
-        }
-      },
+        }),
       // 4. Batch both reads, one action per check.
       { type: "execute_step", stepId: "read", actions: [
         { type: "call_tool", stepId: "read", checkIds: ["check-a"], toolName: "filesystem.read", input: { path: "sources/a.md" } },

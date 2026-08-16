@@ -1,30 +1,36 @@
 import { z } from "zod";
 
 import type {
+  ModelResponse,
   ModelDecisionContext,
+  RuntimeOperationContext,
   RuntimeProvider
-} from "../../packages/harness/src/providers/model-client.js";
+} from "../../packages/harness/src/index.js";
+import {
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL
+} from "../../packages/harness/src/index.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 
 export class ScriptedRuntimeProvider implements RuntimeProvider {
   readonly contexts: ModelDecisionContext[] = [];
   /** Historical counter retained only so deleted compaction assertions can migrate locally. */
   readonly compactionContexts: unknown[] = [];
-  readonly #actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>;
+  readonly #responses: Array<unknown | ((context: ModelDecisionContext) => unknown)>;
 
   constructor(
-    actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>,
+    responses: Array<unknown | ((context: ModelDecisionContext) => unknown)>,
     _removedCompactionOptions?: unknown
   ) {
-    this.#actions = [...actions];
+    this.#responses = [...responses];
   }
 
-  async decide(context: ModelDecisionContext, _operation?: unknown): Promise<unknown> {
+  async decide(context: ModelDecisionContext, _operation?: unknown): Promise<ModelResponse> {
     this.contexts.push(structuredClone(context));
-    const action = this.#actions.shift();
-    if (action === undefined) throw new Error("Scripted Provider exhausted.");
-    const resolved = typeof action === "function" ? action(context) : action;
-    return materializeTestTurn(resolved, context);
+    const response = this.#responses.shift();
+    if (response === undefined) throw new Error("Scripted Provider exhausted.");
+    const resolved = typeof response === "function" ? response(context) : response;
+    return materializeTestResponse(resolved, context);
   }
 
 }
@@ -81,17 +87,22 @@ export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
   };
 }
 
-export function finishFromEvidence(summary: string): (context: ModelDecisionContext) => unknown {
-  return (_context) => ({ action: "finish", text: summary });
+export function finishFromEvidence(summary: string): (context: ModelDecisionContext) => ModelResponse {
+  return (_context) => responseText(summary);
 }
 
-/** Adapts internal Runtime-action test descriptors without widening the production ModelTurn schema. */
-export function runtimeActionTestProvider(provider: RuntimeProvider): RuntimeProvider {
+/** Adapts internal Runtime-command test descriptors into the production Provider response contract. */
+export function runtimeActionTestProvider(provider: {
+  readonly modelProfile?: RuntimeProvider["modelProfile"];
+  readonly measureTokens?: RuntimeProvider["measureTokens"];
+  decide(context: ModelDecisionContext, operation: RuntimeOperationContext): Promise<unknown>;
+  dispose?(): void | Promise<void>;
+}): RuntimeProvider {
   return {
     ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
     ...(provider.measureTokens === undefined ? {} : { measureTokens: provider.measureTokens }),
     async decide(context, operation) {
-      return materializeTestTurn(await provider.decide(context, operation), context);
+      return materializeTestResponse(await provider.decide(context, operation), context);
     },
     ...(provider.dispose === undefined ? {} : {
       dispose: () => provider.dispose!()
@@ -99,48 +110,97 @@ export function runtimeActionTestProvider(provider: RuntimeProvider): RuntimePro
   };
 }
 
-export function materializeTestTurn(value: unknown, context: ModelDecisionContext): unknown {
-  if (value === null || typeof value !== "object") return value;
-  const action = value as Record<string, unknown>;
-  if (action.type === "request_context") {
-    return { action: "finish", text: "Continue using the deterministically restored context." };
+export function materializeTestResponse(value: unknown, context: ModelDecisionContext): ModelResponse {
+  if (value === null || typeof value !== "object") return value as ModelResponse;
+  const command = value as Record<string, unknown>;
+  if ("text" in command && "toolCalls" in command && "finishReason" in command) {
+    return value as ModelResponse;
   }
-  if (action.type === "request_input") {
-    return { action: "request_input", question: action.question, reason: action.reason };
+  if (command.type === "request_context") {
+    return responseText("Continue using the deterministically restored context.");
   }
-  if (action.type === "propose_finish") {
-    return { action: "finish", text: action.summary };
+  if (command.type === "request_input") {
+    return responseInput(String(command.question), String(command.reason));
   }
-  if (action.type === "call_tool") {
-    return { action: "continue", toolCalls: [{ name: action.toolName, arguments: action.input }] };
+  if (command.type === "propose_finish") {
+    return responseText(String(command.summary));
   }
-  if (action.type === "execute_step" && Array.isArray(action.actions)) {
-    return {
-      action: "continue",
-      toolCalls: action.actions.map((item) => {
+  if (command.type === "call_tool") {
+    return responseCall(String(command.toolName), command.input);
+  }
+  if (command.type === "execute_step" && Array.isArray(command.actions)) {
+    return responseTools(command.actions.map((item) => {
         const call = item as Record<string, unknown>;
-        return { name: call.toolName, arguments: call.input };
-      })
-    };
+        return { name: String(call.toolName), arguments: call.input };
+      }));
   }
-  if (action.type !== "set_plan" || !Array.isArray(action.orderedSteps)) return value;
+  if (command.type !== "set_plan" || !Array.isArray(command.orderedSteps)) return value as ModelResponse;
   const completedIds = new Set(context.run.stepProgress
     .filter((progress) => progress.status === "completed")
     .map((progress) => progress.stepId));
-  const remaining = action.orderedSteps.filter((item) => {
+  const remaining = command.orderedSteps.filter((item) => {
     const step = item as Record<string, unknown>;
     return typeof step.id !== "string" || !completedIds.has(step.id);
   });
-  const sourceSteps = remaining.length === 0 ? action.orderedSteps : remaining;
-  const taskContractValue = action.taskContract as Record<string, unknown> | undefined;
-  return {
-    action: "continue",
-    plan: {
+  const sourceSteps = remaining.length === 0 ? command.orderedSteps : remaining;
+  const taskContractValue = command.taskContract as Record<string, unknown> | undefined;
+  return responsePlan({
       ...(typeof taskContractValue?.goal === "string" ? { goal: taskContractValue.goal } : {}),
       tasks: sourceSteps.map((item) => {
         const step = item as Record<string, unknown>;
         return { objective: step.objective };
       })
-    }
+  });
+}
+
+let testCallSequence = 0;
+
+export function responseCall(name: string, argumentsValue: unknown): ModelResponse {
+  return {
+    text: null,
+    toolCalls: [{ callId: nextTestCallId(), name, arguments: argumentsValue }],
+    finishReason: "tool_calls"
   };
+}
+
+export function responseTools(calls: readonly {
+  readonly name: string;
+  readonly arguments: unknown;
+}[]): ModelResponse {
+  return {
+    text: null,
+    toolCalls: calls.map((call) => ({
+      callId: nextTestCallId(),
+      name: call.name,
+      arguments: call.arguments
+    })),
+    finishReason: "tool_calls"
+  };
+}
+
+export function responsePlan(plan: unknown): ModelResponse {
+  return responseCall(UPDATE_PLAN_CONTROL, plan);
+}
+
+export function responsePlanAndTools(
+  plan: unknown,
+  calls: readonly { readonly name: string; readonly arguments: unknown }[]
+): ModelResponse {
+  return responseTools([
+    { name: UPDATE_PLAN_CONTROL, arguments: plan },
+    ...calls
+  ]);
+}
+
+export function responseInput(question: string, reason: string): ModelResponse {
+  return responseCall(REQUEST_INPUT_CONTROL, { question, reason });
+}
+
+export function responseText(text: string): ModelResponse {
+  return { text, toolCalls: [], finishReason: "stop" };
+}
+
+function nextTestCallId(): string {
+  testCallSequence += 1;
+  return `test-call-${testCallSequence}`;
 }

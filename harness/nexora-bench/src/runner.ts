@@ -332,8 +332,8 @@ export function observeProvider(
   const capture = async (
     phase: ModelObservation["phase"],
     input: unknown,
-    call: () => Promise<unknown>
-  ): Promise<unknown> => {
+    call: () => ReturnType<RuntimeProvider["decide"]>
+  ): ReturnType<RuntimeProvider["decide"]> => {
     const index = observations.push({ phase, input: structuredClone(input) }) - 1;
     try {
       const output = await call();
@@ -450,12 +450,12 @@ function infrastructureFailure(
       runErrorCode: "EVAL_INFRASTRUCTURE",
       failedToolCodes: [],
       failedModelCallCodes: [],
-      actionRejectedCount: 0,
+      responseRejectedCount: 0,
       providerFailureCount: 0,
       exactFailedReplayCount: 0,
       persistedProgressCount: 0,
       effectiveToolRatio: 0,
-      actionRejectionRate: 0,
+      responseRejectionRate: 0,
       repairRecoveryCount: 0,
       firstPersistedProgressMs: null,
       progressAcrossRestartCount: 0

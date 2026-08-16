@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { modelResponses } from "@nexora/harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,24 +18,21 @@ export const createScenario: ScenarioFactory = ({ workspace }) => {
   const provider: RuntimeProvider = {
     async decide(context: ModelDecisionContext) {
       if (context.run.currentPlan === null) {
-        return {
-          action: "continue",
-          plan: {
+        return modelResponses.plan({
             goal: "Repair the service configuration from repository requirements and verify it.",
             tasks: [
               { objective: "Read the requirements." },
               { objective: "Inspect the current configuration." },
               { objective: "Verify the configuration and repair it from diagnostics if needed." }
             ]
-          }
-        };
+          });
       }
       const invocations = context.toolObservations;
       if (!invocations.some((item) => item.toolName === "filesystem.read" && item.status === "succeeded" && JSON.stringify(item.facts).includes("REQUIREMENTS.md"))) {
-        return { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "REQUIREMENTS.md" } }] };
+        return modelResponses.tool({ name: "filesystem.read", arguments: { path: "REQUIREMENTS.md" } });
       }
       if (!invocations.some((item) => item.toolName === "filesystem.read" && item.status === "succeeded" && JSON.stringify(item.facts).includes("service.json"))) {
-        return { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "service.json" } }] };
+        return modelResponses.tool({ name: "filesystem.read", arguments: { path: "service.json" } });
       }
       const shellFailed = invocations.some((item) => item.toolName === "shell.execute" && item.status === "failed");
       const shellSucceeded = invocations.some((item) => item.toolName === "shell.execute" && item.status === "succeeded");
@@ -45,20 +43,16 @@ export const createScenario: ScenarioFactory = ({ workspace }) => {
         && currentConfig.port === 8080
         && currentConfig.healthCheck === true;
       if (corrected && shellSucceeded) {
-        return { action: "finish", text: "Repaired service.json from REQUIREMENTS.md and verify.mjs now passes." };
+        return modelResponses.text("Repaired service.json from REQUIREMENTS.md and verify.mjs now passes.");
       }
       if (!corrected && !verificationFailed) {
-        return { action: "continue", toolCalls: [{ name: "shell.execute", arguments: verifyArguments }] };
+        return modelResponses.tool({ name: "shell.execute", arguments: verifyArguments });
       }
       if (!corrected) {
         // The active Check still names shell.execute. The safe patch is
         // intentionally outside that checkpoint: Plan provenance is retained,
         // but Harness Tool choice is no longer blocked by Plan membership.
-        return {
-          action: "continue",
-          toolCalls: [{
-              name: "filesystem.patch",
-              arguments: {
+        return modelResponses.tool({ name: "filesystem.patch", arguments: {
                 path: "service.json",
                 expectedDigest: digest(original),
                 find: original.trimEnd(),
@@ -68,14 +62,12 @@ export const createScenario: ScenarioFactory = ({ workspace }) => {
                   port: 8080,
                   healthCheck: true
                 }, null, 2)
-              }
-            }]
-        };
+              } });
       }
       if (!shellSucceeded) {
-        return { action: "continue", toolCalls: [{ name: "shell.execute", arguments: verifyArguments }] };
+        return modelResponses.tool({ name: "shell.execute", arguments: verifyArguments });
       }
-      return { action: "request_input", question: "Verification state is inconsistent.", reason: "The deterministic scenario cannot prove success." };
+      return modelResponses.input({ question: "Verification state is inconsistent.", reason: "The deterministic scenario cannot prove success." });
     }
   };
   return { provider, tools: createBuiltInTools() };

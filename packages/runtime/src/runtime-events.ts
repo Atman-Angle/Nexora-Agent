@@ -259,7 +259,7 @@ function lifecycleType(type: string): LifecycleEventType | null {
     "run.succeeded": "run.succeeded",
     "plan.set": "plan.updated",
     "model.requested": "model.requested",
-    "action.rejected": "model.action_rejected",
+    "response.rejected": "model.response_rejected",
     "tool.started": "tool.started",
     "tool.succeeded": "tool.succeeded",
     "tool.failed": "tool.failed",

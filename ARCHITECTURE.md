@@ -182,31 +182,29 @@ Load Run
 → Continue / Wait / Finish
 ```
 
-## 5. Prompt、ModelTurn 与内部 Action 规则
+## 5. Prompt、ModelResponse 与内部 Action 规则
 
 Harness 使用固定通用 Kernel 和确定性 Prompt Compiler。稳定前缀按 `Kernel → Transport → Host Policy → Agent Profile → Project Policy → canonical Tool Contract` 组成；Run/Plan/Observation/Repair/最新输入全部位于动态边界之后。Agent Profile 是版本化 strategy-only snapshot，只能影响模型如何工作和表达，不能注册 Tool、授权 Effect、提供事实、批准操作或满足 Completion Gate。每次 Model Call 的 kernel/compiler/Profile/Policy/Tool/Transport/payload/cache digest 进入 Context Manifest；Runtime 只把它当作不透明审计 JSON。
 
-Provider Adapter 每个请求只选择 `native_tools` 或 `json_actions` 一种 Transport。Tool descriptor 的 `inputSchema` 由真实 Zod Schema 编译为 canonical JSON Schema，不从 `inputExample` 推断。Provider Prompt Cache 可为 `disabled`、`automatic` 或由具体 Adapter 明确实现的 breakpoint 模式；缓存命中不复用模型响应，也不跳过 Agent Loop、Runtime 或 Completion Gate。
+Provider Adapter 每个 Run 只选择 `native_tools` 或 `structured_output` 一种 Transport。Tool descriptor 的 `inputSchema` 由真实 Zod Schema 编译为 canonical JSON Schema，不从 `inputExample` 推断。native mode 只读取 Provider 原生 `tool_calls` 且不发送 `response_format`；structured mode 必须使用严格 `json_schema`，不能以 JSON-object 或 Prompt 约定冒充。Provider Prompt Cache 可为 `disabled`、`automatic` 或由具体 Adapter 明确实现的 breakpoint 模式；缓存命中不复用模型响应，也不跳过 Agent Loop、Runtime 或 Completion Gate。
 
-生产 wire 每轮只接受一个 `ModelTurn`：
+Provider Adapter 每轮归一化为只含事实的 `ModelResponse`：
 
 ```text
-{ action: "continue", plan?: { goal?, tasks: [{ objective }] }, toolCalls?: [{ name, arguments }] }
-| { action: "request_input", question, reason }
-| { action: "finish", text }
+{ text: string | null, toolCalls: [{ callId, name, arguments }], finishReason: string | null }
 ```
 
-Provider 只决定可选目标、按顺序排列的 objective-only Task、Tool 与业务参数、澄清问题或最终文本，不提供 Task Contract、Requirement、Plan/Step/Check/Invocation/Evidence ID、version、binding、Approval 或完成状态。Harness 是唯一语义编译器：它从原始输入与 objective-only Plan 派生 Runtime Task Contract，并确定性生成内部 `set_plan`、`call_tool`/`execute_step`、`request_input` 或 `propose_finish`；Runtime 只校验并执行这些机械命令。
+Provider 只选择 Runtime Tool、提供业务参数、调用 `nexora_update_plan` / `nexora_request_input` 控件或返回最终文本，不提供 Runtime-owned Task Contract、Requirement、Plan/Step/Check/Invocation/Evidence ID、version、binding、Approval、Action 或完成状态。Harness 按响应形状确定性路由：Plan control 编译 `set_plan`，Runtime Tool calls 编译 `call_tool`/`execute_step`，input control 编译 `request_input`，无调用的非空文本编译 `propose_finish`。控件不产生 Tool Invocation；Runtime 只校验并执行内部机械命令。
 
 Harness 在调用 Provider 前自动恢复最新 Input 明确点名的已发布 ref、最高相关 Memory，以及 active Task 未满足的 `context_ref` Check；成功恢复通过 Runtime port 生成真实 Run-owned Context Evidence，失败仍遵守统一 scope/digest/预算错误。Provider 不需要也不能提交恢复协议命令。
 
 Plan 是可选方向与 provenance，不是 Tool 白名单。Harness 把每个 objective 编译为没有虚假机械 Check 的导航 Step；已注册的安全 Tool 可在没有 Plan 时执行，成功调用始终生成绑定 Invocation 的 Evidence，无 Plan 时使用 `run-unplanned` provenance 而不伪造 Plan Check。Runtime 不从 Tool 调用反推、插入、替换或扩展 Plan。跨轮已确定失败的调用不因 Tool 名或参数相同而被封禁；同批完全重复的幂等读只执行一次，已成功读不会阻塞同批新读；同 Run 中相同非读 Tool/canonical input 的未失败 Invocation 跨 Plan/Step 拒绝重复，非幂等 unknown Effect 永不自动重放。
 
-`repair` 是最近错误及与其精确关联的失败/unknown Invocation 的有界投影，不是策略 Authority。它不携带行为禁令、进度事件白名单或独立 retry counter；Agent Loop 由既有 iteration/model-call/duration 预算约束，`maxRetries` 与 `budgetsUsed.retries` 只计 Tool/Provider 等机械重试。字段级 ModelTurn 错误只丢弃非法字段，已成功的 batch sibling、Plan、Invocation 和 Evidence 保持不变。
+`repair` 是最近错误及与其精确关联的失败/unknown Invocation 的有界投影，不是策略 Authority。它不携带行为禁令、进度事件白名单或独立 retry counter；Agent Loop 由既有 iteration/model-call/duration 预算约束，`maxRetries` 与 `budgetsUsed.retries` 只计 Tool/Provider 等机械重试。归一化响应或 Tool batch 在任何 Effect 前整体校验；非法 batch 不产生部分 Plan、Invocation 或 Effect，后续修正只继续使用已持久化的真实 Plan、Invocation 和 Evidence。
 
 Harness 按“已有事实 → Tool 探寻 → 有依据的重试或换路径 → 最后询问用户”引导决策。无 Plan、零 Tool 且存在可用 Tool 时，第一次 `request_input` 不暂停 Run，而作为结构化 repair 返回同一循环；再次明确请求同一类用户专属信息时才进入 waiting。Approval 始终是独立 Runtime 边界，不能与澄清输入合并。
 
-Approval 不是 ModelTurn 权限，而是 Runtime 对受保护内部 Tool Action 的确定性执行边界。Harness 提交的 finish proposal 只含 summary；Runtime 从当前 Run 自动派生 Invocation/Evidence/Artifact provenance，再执行同一个确定性 Completion Gate。无 Plan、无 Tool 的直接答案可以成功；存在 Tool 时只能引用真实、同 Run、digest 一致的成功事实。内部失败仍只通过 State Machine 进入 `failed`，所有终态和外部阻塞都持久化用户可读 Delivery。
+Approval 不是 Provider Tool Calling 权限，而是 Runtime 对受保护内部 Tool Action 的确定性执行边界。Harness 提交的 finish proposal 只含 summary；Runtime 从当前 Run 自动派生 Invocation/Evidence/Artifact provenance，再执行同一个确定性 Completion Gate。无 Plan、无 Tool 的直接答案可以成功；存在 Tool 时只能引用真实、同 Run、digest 一致的成功事实。内部失败仍只通过 State Machine 进入 `failed`，所有终态和外部阻塞都持久化用户可读 Delivery。
 
 ## 6. 数据传输
 
@@ -279,13 +277,13 @@ nexora/
 | `harness/agent-loop.ts` | 唯一 Agent Loop、Provider Decision 校验与调度 | 直接修改 Runtime/Memory Authority |
 | `harness/prompt.ts`、`profile.ts` | 通用 Kernel、Profile/Policy snapshot、canonical Prompt 与 cache-stable manifest | 权限、Evidence、Completion 或 Run Status |
 | `harness/context/`、`memory/`、`providers/` | Context 收缩/Rehydration、Memory Store/Policy、单一 Provider Transport | Run Status、Invocation、Effect |
-| `harness/planning.ts` | ModelTurn 的字段级解析与 Runtime Action 编译 | 生成 Runtime-owned ID、证明或状态 |
+| `harness/planning.ts` | Plan/input control 参数校验与 Runtime Action 编译 | 生成 Runtime-owned ID、证明或状态 |
 | `runtime/runtime.ts`、`agent-runtime-port.ts` | RunHandle、Lease、Plan CAS、机械命令 port、driver 委托 | Provider/LLM、Prompt、Context、Memory 策略 |
 | `runtime/execution/` | Tool Schema、Approval、Invocation、Effect、Recovery、Evidence | 语义规划或完成判断 |
 | `runtime/store/`、`state-machine.ts` | SQLite Authority、version/CAS、Event、合法状态迁移 | Provider 或 Harness 策略 |
 | `runtime/completion-gate.ts` | 机械完成不变量与 Result provenance | 调用 Provider 或判断用户语义目标 |
 
-`@nexora/harness` 只通过 `@nexora/runtime`/`@nexora/runtime/internal` ports 依赖 Runtime；Runtime package 的源代码和依赖清单禁止反向引用 Harness、Provider、Memory 或 Provider-facing Context。`createRuntime()` 只保留一个迁移版本并直接返回 `createAgent(options)`，不保留旧循环。Plan 与首批 read 的组合协议继续关闭，避免在本次边界重构中改变模型调用策略。
+`@nexora/harness` 只通过 `@nexora/runtime`/`@nexora/runtime/internal` ports 依赖 Runtime；Runtime package 的源代码和依赖清单禁止反向引用 Harness、Provider、Memory 或 Provider-facing Context。`createRuntime()` 只保留一个迁移版本并直接返回 `createAgent(options)`，不保留旧循环。Plan control 可与首批 Runtime Tool calls 同一响应提交，Harness 先编译 Plan 再走唯一 Tool Action 路径。
 
 后续不因文件行数继续拆分；只有第二个真实调用方、稳定 Provider 证据或性能测量证明需要时才重新打开上述 gate。
 

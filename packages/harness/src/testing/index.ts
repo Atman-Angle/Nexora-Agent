@@ -26,11 +26,16 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../index.js";
+import {
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL,
+  type ModelResponse
+} from "../providers/model-response.js";
 
-const SCRIPTED_MODEL_TURN = Symbol("nexora.scripted-model-turn");
+const SCRIPTED_MODEL_RESPONSE = Symbol("nexora.scripted-model-response");
 
 type ScriptedPlanTurn = {
-  readonly [SCRIPTED_MODEL_TURN]: true;
+  readonly [SCRIPTED_MODEL_RESPONSE]: true;
   readonly kind: "plan";
   readonly goal: string;
   readonly steps: readonly {
@@ -39,47 +44,47 @@ type ScriptedPlanTurn = {
 };
 
 type ScriptedToolTurn = {
-  readonly [SCRIPTED_MODEL_TURN]: true;
+  readonly [SCRIPTED_MODEL_RESPONSE]: true;
   readonly kind: "tool";
   readonly toolName: string;
   readonly input: unknown;
 };
 
 type ScriptedInputTurn = {
-  readonly [SCRIPTED_MODEL_TURN]: true;
+  readonly [SCRIPTED_MODEL_RESPONSE]: true;
   readonly kind: "input";
   readonly question: string;
   readonly reason: string;
 };
 
 type ScriptedFinishTurn = {
-  readonly [SCRIPTED_MODEL_TURN]: true;
+  readonly [SCRIPTED_MODEL_RESPONSE]: true;
   readonly kind: "finish";
   readonly summary: string;
 };
 
 type ScriptedRawTurn = {
-  readonly [SCRIPTED_MODEL_TURN]: true;
+  readonly [SCRIPTED_MODEL_RESPONSE]: true;
   readonly kind: "raw";
   readonly value: unknown;
 };
 
-export type ScriptedModelTurn =
+export type ScriptedModelResponse =
   | ScriptedPlanTurn
   | ScriptedToolTurn
   | ScriptedInputTurn
   | ScriptedFinishTurn
   | ScriptedRawTurn;
 
-export const modelTurns = Object.freeze({
+export const modelResponses = Object.freeze({
   plan(input: {
     readonly goal: string;
     readonly steps: readonly {
       readonly objective: string;
     }[];
-  }): ScriptedModelTurn {
+  }): ScriptedModelResponse {
     return Object.freeze({
-      [SCRIPTED_MODEL_TURN]: true as const,
+      [SCRIPTED_MODEL_RESPONSE]: true as const,
       kind: "plan",
       ...input
     });
@@ -87,9 +92,9 @@ export const modelTurns = Object.freeze({
   tool(input: {
     readonly toolName: string;
     readonly input: unknown;
-  }): ScriptedModelTurn {
+  }): ScriptedModelResponse {
     return Object.freeze({
-      [SCRIPTED_MODEL_TURN]: true as const,
+      [SCRIPTED_MODEL_RESPONSE]: true as const,
       kind: "tool",
       ...input
     });
@@ -97,25 +102,25 @@ export const modelTurns = Object.freeze({
   input(input: {
     readonly question: string;
     readonly reason: string;
-  }): ScriptedModelTurn {
+  }): ScriptedModelResponse {
     return Object.freeze({
-      [SCRIPTED_MODEL_TURN]: true as const,
+      [SCRIPTED_MODEL_RESPONSE]: true as const,
       kind: "input",
       ...input
     });
   },
   finish(input: {
     readonly summary: string;
-  }): ScriptedModelTurn {
+  }): ScriptedModelResponse {
     return Object.freeze({
-      [SCRIPTED_MODEL_TURN]: true as const,
+      [SCRIPTED_MODEL_RESPONSE]: true as const,
       kind: "finish",
       ...input
     });
   },
-  raw(value: unknown): ScriptedModelTurn {
+  raw(value: unknown): ScriptedModelResponse {
     return Object.freeze({
-      [SCRIPTED_MODEL_TURN]: true as const,
+      [SCRIPTED_MODEL_RESPONSE]: true as const,
       kind: "raw",
       value
     });
@@ -123,25 +128,25 @@ export const modelTurns = Object.freeze({
 });
 
 export function createScriptedProvider(input: {
-  readonly modelTurns: readonly ScriptedModelTurn[];
+  readonly modelResponses: readonly ScriptedModelResponse[];
   readonly dispose?: () => void | Promise<void>;
 }): RuntimeProvider {
-  const modelTurns = [...input.modelTurns];
+  const modelResponses = [...input.modelResponses];
   let decisionIndex = 0;
 
   const provider: RuntimeProvider = {
     async decide(context, operation) {
       operation.signal.throwIfAborted();
-      const descriptor = modelTurns[decisionIndex];
+      const descriptor = modelResponses[decisionIndex];
       if (descriptor === undefined) {
         throw new Error(
-          `Scripted Provider ModelTurn exhausted at index ${decisionIndex}.`
+          `Scripted Provider response exhausted at index ${decisionIndex}.`
         );
       }
       decisionIndex += 1;
-      const action = materializeModelTurn(descriptor);
+      const response = materializeModelResponse(descriptor, decisionIndex);
       operation.signal.throwIfAborted();
-      return action;
+      return response;
     },
     ...(input.dispose === undefined
       ? {}
@@ -263,36 +268,48 @@ export function assertEventSequence(
   }
 }
 
-function materializeModelTurn(
-  descriptor: ScriptedModelTurn
-): unknown {
-  if (descriptor.kind === "raw") return descriptor.value;
+function materializeModelResponse(
+  descriptor: ScriptedModelResponse,
+  decisionIndex: number
+): ModelResponse {
+  if (descriptor.kind === "raw") return descriptor.value as ModelResponse;
   if (descriptor.kind === "tool") {
     return {
-      action: "continue",
-      toolCalls: [{ name: descriptor.toolName, arguments: descriptor.input }]
+      text: null,
+      toolCalls: [{ callId: `scripted-${decisionIndex}-0`, name: descriptor.toolName, arguments: descriptor.input }],
+      finishReason: "tool_calls"
     };
   }
   if (descriptor.kind === "input") {
     return {
-      action: "request_input",
-      question: descriptor.question,
-      reason: descriptor.reason
+      text: null,
+      toolCalls: [{
+        callId: `scripted-${decisionIndex}-0`,
+        name: REQUEST_INPUT_CONTROL,
+        arguments: { question: descriptor.question, reason: descriptor.reason }
+      }],
+      finishReason: "tool_calls"
     };
   }
   if (descriptor.kind === "finish") {
     return {
-      action: "finish",
-      text: descriptor.summary
+      text: descriptor.summary,
+      toolCalls: [],
+      finishReason: "stop"
     };
   }
 
   return {
-    action: "continue",
-    plan: {
-      goal: descriptor.goal,
-      tasks: descriptor.steps.map((step) => ({ objective: step.objective }))
-    }
+    text: null,
+    toolCalls: [{
+      callId: `scripted-${decisionIndex}-0`,
+      name: UPDATE_PLAN_CONTROL,
+      arguments: {
+        goal: descriptor.goal,
+        tasks: descriptor.steps.map((step) => ({ objective: step.objective }))
+      }
+    }],
+    finishReason: "tool_calls"
   };
 }
 

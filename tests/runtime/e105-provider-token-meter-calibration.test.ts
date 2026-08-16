@@ -101,7 +101,7 @@ describe("E105 Provider token meter calibration", () => {
       ...providerOptions,
       model: "qwen3.7-flash",
       fetch: async () => new Response(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({ action: "request_input", question: "Which target?", reason: "A target is required." }) } }],
+        choices: [{ message: { content: "Which target should be used?" } }],
         usage: { prompt_tokens: 123, completion_tokens: 7, total_tokens: 130 }
       }), { status: 200, headers: { "content-type": "application/json" } })
     });
@@ -144,7 +144,7 @@ function decisionContext(text: string): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:e105" },
-    providerContractVersion: 4,
+    providerContractVersion: 5,
     activeInvocations: [],
     toolObservations: [],
     rehydratedFacts: [],

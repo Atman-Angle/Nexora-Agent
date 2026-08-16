@@ -151,7 +151,7 @@ export function buildDecisionContext(args: {
   const projection = deepFreeze(structuredClone({
     workspace,
     run: projectRunContext(run),
-    providerContractVersion: 4 as const,
+    providerContractVersion: 5 as const,
     activeInvocations: invocations
       .filter((invocation): invocation is ToolInvocation & { readonly status: "started" | "unknown" } => (
         invocation.status === "started" || invocation.status === "unknown"
@@ -285,7 +285,7 @@ function invocationErrorCode(invocation: ToolInvocation): string | null {
 }
 
 function repairKind(code: string, failedInvocation: ToolInvocation | null): RepairContext["kind"] {
-  if (code === "INVALID_MODEL_ACTION") return "invalid_action";
+  if (code === "INVALID_MODEL_RESPONSE") return "invalid_response";
   if (code === "COMPLETION_BLOCKED") return "completion_blocked";
   if (code === "APPROVAL_DENIED") return "approval_denied";
   if (failedInvocation !== null) return "tool_failure";

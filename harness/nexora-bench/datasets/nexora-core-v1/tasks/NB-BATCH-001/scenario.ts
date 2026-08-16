@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { modelResponses } from "@nexora/harness";
 import { join } from "node:path";
 
 import {
@@ -34,9 +35,7 @@ function batchProvider(): RuntimeProvider {
     async decide(context: ModelDecisionContext, operation) {
       operation.signal.throwIfAborted();
       if (context.run.currentPlan === null) {
-        return {
-          action: "continue",
-          plan: {
+        return modelResponses.plan({
             goal: "Read three independent shards concurrently, produce the ordered total, and validate it.",
             tasks: [
               {
@@ -49,41 +48,25 @@ function batchProvider(): RuntimeProvider {
                 objective: "Validate the aggregate"
               }
             ]
-          }
-        };
+          });
       }
       const succeeded = context.toolObservations.filter((item) => item.status === "succeeded");
       if (succeeded.filter((item) => item.toolName === "fixture.delayed_read").length < 3) {
-        return {
-          action: "continue",
-          toolCalls: ["facts/alpha.txt", "facts/beta.txt", "facts/gamma.txt"].map((path) => ({
+        return modelResponses.tools({ calls: ["facts/alpha.txt", "facts/beta.txt", "facts/gamma.txt"].map((path) => ({
               name: "fixture.delayed_read",
               arguments: { path }
-            }))
-        };
+            })) });
       }
       if (!succeeded.some((item) => item.toolName === "filesystem.write")) {
-        return {
-          action: "continue",
-          toolCalls: [{
-              name: "filesystem.write",
-              arguments: {
+        return modelResponses.tool({ name: "filesystem.write", arguments: {
                 path: "report.txt",
                 content: "ALPHA=17\nBETA=29\nGAMMA=43\nTOTAL=89\n"
-              }
-            }]
-        };
+              } });
       }
       if (!succeeded.some((item) => item.toolName === "shell.execute")) {
-        return {
-          action: "continue",
-          toolCalls: [{
-              name: "shell.execute",
-              arguments: { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }
-            }]
-        };
+        return modelResponses.tool({ name: "shell.execute", arguments: { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 } });
       }
-      return { action: "finish", text: "All three shards were read and the ordered total 89 was verified." };
+      return modelResponses.text("All three shards were read and the ordered total 89 was verified.");
     }
   };
 }

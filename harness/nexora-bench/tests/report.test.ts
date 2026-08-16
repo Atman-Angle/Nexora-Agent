@@ -42,7 +42,7 @@ describe("NexoraBench Prompt strategy report", () => {
       hostPolicyDigest: "sha256:host",
       projectInstructions: [{ sourceRef: "AGENTS.md", digest: "sha256:project" }],
       toolContractDigest: "sha256:tools",
-      transport: { kind: "json_actions", promptCacheMode: "automatic" },
+      transport: { kind: "structured_output", promptCacheMode: "automatic" },
       stablePrefix: { digest: "stable-a", tokens: 100 }
     });
     expect(result.strategyConsistency).toEqual({
@@ -97,7 +97,7 @@ function report(tasks: readonly TaskReport[]): EvalReport {
     hardGateFailures: [],
     telemetryErrors: [],
     convergence: {
-      actionRejectionRate: 0,
+      responseRejectionRate: 0,
       exactFailedReplayRate: 0,
       repairRecoveryRate: 1,
       effectiveToolRatio: 0,
@@ -155,12 +155,12 @@ function task(overrides: Partial<TaskReport> = {}): TaskReport {
       runErrorCode: null,
       failedToolCodes: [],
       failedModelCallCodes: [],
-      actionRejectedCount: 0,
+      responseRejectedCount: 0,
       providerFailureCount: 0,
       exactFailedReplayCount: 0,
       persistedProgressCount: 0,
       effectiveToolRatio: 0,
-      actionRejectionRate: 0,
+      responseRejectionRate: 0,
       repairRecoveryCount: 0,
       firstPersistedProgressMs: null,
       progressAcrossRestartCount: 0
@@ -218,7 +218,7 @@ function trace(
           hostPolicyDigest: "sha256:host",
           projectInstructions: [{ sourceRef: "AGENTS.md", digest: "sha256:project" }],
           toolContractDigest: "sha256:tools",
-          transport: { kind: "json_actions", promptCache: { mode: "automatic" } },
+          transport: { kind: "structured_output", promptCache: { mode: "automatic" } },
           authorityContextDigest: "sha256:authority",
           payloadDigests: { system: "sha256:system", input: "sha256:input", final: "sha256:final" },
           cache: {

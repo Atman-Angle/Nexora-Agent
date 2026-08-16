@@ -18,13 +18,16 @@ import {
   openMemoryStore,
   MemoryRecordSchema,
   type CreateMemoryInput,
+  type MemoryCandidate,
   type MemoryRecord,
   type MemoryScope,
-  type MemoryCandidate,
   type ModelDecisionContext
 } from "../../packages/harness/src/index.js";
 import { digestJson } from "../../packages/runtime/src/runtime-helpers.js";
-import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import {
+  ScriptedRuntimeProvider,
+  responseInput
+} from "./runtime-testkit.js";
 
 const roots: string[] = [];
 const BASE = "2026-08-11T00:00:00.000Z";
@@ -196,11 +199,7 @@ describe("E093 bounded Memory recall", () => {
       fetch: async (_input, init) => {
         bodies.push(JSON.parse(String(init?.body)));
         return new Response(JSON.stringify({
-          choices: [{ message: { content: JSON.stringify({
-            action: "request_input",
-            question: "Stop?",
-            reason: "Memory wire captured."
-          }) } }]
+          choices: [{ message: { content: JSON.stringify(responseInput("Stop?", "Memory wire captured.")) } }]
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
     });
@@ -349,7 +348,7 @@ function memoryDecisionContext(): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:placeholder" },
-    providerContractVersion: 4,
+    providerContractVersion: 5,
     activeInvocations: [],
     toolObservations: [{
       invocationId: "old",

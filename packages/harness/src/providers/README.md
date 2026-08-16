@@ -7,8 +7,8 @@
 | 文件 | 职责 |
 |---|---|
 | `model-client.ts` | Provider 相关的公共类型（`RuntimeProvider`、`ModelDecisionContext`、`ToolObservation` 等）。 |
-| `model-turn.ts` | 单一 Provider 输出 `ModelTurn` 的严格 Schema。 |
-| `adapter.ts` | `defineProviderAdapter` 工厂、传输类型以及 Decision 系统 Prompt。 |
+| `model-response.ts` | 归一化 `ModelResponse`、Provider Tool Call 与 Plan/HITL control 的严格 Schema。 |
+| `adapter.ts` | `defineProviderAdapter` 工厂、`native_tools` / `structured_output` 传输类型以及 Prompt 编译入口。 |
 | `openai-compatible.ts` | OpenAI 兼容协议的实现：`createOpenAICompatibleProvider`、`openAICompatibleProviderFromEnv`、`ModelConfigError`。 |
 | `index.ts` | 重导出桶；新增厂商时在这里暴露公共入口。 |
 
@@ -26,10 +26,19 @@
 interface RuntimeProvider {
   readonly modelProfile?: ProviderModelProfile;
   readonly measureTokens?: ProviderTokenMeter;
-  decide(context: ModelDecisionContext, operation): Promise<unknown>;
+  decide(context: ModelDecisionContext, operation): Promise<ModelResponse>;
   dispose?(): void | Promise<void>;
 }
 ```
+
+`ModelResponse` 只描述 Provider 返回的事实：可选文本、带 `callId` 的 Tool Calls 和 finish reason。它不包含模型填写的 Runtime Action。Harness 按响应形状确定性路由：`nexora_update_plan` 编译 Plan、`nexora_request_input` 编译 HITL、注册的 Runtime Tool 进入唯一 Tool Action 路径、无调用的非空文本提出完成。
+
+Provider 必须在一个 Run 内固定声明一种能力：
+
+- `native_tools`：注册真实函数 Schema，不发送 `response_format`，只读取 Provider 原生 `tool_calls`；普通 content 永远不解析为 Tool。
+- `structured_output`：不注册原生 Tools，使用 strict `json_schema` 返回 response envelope；Adapter 为缺少原生 ID 的 calls 生成稳定 ID。
+
+不支持任一能力的 Provider 必须显式失败，不能降级到 JSON-object、Prompt 约定或已删除的 Action wire。
 
 OpenAI-compatible 生产 Adapter 把底层 Decision Context 统一投影为 `AgentWorkingContext`：`task`、`plan`、`workingSet`、`recentOutcome`、`relevantMemory` 与 `capabilities`。`workingSet` 保留最近真实 Tool 参数、结果/错误、repeatCount、恢复事实、当前文件、workspaceChanged、已完成工作、未解决问题与可读 Artifact refs；这只是从 Authority 重建的 Harness 投影，不新增 Store 或状态所有权。
 

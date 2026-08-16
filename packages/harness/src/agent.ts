@@ -20,6 +20,11 @@ import type { CreateAgentOptions, RuntimeMemoryOptions } from "./types.js";
 import { allowedActions } from "./runtime-policy.js";
 import { contextSourceFromState } from "./context/source.js";
 import {
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL,
+  isControlCall
+} from "./providers/model-response.js";
+import {
   resolvePromptHostConfiguration,
   type PromptHostConfiguration
 } from "./profile.js";
@@ -31,6 +36,7 @@ export function createAgent(options: CreateAgentOptions): RuntimeEngine {
   try {
     const provider = validateProvider(options.provider);
     const memory = validateMemory(options.memory);
+    validateReservedToolNames(options.tools);
     const promptHost = resolvePromptHostConfiguration(options);
     const capturePolicy = options.payloadCapturePolicy ?? "metadata";
     if (capturePolicy !== "metadata" && capturePolicy !== "redacted") {
@@ -74,6 +80,14 @@ function validateProvider(provider: RuntimeProvider): RuntimeProvider {
     throw new Error("Runtime Provider must implement decide().");
   }
   return provider;
+}
+
+function validateReservedToolNames(tools: CreateAgentOptions["tools"]): void {
+  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL]);
+  const conflict = tools.find((tool) => reserved.has(tool.contract.identity.name));
+  if (conflict !== undefined) {
+    throw new Error(`Runtime Tool name is reserved for a Harness control: ${conflict.contract.identity.name}`);
+  }
 }
 
 function validateMemory(memory: RuntimeMemoryOptions | undefined): RuntimeMemoryOptions | undefined {
@@ -162,30 +176,23 @@ function createLoopPort(input: {
     blockForProvider: (run, error, observer) => (
       runtime.blockForProvider(run, error, observer)
     ),
-    recordModelTurn: (run, turn, compiledActionTypes, observer) => {
+    recordModelResponse: (run, response, compiledActionTypes, observer) => {
       runtime.recordAgentEvent(run.runId, {
         type: "model.turn",
         payload: {
-          action: turn.action,
-          hasText: turn.action === "finish",
-          hasPlan: turn.action === "continue" && turn.plan !== undefined,
-          toolCallCount: turn.action === "continue" ? turn.toolCalls?.length ?? 0 : 0,
-          requestsInput: turn.action === "request_input",
+          hasText: response.text !== null,
+          finishReason: response.finishReason,
+          toolCallCount: response.toolCalls.length,
+          controlCallCount: response.toolCalls.filter(isControlCall).length,
           compiledActionTypes
         }
-      }, observer);
-    },
-    recordRejectedTurnFields: (run, fields, observer) => {
-      runtime.recordAgentEvent(run.runId, {
-        type: "model.turn.field_rejected",
-        payload: { fields }
       }, observer);
     },
     dispatch: async (run, action, signal, observer) => (
       dispatchAgentAction(runtime, run, action, signal, observer)
     ),
-    rejectAction: (run, error, rawAction, observer) => (
-      runtime.rejectModelAction(run, error, rawAction, observer)
+    rejectResponse: (run, error, rawResponse, observer) => (
+      runtime.rejectModelResponse(run, error, rawResponse, observer)
     ),
     snapshot: (runId) => runtime.readState(runId).run
   };

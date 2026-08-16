@@ -104,7 +104,17 @@ async function providerStub(): Promise<{ readonly baseUrl: string; readonly call
   const server = createServer(async (request, response) => {
     for await (const _chunk of request) { /* consume request */ }
     calls += 1;
-    const content = { action: "request_input", question: "Stop after Provider configuration is proven.", reason: "Provider configuration loaded"  };
+    const content = {
+      text: null,
+      toolCalls: [{
+        name: "nexora_request_input",
+        arguments: {
+          question: "Which target should be used?",
+          reason: "The task does not identify a target."
+        }
+      }],
+      finishReason: "tool_calls"
+    };
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
   });
@@ -124,6 +134,7 @@ function providerEnvFile(baseUrl: string, apiKey: string): string {
     `NEXORA_MODEL_BASE_URL=${baseUrl}`,
     `NEXORA_MODEL_API_KEY=${apiKey}`,
     "NEXORA_MODEL_NAME=qwen3.7-flash",
+    "NEXORA_MODEL_TOOL_TRANSPORT=structured_output",
     "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
     "NEXORA_MODEL_TIMEOUT_MS=10000",
     ""

@@ -175,7 +175,7 @@ describe("durable read Tool batches", () => {
     await runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(view.events.filter(({ type }) => type === "action.rejected")).toEqual([]);
+    expect(view.events.filter(({ type }) => type === "response.rejected")).toEqual([]);
     expect(state.calls.get("0")).toBe(2);
     expect(state.calls.get("1")).toBe(1);
     expect(view.toolInvocations).toHaveLength(3);

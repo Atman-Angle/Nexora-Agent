@@ -35,8 +35,25 @@ export {
   type ProviderAdapterDefinition,
   type ProviderCompletionOperation,
   type ProviderCompletionRequest,
+  type ProviderResponseFormat,
   type ProviderRequestTokenMeter
 } from "./adapter.js";
+
+export {
+  ModelResponseSchema,
+  ModelPlanUpdateSchema,
+  ModelPlanTaskSchema,
+  ProviderToolCallSchema,
+  ModelInputRequestSchema,
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL,
+  modelResponses,
+  type ModelResponse,
+  type ModelPlanUpdate,
+  type ModelPlanTask,
+  type ProviderToolCall,
+  type ModelInputRequest
+} from "./model-response.js";
 
 export {
   MEMORY_SECURITY_SYSTEM_PROMPT

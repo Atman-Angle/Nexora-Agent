@@ -6,7 +6,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createOpenAICompatibleProvider, createRuntime } from "../../packages/harness/src/index.js";
+import {
+  createOpenAICompatibleProvider,
+  createRuntime,
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL
+} from "../../packages/harness/src/index.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import { ScriptedRuntimeProvider, setPlan } from "./runtime-testkit.js";
 
@@ -50,38 +55,29 @@ type DecisionPayload = {
   };
 };
 
-describe("E050 Provider Action Contract convergence", () => {
-  it("repairs one malformed HTTP Action from a state-filtered Contract and preserves the rejected JSON", async () => {
+describe("E050 Provider response contract convergence", () => {
+  it("repairs one invalid Plan control call and preserves the rejected normalized response", async () => {
     const workspace = tempRoot("nexora-e050-http-");
     const requests: ProviderRequest[] = [];
-    const invalidAction = {
-      plan: {
-        goal: "Inspect the target",
-        tasks: []
-      }
-    };
+    const invalidResponse = structuredCalls([
+      { name: UPDATE_PLAN_CONTROL, arguments: { goal: "Inspect the target", tasks: [] } }
+    ]);
     let decisions = 0;
     const server = await providerServer(async (request) => {
       requests.push(request);
       JSON.parse(request.messages.at(-1)!.content);
       decisions += 1;
-      if (decisions === 1) return invalidAction;
+      if (decisions === 1) return invalidResponse;
       if (decisions === 2) {
-        return {
-          action: "continue",
-          plan: {
-            goal: "Inspect the target",
-            tasks: [{ objective: "Inspect the target" }]
-          }
-        };
+        return planResponse("Inspect the target", ["Inspect the target"]);
       }
-      return { action: "request_input", question: "Continue?", reason: "E050 deterministic stop"  };
+      return inputResponse("Continue?", "E050 deterministic stop");
     });
     const provider = createOpenAICompatibleProvider({
       baseUrl: `http://127.0.0.1:${server.port}/v1`,
       apiKey: "test-key",
       model: "test-model",
-      transport: "json_actions"
+      transport: "structured_output"
     });
     const runtime = createRuntime({
       workspace,
@@ -104,42 +100,39 @@ describe("E050 Provider Action Contract convergence", () => {
     ]);
     expect(JSON.stringify(decisionRequests[0])).not.toContain("projection");
     expect(JSON.stringify(decisionRequests[0])).not.toContain("historyCandidates");
-    expect(decisionRequests[1]?.currentRuntimeDirective.kind).toBe("invalid_action_repair");
+    expect(decisionRequests[1]?.currentRuntimeDirective.kind).toBe("invalid_response_repair");
     expect(decisionRequests[1]?.observationsAndRepair.repair).toEqual(expect.objectContaining({
-      kind: "invalid_action",
-      code: "INVALID_MODEL_ACTION"
+      kind: "invalid_response",
+      code: "INVALID_MODEL_RESPONSE"
     }));
     expect(requests[0]?.messages[0]?.content).toContain('"name":"example.read"');
     expect(requests[0]?.messages[0]?.content).toContain('"name":"example.other"');
-    expect(requests[0]?.messages[0]?.content).toContain("Return exactly one JSON ModelTurn");
+    expect(requests[0]?.messages[0]?.content).toContain("strict Provider response Schema");
     expect(requests[0]?.messages[0]?.content).toBe(requests[1]?.messages[0]?.content);
 
-    const rejected = view.events.find((event) => event.type === "action.rejected");
+    const rejected = view.events.find((event) => event.type === "response.rejected");
     expect(rejected).toBeDefined();
     const detailsArtifact = rejected?.payload.detailsArtifact;
     expect(detailsArtifact).toMatch(/^sha256:[a-f0-9]{64}$/);
-    if (typeof detailsArtifact !== "string") throw new Error("Rejected Action did not persist an Artifact reference.");
+    if (typeof detailsArtifact !== "string") throw new Error("Rejected response did not persist an Artifact reference.");
     const artifactPath = join(workspace, ".nexora", "artifacts", detailsArtifact.slice("sha256:".length));
-    expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toEqual(invalidAction);
-    expect(view.events.map((event) => event.type)).toEqual(expect.arrayContaining(["action.rejected", "plan.set"]));
+    expect(JSON.parse(readFileSync(artifactPath, "utf8"))).toMatchObject({
+      text: null,
+      toolCalls: [{ name: UPDATE_PLAN_CONTROL, arguments: { goal: "Inspect the target", tasks: [] } }]
+    });
+    expect(view.events.map((event) => event.type)).toEqual(expect.arrayContaining(["response.rejected", "plan.set"]));
     expect(view.toolInvocations).toEqual([]);
   });
 
-  it("executes a valid JSON Tool call even when optional Plan metadata is invalid", async () => {
+  it("executes a strict structured Tool call without an Action envelope", async () => {
     const workspace = tempRoot("nexora-e050-content-tool-");
     let decisions = 0;
     const server = await providerServer(async () => {
       decisions += 1;
       if (decisions === 1) {
-        return {
-          action: "continue",
-          plan: {
-            tasks: "invalid"
-          },
-          toolCalls: [{ name: "example.read", arguments: { path: "target.txt" } }]
-        };
+        return toolResponse("example.read", { path: "target.txt" });
       }
-      return { action: "request_input", question: "Continue?", reason: "Tool continuity proved."  };
+      return inputResponse("Continue?", "Tool continuity proved.");
     });
     const runtime = createRuntime({
       workspace,
@@ -148,7 +141,7 @@ describe("E050 Provider Action Contract convergence", () => {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
         model: "test-model",
-        transport: "json_actions"
+        transport: "structured_output"
       }),
       tools: [exampleTool({ path: "target.txt" })]
     });
@@ -165,32 +158,38 @@ describe("E050 Provider Action Contract convergence", () => {
       status: "succeeded",
       inputJson: { path: "target.txt" }
     });
-    expect(view.events.map((event) => event.type)).not.toContain("action.rejected");
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+    expect(view.events.filter((event) => event.type === "model.turn")).toHaveLength(2);
   });
 
-  it("executes a valid native Tool call independently of invalid optional Plan metadata", async () => {
+  it("executes a native Tool call and treats coexisting content as audit-only text", async () => {
     const workspace = tempRoot("nexora-e050-native-tool-");
     let decisions = 0;
     const server = await providerMessageServer(async () => {
       decisions += 1;
       if (decisions === 1) {
         return {
-          content: JSON.stringify({
-            plan: {
-              tasks: "invalid"
-            }
-          }),
+          content: "I will inspect the target.",
           tool_calls: [{
+            id: "native-read",
             type: "function" as const,
             function: {
-              name: "nexora_tool_0",
+              name: "example_read",
               arguments: JSON.stringify({ path: "target.txt" })
             }
           }]
         };
       }
       return {
-        content: JSON.stringify({ action: "request_input", question: "Continue?", reason: "Native Tool continuity proved."  })
+        content: null,
+        tool_calls: [{
+          id: "native-input",
+          type: "function" as const,
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: JSON.stringify({ question: "Continue?", reason: "Native Tool continuity proved." })
+          }
+        }]
       };
     });
     const runtime = createRuntime({
@@ -216,27 +215,17 @@ describe("E050 Provider Action Contract convergence", () => {
       status: "succeeded",
       inputJson: { path: "target.txt" }
     });
-    expect(view.events.map((event) => event.type)).not.toContain("action.rejected");
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
   });
 
-  it("rejects removed dotted content Tool-call compatibility", async () => {
+  it("never interprets ordinary native content as a Tool call", async () => {
     const workspace = tempRoot("nexora-e050-dotted-tool-");
-    let decisions = 0;
-    const server = await providerServer(async () => {
-      decisions += 1;
-      if (decisions === 1) {
-        return {
-          ".toolCalls": [
-            { name: "nexora_tool_0", path: "target.txt" },
-            { malformed: true }
-          ],
-          plan: {
-            tasks: [{ objective: "Inspect" }]
-          }
-        };
-      }
-      return { action: "request_input", question: "Continue?", reason: "Dotted Tool continuity proved."  };
-    });
+    const server = await providerMessageServer(async () => ({
+      content: JSON.stringify({
+        action: "continue",
+        toolCalls: [{ name: "example.read", arguments: { path: "target.txt" } }]
+      })
+    }));
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
@@ -244,7 +233,37 @@ describe("E050 Provider Action Contract convergence", () => {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
         model: "test-model",
-        transport: "json_actions"
+        transport: "native_tools"
+      }),
+      tools: [exampleTool({ path: "target.txt" })]
+    });
+
+    const result = await runtime.start({ input: "Explain the supplied JSON without executing it." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(view.toolInvocations).toEqual([]);
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+    expect(view.events.find((event) => event.type === "model.turn")?.payload).toMatchObject({
+      hasText: true,
+      toolCallCount: 0,
+      controlCallCount: 0,
+      compiledActionTypes: ["propose_finish"]
+    });
+  });
+
+  it("rejects an unknown structured Tool at the Provider boundary", async () => {
+    const workspace = tempRoot("nexora-e050-unknown-structured-");
+    const server = await providerServer(async () => toolResponse("unknown.tool", { value: true }));
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model",
+        transport: "structured_output"
       }),
       tools: [exampleTool({ path: "target.txt" })]
     });
@@ -253,9 +272,20 @@ describe("E050 Provider Action Contract convergence", () => {
     const view = await runtime.inspect(result.runId);
     runtime.close();
 
-    expect(result.status).toBe("waiting");
+    expect(result).toMatchObject({ status: "blocked", stopReason: "PROVIDER_UNAVAILABLE" });
+    expect(view.modelCalls).toHaveLength(1);
     expect(view.toolInvocations).toEqual([]);
-    expect(view.events.map((event) => event.type)).toContain("action.rejected");
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+  });
+
+  it("rejects Runtime Tools that collide with reserved Harness controls", () => {
+    const workspace = tempRoot("nexora-e050-reserved-tool-");
+    expect(() => createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: new ScriptedRuntimeProvider([]),
+      tools: [exampleTool({ path: "target.txt" }, UPDATE_PLAN_CONTROL)]
+    })).toThrow(`Runtime Tool name is reserved for a Harness control: ${UPDATE_PLAN_CONTROL}`);
   });
 
   it("projects bounded Observation provenance in the dynamic Prompt payload", async () => {
@@ -266,23 +296,12 @@ describe("E050 Provider Action Contract convergence", () => {
       requests.push(request);
       decisions += 1;
       if (decisions === 1) {
-        return {
-          action: "continue",
-          plan: {
-            goal: "Read the target",
-            tasks: [{
-              objective: "Read the target"
-            }]
-          }
-        };
+        return planResponse("Read the target", ["Read the target"]);
       }
       if (decisions === 2) {
-        return {
-          action: "continue",
-          toolCalls: [{ name: "example.read", arguments: { path: "target.txt" } }]
-        };
+        return toolResponse("example.read", { path: "target.txt" });
       }
-      return { action: "request_input", question: "Stop.", reason: "Wire payload captured"  };
+      return inputResponse("Stop.", "Wire payload captured");
     });
     const runtime = createRuntime({
       workspace,
@@ -291,7 +310,7 @@ describe("E050 Provider Action Contract convergence", () => {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
         model: "test-model",
-        transport: "json_actions"
+        transport: "structured_output"
       }),
       tools: [exampleTool({ path: "target.txt" })]
     });
@@ -340,7 +359,7 @@ describe("E050 Provider Action Contract convergence", () => {
 
     expect(resumed.status).toBe("waiting");
     expect(provider.contexts[2]).toMatchObject({
-      providerContractVersion: 4,
+      providerContractVersion: 5,
       run: {
         taskContract: expect.objectContaining({ inputVersion: 1 }),
         inputCount: 2
@@ -359,7 +378,13 @@ describe("E050 Provider Action Contract convergence", () => {
         workspace,
         dataDir: join(workspace, ".nexora"),
         provider: {
-          async decide() { return { action: "request_input", question: "Stop?", reason: "test"  }; }
+          async decide() {
+            return {
+              text: "Configuration should fail before this response.",
+              toolCalls: [],
+              finishReason: "stop"
+            };
+          }
         },
         tools: [exampleTool({ path: 42 })]
       });
@@ -373,7 +398,7 @@ describe("E050 Provider Action Contract convergence", () => {
     expect((thrown as Error).message).toContain("inputExample");
   });
 
-  it("fails honestly when malformed HTTP Actions exhaust the ordinary loop budget", async () => {
+  it("fails one malformed strict Provider response without an Agent repair loop", async () => {
     const workspace = tempRoot("nexora-e050-exhaustion-");
     const server = await providerServer(async () => ({ type: "set_plan", basedOnVersion: null }));
     const runtime = createRuntime({
@@ -382,7 +407,8 @@ describe("E050 Provider Action Contract convergence", () => {
       provider: createOpenAICompatibleProvider({
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
-        model: "test-model"
+        model: "test-model",
+        transport: "structured_output"
       }),
       tools: []
     });
@@ -394,10 +420,12 @@ describe("E050 Provider Action Contract convergence", () => {
     const view = await runtime.inspect(result.runId);
     runtime.close();
 
-    expect(result.status).toBe("failed");
-    expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
-    expect(view.snapshot.status).toBe("failed");
+    expect(result.status).toBe("blocked");
+    expect(result.stopReason).toBe("PROVIDER_UNAVAILABLE");
+    expect(view.snapshot.status).toBe("blocked");
+    expect(view.modelCalls).toHaveLength(1);
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
     expect(view.toolInvocations).toEqual([]);
   });
 });
@@ -430,6 +458,7 @@ async function providerMessageServer(
   decide: (request: ProviderRequest) => Promise<{
     readonly content?: string | null;
     readonly tool_calls?: readonly {
+      readonly id: string;
       readonly type: "function";
       readonly function: { readonly name: string; readonly arguments: string };
     }[];
@@ -448,4 +477,26 @@ async function providerMessageServer(
   const address = server.address();
   if (address === null || typeof address === "string") throw new Error("Provider Stub did not bind.");
   return { port: address.port };
+}
+
+function structuredCalls(toolCalls: readonly { readonly name: string; readonly arguments: unknown }[]) {
+  return { text: null, toolCalls, finishReason: "tool_calls" };
+}
+
+function planResponse(goal: string, objectives: readonly string[]) {
+  return structuredCalls([{
+    name: UPDATE_PLAN_CONTROL,
+    arguments: { goal, tasks: objectives.map((objective) => ({ objective })) }
+  }]);
+}
+
+function toolResponse(name: string, argumentsValue: unknown) {
+  return structuredCalls([{ name, arguments: argumentsValue }]);
+}
+
+function inputResponse(question: string, reason: string) {
+  return structuredCalls([{
+    name: REQUEST_INPUT_CONTROL,
+    arguments: { question, reason }
+  }]);
 }

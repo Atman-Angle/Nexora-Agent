@@ -1,7 +1,11 @@
 import type {
+  ModelResponse,
   ModelDecisionContext,
   RuntimeProvider,
   RuntimeTool
+} from "@nexora/harness";
+import {
+  UPDATE_PLAN_CONTROL
 } from "@nexora/harness";
 
 import type { EvalTask } from "./contracts.js";
@@ -47,11 +51,16 @@ export function createDeterministicProvider(input: {
       if (!planSent) {
         planSent = true;
         return {
-          action: "continue",
-          plan: {
-            goal: input.goal,
-            tasks: input.tasks.map((task) => ({ objective: task.objective }))
-          }
+          text: null,
+          toolCalls: [{
+            callId: "bench-plan",
+            name: UPDATE_PLAN_CONTROL,
+            arguments: {
+              goal: input.goal,
+              tasks: input.tasks.map((task) => ({ objective: task.objective }))
+            }
+          }],
+          finishReason: "tool_calls"
         };
       }
 
@@ -59,12 +68,13 @@ export function createDeterministicProvider(input: {
       if (task !== undefined) {
         nextTaskIndex += 1;
         return {
-          action: "continue",
-          toolCalls: [{ name: task.capability, arguments: task.arguments }]
+          text: null,
+          toolCalls: [{ callId: `bench-tool-${nextTaskIndex}`, name: task.capability, arguments: task.arguments }],
+          finishReason: "tool_calls"
         };
       }
 
-      return { action: "finish", text: input.summary };
+      return { text: input.summary, toolCalls: [], finishReason: "stop" } satisfies ModelResponse;
     }
   };
   return Object.freeze(provider);

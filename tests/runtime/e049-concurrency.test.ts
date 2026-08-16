@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { deriveRunDelivery } from "../../packages/runtime/src/delivery.js";
-import { createRuntime, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import { createRuntime, modelResponses, type ModelDecisionContext, type ModelResponse, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { transitionRunStatus } from "../../packages/runtime/src/state-machine.js";
 
@@ -26,10 +26,10 @@ class PausedProvider implements RuntimeProvider {
   release!: () => void;
   readonly releasePromise = new Promise<void>((resolve) => { this.release = resolve; });
 
-  async decide(_context: ModelDecisionContext): Promise<unknown> {
+  async decide(_context: ModelDecisionContext): Promise<ModelResponse> {
     this.entered();
     await this.releasePromise;
-    return { action: "request_input", question: "Pause", reason: "test"  };
+    return modelResponses.input({ question: "Pause", reason: "test" });
   }
 
 }
@@ -43,8 +43,8 @@ describe("E049 lease and fencing", () => {
         calls += 1;
         await new Promise((resolve) => setTimeout(resolve, 15));
         return calls < 30
-          ? { type: "unknown_action" }
-          : { action: "request_input", question: "Continue?", reason: "lease test"  };
+          ? { invalid: "response" } as unknown as ModelResponse
+          : modelResponses.input({ question: "Continue?", reason: "lease test" });
       }
     };
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [], leaseTtlMs: 300 });
@@ -70,7 +70,7 @@ describe("E049 lease and fencing", () => {
     const second = createRuntime({
       workspace,
       dataDir,
-      provider: { async decide() { return { action: "request_input", question: "x", reason: "x"  }; } },
+      provider: { async decide() { return modelResponses.input({ question: "x", reason: "x" }); } },
       tools: []
     });
     await expect(second.resume({ runId })).rejects.toThrow(/RUN_BUSY/);

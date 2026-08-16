@@ -9,7 +9,7 @@ import {
   TaskContractSchema,
   createInitialRunSnapshot
 } from "../../packages/runtime/src/contracts.js";
-import { actionRejectionDiagnostic } from "../../packages/runtime/src/runtime-helpers.js";
+import { responseRejectionDiagnostic } from "../../packages/runtime/src/runtime-helpers.js";
 
 const now = "2026-07-22T00:00:00.000Z";
 
@@ -174,7 +174,7 @@ describe("E049 authoritative runtime contracts", () => {
         RuntimeActionSchema.parse(input);
         return [];
       } catch (error) {
-        return actionRejectionDiagnostic(error as Parameters<typeof actionRejectionDiagnostic>[0], input).issues;
+        return responseRejectionDiagnostic(error as Parameters<typeof responseRejectionDiagnostic>[0], input).issues;
       }
     })();
     expect(diagnostics).toEqual([]);

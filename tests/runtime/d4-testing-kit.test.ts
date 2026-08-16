@@ -14,7 +14,7 @@ import {
   assertSucceeded,
   createAgentHarness,
   createScriptedProvider,
-  modelTurns
+  modelResponses
 } from "../../packages/harness/src/testing/index.js";
 
 describe("D4 Runtime Testing Kit", () => {
@@ -40,18 +40,18 @@ describe("D4 Runtime Testing Kit", () => {
       }
     });
     const provider = createScriptedProvider({
-      modelTurns: [
-        modelTurns.plan({
+      modelResponses: [
+        modelResponses.plan({
           goal: "Read fixture",
           steps: [{
             objective: "Read fixture"
           }]
         }),
-        modelTurns.tool({
+        modelResponses.tool({
           toolName: "fixture.read",
           input: { path: "values/example.txt" }
         }),
-        modelTurns.finish({ summary: "Fixture was read." })
+        modelResponses.finish({ summary: "Fixture was read." })
       ]
     });
     const harness = await createAgentHarness({
@@ -98,9 +98,9 @@ describe("D4 Runtime Testing Kit", () => {
   it("keeps malformed scripted output on the production Action repair path", async () => {
     const harness = await createAgentHarness({
       provider: createScriptedProvider({
-        modelTurns: [
-          modelTurns.raw({ invalid: "turn" }),
-          modelTurns.input({
+        modelResponses: [
+          modelResponses.raw({ invalid: "response" }),
+          modelResponses.input({
             question: "Repair observed?",
             reason: "Stop after repair."
           })
@@ -113,9 +113,9 @@ describe("D4 Runtime Testing Kit", () => {
       const inspection = await run.wait();
 
       expect(inspection.status).toBe("waiting_for_input");
-      expect(inspection.error?.code).toBe("INVALID_MODEL_ACTION");
+      expect(inspection.error?.code).toBe("INVALID_MODEL_RESPONSE");
       expect((await harness.runtime.inspect(run.id)).events.some(
-        (event) => event.type === "action.rejected"
+        (event) => event.type === "response.rejected"
       )).toBe(true);
     } finally {
       await harness[Symbol.asyncDispose]();
@@ -124,7 +124,7 @@ describe("D4 Runtime Testing Kit", () => {
 
   it("exhausts scripts as Provider failure and assertions reject false claims", async () => {
     const harness = await createAgentHarness({
-      provider: createScriptedProvider({ modelTurns: [] }),
+      provider: createScriptedProvider({ modelResponses: [] }),
       tools: []
     });
     try {

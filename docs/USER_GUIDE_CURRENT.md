@@ -147,12 +147,12 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 默认数据目录是 `<workspace>/.nexora`：
 
 - `runtime-v1.1.db`：Run、Journal、Invocation、Model Call、Provider Attempt 和 Branch Authority；
-- `artifacts/`：内容寻址的大内容和被拒绝原始 Action。
+- `artifacts/`：内容寻址的大内容和被拒绝原始 Provider Response。
 
 成功链必须满足：
 
 ```text
-ModelTurn.action = "finish" + ModelTurn.text
+ModelResponse.toolCalls = [] + 非空 ModelResponse.text
 → Harness 编译只含 summary 的 propose_finish
 → Runtime 从真实 Invocation / Evidence / Artifact 自动派生 provenance
 → required mechanical Checks + pending/unknown safety gate
@@ -166,7 +166,7 @@ ModelTurn.action = "finish" + ModelTurn.text
 
 ## 7. 当前限制
 
-- 只有 OpenAI-compatible HTTP Provider；没有 Provider 自动探测或 Function Calling 旁路。
+- 只有 OpenAI-compatible HTTP Provider；Transport 必须显式选择原生 Function Calling 或严格 Structured Output，没有自动探测或运行中降级。
 - 没有 Desktop、HTTP 服务、Python/Rust SDK、MCP、Workflow DSL 或领域 Agent。
 - CLI 不提供单独的 `ask/read/patch/verify/agent/approve` 命令；这些属于已删除的旧实现。
 - 新 1.1 Runtime 不迁移或恢复旧数据库。

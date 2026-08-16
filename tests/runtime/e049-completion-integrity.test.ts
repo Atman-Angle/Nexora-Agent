@@ -37,7 +37,7 @@ describe("E049 deterministic completion integrity", () => {
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("succeeded");
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     expect(view.events.some((event) => event.type.startsWith("validation."))).toBe(false);
     expect(view.modelCalls.every((call) => call.phase === "decision")).toBe(true);
     expect(view.snapshot.result?.evidenceIds).toEqual([view.snapshot.evidence[0]!.id]);
@@ -98,7 +98,7 @@ describe("E049 deterministic completion integrity", () => {
 
     expect(result.status).toBe("failed");
     expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
-    expect(result.lastError?.code).toBe("INVALID_MODEL_ACTION");
+    expect(result.lastError?.code).toBe("INVALID_MODEL_RESPONSE");
     await runtime.close();
   });
 });

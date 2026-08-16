@@ -52,7 +52,7 @@ export function projectAgentWorkingContext(
     },
     recentOutcome: repair === null ? null : {
       intent: repair.latestIntent ?? null,
-      status: repair.kind === "invalid_action"
+      status: repair.kind === "invalid_response"
         ? "rejected"
         : repair.kind === "approval_denied"
           ? "denied"

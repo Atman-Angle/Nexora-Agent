@@ -221,7 +221,7 @@ describe("E066 execute_step granularity", () => {
     expect(view.toolInvocations).toHaveLength(1);
     expect(view.snapshot.stepProgress[0]?.status).toBe("completed");
     expect(provider.contexts).toHaveLength(3);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     expect(executeStepEvent(view)?.payload).toEqual(expect.objectContaining({
       executedActionCount: 1,
       cachedActionCount: 1,
@@ -267,7 +267,7 @@ describe("E066 execute_step granularity", () => {
 
     expect(result.status).toBe("waiting");
     expect(view.toolInvocations).toHaveLength(0);
-    expect(view.events.map((event) => event.type)).toContain("action.rejected");
+    expect(view.events.map((event) => event.type)).toContain("response.rejected");
     expect(provider.contexts).toHaveLength(3);
   });
 

@@ -25,7 +25,7 @@ describe("E058 model-owned Tool selection", () => {
     const view = await runtime.inspect(result.runId);
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan).not.toBeNull();
-    expect(view.events.map((event) => event.type)).not.toContain("action.rejected");
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
     runtime.close();
   });
 

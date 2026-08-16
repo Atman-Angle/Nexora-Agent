@@ -18,22 +18,24 @@ import {
   evaluateContinuityCanary,
   runContinuityCanary
 } from "../canaries/context-memory-continuity.js";
-import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import {
+  ScriptedRuntimeProvider,
+  responsePlan,
+  responseText,
+  responseTools
+} from "./runtime-testkit.js";
 
 describe("E097 real Provider continuity canary contract", () => {
   it("drives the fixed Canary through the complete Runtime path without Provider credentials", async () => {
     const outputRoot = mkdtempSync(join(tmpdir(), "nexora-e097-canary-"));
     const scripted = new ScriptedRuntimeProvider([
       canaryPlan(),
-      {
-        action: "continue",
-        toolCalls: SHARD_PATHS.map((path) => ({
+      responseTools(SHARD_PATHS.map((path) => ({
           name: "filesystem.read",
           arguments: { path }
-        }))
-      },
-      { action: "continue", plan: { tasks: [{ objective: "Confirm all eight restored shard outcomes." }] } },
-      { action: "finish", text: "Verified all eight ORCHID shard codes from exact file Evidence." }
+        }))),
+      responsePlan({ tasks: [{ objective: "Confirm all eight restored shard outcomes." }] }),
+      responseText("Verified all eight ORCHID shard codes from exact file Evidence.")
     ]);
     const provider: RuntimeProvider = {
       modelProfile: {
@@ -252,15 +254,12 @@ describe("E097 real Provider continuity canary contract", () => {
 });
 
 function canaryPlan() {
-  return {
-    action: "continue",
-    plan: {
+  return responsePlan({
       goal: "Use cross-run Memory to identify the preferred stream and read all eight exact shards.",
       tasks: [{
         objective: "Read every fixed shard and report the ordered preferred-stream codes from persisted facts."
       }]
-    }
-  };
+    });
 }
 
 function result(status: RunResult["status"], stopReason: string | null): RunResult {

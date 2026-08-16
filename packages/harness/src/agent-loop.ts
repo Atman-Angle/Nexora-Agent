@@ -2,7 +2,12 @@ import { z } from "zod";
 
 import type { RunSnapshot, RuntimeAction } from "@nexora/runtime/internal";
 import type { DecisionContextResult } from "./context/decision-context.js";
-import type { ModelTurn } from "./providers/model-turn.js";
+import {
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL,
+  isControlCall,
+  type ModelResponse
+} from "./providers/model-response.js";
 import type { RehydratedFact } from "./providers/model-client.js";
 import { RuntimeError, cancellationReason, digestJson } from "@nexora/runtime/internal";
 import { ActionRejectedError, toRunResult } from "@nexora/runtime/internal";
@@ -11,10 +16,10 @@ import type { RequestModelResult } from "./provider-gateway.js";
 import {
   compileModelFinish,
   compileModelPlan,
-  compileModelToolCalls,
-  parseModelTurn,
-  parseModelTurnFields,
-  type RejectedModelTurnField
+  compileProviderToolCalls,
+  parseInputControl,
+  parseModelResponse,
+  parsePlanControl
 } from "./planning.js";
 
 const PREMATURE_INPUT_REPAIR = "AUTONOMOUS_INPUT_REPAIR_REQUIRED";
@@ -56,15 +61,10 @@ export interface AgentLoopRuntimePort {
     error: unknown,
     observer?: RuntimeObserver
   ): RunSnapshot;
-  recordModelTurn(
+  recordModelResponse(
     run: RunSnapshot,
-    turn: ModelTurn,
+    response: ModelResponse,
     compiledActionTypes: readonly string[],
-    observer?: RuntimeObserver
-  ): void;
-  recordRejectedTurnFields(
-    run: RunSnapshot,
-    fields: readonly RejectedModelTurnField[],
     observer?: RuntimeObserver
   ): void;
   dispatch(
@@ -73,7 +73,7 @@ export interface AgentLoopRuntimePort {
     signal: AbortSignal,
     observer?: RuntimeObserver
   ): Promise<RunSnapshot>;
-  rejectAction(
+  rejectResponse(
     run: RunSnapshot,
     error: z.ZodError | ActionRejectedError,
     rawAction: unknown,
@@ -136,7 +136,7 @@ export async function runAgentLoop(
       run = runtime.blockForProvider(run, error, observer);
       break;
     }
-    const rawAction = modelCall.output;
+    const rawResponse = modelCall.output;
     if (signal.aborted) {
       run = runtime.cancel(run, cancellationReason(signal), observer);
       break;
@@ -145,8 +145,8 @@ export async function runAgentLoop(
     if (finalizationReason !== null) {
       let summary: string | undefined;
       try {
-        const turn = parseModelTurn(rawAction);
-        summary = turn.action === "finish" ? turn.text : undefined;
+        const response = parseModelResponse(rawResponse);
+        summary = response.toolCalls.length === 0 ? response.text ?? undefined : undefined;
       } catch {
         // Deterministic Delivery remains available when the final model output is malformed.
       }
@@ -159,16 +159,32 @@ export async function runAgentLoop(
     }
 
     try {
-      const parsedTurn = parseModelTurnFields(rawAction);
-      const turn = parsedTurn.turn;
-      if (parsedTurn.rejectedFields.length > 0) {
-        runtime.recordRejectedTurnFields(run, parsedTurn.rejectedFields, observer);
+      const response = parseModelResponse(rawResponse);
+      const planCalls = response.toolCalls.filter((call) => call.name === UPDATE_PLAN_CONTROL);
+      const inputCalls = response.toolCalls.filter((call) => call.name === REQUEST_INPUT_CONTROL);
+      const runtimeCalls = response.toolCalls.filter((call) => !isControlCall(call));
+      if (planCalls.length > 1) {
+        throw new ActionRejectedError(`A Provider response may contain at most one ${UPDATE_PLAN_CONTROL} call.`);
       }
-      const actionTypes: string[] = [];
-      if (turn.action === "continue" && turn.plan !== undefined) {
-        const planAction = compileModelPlan(run, turn.plan, () => runtime.createId());
+      if (inputCalls.length > 1 || (inputCalls.length === 1 && response.toolCalls.length !== 1)) {
+        throw new ActionRejectedError(`${REQUEST_INPUT_CONTROL} must be the only call in a Provider response.`);
+      }
+      const planUpdate = planCalls.length === 1 ? parsePlanControl(planCalls[0]!) : null;
+      const inputRequest = inputCalls.length === 1 ? parseInputControl(inputCalls[0]!) : null;
+      const actionTypes = [
+        ...(planUpdate === null ? [] : ["set_plan"]),
+        ...(inputRequest !== null
+          ? ["request_input"]
+          : runtimeCalls.length > 0
+            ? [runtimeCalls.length === 1 ? "call_tool" : "execute_step"]
+            : response.toolCalls.length === 0
+              ? ["propose_finish"]
+              : [])
+      ];
+      runtime.recordModelResponse(run, response, actionTypes, observer);
+      if (planCalls.length === 1) {
+        const planAction = compileModelPlan(run, planUpdate!, () => runtime.createId());
         run = await runtime.dispatch(run, planAction, signal, observer);
-        actionTypes.push(planAction.type);
         if (decisionResult.context.rehydratedFacts.length > 0) {
           run = runtime.recordContextRefEvidence(
             run,
@@ -177,36 +193,30 @@ export async function runAgentLoop(
           );
         }
       }
-      if (turn.action === "request_input") {
+      if (inputCalls.length === 1) {
         if (shouldRepairPrematureInputRequest(run, decisionContext)) {
-          run = runtime.rejectAction(
+          run = runtime.rejectResponse(
             run,
             new ActionRejectedError(
               `${PREMATURE_INPUT_REPAIR}: Use existing information and available Tools before requesting user input. Ask only for a user-exclusive fact or choice after autonomous paths are exhausted.`
             ),
-            rawAction,
+            rawResponse,
             observer
           );
         } else {
           const inputAction: RuntimeAction = {
             type: "request_input",
-            question: turn.question,
-            reason: turn.reason
+            question: inputRequest!.question,
+            reason: inputRequest!.reason
           };
           run = await runtime.dispatch(run, inputAction, signal, observer);
-          actionTypes.push(inputAction.type);
         }
-      } else if (turn.action === "continue" && (turn.toolCalls?.length ?? 0) > 0) {
-        const toolAction = compileModelToolCalls(run, turn.toolCalls!);
+      } else if (runtimeCalls.length > 0) {
+        const toolAction = compileProviderToolCalls(run, runtimeCalls);
         run = await runtime.dispatch(run, toolAction, signal, observer);
-        actionTypes.push(toolAction.type);
-      } else if (turn.action === "finish") {
-        const finishAction = compileModelFinish(run, turn.text);
+      } else if (response.toolCalls.length === 0) {
+        const finishAction = compileModelFinish(run, response.text!);
         run = await runtime.dispatch(run, finishAction, signal, observer);
-        actionTypes.push(finishAction.type);
-      }
-      if (run.status === "running") {
-        runtime.recordModelTurn(run, turn, actionTypes, observer);
       }
     } catch (error) {
       if (error instanceof RuntimeError && error.code === "CANCELLED") {
@@ -223,7 +233,7 @@ export async function runAgentLoop(
       // rejecting its final transition. Repair must continue from Authority,
       // never from the pre-command revision held by the Agent Loop.
       run = runtime.snapshot(run.runId);
-      run = runtime.rejectAction(run, error, rawAction, observer);
+      run = runtime.rejectResponse(run, error, rawResponse, observer);
     }
   }
   return toRunResult(run);

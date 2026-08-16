@@ -11,6 +11,12 @@ import type {
   RuntimeProvider
 } from "../../packages/harness/src/providers/model-client.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
+import {
+  responseCall,
+  responsePlan,
+  responsePlanAndTools,
+  responseText
+} from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -24,11 +30,11 @@ describe("E119 progressive Agent execution", () => {
     const provider = decisionProvider([
       (context) => {
         contexts.push(structuredClone(context));
-        return { action: "continue", toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }] };
+        return responseCall("records.lookup", { recordId: "customer-42" });
       },
       (context) => {
         contexts.push(structuredClone(context));
-        return { action: "finish", text: "Customer 42 is active." };
+        return responseText("Customer 42 is active.");
       }
     ]);
     const runtime = createAgent({
@@ -64,18 +70,14 @@ describe("E119 progressive Agent execution", () => {
       provider: decisionProvider([
         (context) => {
           contexts.push(structuredClone(context));
-          return {
-            action: "continue",
-            plan: {
+          return responsePlanAndTools({
               goal: "Read customer-42.",
               tasks: [{ objective: "Read the current customer record." }]
-            },
-            toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]
-          };
+            }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]);
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return { action: "finish", text: "Customer 42 is active." };
+          return responseText("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -101,21 +103,18 @@ describe("E119 progressive Agent execution", () => {
       provider: decisionProvider([
         (context) => {
           contexts.push(structuredClone(context));
-          return { action: "continue", toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }] };
+          return responseCall("records.lookup", { recordId: "customer-42" });
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return {
-            action: "continue",
-            plan: {
+          return responsePlan({
               goal: "Deliver the discovered customer status.",
               tasks: [{ objective: "Report the current status from the lookup." }]
-            }
-          };
+            });
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return { action: "finish", text: "Customer 42 is active." };
+          return responseText("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -139,7 +138,7 @@ describe("E119 progressive Agent execution", () => {
     const workspace = tempRoot();
     const dataDir = join(workspace, ".nexora");
     const firstProvider = decisionProvider([
-      () => ({ action: "continue", toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }] })
+      () => responseCall("records.lookup", { recordId: "customer-42" })
     ]);
     const firstRuntime = createAgent({
       workspace,
@@ -160,7 +159,7 @@ describe("E119 progressive Agent execution", () => {
       provider: decisionProvider([
         (context) => {
           resumedContexts.push(structuredClone(context));
-          return { action: "finish", text: "Customer 42 is active." };
+          return responseText("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -183,16 +182,12 @@ describe("E119 progressive Agent execution", () => {
     const runtime = createAgent({
       workspace: tempRoot(),
       provider: decisionProvider([
-        () => ({
-          action: "continue",
-          plan: {
+        () => responsePlanAndTools({
             goal: "Read customer-42.",
             tasks: [{ objective: "Read the current customer record." }]
-          },
-          toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]
-        }),
-        () => ({ action: "finish", text: "" }),
-        () => ({ action: "finish", text: "Customer 42 is active." })
+          }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]),
+        () => responseText(""),
+        () => responseText("Customer 42 is active.")
       ]),
       tools: [recordLookupTool(toolCalls)]
     });
@@ -205,29 +200,34 @@ describe("E119 progressive Agent execution", () => {
     expect(view.toolInvocations).toHaveLength(1);
     expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(1);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
     expect(view.modelCalls.map((call) => call.phase)).toEqual(["decision", "decision", "decision"]);
     await runtime.close();
   });
 
-  it("repairs only an invalid Tool call and does not repeat its successful batch sibling", async () => {
+  it("rejects an invalid response batch before effects and executes the corrected batch once", async () => {
     const lookupCalls = { count: 0 };
     const auditCalls = { count: 0 };
     const runtime = createAgent({
       workspace: tempRoot(),
       provider: decisionProvider([
         () => ({
-          action: "continue",
+          text: null,
           toolCalls: [
-            { name: "records.lookup", arguments: { recordId: "customer-42" } },
-            { name: "records.audit", arguments: undefined }
-          ]
+            { callId: "invalid-lookup", name: "records.lookup", arguments: { recordId: "customer-42" } },
+            { callId: "invalid-audit", name: "records.audit", arguments: undefined }
+          ],
+          finishReason: "tool_calls"
         }),
         () => ({
-          action: "continue",
-          toolCalls: [{ name: "records.audit", arguments: { recordId: "customer-42" } }]
+          text: null,
+          toolCalls: [
+            { callId: "corrected-lookup", name: "records.lookup", arguments: { recordId: "customer-42" } },
+            { callId: "corrected-audit", name: "records.audit", arguments: { recordId: "customer-42" } }
+          ],
+          finishReason: "tool_calls"
         }),
-        () => ({ action: "finish", text: "Customer 42 is active and audited." })
+        () => responseText("Customer 42 is active and audited.")
       ]),
       tools: [recordLookupTool(lookupCalls), recordAuditTool(auditCalls)]
     });
@@ -242,12 +242,7 @@ describe("E119 progressive Agent execution", () => {
       "records.lookup",
       "records.audit"
     ]);
-    expect(view.events).toContainEqual(expect.objectContaining({
-      type: "model.turn.field_rejected",
-      payload: expect.objectContaining({
-        fields: [expect.objectContaining({ field: "toolCalls.1" })]
-      })
-    }));
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
     await runtime.close();
   });
 });
@@ -260,7 +255,7 @@ function decisionProvider(decisions: readonly Decision[]): RuntimeProvider {
     async decide(context) {
       const next = queue.shift();
       if (next === undefined) throw new Error("Decision queue exhausted.");
-      return next(context);
+      return next(context) as ReturnType<typeof responseText>;
     }
   };
 }

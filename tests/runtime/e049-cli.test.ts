@@ -24,16 +24,14 @@ describe("E049 natural-language CLI", () => {
       calls += 1;
       let content: unknown;
       if (calls === 1) {
-        content = {
-          plan: {
+        content = structuredTool("nexora_update_plan", {
             goal: "Read the requested target",
             tasks: [{ objective: "Read target.txt" }]
-          }
-        };
+          });
       } else if (calls === 2) {
-        content = { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] };
+        content = structuredTool("filesystem.read", { path: "target.txt" });
       } else {
-        content = { action: "finish", text: "Read target.txt with verified evidence." };
+        content = { text: "Read target.txt with verified evidence.", toolCalls: [], finishReason: "stop" };
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
@@ -47,6 +45,7 @@ describe("E049 natural-language CLI", () => {
       NEXORA_MODEL_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
       NEXORA_MODEL_API_KEY: "test-key",
       NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_TOOL_TRANSPORT: "structured_output",
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
     });
     server.close();
@@ -76,6 +75,10 @@ describe("E049 natural-language CLI", () => {
     expect(result.stderr).toContain("MODEL_CONFIG_ERROR");
   });
 });
+
+function structuredTool(name: string, argumentsValue: unknown): unknown {
+  return { text: null, toolCalls: [{ name, arguments: argumentsValue }], finishReason: "tool_calls" };
+}
 
 function spawnCli(args: string[], environment: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {

@@ -5,7 +5,7 @@ import type {
   ProviderModelProfile,
   ProviderTokenMeter
 } from "./providers/model-client.js";
-import type { ModelTurn } from "./providers/model-turn.js";
+import type { ModelResponse } from "./providers/model-response.js";
 
 export type AgentProviderOperation = {
   readonly signal: AbortSignal;
@@ -15,7 +15,7 @@ export interface AgentProvider {
   decide(
     context: ModelDecisionContext,
     operation: AgentProviderOperation
-  ): Promise<ModelTurn | unknown>;
+  ): Promise<ModelResponse>;
   describeModel?(): ProviderModelProfile;
   tokenMeter?: ProviderTokenMeter;
   dispose?(): void | Promise<void>;
@@ -26,7 +26,7 @@ export interface AgentContextStrategy {
 }
 
 export interface AgentPlanningStrategy {
-  decide(context: AgentWorkingContext): Promise<ModelTurn>;
+  decide(context: AgentWorkingContext): Promise<ModelResponse>;
 }
 
 export interface AgentMemory {

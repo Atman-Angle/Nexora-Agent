@@ -9,6 +9,7 @@ import {
   MemoryRecordSchema,
   createBuiltInTools,
   createRuntime,
+  modelResponses,
   openAICompatibleProviderFromEnv,
   openMemoryStore,
   type ModelCallRecord,
@@ -320,7 +321,7 @@ async function seedHistoryRun(input: {
 }): Promise<string> {
   const bootstrap: RuntimeProvider = {
     modelProfile: { provider: "benchmark-fixture", model: "history-seeder", contextWindowTokens: 32_000, reservedOutputTokens: { decision: 1_024 }, softLimitRatio: 0.8 },
-    async decide() { return { action: "request_input", question: "Continue fixture setup.", reason: "Build persisted Session Archive input history."  }; }
+    async decide() { return modelResponses.input({ question: "Continue fixture setup.", reason: "Build persisted Session Archive input history." }); }
   };
   const runtime = createRuntime({ workspace: input.workspace, dataDir: input.dataDir, provider: bootstrap, tools: createBuiltInTools(), memory: { store: input.memoryStore, scope: benchmarkScope() } });
   try {
@@ -337,7 +338,11 @@ async function seedHistoryRun(input: {
 }
 
 function observeProvider(provider: RuntimeProvider, observations: Observation[]): RuntimeProvider {
-  const invoke = async (phase: Observation["phase"], context: unknown, call: () => Promise<unknown>) => {
+  const invoke = async (
+    phase: Observation["phase"],
+    context: unknown,
+    call: () => ReturnType<RuntimeProvider["decide"]>
+  ): ReturnType<RuntimeProvider["decide"]> => {
     const started = performance.now();
     const result = await call();
     const action = result as {

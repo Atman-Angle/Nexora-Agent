@@ -8,14 +8,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createRuntime,
   createOpenAICompatibleProvider,
+  modelResponses,
   type ModelDecisionContext,
+  type ModelResponse,
   type RuntimeProvider
 } from "../../packages/harness/src/index.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import {
   finishFromEvidence,
-  materializeTestTurn,
+  materializeTestResponse,
   setPlan,
   successfulReadTool
 } from "./runtime-testkit.js";
@@ -150,7 +152,7 @@ describe("E079 Context Budget and Token Accounting", () => {
       },
       async decide() {
         decideCalls += 1;
-        return { action: "request_input", question: "x", reason: "x"  };
+        return modelResponses.input({ question: "x", reason: "x" });
       }
     };
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -220,7 +222,17 @@ describe("E079 Context Budget and Token Accounting", () => {
       fetch: async (_input, init) => {
         requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return new Response(JSON.stringify({
-          choices: [{ message: { content: JSON.stringify({ action: "request_input", question: "Which target?", reason: "Target is required." }) } }],
+          choices: [{ message: {
+            content: null,
+            tool_calls: [{
+              id: "request-target",
+              type: "function",
+              function: {
+                name: "nexora_request_input",
+                arguments: JSON.stringify({ question: "Which target?", reason: "Target is required." })
+              }
+            }]
+          } }],
           usage: { prompt_tokens: 300, completion_tokens: 20, total_tokens: 320 }
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -231,7 +243,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     const call = (await runtime.inspect(result.runId)).modelCalls[0];
 
     expect(meteredInput).not.toContain('"projection"');
-    expect(meteredSystem).toContain('"assistantJsonActions"');
+    expect(meteredSystem).toContain('"transport":"native_tools"');
     expect(meteredSystem).toContain("A Plan is optional navigation, not permission or a Tool whitelist");
     expect(meteredInput).not.toContain('"intentContract"');
     expect(meteredInput).toContain('"currentRuntimeDirective"');
@@ -251,7 +263,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     const workspace = fixture();
     const provider: RuntimeProvider = {
       async decide() {
-        return { action: "request_input", question: "Which target?", reason: "Target is required."  };
+        return modelResponses.input({ question: "Which target?", reason: "Target is required." });
       }
     };
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -421,7 +433,7 @@ function budgetedProvider(input: {
         outputTokens: 6,
         totalTokens: 70
       });
-      return { action: "request_input", question: "Which target?", reason: "Target is required."  };
+      return modelResponses.input({ question: "Which target?", reason: "Target is required." });
     }
   };
 }
@@ -462,13 +474,13 @@ class CompletingBudgetProvider implements RuntimeProvider {
   async decide(
     context: ModelDecisionContext,
     operation: Parameters<RuntimeProvider["decide"]>[1]
-  ): Promise<unknown> {
+  ): Promise<ModelResponse> {
     operation.reportTokenUsage?.({ inputTokens: 18, outputTokens: 2, totalTokens: 20 });
     const action = this.#actions[this.#cursor++];
     const resolved = typeof action === "function"
       ? (action as (value: ModelDecisionContext) => unknown)(context)
       : action;
-    return materializeTestTurn(resolved, context);
+    return materializeTestResponse(resolved, context);
   }
 
 }

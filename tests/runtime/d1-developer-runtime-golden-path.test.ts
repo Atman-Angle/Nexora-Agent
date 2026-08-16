@@ -208,7 +208,7 @@ describe("D1 developer Runtime golden path", () => {
 
     expect(result.status).toBe("failed");
     if (result.status !== "failed") throw new Error("Expected a failed terminal result.");
-    expect(result.error.code).toBe("INVALID_MODEL_ACTION");
+    expect(result.error.code).toBe("INVALID_MODEL_RESPONSE");
     expect((await run.inspect()).result).toEqual(result);
     await runtime.close();
   });
@@ -646,6 +646,7 @@ function externalConsumerSource(workspace: string): string {
 import {
   createBuiltInTools,
   createRuntime,
+  modelResponses,
   type ModelDecisionContext,
   type RuntimeProvider
 } from "@nexora/harness";
@@ -657,26 +658,17 @@ const workspace = ${JSON.stringify(workspace)};
 const provider: RuntimeProvider = {
   async decide(_context: ModelDecisionContext) {
     call += 1;
-    if (call === 1) return {
-      action: "continue",
-      plan: {
+    if (call === 1) return modelResponses.plan({
         goal: "Search target",
         tasks: [{
           objective: "Search target"
         }]
-      }
-    };
-    if (call === 2) return {
-      action: "continue",
-      toolCalls: [{
-          name: "filesystem.search",
-          arguments: { query: "external D1 consumer", path: "." }
-        }]
-    };
-    return {
-      action: "finish",
-      text: "Verified external package"
-    };
+      });
+    if (call === 2) return modelResponses.tool({
+      name: "filesystem.search",
+      arguments: { query: "external D1 consumer", path: "." }
+    });
+    return modelResponses.text("Verified external package");
   }
 };
 

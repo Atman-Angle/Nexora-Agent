@@ -145,11 +145,11 @@ describe("E051 deterministic mutation closure", () => {
     const releasePromise = new Promise<void>((resolve) => { release = resolve; });
     const stub = await providerStub(async (_context, index) => {
       if (index <= 1) {
-        return { action: "request_input", question: "First input?", reason: "Set up the persisted wait."  };
+        return structuredInput("First input?", "Set up the persisted wait.");
       }
       entered();
       await releasePromise;
-      return { action: "request_input", question: "Next input?", reason: "Keep the Run waiting."  };
+      return structuredInput("Next input?", "Keep the Run waiting.");
     });
     const environment = providerEnvironment(stub.baseUrl);
 
@@ -226,7 +226,7 @@ describe("E051 deterministic mutation closure", () => {
       expect(validation?.status).toBe("failed");
       expect(validation?.errorJson).toEqual(expect.objectContaining({ code: "PROCESS_EXIT_NONZERO" }));
       expect(view.snapshot.evidence.some((item) => item.stepId === "validate")).toBe(false);
-      expect(view.events.some((event) => event.type === "action.rejected")).toBe(false);
+      expect(view.events.some((event) => event.type === "response.rejected")).toBe(false);
       expect(view.events.some((event) => event.type.startsWith("validation.") || event.type === "run.succeeded")).toBe(false);
       expect(readFileSync(fixture.path, "utf8")).toBe("after\n");
     } finally {
@@ -235,9 +235,14 @@ describe("E051 deterministic mutation closure", () => {
   });
 
   it("rejects the removed expectedExitCode field instead of advertising an unconsumed validation contract", () => {
-    const fixture = mutationFixture();
     expect(RuntimeActionSchema.safeParse({
-      ...mutationPlan(fixture),
+      type: "set_plan",
+      basedOnVersion: null,
+      taskContract: {
+        goal: "Validate the implementation.",
+        constraints: [],
+        acceptanceCriteria: ["The validation command succeeds."]
+      },
       orderedSteps: [{
         id: "validate",
         objective: "Validate",
@@ -280,17 +285,14 @@ function mutationFixture(): MutationFixture {
 }
 
 function mutationPlan(_fixture: MutationFixture) {
-  return {
-    action: "continue",
-    plan: {
+  return structuredTool("nexora_update_plan", {
       goal: "Change note.txt from before to after and validate it",
       tasks: [
         { objective: "Read note.txt before mutation" },
         { objective: "Patch note.txt" },
         { objective: "Run the validation command" }
       ]
-    }
-  };
+    });
 }
 
 function mutationDecision(
@@ -300,28 +302,34 @@ function mutationDecision(
   return (_context, index) => {
     if (index === 0) return mutationPlan(fixture);
     if (index === 1) {
-      return { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "note.txt" } }] };
+      return structuredTool("filesystem.read", { path: "note.txt" });
     }
     if (index === 2) {
-      return {
-        action: "continue",
-        toolCalls: [{ name: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: fixture.beforeDigest, find: "before", replace: "after" } }]
-      };
+      return structuredTool("filesystem.patch", { path: "note.txt", expectedDigest: fixture.beforeDigest, find: "before", replace: "after" });
     }
     if (index === 3) {
-      return {
-        action: "continue",
-        toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", `process.exit(${options.validationExitCode})`], cwd: "." } }]
-      };
+      return structuredTool("shell.execute", { command: process.execPath, args: ["-e", `process.exit(${options.validationExitCode})`], cwd: "." });
     }
     if (index === 4) {
       if (options.validationExitCode !== 0) {
-        return { action: "request_input", question: "The verification command failed. How should I continue?", reason: "No successful verification Evidence exists." };
+        return structuredInput("The verification command failed. How should I continue?", "No successful verification Evidence exists.");
       }
-      return { action: "finish", text: "Changed note.txt and ran validation." };
+      return structuredText("Changed note.txt and ran validation.");
     }
-    return { action: "request_input", question: "Required completion evidence is missing. Continue?", reason: "completion rejected"  };
+    return structuredInput("Required completion evidence is missing. Continue?", "completion rejected");
   };
+}
+
+function structuredTool(name: string, argumentsValue: unknown): unknown {
+  return { text: null, toolCalls: [{ name, arguments: argumentsValue }], finishReason: "tool_calls" };
+}
+
+function structuredInput(question: string, reason: string): unknown {
+  return structuredTool("nexora_request_input", { question, reason });
+}
+
+function structuredText(text: string): unknown {
+  return { text, toolCalls: [], finishReason: "stop" };
 }
 
 async function providerStub(
@@ -358,7 +366,7 @@ function provider(baseUrl: string) {
     baseUrl,
     apiKey: "test-key",
     model: "test-model",
-    transport: "json_actions"
+    transport: "structured_output"
   });
 }
 
@@ -368,7 +376,7 @@ function providerEnvironment(baseUrl: string): Record<string, string> {
     NEXORA_MODEL_BASE_URL: baseUrl,
     NEXORA_MODEL_API_KEY: "test-key",
     NEXORA_MODEL_NAME: "qwen3.7-flash",
-    NEXORA_MODEL_TOOL_TRANSPORT: "json_actions",
+    NEXORA_MODEL_TOOL_TRANSPORT: "structured_output",
     NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
   };
 }

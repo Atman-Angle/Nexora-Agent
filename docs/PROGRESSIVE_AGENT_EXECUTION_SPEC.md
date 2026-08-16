@@ -2,6 +2,8 @@
 
 状态：`IMPLEMENTED / VERIFIED`
 
+历史说明：本文的渐进执行与 Runtime Authority 仍有效；其中 `ModelTurn` wire 表述已由 `PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md` 的 `ModelResponse` 与 Provider-native Tool Calling 取代。
+
 Feature mode：`DIRECT`
 
 文档日期：2026-08-16

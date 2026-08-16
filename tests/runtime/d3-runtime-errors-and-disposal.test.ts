@@ -10,6 +10,7 @@ import {
   RuntimeError,
   createOpenAICompatibleProvider,
   createRuntime,
+  modelResponses,
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/harness/src/index.js";
@@ -137,7 +138,7 @@ describe("D3 typed Runtime errors and disposal", () => {
     const disposed: string[] = [];
     const provider: RuntimeProvider = {
       async decide() {
-        return { action: "request_input", question: "Wait.", reason: "test"  };
+        return modelResponses.input({ question: "Wait.", reason: "test" });
       },
       async dispose() {
         disposed.push("provider");
@@ -200,7 +201,7 @@ function temporaryWorkspace(): string {
 function inputProvider(): RuntimeProvider {
   return {
     async decide() {
-      return { action: "request_input", question: "Provide input.", reason: "test"  };
+      return modelResponses.input({ question: "Provide input.", reason: "test" });
     }
   };
 }

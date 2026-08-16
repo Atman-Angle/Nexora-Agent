@@ -5,8 +5,13 @@ import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/harness/src/index.js";
-import { ModelTurnSchema } from "../../packages/harness/src/providers/model-turn.js";
+import {
+  createRuntime,
+  modelResponses,
+  ModelResponseSchema,
+  UPDATE_PLAN_CONTROL,
+  type ModelResponse
+} from "../../packages/harness/src/index.js";
 import type { ModelDecisionContext, RuntimeProvider } from "../../packages/harness/src/providers/model-client.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
@@ -18,32 +23,33 @@ afterEach(() => {
 });
 
 describe("E117 general Agent continuity", () => {
-  it("publishes a simple optional Plan and the Tool batch bound", () => {
-    expect(ModelTurnSchema.parse({
-      action: "continue",
-      plan: { tasks: [{ objective: "Inspect facts" }] },
-      toolCalls: Array.from({ length: 8 }, (_, index) => ({ name: `read.${index}`, arguments: {} }))
-    }).action).toBe("continue");
+  it("publishes the normalized Provider response and Tool batch bound", () => {
+    expect(ModelResponseSchema.parse({
+      text: null,
+      toolCalls: Array.from({ length: 8 }, (_, index) => ({
+        callId: `call-${index}`,
+        name: `read.${index}`,
+        arguments: {}
+      })),
+      finishReason: "tool_calls"
+    }).toolCalls).toHaveLength(8);
   });
 
-  it("executes valid Tool calls when an optional Plan field is malformed", async () => {
+  it("compiles a Plan control before a Runtime Tool call in the same response", async () => {
     const workspace = tempRoot();
     const provider = queuedProvider([
       {
-        action: "continue",
-        plan: {
-          tasks: [{
-            objective: "Read the record.",
-            checks: []
-          }]
-        },
-        toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]
+        text: null,
+        toolCalls: [
+          { callId: "plan-1", name: UPDATE_PLAN_CONTROL, arguments: { tasks: [{ objective: "Read the record." }] } },
+          { callId: "lookup-1", name: "records.lookup", arguments: { recordId: "customer-42" } }
+        ],
+        finishReason: "tool_calls"
       },
-      {
-        action: "request_input",
+      modelResponses.input({
         question: "Stop after the compatibility check?",
         reason: "The requested read is complete."
-      }
+      })
     ]);
     const runtime = createRuntime({
       workspace,
@@ -58,13 +64,7 @@ describe("E117 general Agent continuity", () => {
     expect(result.status).toBe("waiting");
     expect(view.toolInvocations).toHaveLength(1);
     expect(view.toolInvocations[0]).toMatchObject({ status: "succeeded" });
-    expect(view.events).toContainEqual(expect.objectContaining({
-      type: "model.turn.field_rejected",
-      payload: expect.objectContaining({
-        fields: [expect.objectContaining({ field: "plan" })]
-      })
-    }));
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     await runtime.close();
   });
 
@@ -74,12 +74,9 @@ describe("E117 general Agent continuity", () => {
       workspace,
       dataDir: join(workspace, ".nexora"),
       provider: queuedProvider([
-        {
-          action: "continue",
-          plan: { goal: "Read customer-42.", tasks: [{ objective: "Read the current record." }] },
-          toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]
-        },
-        { action: "finish", text: "Customer 42 is active." }
+        modelResponses.plan({ goal: "Read customer-42.", tasks: [{ objective: "Read the current record." }] }),
+        modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
+        modelResponses.text("Customer 42 is active.")
       ]),
       tools: [recordLookupTool()]
     });
@@ -89,7 +86,7 @@ describe("E117 general Agent continuity", () => {
 
     expect(result.status).toBe("succeeded");
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([]);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     await runtime.close();
   });
 
@@ -105,13 +102,12 @@ describe("E117 general Agent continuity", () => {
       workspace,
       dataDir: join(workspace, ".nexora"),
       provider: queuedProvider([
-        { action: "continue", toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }] },
-        { action: "continue", toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }] },
-        {
-          action: "request_input",
+        modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
+        modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
+        modelResponses.input({
           question: "Stop after both observations?",
           reason: "The repeated observation is complete."
-        }
+        })
       ]),
       tools: [tool]
     });
@@ -125,7 +121,7 @@ describe("E117 general Agent continuity", () => {
       expect.objectContaining({ tier: "version-1" }),
       expect.objectContaining({ tier: "version-2" })
     ]);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     await runtime.close();
   });
 
@@ -133,10 +129,10 @@ describe("E117 general Agent continuity", () => {
     const workspace = tempRoot();
     let tier = "silver";
     const provider = queuedProvider([
-      { action: "continue", toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }] },
-      { action: "continue", toolCalls: [{ name: "records.update", arguments: { recordId: "customer-42", tier: "gold" } }] },
-      { action: "continue", toolCalls: [{ name: "records.lookup", arguments: { recordId: "customer-42" } }] },
-      { action: "finish", text: "Customer 42 is now gold." }
+      modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
+      modelResponses.tool({ name: "records.update", arguments: { recordId: "customer-42", tier: "gold" } }),
+      modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
+      modelResponses.text("Customer 42 is now gold.")
     ]);
     const runtime = createRuntime({
       workspace,
@@ -201,7 +197,7 @@ describe("E117 general Agent continuity", () => {
       generatedBy: "model"
     });
     expect(view.toolInvocations).toHaveLength(1);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
     expect(view.events.map((event) => event.type)).not.toContain("validation.requested");
     expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["tool_result"]);
     await runtime.close();
@@ -230,7 +226,7 @@ describe("E117 general Agent continuity", () => {
     expect(result.status).toBe("waiting");
     expect(result.stopReason).toBe("INPUT_REQUIRED");
     expect(view.toolInvocations).toHaveLength(0);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
     expect(view.snapshot.pendingRequest?.prompt).toBe(request.question);
     await runtime.close();
   });
@@ -310,7 +306,7 @@ function recordUpdateTool(update: (tier: string) => void): RuntimeTool {
 }
 
 function queuedProvider(
-  turns: readonly unknown[]
+  turns: readonly ModelResponse[]
 ): RuntimeProvider & { readonly contexts: ModelDecisionContext[] } {
   const queue = [...turns];
   const contexts: ModelDecisionContext[] = [];

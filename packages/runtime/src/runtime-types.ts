@@ -209,7 +209,7 @@ export type RuntimeEvent =
         | "run.succeeded"
         | "plan.updated"
         | "model.requested"
-        | "model.action_rejected"
+        | "model.response_rejected"
         | "tool.started"
         | "tool.succeeded"
         | "tool.failed"

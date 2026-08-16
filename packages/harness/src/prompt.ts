@@ -4,6 +4,10 @@ import { canonicalJson, digestCanonicalJson } from "@nexora/runtime/internal";
 
 import type { PromptHostConfiguration } from "./profile.js";
 import type { ModelDecisionContext, ProviderTokenMeasurement } from "./providers/model-client.js";
+import {
+  REQUEST_INPUT_CONTROL,
+  UPDATE_PLAN_CONTROL
+} from "./providers/model-response.js";
 import type { JsonSchema } from "./tool-schema.js";
 
 export const PROMPT_COMPILER_VERSION = "1.0.0";
@@ -17,9 +21,10 @@ export type ProviderPromptCachePolicy =
 
 export type ProviderTransportProfile =
   | { readonly kind: "native_tools"; readonly promptCache?: ProviderPromptCachePolicy }
-  | { readonly kind: "json_actions"; readonly promptCache?: ProviderPromptCachePolicy };
+  | { readonly kind: "structured_output"; readonly promptCache?: ProviderPromptCachePolicy };
 
 export type ProviderToolContract = {
+  readonly kind: "runtime" | "control";
   readonly name: string;
   readonly description: string;
   readonly inputSchema: JsonSchema;
@@ -28,13 +33,13 @@ export type ProviderToolContract = {
     readonly avoidWhen: readonly string[];
     readonly nonGoals: readonly string[];
   };
-  readonly effect: "read" | "write" | "execute";
+  readonly effect: "read" | "write" | "execute" | "control";
   readonly produces: readonly string[];
 };
 
 export type RuntimeDirective =
   | { readonly kind: "normal" }
-  | { readonly kind: "invalid_action_repair"; readonly issues: readonly unknown[] }
+  | { readonly kind: "invalid_response_repair"; readonly issues: readonly unknown[] }
   | { readonly kind: "tool_failure_repair"; readonly failure: unknown }
   | { readonly kind: "approval_denied"; readonly decisionRef: string }
   | { readonly kind: "completion_blocked"; readonly missing: readonly unknown[] }
@@ -127,8 +132,9 @@ export function compilePrompt(input: {
   readonly measurement?: ProviderTokenMeasurement;
 }): CompiledPrompt {
   const transport = normalizeTransport(input.transport, input.host);
-  const tools = [...input.context.tools]
+  const runtimeTools = [...input.context.tools]
     .map((tool): ProviderToolContract => ({
+      kind: "runtime",
       name: tool.identity.name,
       description: tool.capability.purpose,
       inputSchema: tool.execution.inputSchema,
@@ -141,6 +147,7 @@ export function compilePrompt(input: {
       produces: tool.evidence.produces
     }))
     .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  const tools = [...controlToolContracts(), ...runtimeTools];
   const directive = runtimeDirective(input.context);
   const segments = [
     segment("kernel", { version: SYSTEM_KERNEL_VERSION, content: GENERAL_AGENT_SYSTEM_KERNEL }),
@@ -233,7 +240,7 @@ export function runtimeDirective(context: ModelDecisionContext): RuntimeDirectiv
   }
   const repair = context.repair;
   if (repair === undefined || repair === null) return { kind: "normal" };
-  if (repair.kind === "invalid_action") return { kind: "invalid_action_repair", issues: repair.issues };
+  if (repair.kind === "invalid_response") return { kind: "invalid_response_repair", issues: repair.issues };
   if (repair.kind === "tool_failure") {
     return {
       kind: "tool_failure_repair",
@@ -268,32 +275,75 @@ function segment(
 }
 
 function transportInstructions(transport: ProviderTransportProfile): unknown {
-  const plan = { goal: "optional non-empty string", tasks: [{ objective: "non-empty string" }] };
   return transport.kind === "native_tools"
     ? {
         transport: "native_tools",
-        rule: "Use Provider-native function calls for every Tool call. Never put toolCalls in assistant JSON text.",
-        assistantJsonActions: {
-          finish: { action: "finish", text: "non-empty final user-facing delivery" },
-          requestInput: { action: "request_input", question: "non-empty", reason: "non-empty" },
-          continueWithoutTools: { action: "continue", plan }
-        },
+        rule: "Use Provider-native functions for Tools, Plan updates and human input. Return ordinary user-facing text only when no call is needed.",
+        controls: [UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL],
         nativeToolBatchLimit: 8
       }
     : {
-        transport: "json_actions",
-        rule: "Return exactly one JSON ModelTurn. No Provider-native tools are registered.",
-        modelTurn: {
-          finish: { action: "finish", text: "non-empty final user-facing delivery" },
-          requestInput: { action: "request_input", question: "non-empty", reason: "non-empty" },
-          continue: {
-            action: "continue",
-            plan,
-            toolCalls: [{ name: "registered Tool name", arguments: "Tool Schema input" }]
-          }
-        },
+        transport: "structured_output",
+        rule: "Return the strict Provider response Schema supplied with this request. It contains text and function calls, never a Nexora Action.",
+        controls: [UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL],
         toolBatchLimit: 8
       };
+}
+
+function controlToolContracts(): readonly ProviderToolContract[] {
+  return [
+    {
+      kind: "control",
+      name: UPDATE_PLAN_CONTROL,
+      description: "Create or revise the short objective-only Plan when task direction or ordering changes.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          goal: { type: "string", minLength: 1 },
+          tasks: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              properties: { objective: { type: "string", minLength: 1 } },
+              required: ["objective"],
+              additionalProperties: false
+            }
+          }
+        },
+        required: ["tasks"],
+        additionalProperties: false
+      },
+      decision: {
+        useWhen: ["Ordering or duration makes a short Plan useful.", "New facts change the current direction."],
+        avoidWhen: ["A direct answer or one obvious Tool call is sufficient."],
+        nonGoals: ["Grant permission.", "Declare completion."]
+      },
+      effect: "control",
+      produces: ["A Run-owned objective-only Plan."]
+    },
+    {
+      kind: "control",
+      name: REQUEST_INPUT_CONTROL,
+      description: "Pause for a user-exclusive fact, irreversible preference or business choice after autonomous paths are exhausted.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          question: { type: "string", minLength: 1 },
+          reason: { type: "string", minLength: 1 }
+        },
+        required: ["question", "reason"],
+        additionalProperties: false
+      },
+      decision: {
+        useWhen: ["Only the user can supply the required fact or choice."],
+        avoidWhen: ["Available facts or Tools can resolve the uncertainty.", "Runtime Approval is required."],
+        nonGoals: ["Request Tool Approval.", "Delegate ordinary exploration to the user."]
+      },
+      effect: "control",
+      produces: ["A persisted human-input request."]
+    }
+  ];
 }
 
 function authorityContext(context: ModelDecisionContext): unknown {

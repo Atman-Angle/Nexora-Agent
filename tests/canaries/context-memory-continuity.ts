@@ -176,7 +176,7 @@ export function evaluateContinuityCanary(input: {
   const evictedModelCalls = input.view.events.filter((event) => (
     event.type === "model.requested" && Number(event.payload.tokenEvictionCount ?? 0) > 0
   )).length;
-  const actionRejections = input.view.events.filter((event) => event.type === "action.rejected").length;
+  const actionRejections = input.view.events.filter((event) => event.type === "response.rejected").length;
   const tokens = tokenMetrics(input.view.modelCalls, input.pricing);
   const contextBudget = contextBudgetMetrics(input.view.modelCalls);
   const providerLatency = latencyMetrics(input.observations);
@@ -312,8 +312,8 @@ function observeProvider(
     phase: ProviderObservation["phase"],
     context: Parameters<RuntimeProvider["decide"]>[0],
     operation: Parameters<RuntimeProvider["decide"]>[1],
-    call: () => Promise<unknown>
-  ): Promise<unknown> => {
+    call: () => ReturnType<RuntimeProvider["decide"]>
+  ): ReturnType<RuntimeProvider["decide"]> => {
     const started = performance.now();
     const result = await call();
     const decisionContext = phase === "decision" ? context as ModelDecisionContext : null;

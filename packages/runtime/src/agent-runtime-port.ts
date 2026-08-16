@@ -52,24 +52,14 @@ export type AgentStateView = {
 };
 
 export type AgentAuditEvent =
-  | {
+  {
     readonly type: "model.turn";
     readonly payload: {
-      readonly action: "continue" | "request_input" | "finish";
       readonly hasText: boolean;
-      readonly hasPlan: boolean;
+      readonly finishReason: string | null;
       readonly toolCallCount: number;
-      readonly requestsInput: boolean;
+      readonly controlCallCount: number;
       readonly compiledActionTypes: readonly string[];
-    };
-  }
-  | {
-    readonly type: "model.turn.field_rejected";
-    readonly payload: {
-      readonly fields: readonly {
-        readonly field: string;
-        readonly issues: readonly string[];
-      }[];
     };
   };
 
@@ -142,10 +132,10 @@ export interface AgentRuntimePort {
     facts: readonly ContextEvidenceFact[],
     observer?: RuntimeObserver
   ): RunSnapshot;
-  rejectModelAction(
+  rejectModelResponse(
     run: RunSnapshot,
     error: unknown,
-    rawAction: unknown,
+    rawResponse: unknown,
     observer?: RuntimeObserver
   ): RunSnapshot;
   cancel(

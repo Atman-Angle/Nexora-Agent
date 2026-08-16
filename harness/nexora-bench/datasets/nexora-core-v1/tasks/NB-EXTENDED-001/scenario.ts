@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { modelResponses } from "@nexora/harness";
 import { join } from "node:path";
 
 import {
@@ -27,9 +28,7 @@ function provider(): RuntimeProvider {
           objective: `Read sequence items ${start}-${start + 7}.`,
 
         });
-        return {
-          action: "continue",
-          plan: {
+        return modelResponses.plan({
             goal: "Complete a 24-Tool sequence across multiple Runtime restarts and verify the aggregate.",
             tasks: [
               readTask(1),
@@ -44,29 +43,25 @@ function provider(): RuntimeProvider {
 
               }
             ]
-          }
-        };
+          });
       }
       const successfulReads = context.run.evidence.filter((item) => (
         /^sequence:[1-9][0-9]*$/.test(item.subjectRef)
       )).length;
       if (successfulReads < 24) {
         const start = successfulReads + 1;
-        return {
-          action: "continue",
-          toolCalls: Array.from({ length: Math.min(8, 25 - start) }, (_, offset) => ({
+        return modelResponses.tools({ calls: Array.from({ length: Math.min(8, 25 - start) }, (_, offset) => ({
               name: "fixture.sequence_read",
               arguments: { index: start + offset }
-            }))
-        };
+            })) });
       }
       if (!context.toolObservations.some((item) => item.toolName === "filesystem.write" && item.status === "succeeded")) {
-        return { action: "continue", toolCalls: [{ name: "filesystem.write", arguments: { path: "summary.txt", content: summary } }] };
+        return modelResponses.tool({ name: "filesystem.write", arguments: { path: "summary.txt", content: summary } });
       }
       if (!context.toolObservations.some((item) => item.toolName === "fixture.sequence_validate" && item.status === "succeeded")) {
-        return { action: "continue", toolCalls: [{ name: "fixture.sequence_validate", arguments: { path: "summary.txt", expectedCount: 24, expectedTotal: total } }] };
+        return modelResponses.tool({ name: "fixture.sequence_validate", arguments: { path: "summary.txt", expectedCount: 24, expectedTotal: total } });
       }
-      return { action: "finish", text: "Read 24 sequence values across restarts and verified their total of 300." };
+      return modelResponses.text("Read 24 sequence values across restarts and verified their total of 300.");
     }
   };
 }

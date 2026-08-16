@@ -29,16 +29,13 @@ describe("E088 decision continuity projection", () => {
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",
       model: "test-model",
+      transport: "structured_output",
       fetch: async (_input, init) => {
         bodies.push(JSON.parse(String(init?.body)) as ProviderRequest);
         return new Response(JSON.stringify({
           choices: [{
             message: {
-              content: JSON.stringify({
-                action: "request_input",
-                question: "Continue?",
-                reason: "Continuity projection captured."
-              })
+              content: JSON.stringify(structuredInput("Continue?", "Continuity projection captured."))
             }
           }]
         }), {
@@ -80,22 +77,20 @@ describe("E088 decision continuity projection", () => {
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",
       model: "test-model",
+      transport: "structured_output",
       fetch: async (_input, init) => {
         bodies.push(JSON.parse(String(init?.body)) as ProviderRequest);
         decisions += 1;
-        const action = decisions === 1
-          ? {
-              action: "continue",
-              plan: {
+        const response = decisions === 1
+          ? structuredTool("nexora_update_plan", {
                 goal: "Prove exact Context recovery.",
                 tasks: [{
                   objective: "Recall the original Input."
                 }]
-              }
-            }
-          : { action: "request_input", question: "Stop?", reason: "Exact wire rehydration captured." };
+              })
+          : structuredInput("Stop?", "Exact wire rehydration captured.");
         return new Response(JSON.stringify({
-          choices: [{ message: { content: JSON.stringify(action) } }]
+          choices: [{ message: { content: JSON.stringify(response) } }]
         }), {
           status: 200,
           headers: { "content-type": "application/json" }
@@ -155,14 +150,22 @@ describe("E088 decision continuity projection", () => {
   });
 });
 
+function structuredTool(name: string, argumentsValue: unknown): unknown {
+  return { text: null, toolCalls: [{ name, arguments: argumentsValue }], finishReason: "tool_calls" };
+}
+
+function structuredInput(question: string, reason: string): unknown {
+  return structuredTool("nexora_request_input", { question, reason });
+}
+
 function decisionContext(options: {
   readonly withObservation?: boolean;
   readonly withRepair?: boolean;
 } = {}): ModelDecisionContext {
   const repair: NonNullable<ModelDecisionContext["repair"]> | undefined = options.withRepair
     ? {
-        kind: "invalid_action",
-        code: "INVALID_MODEL_ACTION",
+        kind: "invalid_response",
+        code: "INVALID_MODEL_RESPONSE",
         issues: [{ kind: "plan_mismatch", message: "Revise only the invalid intent." }],
         failedObjective: null,
         latestFailedAttempt: null
@@ -206,7 +209,7 @@ function decisionContext(options: {
       }
     },
     projection: { schemaVersion: 1, digest: `sha256:${"0".repeat(64)}` },
-    providerContractVersion: 4,
+    providerContractVersion: 5,
     activeInvocations: [],
     toolObservations: options.withObservation ? [{
       invocationId: "invocation-1",

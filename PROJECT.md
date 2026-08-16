@@ -104,7 +104,7 @@ Harness 对以下能力负责：
 - 唯一 Agent Loop、Provider Gateway 和全部 Provider/LLM 调用；
 - 通用 System Kernel、版本化 Agent Profile、Host/Project Policy 和确定性 Prompt Compiler；
 - cache-stable Prompt layout、Provider Transport、AgentWorkingContext、确定性 Context 收缩、Rehydration 与 Memory 策略；
-- 显式 ModelTurn Contract、Planning、Reasoning 和非法模型输出修复；
+- Provider-native Tool Calling、归一化 ModelResponse、Planning controls、Reasoning 和非法响应修复；
 - 引导模型按任务事实选择直接行动、探索、可选 Plan 或最终文本；
 - 将模型业务语义编译为 Runtime Action，并把具体机械失败局部返回下一轮；
 - 通过 Runtime port 读取 Authority、提交 Plan/Command/finish proposal，不直接写 Run Store。

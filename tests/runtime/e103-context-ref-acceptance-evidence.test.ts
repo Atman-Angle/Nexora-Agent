@@ -12,6 +12,9 @@ import {
 import type { ModelDecisionContext } from "../../packages/harness/src/providers/model-client.js";
 import {
   ScriptedRuntimeProvider,
+  responseCall,
+  responsePlan,
+  responseText,
   successfulReadTool
 } from "./runtime-testkit.js";
 
@@ -27,16 +30,13 @@ describe("E103 explicit Memory restoration with objective-only Plans", () => {
     const fixture = createFixture();
     const provider = new ScriptedRuntimeProvider([
       plan(),
-      (_context: ModelDecisionContext) => ({
-          action: "continue",
-          toolCalls: [{ name: "filesystem.read", arguments: { path: "proof.txt" } }]
-      }),
+      (_context: ModelDecisionContext) => (responseCall("filesystem.read", { path: "proof.txt" })),
       (context: ModelDecisionContext) => {
         expect(context.toolObservations).toContainEqual(expect.objectContaining({
           toolName: "filesystem.read",
           status: "succeeded"
         }));
-        return { action: "finish", text: "Verified the restored Memory context and proof file." };
+        return responseText("Verified the restored Memory context and proof file.");
       }
     ]);
     const runtime = createRuntime({
@@ -78,13 +78,10 @@ describe("E103 explicit Memory restoration with objective-only Plans", () => {
 });
 
 function plan() {
-  return {
-    action: "continue",
-    plan: {
+  return responsePlan({
       goal: "Restore the required Memory and verify the proof file.",
       tasks: [{ objective: "Use the restored Memory context and read the proof file." }]
-    }
-  };
+    });
 }
 
 function createFixture() {

@@ -166,7 +166,7 @@ Feature Core
 
 External Environment Acceptance
 → real Provider endpoint
-→ timeout, rate limit, latency, Action repair and convergence
+→ timeout, rate limit, latency, Provider protocol compatibility and convergence
 ```
 
 以下任一结果属于 Feature Core 失败，并阻断当前 Feature：
@@ -179,7 +179,7 @@ External Environment Acceptance
 - Lease/Fencing、并发控制或资源释放失效；
 - package caller 必须导入 CLI、Store 或内部源码。
 
-如果 Runtime 正确持久化 blocked/failed、没有假成功、没有越权 Effect、保留已有 Invocation/Evidence 且可恢复，则特定 Provider 的 timeout、Action repair 次数、交互收敛轮数和并发成功率属于 External Environment Acceptance。
+如果 Runtime 正确持久化 blocked/failed、没有假成功、没有越权 Effect、保留已有 Invocation/Evidence 且可恢复，则特定 Provider 的 timeout、协议不兼容、响应拒绝次数、交互收敛轮数和并发成功率属于 External Environment Acceptance。
 
 External Acceptance 失败必须继续记录为失败或 `verification_blocked`，不能被确定性测试通过覆盖；但它不自动否定已由独立证据证明的 Runtime Feature Core。
 
@@ -193,7 +193,7 @@ Agent Loop、Provider Contract 或 Completion Gate 改动必须固定验证：�
 
 ### 4.4 General Agent Prompt / Profile 验收
 
-Prompt、Profile、Tool Schema、ModelTurn 或 Provider Transport 改动必须固定验证：Kernel/Host/Profile/Project/Tool 语义优先级；Profile 不能改变 Tool、权限、Approval、Evidence 或 Completion；canonical stable prefix 和 Tool ordering；真实 Zod JSON Schema；native/JSON 单 Transport wire；显式 `continue/request_input/finish`；reopen strategy continuity；逐 Attempt cache usage 持久化；Bench provenance 与六种 cache status 口径。`unsupported/disabled/unknown` 不进入 zero-hit 分母。L3 还必须保留真实 Provider before/after 结果，并把缓存门槛、Provider 不返回指标和外部模型失败如实区分。
+Prompt、Profile、Tool Schema、ModelResponse 或 Provider Transport 改动必须固定验证：Kernel/Host/Profile/Project/Tool 语义优先级；Profile 不能改变 Tool、权限、Approval、Evidence 或 Completion；canonical stable prefix 和 Tool ordering；真实 Zod JSON Schema；`native_tools`/`structured_output` 单 Transport wire；Provider call ID 保留；Plan/HITL controls 的确定性路由；普通 native content 不执行 Tool；reopen strategy continuity；逐 Attempt cache usage 持久化；Bench provenance 与六种 cache status 口径。`unsupported/disabled/unknown` 不进入 zero-hit 分母。L3 还必须保留真实 Provider capability 与任务结果，并把缓存门槛、Provider 不返回指标、协议不兼容和外部模型失败如实区分。
 
 ## 5. 完成证据
 

@@ -56,7 +56,7 @@ export async function requestModel(
     context: effectiveContext,
     host: services.promptHost,
     transport: services.provider.transport ?? {
-      kind: "json_actions",
+      kind: "structured_output",
       promptCache: { mode: "disabled" }
     }
   });
