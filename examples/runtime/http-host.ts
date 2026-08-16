@@ -11,7 +11,7 @@ import {
   type RecoveryDecision,
   type RuntimeEngine,
   type RuntimeSubscription
-} from "@nexora/runtime";
+} from "@nexora/harness";
 
 export type RuntimeHttpHost = {
   listen(input?: {

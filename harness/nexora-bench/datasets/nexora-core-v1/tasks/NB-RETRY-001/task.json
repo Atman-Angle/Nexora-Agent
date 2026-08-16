@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-RETRY-001",
+  "category": "durable_transient_retry",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "instruction": "Read source.txt through the transient fixture service, recover from the temporary 503 without asking for a new model decision, write result.txt with the exact value, and run the verifier. Do not modify source.txt.",
+  "fixture": {
+    "path": "tasks/NB-RETRY-001/fixture",
+    "digest": "sha256:4475dde2c33d208364f008f64ac30d765efb4b11e301ab176450969f12f40eac"
+  },
+  "scenario": "tasks/NB-RETRY-001/scenario.ts",
+  "allowedCapabilities": ["fixture.transient_read", "filesystem.write", "shell.execute"],
+  "budgets": {
+    "maxIterations": 10,
+    "maxModelCalls": 10,
+    "maxToolCalls": 6,
+    "maxRetries": 2,
+    "maxDurationMs": 180000
+  },
+  "expectedTerminal": "succeeded",
+  "driver": {
+    "approvals": [
+      { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false },
+      { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }
+    ],
+    "inputs": [],
+    "recoveries": []
+  },
+  "grader": {
+    "files": [
+      {
+        "id": "retried-value",
+        "path": "result.txt",
+        "exists": true,
+        "equals": "transient-service-value=ready\n"
+      }
+    ],
+    "commands": [
+      {
+        "id": "retry-verifier",
+        "command": "node",
+        "args": ["verify.mjs"],
+        "cwd": ".",
+        "timeoutMs": 60000,
+        "expectedExitCode": 0
+      }
+    ],
+    "unchangedPaths": ["source.txt", "verify.mjs"]
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity"
+  ]
+}

@@ -45,6 +45,8 @@ export function projectRunInspection(
     inputDigest: invocation.inputDigest,
     idempotencyKey: invocation.idempotencyKey,
     idempotent: invocation.idempotent,
+    batchId: invocation.batchId ?? null,
+    batchOrdinal: invocation.batchOrdinal ?? null,
     status: invocation.status,
     startedAt: invocation.startedAt,
     completedAt: invocation.completedAt,
@@ -66,17 +68,12 @@ export function projectRunInspection(
   const unknownInvocations = invocations.filter(
     (invocation) => invocation.status === "unknown"
   );
-  if (unknownInvocations.length > 1) {
-    throw new Error(`Run has multiple unknown Tool Invocations: ${snapshot.runId}`);
-  }
-  const unknownInvocation = unknownInvocations[0];
-  const recovery: PublicRecoveryRequest | null = unknownInvocation === undefined
-    ? null
-    : {
-        invocationId: unknownInvocation.id,
-        toolName: unknownInvocation.toolName,
-        reason: "tool_result_unknown"
-      };
+  const recoveries: PublicRecoveryRequest[] = unknownInvocations.map((invocation) => ({
+    invocationId: invocation.id,
+    toolName: invocation.toolName,
+    reason: "tool_result_unknown"
+  }));
+  const recovery = recoveries[0] ?? null;
   return deepFreeze({
     runId: snapshot.runId,
     revision: snapshot.revision,
@@ -88,7 +85,9 @@ export function projectRunInspection(
     evidence: snapshot.evidence,
     invocations: publicInvocations,
     recovery,
+    recoveries,
     result: projectRunFinalResult(snapshot),
+    delivery: snapshot.delivery,
     error: snapshot.lastError,
     lastEventSequence
   });
@@ -121,6 +120,7 @@ export function projectRunFinalResult(
       resultArtifact: snapshot.result.resultArtifact,
       evidence: citedEvidence,
       error: null,
+      delivery: requireDelivery(snapshot),
       failureHandoff: null
     });
   }
@@ -134,10 +134,11 @@ export function projectRunFinalResult(
       runId: snapshot.runId,
       status: "failed",
       stopReason: snapshot.stopReason,
-      summary: null,
+      summary: requireDelivery(snapshot).summary,
       resultArtifact: null,
       evidence: snapshot.evidence,
       error: snapshot.lastError,
+      delivery: requireDelivery(snapshot),
       failureHandoff
     });
   }
@@ -151,14 +152,22 @@ export function projectRunFinalResult(
       runId: snapshot.runId,
       status: "cancelled",
       stopReason: snapshot.stopReason,
-      summary: null,
+      summary: requireDelivery(snapshot).summary,
       resultArtifact: null,
       evidence: snapshot.evidence,
       error: snapshot.lastError,
+      delivery: requireDelivery(snapshot),
       failureHandoff
     });
   }
   return null;
+}
+
+function requireDelivery(snapshot: RunSnapshot): NonNullable<RunSnapshot["delivery"]> {
+  if (snapshot.delivery === null) {
+    throw new Error(`Run is missing its persisted Delivery: ${snapshot.runId}`);
+  }
+  return snapshot.delivery;
 }
 
 function deepFreeze<T>(value: T): T {

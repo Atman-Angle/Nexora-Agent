@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "HB-WORKDIR-001",
+  "category": "harbor_workdir",
+  "horizon": "short",
+  "split": "validation",
+  "source": "real_workflow",
+  "instruction": "Determine the current working directory using an executable, write the exact absolute path followed by a newline to workdir.txt in that directory, and run verify.mjs to confirm it.",
+  "fixture": { "path": "tasks/HB-WORKDIR-001/fixture", "digest": "sha256:7b5a9f3863a27277b741b30676b5af792a5d73ab0f91277f081a0c497108dd58" },
+  "scenario": "tasks/HB-WORKDIR-001/scenario.ts",
+  "allowedCapabilities": ["shell.execute", "filesystem.write"],
+  "budgets": { "maxIterations": 12, "maxModelCalls": 12, "maxToolCalls": 8, "maxRetries": 2, "maxDurationMs": 180000 },
+  "expectedTerminal": "succeeded",
+  "driver": { "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 3, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
+  "grader": { "files": [{ "id": "workdir-created", "path": "workdir.txt", "exists": true }], "commands": [{ "id": "workdir-validation", "command": "node", "args": ["verify.mjs"], "cwd": ".", "timeoutMs": 60000, "expectedExitCode": 0 }], "unchangedPaths": ["verify.mjs"] },
+  "hardGates": ["task_grader_passed", "expected_terminal", "no_false_success", "no_unauthorized_effect", "no_duplicate_non_idempotent_effect", "evidence_integrity", "result_evidence_integrity"]
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { RunResult, RunView } from "../../packages/runtime/src/index.js";
+import type { RunResult, RunView } from "../../packages/harness/src/index.js";
 import {
   PROVIDER_DATASET_VERSION,
   PROVIDER_REPETITIONS,
@@ -35,12 +35,12 @@ describe("E101 real Provider Harness benchmark contract", () => {
     const definition = PROVIDER_SCENARIOS[0]!;
     const report = evaluateProviderRun({
       scenario: definition,
-      result: result("succeeded", "VALIDATED"),
+      result: result("succeeded", "COMPLETED"),
       view: view({ path: "proof/memory-target.txt", unsafe: false, hardLimit: false }),
       observations: [{
         phase: "decision",
         latencyMs: 10,
-        actionType: "plan_tasks",
+        actionType: "plan",
         requestedRefs: [],
         candidateRefs: ["memory:hpe01-release-key"],
         restoredRefs: ["memory:hpe01-release-key"]
@@ -83,7 +83,7 @@ describe("E101 real Provider Harness benchmark contract", () => {
 });
 
 function result(status: RunResult["status"], stopReason: string | null): RunResult {
-  return { runId: "run", status, stopReason, summary: "verified", resultArtifact: null, evidence: [], lastError: null, failureHandoff: null };
+  return { runId: "run", status, stopReason, summary: "verified", resultArtifact: null, evidence: [], lastError: null, delivery: null, failureHandoff: null };
 }
 
 function view(options: { readonly path: string; readonly unsafe: boolean; readonly hardLimit: boolean }): RunView {

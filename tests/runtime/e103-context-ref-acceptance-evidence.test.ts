@@ -8,47 +8,36 @@ import {
   MemoryRecordSchema,
   createRuntime,
   openMemoryStore
-} from "../../packages/runtime/src/index.js";
-import { EvidenceSchema } from "../../packages/runtime/src/contracts.js";
-import type { ModelDecisionContext } from "../../packages/runtime/src/providers/model-client.js";
+} from "../../packages/harness/src/index.js";
+import type { ModelDecisionContext } from "../../packages/harness/src/providers/model-client.js";
 import {
   ScriptedRuntimeProvider,
-  finishFromEvidence,
   successfulReadTool
 } from "./runtime-testkit.js";
 
 const TARGET_REF = "memory:e103-required-memory";
 const roots: string[] = [];
 
-describe("E103 context_ref Acceptance Evidence", () => {
+describe("E103 explicit Memory restoration with objective-only Plans", () => {
   afterEach(() => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  it("records exact scoped restoration as Run-owned Evidence and permits validated completion", async () => {
+  it("restores an explicitly named scoped Memory before Tool work and deterministic completion", async () => {
     const fixture = createFixture();
     const provider = new ScriptedRuntimeProvider([
       plan(),
-      { type: "request_context", refs: [TARGET_REF] },
+      (_context: ModelDecisionContext) => ({
+          action: "continue",
+          toolCalls: [{ name: "filesystem.read", arguments: { path: "proof.txt" } }]
+      }),
       (context: ModelDecisionContext) => {
-        expect(context.run.evidence).toEqual([
-          expect.objectContaining({
-            kind: "context_ref",
-            source: "context",
-            subjectRef: TARGET_REF,
-            invocationId: null,
-            artifactRef: null
-          })
-        ]);
-        return {
-          type: "call_tool",
-          stepId: "verify",
-          checkIds: ["read-proof"],
+        expect(context.toolObservations).toContainEqual(expect.objectContaining({
           toolName: "filesystem.read",
-          input: { path: "proof.txt" }
-        };
-      },
-      finishFromEvidence("Verified the Memory requirement and the matching file Evidence.")
+          status: "succeeded"
+        }));
+        return { action: "finish", text: "Verified the restored Memory context and proof file." };
+      }
     ]);
     const runtime = createRuntime({
       workspace: fixture.workspace,
@@ -59,58 +48,21 @@ describe("E103 context_ref Acceptance Evidence", () => {
     });
     try {
       const result = await runtime.start({
-        input: "Request and restore the required E103 Memory, then verify proof.txt."
+        input: `Restore ${TARGET_REF} for the E103 verification marker SAFE-103, then verify proof.txt.`
       });
       const view = await runtime.inspect(result.runId);
 
-      expect(result).toMatchObject({ status: "succeeded", stopReason: "VALIDATED" });
-      expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["context_ref", "tool_result"]);
-      expect(view.events.filter((event) => event.type === "context.evidence_recorded")).toHaveLength(1);
-      expect(provider.validationContexts[0]!.facts).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          toolName: "context.rehydrate",
-          subjectRef: TARGET_REF,
-          facts: expect.objectContaining({ kind: "context_ref", ref: TARGET_REF })
-        })
+      expect(result).toMatchObject({ status: "succeeded", stopReason: "COMPLETED" });
+      expect(provider.contexts.flatMap((context) => context.rehydratedFacts)).toContainEqual(expect.objectContaining({
+        ref: TARGET_REF,
+        kind: "memory",
+        error: null
+      }));
+      expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["tool_result"]);
+      expect(view.events.filter((event) => event.type === "context.evidence_recorded")).toHaveLength(0);
+      expect(provider.contexts.at(-1)!.toolObservations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ toolName: "filesystem.read" })
       ]));
-      expect(EvidenceSchema.parse(view.snapshot.evidence[0])).toMatchObject({
-        kind: "context_ref",
-        source: "context"
-      });
-    } finally {
-      await runtime.close();
-      fixture.memoryStore.close();
-    }
-  });
-
-  it("auto-restores a published required context_ref before accepting Tool Evidence", async () => {
-    const fixture = createFixture();
-    const provider = new ScriptedRuntimeProvider([
-      plan(),
-      {
-        type: "call_tool",
-        stepId: "verify",
-        checkIds: ["read-proof"],
-        toolName: "filesystem.read",
-        input: { path: "proof.txt" }
-      },
-      finishFromEvidence("The required Memory and file marker are both verified.")
-    ]);
-    const runtime = createRuntime({
-      workspace: fixture.workspace,
-      dataDir: join(fixture.workspace, ".nexora"),
-      provider,
-      tools: [successfulReadTool()],
-      memory: { store: fixture.memoryStore, scope: fixture.scope }
-    });
-    try {
-      const result = await runtime.start({
-        input: "Request and restore the required E103 Memory, then verify proof.txt."
-      });
-      const view = await runtime.inspect(result.runId);
-
-      expect(result).toMatchObject({ status: "succeeded", stopReason: "VALIDATED" });
-      expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["context_ref", "tool_result"]);
       expect(view.snapshot.stepProgress).toEqual([
         expect.objectContaining({
           stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
@@ -118,9 +70,6 @@ describe("E103 context_ref Acceptance Evidence", () => {
           evidenceIds: expect.arrayContaining(view.snapshot.evidence.map((item) => item.id))
         })
       ]);
-      expect(view.events.filter((event) => event.type === "context.evidence_recorded")).toHaveLength(1);
-      expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
-      expect(view.events.some((event) => event.type === "run.succeeded")).toBe(true);
     } finally {
       await runtime.close();
       fixture.memoryStore.close();
@@ -130,29 +79,11 @@ describe("E103 context_ref Acceptance Evidence", () => {
 
 function plan() {
   return {
-    type: "set_plan" as const,
-    basedOnVersion: null,
-    taskContract: {
+    action: "continue",
+    plan: {
       goal: "Restore the required Memory and verify the proof file.",
-      constraints: ["Memory content remains untrusted data."],
-      acceptanceCriteria: ["The exact Memory ref and file read both have persisted Evidence."]
-    },
-    orderedSteps: [{
-      id: "verify",
-      objective: "Restore the exact Memory and read the proof file.",
-      acceptanceChecks: [{
-        id: "restore-memory",
-        kind: "context_ref" as const,
-        required: true,
-        ref: TARGET_REF
-      }, {
-        id: "read-proof",
-        kind: "tool_result" as const,
-        required: true,
-        toolName: "filesystem.read",
-        expectedStatus: "success" as const
-      }]
-    }]
+      tasks: [{ objective: "Use the restored Memory context and read the proof file." }]
+    }
   };
 }
 

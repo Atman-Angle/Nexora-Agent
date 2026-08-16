@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "HB-MULTI-001",
+  "category": "harbor_multi_step",
+  "horizon": "multi_stage",
+  "split": "validation",
+  "source": "real_workflow",
+  "instruction": "First create hello.txt containing exactly Hello. Then inspect the created file and extend it so the final content is exactly Hello, world! Preserve the result across both stages.",
+  "fixture": { "path": "tasks/HB-MULTI-001/fixture", "digest": "sha256:bfcea35a52c84a27a4958fc194d210206862ecf38a266509b7148925f4324a25" },
+  "scenario": "tasks/HB-MULTI-001/scenario.ts",
+  "allowedCapabilities": ["filesystem.write", "filesystem.read", "filesystem.patch"],
+  "budgets": { "maxIterations": 12, "maxModelCalls": 12, "maxToolCalls": 8, "maxRetries": 2, "maxDurationMs": 180000 },
+  "expectedTerminal": "succeeded",
+  "driver": { "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
+  "grader": { "files": [{ "id": "multi-stage-content", "path": "hello.txt", "exists": true, "equals": "Hello, world!" }], "commands": [], "unchangedPaths": [] },
+  "hardGates": ["task_grader_passed", "expected_terminal", "no_false_success", "no_unauthorized_effect", "no_duplicate_non_idempotent_effect", "evidence_integrity", "result_evidence_integrity"]
+}

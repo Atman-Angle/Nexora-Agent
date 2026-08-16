@@ -5,27 +5,36 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createRuntime, type RuntimeTool } from "../../packages/runtime/src/index.js";
-import { createOpenAICompatibleProvider } from "../../packages/runtime/src/providers/openai-compatible.js";
+import { createRuntime, type RuntimeTool } from "../../packages/harness/src/index.js";
+import { createOpenAICompatibleProvider } from "../../packages/harness/src/providers/openai-compatible.js";
 
 const context = {
   workspace: "D:\\fixture",
-  run: {} as never,
+  run: {
+    inputCount: 1,
+    coveredInputCount: 0,
+    inputHistory: [{ sequence: 1, text: "Inspect the fixture." }],
+    taskContract: null,
+    currentPlan: null,
+    stepProgress: [],
+    evidence: [],
+    lastError: null
+  },
   projection: { schemaVersion: 1 as const, digest: "sha256:test" },
-  providerContractVersion: 2 as const,
-  allowedIntents: [],
-  intentContract: [],
+  providerContractVersion: 4 as const,
+  activeInvocations: [],
   toolObservations: [],
   contextCheckpoint: null,
   rehydratedFacts: [],
   historyCandidates: [],
   memoryCandidates: [],
+  repair: null,
   tools: []
 };
 const operation = { signal: new AbortController().signal };
 
 describe("E065 Provider transient failure recovery", () => {
-  it("recovers decide after transient network and server failures", async () => {
+  it("leaves physical decide retries to the audited Harness gateway", async () => {
     const fetch = vi.fn()
       .mockRejectedValueOnce(new TypeError("fetch failed"))
       .mockResolvedValueOnce(new Response("busy", { status: 503 }))
@@ -37,20 +46,15 @@ describe("E065 Provider transient failure recovery", () => {
       fetch
     });
 
-    await expect(provider.decide(context, operation)).resolves.toEqual({
-      type: "request_input",
-      question: "Ready?",
-      reason: "Need input"
-    });
-    expect(fetch).toHaveBeenCalledTimes(3);
+    await expect(provider.decide(context, operation)).rejects.toThrow("fetch failed");
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("recovers validation after a timed-out attempt", async () => {
+  it("aborts one timed-out decision request without an Adapter retry", async () => {
     const fetch = vi.fn()
       .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-      }))
-      .mockResolvedValueOnce(providerResponse({ passed: true, issues: [] }));
+      }));
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example",
       apiKey: "test",
@@ -59,12 +63,8 @@ describe("E065 Provider transient failure recovery", () => {
       fetch
     });
 
-    await expect(provider.validate({
-      inputs: ["find the value"],
-      proposedSummary: "value",
-      facts: []
-    }, operation)).resolves.toEqual({ passed: true, issues: [] });
-    expect(fetch).toHaveBeenCalledTimes(2);
+    await expect(provider.decide(context, operation)).rejects.toThrow("aborted");
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("does not retry non-retryable HTTP or invalid Provider responses", async () => {
@@ -92,7 +92,7 @@ describe("E065 Provider transient failure recovery", () => {
     expect(invalidFetch).toHaveBeenCalledTimes(1);
   });
 
-  it("stops after three transient failures", async () => {
+  it("performs one physical request per Provider Adapter call", async () => {
     const fetch = vi.fn().mockImplementation(async () => new Response("rate limited", { status: 429 }));
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example",
@@ -102,7 +102,7 @@ describe("E065 Provider transient failure recovery", () => {
     });
 
     await expect(provider.decide(context, operation)).rejects.toThrow("Provider HTTP 429");
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("uses the existing blocked Run path after retries are exhausted", async () => {
@@ -127,7 +127,11 @@ describe("E065 Provider transient failure recovery", () => {
 
       expect(result.status).toBe("blocked");
       expect(result.stopReason).toBe("PROVIDER_UNAVAILABLE");
-      expect(result.summary).toBeNull();
+      expect(result.summary).toBe("No task result was confirmed before PROVIDER_UNAVAILABLE.");
+      expect(result.delivery).toEqual(expect.objectContaining({
+        outcome: "blocked",
+        generatedBy: "deterministic"
+      }));
       expect(fetch).toHaveBeenCalledTimes(3);
       expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
     } finally {
@@ -136,57 +140,47 @@ describe("E065 Provider transient failure recovery", () => {
     }
   });
 
-  it("resumes after exhausted validation retries without repeating a successful Tool Effect", async () => {
+  it("resumes after exhausted decision retries without repeating a successful Tool Effect", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e071-"));
     const effect = { calls: 0 };
     let decisions = 0;
-    let validations = 0;
+    let transientFailures = 0;
     const fetch = vi.fn(async (_input: unknown, init?: { body?: unknown }) => {
       const request = JSON.parse(String(init?.body)) as {
         messages: Array<{ content: string }>;
       };
-      const payload = JSON.parse(request.messages[1]!.content) as {
-        mode: "decide" | "validate";
-        context: {
-          workspace?: string;
-          intentContract?: Record<string, unknown>;
-        };
-      };
-      if (payload.mode === "validate") {
-        validations += 1;
-        return validations <= 3
-          ? new Response("unavailable", { status: 503 })
-          : providerResponse({ passed: true, issues: [] });
-      }
-
-      decisions += 1;
-      if (decisions === 1) {
+      JSON.parse(request.messages[1]!.content);
+      if (decisions === 0) {
+        decisions += 1;
         return providerResponse({
-          intent: {
-            kind: "plan_tasks",
-            taskContract: {
-              goal: "Read the item once.",
-              constraints: [],
-              acceptanceCriteria: ["The persisted read result is cited."]
-            },
+          action: "continue",
+          plan: {
+            goal: "Read the item once.",
             tasks: [{
-              objective: "Read the item once.",
-              completionRequirements: [{ kind: "capability_result", capability: "counter.read" }]
+              objective: "Read the item once."
             }]
           }
         });
       }
-      if (decisions === 2 || decisions === 4) {
+      if (decisions === 1) {
+        decisions += 1;
         return providerResponse({
-          intent: { kind: "use_capabilities", calls: [{ capability: "counter.read", arguments: { key: "item" } }] }
+          action: "continue",
+          toolCalls: [{ name: "counter.read", arguments: { key: "item" } }]
         });
       }
-      return providerResponse({ intent: { kind: "finish", summary: "The persisted item was read once." } });
+      if (transientFailures < 3) {
+        transientFailures += 1;
+        return new Response("unavailable", { status: 503 });
+      }
+      decisions += 1;
+      return providerResponse({ action: "finish", text: "The persisted item was read once." });
     });
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example",
       apiKey: "test",
       model: "test",
+      transport: "json_actions",
       fetch
     });
     const runtime = createRuntime({
@@ -202,7 +196,11 @@ describe("E065 Provider transient failure recovery", () => {
       expect(blocked).toEqual(expect.objectContaining({
         status: "blocked",
         stopReason: "PROVIDER_UNAVAILABLE",
-        summary: null
+        summary: "Completed 1 planned item(s) and preserved 1 confirmed fact(s) before PROVIDER_UNAVAILABLE.",
+        delivery: expect.objectContaining({
+          outcome: "blocked",
+          generatedBy: "deterministic"
+        })
       }));
       expect(effect.calls).toBe(1);
       expect(blockedView.toolInvocations).toHaveLength(1);
@@ -213,17 +211,17 @@ describe("E065 Provider transient failure recovery", () => {
       const completedView = await runtime.inspect(blocked.runId);
       expect(resumed.status, JSON.stringify({
         decisions,
-        validations,
+        transientFailures,
         lastError: completedView.snapshot.lastError,
         events: completedView.events.map((event) => event.type)
       })).toBe("succeeded");
-      expect(resumed.stopReason).toBe("VALIDATED");
+      expect(resumed.stopReason).toBe("COMPLETED");
       expect(effect.calls).toBe(1);
       expect(completedView.toolInvocations).toHaveLength(1);
-      expect(completedView.events.some((event) => event.type === "action.rejected")).toBe(true);
+      expect(completedView.events.some((event) => event.type === "action.rejected")).toBe(false);
       expect(completedView.events.filter((event) => event.type === "tool.succeeded")).toHaveLength(1);
       expect(completedView.events.filter((event) => event.type === "run.succeeded")).toHaveLength(1);
-      expect(validations).toBe(4);
+      expect(completedView.modelCalls.every((call) => call.phase === "decision")).toBe(true);
     } finally {
       runtime.close();
       rmSync(workspace, { recursive: true, force: true });

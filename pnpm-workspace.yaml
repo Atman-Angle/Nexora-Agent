@@ -1,5 +1,6 @@
 packages:
   - apps/*
+  - harness/*
   - packages/*
 allowBuilds:
   better-sqlite3: true

@@ -9,14 +9,13 @@ import {
   createRuntime,
   createOpenAICompatibleProvider,
   type ModelDecisionContext,
-  type RuntimeProvider,
-  type SemanticValidationContext
-} from "../../packages/runtime/src/index.js";
+  type RuntimeProvider
+} from "../../packages/harness/src/index.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import {
   finishFromEvidence,
-  legacyTestActionToDecision,
+  materializeTestTurn,
   setPlan,
   successfulReadTool
 } from "./runtime-testkit.js";
@@ -74,7 +73,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     await reopened.close();
   });
 
-  it("refuses a hard-limit call before Provider execution and records the decision without consuming a model call", async () => {
+  it("dispatches a deterministically reduced hard-limit projection instead of terminating the Run", async () => {
     const workspace = fixture();
     let decideCalls = 0;
     const provider = budgetedProvider({
@@ -85,27 +84,21 @@ describe("E079 Context Budget and Token Accounting", () => {
 
     const result = await runtime.start({ input: "A context that is too large." });
 
-    expect(result.status).toBe("failed");
-    expect(result.stopReason).toBe("CONTEXT_BUDGET_EXCEEDED");
-    expect(result.lastError?.code).toBe("CONTEXT_BUDGET_EXCEEDED");
-    expect(decideCalls).toBe(0);
+    expect(result.status).toBe("waiting");
+    expect(result.stopReason).toBe("INPUT_REQUIRED");
+    expect(result.lastError).toBeNull();
+    expect(decideCalls).toBe(1);
     const view = await runtime.inspect(result.runId);
-    expect(view.snapshot.budgetsUsed).toMatchObject({ iterations: 1, modelCalls: 0 });
+    expect(view.snapshot.budgetsUsed).toMatchObject({ iterations: 1, modelCalls: 1 });
     expect(view.modelCalls).toEqual([expect.objectContaining({
       budgetDecision: "hard_limit_exceeded",
-      status: "refused",
-      errorCode: "CONTEXT_BUDGET_EXCEEDED",
-      actualInputTokens: null,
-      actualOutputTokens: null,
-      actualTotalTokens: null
+      status: "succeeded",
+      errorCode: null,
+      actualInputTokens: 64,
+      actualOutputTokens: 6,
+      actualTotalTokens: 70
     })]);
-    expect(view.events.at(-1)).toMatchObject({
-      type: "run.failed",
-      payload: expect.objectContaining({
-        errorCode: "CONTEXT_BUDGET_EXCEEDED",
-        budgetDecision: "hard_limit_exceeded"
-      })
-    });
+    expect(view.events.some((event) => event.type === "run.failed")).toBe(false);
     await runtime.close();
   });
 
@@ -147,7 +140,7 @@ describe("E079 Context Budget and Token Accounting", () => {
         provider: "test-provider",
         model: "async-meter",
         contextWindowTokens: 100,
-        reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
+        reservedOutputTokens: { decision: 20 },
         softLimitRatio: 0.75
       },
       async measureTokens() {
@@ -157,10 +150,7 @@ describe("E079 Context Budget and Token Accounting", () => {
       },
       async decide() {
         decideCalls += 1;
-        return { intent: { kind: "request_input", question: "x", reason: "x" } };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
+        return { action: "request_input", question: "x", reason: "x"  };
       }
     };
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -178,7 +168,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     await runtime.close();
   });
 
-  it("accounts for decision and semantic-validation calls as separate logical calls", async () => {
+  it("accounts for progressive execution as decision-only logical calls", async () => {
     const workspace = fixture();
     const provider = new CompletingBudgetProvider(workspace);
     const runtime = createRuntime({
@@ -193,21 +183,19 @@ describe("E079 Context Budget and Token Accounting", () => {
 
     expect(result.status).toBe("succeeded");
     const view = await runtime.inspect(result.runId);
-    expect(view.snapshot.budgetsUsed.modelCalls).toBe(4);
+    expect(view.snapshot.budgetsUsed.modelCalls).toBe(3);
     expect(view.modelCalls.map((call) => call.phase)).toEqual([
       "decision",
       "decision",
-      "decision",
-      "validation"
+      "decision"
     ]);
-    expect(view.modelCalls.map((call) => call.sequence)).toEqual([1, 2, 3, 4]);
-    expect(view.modelCalls.slice(0, 3).every((call) => call.projectionDigest !== null)).toBe(true);
-    expect(view.modelCalls[3]).toMatchObject({
-      projectionDigest: null,
-      measuredInputTokens: 12,
-      actualInputTokens: 10,
+    expect(view.modelCalls.map((call) => call.sequence)).toEqual([1, 2, 3]);
+    expect(view.modelCalls.every((call) => call.projectionDigest !== null)).toBe(true);
+    expect(view.modelCalls[2]).toMatchObject({
+      measuredInputTokens: 20,
+      actualInputTokens: 18,
       actualOutputTokens: 2,
-      actualTotalTokens: 12,
+      actualTotalTokens: 20,
       status: "succeeded"
     });
     await runtime.close();
@@ -223,7 +211,7 @@ describe("E079 Context Budget and Token Accounting", () => {
       apiKey: "test-key",
       model: "provider-model",
       contextWindowTokens: 10_000,
-      reservedOutputTokens: { decision: 500, validation: 200, compaction: 500 },
+      reservedOutputTokens: { decision: 500 },
       tokenMeter(request) {
         meteredSystem = request.system;
         meteredInput = request.input;
@@ -232,11 +220,7 @@ describe("E079 Context Budget and Token Accounting", () => {
       fetch: async (_input, init) => {
         requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return new Response(JSON.stringify({
-          choices: [{ message: { content: JSON.stringify({
-            type: "request_input",
-            question: "Which target?",
-            reason: "Target is required."
-          }) } }],
+          choices: [{ message: { content: JSON.stringify({ action: "request_input", question: "Which target?", reason: "Target is required." }) } }],
           usage: { prompt_tokens: 300, completion_tokens: 20, total_tokens: 320 }
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -247,10 +231,10 @@ describe("E079 Context Budget and Token Accounting", () => {
     const call = (await runtime.inspect(result.runId)).modelCalls[0];
 
     expect(meteredInput).not.toContain('"projection"');
-    expect(meteredSystem).toContain("Provider Contract v2");
-    expect(meteredSystem).toContain("Runtime owns all IDs, versions, bindings");
-    expect(meteredInput).toContain('"intentContract"');
-    expect(meteredInput).toContain('"toolCatalog"');
+    expect(meteredSystem).toContain('"assistantJsonActions"');
+    expect(meteredSystem).toContain("A Plan is optional navigation, not permission or a Tool whitelist");
+    expect(meteredInput).not.toContain('"intentContract"');
+    expect(meteredInput).toContain('"currentRuntimeDirective"');
     expect(requestBody).toMatchObject({ model: "provider-model", max_tokens: 500 });
     expect(call).toMatchObject({
       measuredInputTokens: 321,
@@ -267,10 +251,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     const workspace = fixture();
     const provider: RuntimeProvider = {
       async decide() {
-        return { intent: { kind: "request_input", question: "Which target?", reason: "Target is required." } };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
+        return { action: "request_input", question: "Which target?", reason: "Target is required."  };
       }
     };
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -320,19 +301,25 @@ describe("E079 Context Budget and Token Accounting", () => {
       "PRAGMA table_info(tool_invocations)"
     ).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(5);
+    expect(version).toBe(8);
     expect(tables.map((row) => row.name)).toEqual([
       "branch_fork_base",
       "branches",
+      "cancellation_requests",
       "context_checkpoints",
+      "model_call_audits",
       "model_calls",
+      "provider_attempts",
       "run_events",
       "runs",
+      "tool_attempts",
       "tool_invocations"
     ]);
     expect(toolColumns.map((row) => row.name)).toEqual(expect.arrayContaining([
       "payload_digest",
-      "payload_artifact_ref"
+      "payload_artifact_ref",
+      "batch_id",
+      "batch_ordinal"
     ]));
   });
 
@@ -417,7 +404,7 @@ function budgetedProvider(input: {
       provider: "test-provider",
       model: "test-model",
       contextWindowTokens: 100,
-      reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
+      reservedOutputTokens: { decision: 20 },
       softLimitRatio: 0.75
     },
     measureTokens() {
@@ -434,12 +421,7 @@ function budgetedProvider(input: {
         outputTokens: 6,
         totalTokens: 70
       });
-      return {
-        intent: { kind: "request_input", question: "Which target?", reason: "Target is required." }
-      };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
+      return { action: "request_input", question: "Which target?", reason: "Target is required."  };
     }
   };
 }
@@ -449,7 +431,7 @@ class CompletingBudgetProvider implements RuntimeProvider {
     provider: "test-provider",
     model: "completion-model",
     contextWindowTokens: 1_000,
-    reservedOutputTokens: { decision: 100, validation: 50, compaction: 100 },
+    reservedOutputTokens: { decision: 100 },
     softLimitRatio: 0.8
   } as const;
   readonly #actions: readonly unknown[];
@@ -469,9 +451,9 @@ class CompletingBudgetProvider implements RuntimeProvider {
     ];
   }
 
-  measureTokens(phase: "decision" | "validation" | "compaction") {
+  measureTokens(_phase: "decision") {
     return {
-      inputTokens: phase === "decision" ? 20 : 12,
+      inputTokens: 20,
       method: "exact" as const,
       meter: "test:exact:v1"
     };
@@ -486,16 +468,9 @@ class CompletingBudgetProvider implements RuntimeProvider {
     const resolved = typeof action === "function"
       ? (action as (value: ModelDecisionContext) => unknown)(context)
       : action;
-    return legacyTestActionToDecision(resolved, context);
+    return materializeTestTurn(resolved, context);
   }
 
-  async validate(
-    _context: SemanticValidationContext,
-    operation: Parameters<RuntimeProvider["validate"]>[1]
-  ): Promise<unknown> {
-    operation.reportTokenUsage?.({ inputTokens: 10, outputTokens: 2, totalTokens: 12 });
-    return { passed: true, issues: [] };
-  }
 }
 
 function fixture(): string {

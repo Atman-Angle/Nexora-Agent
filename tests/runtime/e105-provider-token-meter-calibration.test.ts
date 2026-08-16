@@ -4,14 +4,10 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
-import { assessContextBudget } from "../../packages/runtime/src/context/budget.js";
-import { createOpenAICompatibleProvider } from "../../packages/runtime/src/providers/openai-compatible.js";
-import type {
-  CompactionContext,
-  ModelDecisionContext,
-  SemanticValidationContext
-} from "../../packages/runtime/src/providers/model-client.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
+import { assessContextBudget } from "../../packages/harness/src/context/budget.js";
+import { createOpenAICompatibleProvider } from "../../packages/harness/src/providers/openai-compatible.js";
+import type { ModelDecisionContext } from "../../packages/harness/src/providers/model-client.js";
 
 const roots: string[] = [];
 
@@ -19,7 +15,7 @@ const providerOptions = {
   baseUrl: "https://provider.example/v1",
   apiKey: "test-key",
   contextWindowTokens: 32_000,
-  reservedOutputTokens: { decision: 16_384, validation: 8_192, compaction: 8_192 },
+  reservedOutputTokens: { decision: 16_384 },
   softLimitRatio: 0.8,
   fetch: async () => {
     throw new Error("E105 token measurement must not call the Provider.");
@@ -31,28 +27,22 @@ describe("E105 Provider token meter calibration", () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  it("applies phase-specific qwen calibration to the final wire request", async () => {
+  it("applies qwen decision calibration to the final wire request", async () => {
     const qwen = createOpenAICompatibleProvider({ ...providerOptions, model: "qwen3.7-flash" });
     const fallback = createOpenAICompatibleProvider({ ...providerOptions, model: "unknown-model" });
-    const cases = [
-      ["decision", decisionContext("calibration"), 1.8],
-      ["validation", validationContext(), 1.2],
-      ["compaction", compactionContext(), 1.8]
-    ] as const;
-
-    for (const [phase, context, multiplier] of cases) {
-      const baseline = await fallback.measureTokens!(phase, context);
-      const calibrated = await qwen.measureTokens!(phase, context);
-      expect(baseline).toMatchObject({
-        method: "estimated",
-        meter: "nexora:utf8-bytes/4:v1"
-      });
-      expect(calibrated).toEqual({
-        inputTokens: Math.ceil(baseline.inputTokens * multiplier),
-        method: "estimated",
-        meter: `nexora:qwen3.7-flash:utf8-bytes/4*x${multiplier}:e101-v1`
-      });
-    }
+    const context = decisionContext("calibration");
+    const baseline = await fallback.measureTokens!("decision", context);
+    const calibrated = await qwen.measureTokens!("decision", context);
+    expect(baseline).toMatchObject({
+      method: "estimated",
+      meter: "nexora:utf8-bytes/4:v1"
+    });
+    expect(calibrated).toEqual({
+      inputTokens: Math.ceil(baseline.inputTokens * 1.8),
+      stablePrefixTokens: Math.ceil(baseline.stablePrefixTokens! * 1.8),
+      method: "estimated",
+      meter: "nexora:qwen3.7-flash:utf8-bytes/4*x1.8:e101-v1"
+    });
   });
 
   it("moves the former HPE-05 32K decision profile across the soft governance boundary", async () => {
@@ -60,7 +50,18 @@ describe("E105 Provider token meter calibration", () => {
     const fallback = createOpenAICompatibleProvider({ ...providerOptions, model: "unknown-model" });
     const emptyMeasurement = await fallback.measureTokens!("decision", decisionContext(""));
     const targetBaselineTokens = 7_000;
-    const paddingBytes = Math.max(0, (targetBaselineTokens - emptyMeasurement.inputTokens) * 4);
+    const calibrationBytes = 4_000;
+    const calibrationMeasurement = await fallback.measureTokens!(
+      "decision",
+      decisionContext("x".repeat(calibrationBytes))
+    );
+    const tokensPerByte = (
+      calibrationMeasurement.inputTokens - emptyMeasurement.inputTokens
+    ) / calibrationBytes;
+    const paddingBytes = Math.max(
+      0,
+      Math.floor((targetBaselineTokens - emptyMeasurement.inputTokens) / tokensPerByte)
+    );
     const context = decisionContext("x".repeat(paddingBytes));
 
     const baseline = await assessContextBudget(fallback, "decision", context);
@@ -100,11 +101,7 @@ describe("E105 Provider token meter calibration", () => {
       ...providerOptions,
       model: "qwen3.7-flash",
       fetch: async () => new Response(JSON.stringify({
-        choices: [{ message: { content: JSON.stringify({
-          type: "request_input",
-          question: "Which target?",
-          reason: "A target is required."
-        }) } }],
+        choices: [{ message: { content: JSON.stringify({ action: "request_input", question: "Which target?", reason: "A target is required." }) } }],
         usage: { prompt_tokens: 123, completion_tokens: 7, total_tokens: 130 }
       }), { status: 200, headers: { "content-type": "application/json" } })
     });
@@ -147,32 +144,12 @@ function decisionContext(text: string): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:e105" },
-    providerContractVersion: 2,
-    allowedIntents: ["plan_tasks", "request_input"],
-    intentContract: [],
+    providerContractVersion: 4,
+    activeInvocations: [],
     toolObservations: [],
-    contextCheckpoint: null,
     rehydratedFacts: [],
     historyCandidates: [],
     memoryCandidates: [],
     tools: []
-  };
-}
-
-function validationContext(): SemanticValidationContext {
-  return {
-    inputs: ["Report the exact result."],
-    proposedSummary: "Exact result.",
-    facts: []
-  };
-}
-
-function compactionContext(): CompactionContext {
-  return {
-    workspace: "D:\\fixture",
-    run: decisionContext("compact").run,
-    toolObservations: [],
-    previousCheckpoint: null,
-    budgetDecision: "soft_limit_exceeded"
   };
 }

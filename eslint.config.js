@@ -8,9 +8,12 @@ export default [
     ignores: [
       "dist/**",
       "packages/runtime/dist/**",
+      "packages/harness/dist/**",
       "node_modules/**",
       "tmp/**",
       "tests/fixtures/**",
+      "harness/**/reports/**",
+      "harness/**/datasets/**/fixture/**",
       ".nexora/**",
       ".nexora-docling/**",
       ".tmp-e001/**",

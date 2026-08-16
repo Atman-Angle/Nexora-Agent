@@ -11,9 +11,9 @@ import {
   createInitialRunSnapshot,
   type RunSnapshot
 } from "../../packages/runtime/src/contracts.js";
-import { createRuntime, type RuntimeTool } from "../../packages/runtime/src/index.js";
+import { createRuntime, type RuntimeTool } from "../../packages/harness/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
-import { digestTaskContract } from "../../packages/runtime/src/validation.js";
+import { digestTaskContract } from "../../packages/runtime/src/completion-gate.js";
 import { ScriptedRuntimeProvider, finishFromEvidence } from "./runtime-testkit.js";
 
 const roots: string[] = [];

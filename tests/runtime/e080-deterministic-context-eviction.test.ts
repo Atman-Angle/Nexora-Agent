@@ -7,12 +7,12 @@ import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
-import { createRuntime, type RuntimeProvider } from "../../packages/runtime/src/index.js";
+import { createRuntime, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import {
   canonicalJson,
   digestCanonicalJson
 } from "../../packages/runtime/src/runtime-helpers.js";
-import { projectRelevantToolObservations } from "../../packages/runtime/src/context/projection.js";
+import { projectRelevantToolObservations } from "../../packages/harness/src/context/projection.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("E080 deterministic Context Eviction", () => {
-  it("archives large predecessor facts and projects exact Authority references instead of a partial payload", async () => {
+  it("archives large predecessor facts and projects a bounded reference with exact Authority links", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
     const steps = [step(1), step(2)];
@@ -58,6 +58,7 @@ describe("E080 deterministic Context Eviction", () => {
       truncated: true,
       facts: null,
       error: null,
+      payloadFragment: null,
       originalBytes: expect.any(Number),
       digest: evidence.digest,
       sourceRefs: [
@@ -67,14 +68,14 @@ describe("E080 deterministic Context Eviction", () => {
       ]
     }));
     expect(observation!.originalBytes).toBeGreaterThan(4 * 1024);
-    expect(JSON.stringify(observation)).not.toContain("xxxx");
+    expect(Buffer.byteLength(JSON.stringify(observation), "utf8")).toBeLessThan(4 * 1024);
     expect(JSON.parse(
       new ArtifactStore(join(dataDir, "artifacts")).getText(evidence.artifactRef!)
     )).toEqual(invocation.resultJson);
     await runtime.close();
   });
 
-  it("evicts the oldest low-value predecessors before an active failure and remains rebuildable without Summary state", async () => {
+  it("keeps the latest bounded observations through failure and remains rebuildable without Summary state", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
     const steps = Array.from({ length: 10 }, (_, index) => step(index + 1));
@@ -107,38 +108,18 @@ describe("E080 deterministic Context Eviction", () => {
     expect(projected).toEqual(rebuilt);
     expect(projected).toHaveLength(8);
     expect(projected.map((item) => item.invocationId)).toEqual(
-      [
-        view.toolInvocations[0]!.id,
-        ...view.toolInvocations.slice(4).map((item) => item.id)
-      ]
+      [view.toolInvocations[0]!.id, ...view.toolInvocations.slice(-7).map((item) => item.id)]
     );
-    expect(projected[0]).toEqual(expect.objectContaining({
-      invocationId: view.toolInvocations[0]!.id,
-      status: "failed",
-      payloadMode: "fragment",
-      retention: expect.objectContaining({
-        class: "safety_constraint",
-        critical: true
-      }),
-      sourceRefs: expect.arrayContaining([
-        `invocation:${view.toolInvocations[0]!.id}`,
-        `artifact:${view.toolInvocations[0]!.payloadArtifactRef}`
-      ])
-    }));
-    expect(projected.slice(1, 7).every((item) => item.payloadMode === "reference")).toBe(true);
+    expect(projected.slice(0, -1).every((item) => item.truncated)).toBe(true);
     expect(projected.at(-1)).toEqual(expect.objectContaining({
       invocationId: view.toolInvocations.at(-1)!.id,
       status: "failed",
-      payloadMode: "fragment",
+      payloadMode: "reference",
       error: null,
-      payloadFragment: expect.objectContaining({
-        kind: "deterministic_excerpt",
-        code: "EXPECTED_FAILURE",
-        retryable: true
-      }),
+      payloadFragment: null,
       retention: expect.objectContaining({
-        class: "unresolved_error",
-        critical: true
+        class: "predecessor_evidence",
+        critical: false
       })
     }));
     const activeFailure = view.toolInvocations.at(-1)!;
@@ -160,15 +141,19 @@ describe("E080 deterministic Context Eviction", () => {
     expect(tables.map((row) => row.name)).toEqual([
       "branch_fork_base",
       "branches",
+      "cancellation_requests",
       "context_checkpoints",
+      "model_call_audits",
       "model_calls",
+      "provider_attempts",
       "run_events",
       "runs",
+      "tool_attempts",
       "tool_invocations"
     ]);
   });
 
-  it("uses the Provider-aware soft token limit to evict a small low-value payload while preserving Task constraints", async () => {
+  it("uses the Provider-aware soft token limit to reduce a predecessor payload to a reference", async () => {
     const workspace = fixture();
     const steps = [step(1), step(2)];
     const scripted = new ScriptedRuntimeProvider([
@@ -182,7 +167,7 @@ describe("E080 deterministic Context Eviction", () => {
         provider: "test-provider",
         model: "token-eviction-model",
         contextWindowTokens: 100,
-        reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
+        reservedOutputTokens: { decision: 20 },
         softLimitRatio: 0.75
       },
       measureTokens(_phase, context) {
@@ -197,9 +182,6 @@ describe("E080 deterministic Context Eviction", () => {
       },
       async decide(context) {
         return await scripted.decide(context);
-      },
-      async validate(context) {
-        return await scripted.validate(context);
       }
     };
     const runtime = createRuntime({
@@ -218,9 +200,9 @@ describe("E080 deterministic Context Eviction", () => {
     expect(finalContext.toolObservations[0]).toEqual(expect.objectContaining({
       payloadMode: "reference",
       facts: null,
-      retention: expect.objectContaining({ critical: false })
+      retention: expect.objectContaining({ class: "predecessor_evidence", critical: false })
     }));
-    expect(finalContext.run.taskContract?.constraints).toEqual(["Do not summarize facts."]);
+    expect(finalContext.run.taskContract?.constraints).toEqual([]);
     expect(view.modelCalls.at(-1)).toEqual(expect.objectContaining({
       measuredInputTokens: 55,
       budgetDecision: "within_budget",
@@ -228,7 +210,7 @@ describe("E080 deterministic Context Eviction", () => {
     }));
     expect(view.events.find((event) => (
       event.type === "model.requested"
-      && event.payload.tokenEvictionCount === 1
+      && Number(event.payload.tokenEvictionCount ?? 0) > 0
     ))).toBeDefined();
     await runtime.close();
   });
@@ -246,7 +228,7 @@ describe("E080 deterministic Context Eviction", () => {
     );
   });
 
-  it("treats eight as a default rather than dropping critical unresolved Check failures", async () => {
+  it("enforces the hard eight-observation limit while retaining failed outcomes", async () => {
     const workspace = fixture();
     const current = step(1);
     const provider = new ScriptedRuntimeProvider([
@@ -264,16 +246,17 @@ describe("E080 deterministic Context Eviction", () => {
     const observations = provider.contexts.at(-1)!.toolObservations;
 
     expect(result.status).toBe("waiting");
-    expect(observations).toHaveLength(9);
-    expect(observations.every((item) => (
-      item.retention.critical
-      && item.retention.class === "unresolved_error"
-    ))).toBe(true);
+    expect(observations).toHaveLength(8);
+    expect(observations.every((item) => item.status === "failed")).toBe(true);
+    expect(observations.at(-1)?.retention).toEqual(expect.objectContaining({
+      critical: false,
+      class: "predecessor_evidence"
+    }));
     expect(Buffer.byteLength(JSON.stringify(observations), "utf8")).toBeLessThanOrEqual(32 * 1024);
     await runtime.close();
   });
 
-  it("keeps a large active-check success as a fragment with its Evidence and Artifact while the Check stays pending", async () => {
+  it("keeps a large navigation success as a reference with its Evidence and Artifact", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
     const current = {
@@ -309,17 +292,17 @@ describe("E080 deterministic Context Eviction", () => {
     expect(view.snapshot.evidence).toHaveLength(1);
     expect(view.snapshot.evidence[0]).toEqual(expect.objectContaining({
       stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
-      checkId: view.snapshot.currentPlan!.orderedSteps[0]!.acceptanceChecks[0]!.id,
+      checkId: `invocation:${invocation.id}`,
       invocationId: invocation.id,
       artifactRef: invocation.payloadArtifactRef
     }));
     expect(observation).toEqual(expect.objectContaining({
       invocationId: invocation.id,
       status: "succeeded",
-      payloadMode: "fragment",
+      payloadMode: "reference",
       facts: null,
-      payloadFragment: expect.objectContaining({ kind: "deterministic_excerpt" }),
-      retention: expect.objectContaining({ class: "active_check", critical: true }),
+      payloadFragment: null,
+      retention: expect.objectContaining({ class: "predecessor_evidence", critical: false }),
       sourceRefs: expect.arrayContaining([
         `invocation:${invocation.id}`,
         `evidence:${view.snapshot.evidence[0]!.id}`,
@@ -332,7 +315,7 @@ describe("E080 deterministic Context Eviction", () => {
     await runtime.close();
   });
 
-  it("never turns a failed payload into Evidence and archives the error artifact without moving the Completion gate", async () => {
+  it("never turns a failed payload into Evidence and archives the error artifact", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
     const provider = new ScriptedRuntimeProvider([
@@ -355,13 +338,13 @@ describe("E080 deterministic Context Eviction", () => {
     )).toEqual(invocation.errorJson);
     expect(view.snapshot.stepProgress[0]).toEqual(expect.objectContaining({
       stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
-      status: "active",
+      status: "completed",
       evidenceIds: []
     }));
     await runtime.close();
   });
 
-  it("refuses the Provider when eviction still exceeds the hard limit and records the eviction count", async () => {
+  it("continues from the minimum projection after earlier Context exceeds the hard limit", async () => {
     const workspace = fixture();
     const steps = [step(1), step(2)];
     const scripted = new ScriptedRuntimeProvider([
@@ -376,7 +359,7 @@ describe("E080 deterministic Context Eviction", () => {
         provider: "test-provider",
         model: "hard-eviction-model",
         contextWindowTokens: 100,
-        reservedOutputTokens: { decision: 20, validation: 10, compaction: 20 },
+        reservedOutputTokens: { decision: 20 },
         softLimitRatio: 0.75
       },
       measureTokens(_phase, context) {
@@ -390,9 +373,6 @@ describe("E080 deterministic Context Eviction", () => {
       async decide(context) {
         decideCalls += 1;
         return scripted.decide(context);
-      },
-      async validate(context) {
-        return scripted.validate(context);
       }
     };
     const runtime = createRuntime({
@@ -404,22 +384,16 @@ describe("E080 deterministic Context Eviction", () => {
     const result = await runtime.start({ input: "Force a hard-limit block after eviction." });
     const view = await runtime.inspect(result.runId);
 
-    expect(result.status).toBe("failed");
-    expect(result.stopReason).toBe("CONTEXT_BUDGET_EXCEEDED");
-    expect(decideCalls).toBe(3);
-    expect(view.events.find((event) => event.type === "run.failed")).toEqual(
-      expect.objectContaining({
-        payload: expect.objectContaining({
-          stopReason: "CONTEXT_BUDGET_EXCEEDED",
-          tokenEvictionCount: 2
-        })
-      })
-    );
+    expect(result.status).toBe("waiting");
+    expect(result.stopReason).toBe("INPUT_REQUIRED");
+    expect(decideCalls).toBe(4);
+    expect(view.events.some((event) => event.type === "run.failed")).toBe(false);
     expect(view.modelCalls).toHaveLength(4);
     expect(view.modelCalls.at(-1)).toEqual(expect.objectContaining({
-      budgetDecision: "hard_limit_exceeded",
-      status: "refused",
-      errorCode: "CONTEXT_BUDGET_EXCEEDED"
+      budgetDecision: "within_budget",
+      measuredInputTokens: 1,
+      status: "succeeded",
+      errorCode: null
     }));
     await runtime.close();
   });
@@ -599,7 +573,7 @@ describe("E080 deterministic Context Eviction", () => {
       ORDER BY name
     `).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(5);
+    expect(version).toBe(8);
     expect(tables.map((row) => row.name)).toContain("context_checkpoints");
     expect(tables.map((row) => row.name)).toContain("branches");
     expect(toolColumns.filter((row) => row.name === "payload_digest")).toHaveLength(1);
@@ -833,9 +807,6 @@ function requestInputStub(): RuntimeProvider {
         question: "Provide more input.",
         reason: "Input is required."
       };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   };
 }

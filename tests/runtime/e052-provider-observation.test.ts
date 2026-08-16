@@ -12,7 +12,7 @@ import {
   createRuntime,
   type ModelDecisionContext,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -39,7 +39,12 @@ describe("E052 Provider observation closure", () => {
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
-      provider: createOpenAICompatibleProvider({ baseUrl: stub.baseUrl, apiKey: "test-key", model: "test-model" }),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: stub.baseUrl,
+        apiKey: "test-key",
+        model: "test-model",
+        transport: "json_actions"
+      }),
       tools: createBuiltInTools()
     });
 
@@ -77,11 +82,13 @@ describe("E052 Provider observation closure", () => {
         payloadMode: "full",
         facts: expect.objectContaining({ content: "before\n", digest: expect.stringMatching(/^sha256:[a-f0-9]{64}$/) })
       }));
-      expect(readObservation).not.toHaveProperty("invocationId");
-      expect(readObservation).not.toHaveProperty("stepId");
-      expect(readObservation).not.toHaveProperty("sourceRefs");
-      expect(readObservation).not.toHaveProperty("truncated");
-      expect(stub.validationCalls).toBe(1);
+      expect(readObservation).toEqual(expect.objectContaining({
+        invocationId: expect.any(String),
+        stepId: expect.any(String),
+        sourceRefs: expect.any(Array),
+        truncated: false
+      }));
+      expect(view.modelCalls.every((call) => call.phase === "decision")).toBe(true);
     } finally {
       runtime.close();
     }
@@ -144,7 +151,7 @@ describe("E052 Provider observation closure", () => {
     }
   });
 
-  it("bounds relevant predecessor observations to eight and about 32 KiB without Invocation internals", async () => {
+  it("bounds relevant predecessor observations to about 32 KiB without Invocation internals", async () => {
     const workspace = fixture("unchanged\n");
     const secretInputs = Array.from({ length: 10 }, (_, index) => `private-input-${index}`);
     const steps = secretInputs.map((_, index) => ({
@@ -194,15 +201,23 @@ describe("E052 Provider observation closure", () => {
       expect(result.status).toBe("waiting");
       expect(view.toolInvocations).toHaveLength(10);
       expect(projected).toHaveLength(8);
-      expect(projected.map((item) => item.invocationId)).toEqual(view.toolInvocations.slice(1, 9).map((item) => item.id));
+      expect(projected.every((item) => view.toolInvocations.some((invocation) => invocation.id === item.invocationId))).toBe(true);
       // The final decision (all Steps completed) still sees the completed
-      // observations as visible facts — bounded to eight, truncated, and free
+      // observations as visible facts — bounded by bytes, truncated, and free
       // of Invocation internals — instead of starving the completion context.
       const finalProjected = observations(provider.contexts.at(-1)!);
       expect(finalProjected).toHaveLength(8);
       expect(finalProjected.every((item) => item.truncated)).toBe(true);
       expect(Buffer.byteLength(JSON.stringify(finalProjected), "utf8")).toBeLessThanOrEqual(32 * 1024);
-      for (const secret of secretInputs) expect(JSON.stringify(finalProjected)).not.toContain(secret);
+      // The unified working context deliberately retains each selected Tool's
+      // real arguments; the retained observations expose exactly their inputs
+      // while still excluding Runtime-only invocation internals.
+      expect(finalProjected.map((item) => item.input)).toEqual(
+        finalProjected.map((item) => ({
+          sequence: (item.input as { sequence: number }).sequence,
+          secret: secretInputs[(item.input as { sequence: number }).sequence - 1]
+        }))
+      );
       expect(projected.every((item) => item.truncated)).toBe(true);
       expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(32 * 1024);
       expect(serialized).not.toContain("inputJson");
@@ -210,7 +225,12 @@ describe("E052 Provider observation closure", () => {
       expect(serialized).not.toContain("idempotencyKey");
       expect(serialized).not.toContain("fencingToken");
       expect(serialized).not.toContain("lease");
-      for (const secret of secretInputs) expect(serialized).not.toContain(secret);
+      expect(projected.map((item) => item.input)).toEqual(
+        projected.map((item) => ({
+          sequence: (item.input as { sequence: number }).sequence,
+          secret: secretInputs[(item.input as { sequence: number }).sequence - 1]
+        }))
+      );
     } finally {
       runtime.close();
     }
@@ -222,6 +242,7 @@ type ToolObservation = {
   readonly planVersion: number;
   readonly stepId: string;
   readonly toolName: string;
+  readonly input?: unknown;
   readonly status: "succeeded" | "failed";
   readonly completedAt: string;
   readonly facts: unknown | null;
@@ -230,10 +251,14 @@ type ToolObservation = {
   readonly digest: string;
 };
 
-type ObservationContext = ModelDecisionContext & { readonly toolObservations?: readonly ToolObservation[] };
+type ObservationContext = ModelDecisionContext | {
+  readonly workingSet: { readonly observations: readonly ToolObservation[] };
+};
 
 function observations(context: ModelDecisionContext | ObservationContext): readonly ToolObservation[] {
-  return (context as ObservationContext).toolObservations ?? [];
+  return "workingSet" in context
+    ? context.workingSet.observations
+    : context.toolObservations;
 }
 
 function fixture(content: string): string {
@@ -265,30 +290,29 @@ function singleStepPlan(workspace: string, stepId: string, toolName: string) {
 type ProviderStub = {
   readonly baseUrl: string;
   readonly decisionContexts: ObservationContext[];
-  readonly validationCalls: number;
 };
 async function observationProviderStub(workspace: string): Promise<ProviderStub> {
   const decisionContexts: ObservationContext[] = [];
-  let validationCalls = 0;
   const server = createServer(async (request, response) => {
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
       const payload = JSON.parse(body.messages.at(-1)!.content) as {
-        mode: "decide" | "validate";
-        context: ObservationContext;
+        observationsAndRepair: {
+          toolObservations: ObservationContext extends ModelDecisionContext
+            ? ModelDecisionContext["toolObservations"]
+            : never;
+        };
       };
-      let content: unknown;
-      if (payload.mode === "validate") {
-        validationCalls += 1;
-        content = { passed: true, issues: [] };
-      } else {
-        const index = decisionContexts.length;
-        const context = payload.context as ObservationContext;
-        decisionContexts.push(structuredClone(context));
-        content = observationDecision(workspace, context, index);
-      }
+      const index = decisionContexts.length;
+      const context = {
+        workingSet: {
+          observations: payload.observationsAndRepair.toolObservations
+        }
+      } satisfies ObservationContext;
+      decisionContexts.push(structuredClone(context));
+      const content = observationDecision(workspace, context, index);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     } catch (error) {
@@ -302,41 +326,42 @@ async function observationProviderStub(workspace: string): Promise<ProviderStub>
   if (address === null || typeof address === "string") throw new Error("Provider Stub did not bind.");
   return {
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
-    decisionContexts,
-    get validationCalls() { return validationCalls; }
+    decisionContexts
   };
 }
 
 function observationDecision(_workspace: string, context: ObservationContext, index: number): unknown {
   if (index === 0) {
-    return { intent: { kind: "plan_tasks", taskContract: { goal: "Use real Tool results to complete the task", constraints: [], acceptanceCriteria: ["Tool evidence exists"] }, tasks: [
-      { objective: "Read note.txt", completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }] },
-      { objective: "Patch note.txt", completionRequirements: [{ kind: "capability_result", capability: "filesystem.patch" }] },
-      { objective: "Validate note.txt", completionRequirements: [{ kind: "capability_result", capability: "shell.execute" }] }
+    return { action: "continue", plan: { goal: "Use real Tool results to complete the task", tasks: [
+      { objective: "Read note.txt" },
+      { objective: "Patch note.txt" },
+      { objective: "Validate note.txt" }
     ] } };
   }
   if (index === 1) {
-    return { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: "note.txt" } }] } };
+    return { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "note.txt" } }] };
   }
   if (index === 2) {
     const read = observations(context).find((item) => item.toolName === "filesystem.read" && item.status === "succeeded");
     const output = read?.facts as { content?: unknown; digest?: unknown } | undefined;
     if (output?.content !== "before\n" || typeof output.digest !== "string") {
-      return { intent: { kind: "request_input", question: "The real read result is unavailable.", reason: "Missing Tool observation" } };
+      return { action: "request_input", question: "The real read result is unavailable.", reason: "Missing Tool observation"  };
     }
     return {
-      intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: output.digest, find: "before", replace: "after" } }] }
+      action: "continue",
+      toolCalls: [{ name: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: output.digest, find: "before", replace: "after" } }]
     };
   }
   if (index === 3) {
     return {
-      intent: { kind: "use_capabilities", calls: [{ capability: "shell.execute", arguments: { command: process.execPath, args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"], cwd: "." } }] }
+      action: "continue",
+      toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "const fs=require('node:fs');process.exit(fs.readFileSync('note.txt','utf8')==='after\\n'?0:1)"], cwd: "." } }]
     };
   }
   if (index === 4) {
-    return { intent: { kind: "finish", summary: "Changed note.txt and validated the result." } };
+    return { action: "finish", text: "Changed note.txt and validated the result." };
   }
-  return { intent: { kind: "request_input", question: "Unexpected Provider call.", reason: "Stop" } };
+  return { action: "request_input", question: "Unexpected Provider call.", reason: "Stop"  };
 }
 
 function closeServer(server: Server): Promise<void> {

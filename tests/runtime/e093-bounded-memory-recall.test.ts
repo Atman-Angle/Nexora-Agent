@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createInitialRunSnapshot, type RunSnapshot } from "../../packages/runtime/src/contracts.js";
-import { evictDecisionContextOnce } from "../../packages/runtime/src/context/eviction.js";
+import { evictDecisionContextOnce } from "../../packages/harness/src/context/eviction.js";
 import {
   MAX_MEMORY_CANDIDATES,
   MAX_MEMORY_CANDIDATE_BYTES,
   MAX_MEMORY_CANDIDATE_ESTIMATED_TOKENS,
   projectMemoryCandidates
-} from "../../packages/runtime/src/memory/recall.js";
+} from "../../packages/harness/src/memory/recall.js";
 import {
   createRuntime,
   createOpenAICompatibleProvider,
@@ -22,7 +22,7 @@ import {
   type MemoryScope,
   type MemoryCandidate,
   type ModelDecisionContext
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import { digestJson } from "../../packages/runtime/src/runtime-helpers.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
@@ -128,40 +128,37 @@ describe("E093 bounded Memory recall", () => {
       content: record,
       error: null
     }));
-    expect(evicted).toBeNull();
+    expect(evicted).not.toBeNull();
+    expect(evicted!.memoryCandidates).toEqual([]);
+    expect(evicted!.rehydratedFacts).toContainEqual(expect.objectContaining({
+      ref: selectedRef,
+      kind: "memory",
+      error: null
+    }));
     expect(memoryStore.get(SCOPE, record.memoryId)).toEqual(record);
     memoryStore.close();
   });
 
-  it("returns one non-disclosing REF_UNAVAILABLE when an active record digest drifts after publication", async () => {
+  it("rebuilds the current eligible Memory after its digest changes between user turns", async () => {
     const workspace = fixture("drift");
     const memoryStore = openMemoryStore({ stateDir: join(workspace, "memory") });
     const record = memoryStore.create(memory());
+    let sawCurrentRecord = false;
     const provider = new ScriptedRuntimeProvider([
       plan(),
+      { type: "request_input", question: "Revalidate Memory?", reason: "Turn boundary." },
       (context: ModelDecisionContext) => {
-        const ref = context.memoryCandidates[0]!.ref;
-        memoryStore.revalidate({
-          scope: SCOPE,
-          memoryId: record.memoryId,
-          verification: {
-            state: "verified",
-            verifiedAt: "2026-08-11T13:00:00.000Z",
-            evidenceRefs: ["evidence:revalidated"]
-          },
-          updatedAt: "2026-08-11T13:00:00.000Z"
-        });
-        return { type: "request_context", refs: [ref] };
-      },
-      (context: ModelDecisionContext) => {
-        expect(context.rehydratedFacts).toContainEqual(expect.objectContaining({
+        const current = context.rehydratedFacts.find((fact) => fact.ref === `memory:${record.memoryId}`);
+        expect(current).toEqual(expect.objectContaining({
           ref: `memory:${record.memoryId}`,
           kind: "memory",
-          digest: "",
-          content: null,
-          error: "REF_UNAVAILABLE"
+          error: null,
+          content: expect.objectContaining({
+            verification: expect.objectContaining({ evidenceRefs: ["evidence:revalidated"] })
+          })
         }));
-        return { type: "request_input", question: "Stop.", reason: "Drift rejected." };
+        sawCurrentRecord = true;
+        return { type: "request_input", question: "Stop.", reason: "Updated Memory restored." };
       }
     ]);
     const runtime = createRuntime({
@@ -172,13 +169,25 @@ describe("E093 bounded Memory recall", () => {
       now: () => NOW
     });
 
-    const result = await runtime.start({ input: "Use deterministic retrieval for this task." });
+    const waiting = await runtime.start({ input: "Use deterministic retrieval for this task." });
+    memoryStore.revalidate({
+      scope: SCOPE,
+      memoryId: record.memoryId,
+      verification: {
+        state: "verified",
+        verifiedAt: "2026-08-11T13:00:00.000Z",
+        evidenceRefs: ["evidence:revalidated"]
+      },
+      updatedAt: "2026-08-11T13:00:00.000Z"
+    });
+    const result = await runtime.resume({ runId: waiting.runId, input: "Continue with the updated deterministic retrieval preference." });
     await runtime.close();
     memoryStore.close();
     expect(result.status).toBe("waiting");
+    expect(sawCurrentRecord).toBe(true);
   });
 
-  it("projects Memory candidates onto the production wire and preserves them through Eviction", async () => {
+  it("projects bounded Memory data without Runtime internals and evicts it before task facts", async () => {
     const bodies: Array<{ readonly messages: readonly { readonly role: string; readonly content: string }[] }> = [];
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example/v1",
@@ -188,7 +197,7 @@ describe("E093 bounded Memory recall", () => {
         bodies.push(JSON.parse(String(init?.body)));
         return new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify({
-            type: "request_input",
+            action: "request_input",
             question: "Stop?",
             reason: "Memory wire captured."
           }) } }]
@@ -200,23 +209,21 @@ describe("E093 bounded Memory recall", () => {
     await provider.decide(context, { signal: new AbortController().signal });
     const payload = JSON.parse(
       bodies[0]!.messages.find((message) => message.role === "user")!.content
-    ) as { readonly context: { readonly memoryCandidates: readonly MemoryCandidate[]; readonly run: Record<string, unknown> } };
+    ) as {
+      readonly observationsAndRepair: {
+        readonly memoryCandidates: readonly MemoryCandidate[];
+      };
+    };
     const systemPrompt = bodies[0]!.messages.find((message) => message.role === "system")!.content;
     const evicted = evictDecisionContextOnce(context)!;
     const { projection, ...facts } = evicted;
 
-    expect(payload.context.memoryCandidates).toEqual(context.memoryCandidates.map((candidate) => ({
-      ref: candidate.ref,
-      memoryType: candidate.memoryType,
-      hint: candidate.hint,
-      trust: candidate.trust
-    })));
+    expect(payload.observationsAndRepair.memoryCandidates).toEqual(context.memoryCandidates);
     expect(systemPrompt).toContain("untrusted data");
-    expect(Buffer.byteLength(systemPrompt, "utf8")).toBeLessThan(2_000);
-    expect(payload.context.run).not.toHaveProperty("currentPlan");
-    expect(payload.context.run).not.toHaveProperty("evidence");
-    expect(JSON.stringify(payload)).not.toContain("check-memory");
-    expect(evicted.memoryCandidates).toEqual(context.memoryCandidates);
+    expect(payload).not.toHaveProperty("run");
+    expect(payload).toHaveProperty("originalTaskContract");
+    expect(payload).toHaveProperty("currentPlanAndChecks");
+    expect(evicted.memoryCandidates).toEqual([]);
     expect(projection.digest).toBe(digestJson(facts));
   });
 
@@ -239,11 +246,6 @@ describe("E093 bounded Memory recall", () => {
     await first.close();
 
     const secondProvider = new ScriptedRuntimeProvider([
-      plan(1),
-      (context: ModelDecisionContext) => ({
-        type: "request_context",
-        refs: [context.memoryCandidates[0]!.ref]
-      }),
       { type: "request_input", question: "Stop.", reason: "Restart restoration complete." }
     ]);
     const second = createRuntime({
@@ -347,9 +349,8 @@ function memoryDecisionContext(): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:placeholder" },
-    providerContractVersion: 2,
-    allowedIntents: ["request_input", "restore_context"],
-    intentContract: [{ intent: { kind: "request_input", question: "<question>", reason: "<reason>" } }],
+    providerContractVersion: 4,
+    activeInvocations: [],
     toolObservations: [{
       invocationId: "old",
       planVersion: 1,
@@ -373,7 +374,6 @@ function memoryDecisionContext(): ModelDecisionContext {
       },
       digest: digestJson({ value: "old" })
     }],
-    contextCheckpoint: null,
     rehydratedFacts: [],
     historyCandidates: [],
     memoryCandidates: [candidate],

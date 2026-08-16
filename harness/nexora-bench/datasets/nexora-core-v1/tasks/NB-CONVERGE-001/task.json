@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-CONVERGE-001",
+  "category": "long_sequence_convergence",
+  "horizon": "long",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "instruction": "Inspect the repository requirements and current service configuration, correct every mismatch while preserving required values, run the provided verifier, use any failure diagnostics to repair the result, and report only after verification succeeds.",
+  "fixture": {
+    "path": "tasks/NB-CONVERGE-001/fixture",
+    "digest": "sha256:9f57e4831de384ac3e459bdb8c49d39cd456643f199b83f855041acde4f2821a"
+  },
+  "scenario": "tasks/NB-CONVERGE-001/scenario.ts",
+  "allowedCapabilities": ["filesystem.read", "filesystem.patch", "shell.execute"],
+  "budgets": {
+    "maxIterations": 18,
+    "maxModelCalls": 18,
+    "maxToolCalls": 12,
+    "maxRetries": 3,
+    "maxDurationMs": 300000
+  },
+  "expectedTerminal": "succeeded",
+  "driver": {
+    "approvals": [
+      { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false },
+      { "occurrence": 2, "decision": "approve", "restartBeforeDecision": true },
+      { "occurrence": 3, "decision": "approve", "restartBeforeDecision": false }
+    ],
+    "inputs": [],
+    "recoveries": []
+  },
+  "grader": {
+    "files": [{
+      "id": "service-config",
+      "path": "service.json",
+      "exists": true,
+      "equals": "{\n  \"schemaVersion\": 2,\n  \"service\": \"nexora-worker\",\n  \"port\": 8080,\n  \"healthCheck\": true\n}\n"
+    }],
+    "commands": [{
+      "id": "service-validation",
+      "command": "node",
+      "args": ["verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }],
+    "unchangedPaths": ["REQUIREMENTS.md", "verify.mjs"],
+    "authority": {
+      "requiredEventTypes": ["tool.failed", "tool.succeeded", "run.succeeded"],
+      "forbiddenEventTypes": [],
+      "invocations": [
+        { "toolName": "filesystem.patch", "status": "succeeded", "count": 1 },
+        { "toolName": "shell.execute", "status": "failed", "count": 1 },
+        { "toolName": "shell.execute", "status": "succeeded", "count": 1 }
+      ]
+    }
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity",
+    "scenario_authority"
+  ]
+}

@@ -2,7 +2,12 @@ import { lstat, mkdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 export class ToolFailure extends Error {
-  constructor(readonly code: string, message: string, readonly retryable = false) {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly retryable = false,
+    readonly details?: unknown
+  ) {
     super(message);
     this.name = "ToolFailure";
   }

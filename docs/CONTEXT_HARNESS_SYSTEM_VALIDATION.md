@@ -2,6 +2,8 @@
 
 日期：2026-08-07
 
+> 历史报告：本文记录当时包含 semantic Validator/Compaction 的旧执行链与旧 Run 结果。2026-08-16 的 Progressive Agent Execution 已删除这些生产路径；下文的 validation phase、`VALIDATED` 和旧调用数只用于历史审计，不代表当前 Contract。
+
 分支：`codex/runtime-restructure`
 
 范围：Context Harness Slice 1–6（Projection E078 / Token Budget E079 / Deterministic Eviction E080 / Structured Compaction E081 / Rehydration E082 / Context Branching E083）的**系统级总验收**。不新增功能，只验证现有实现是否在真实 Runtime 链路与真实 Provider 上持续为目标模型提供正确且足够的上下文，同时不破坏 Runtime Core 的 Authority、Recovery、Evidence、Completion Gate 与副作用安全。

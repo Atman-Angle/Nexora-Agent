@@ -17,7 +17,7 @@ import {
   type RunResult,
   type RunView,
   type RuntimeProvider
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 
 export const PROVIDER_BENCHMARK_ID = "context-memory-provider-v1";
 export const PROVIDER_DATASET_VERSION = 2;
@@ -49,7 +49,7 @@ export const PROVIDER_SCENARIOS: readonly ProviderScenario[] = Object.freeze([
 ]);
 
 type Observation = {
-  readonly phase: "decision" | "validation" | "compaction";
+  readonly phase: "decision";
   readonly latencyMs: number;
   readonly actionType: string | null;
   readonly requestedRefs: readonly string[];
@@ -119,7 +119,7 @@ export function evaluateProviderRun(input: {
   const evidenceSatisfied = missingReads.length === 0 && input.view.snapshot.evidence.length >= input.scenario.expectedReadPaths.length;
   const falseSuccess = input.result.status === "succeeded" && (!evidenceSatisfied || !requiredRestored);
   const passed = input.result.status === "succeeded"
-    && input.result.stopReason === "VALIDATED"
+    && input.result.stopReason === "COMPLETED"
     && requiredRestored
     && wrongMemoryRefs.length === 0
     && unsafeInvocations.length === 0
@@ -319,9 +319,8 @@ async function seedHistoryRun(input: {
   readonly memoryStore: ReturnType<typeof openMemoryStore>;
 }): Promise<string> {
   const bootstrap: RuntimeProvider = {
-    modelProfile: { provider: "benchmark-fixture", model: "history-seeder", contextWindowTokens: 32_000, reservedOutputTokens: { decision: 1_024, validation: 1_024, compaction: 1_024 }, softLimitRatio: 0.8 },
-    async decide() { return { intent: { kind: "request_input", question: "Continue fixture setup.", reason: "Build persisted Session Archive input history." } }; },
-    async validate() { return { passed: true, issues: [] }; }
+    modelProfile: { provider: "benchmark-fixture", model: "history-seeder", contextWindowTokens: 32_000, reservedOutputTokens: { decision: 1_024 }, softLimitRatio: 0.8 },
+    async decide() { return { action: "request_input", question: "Continue fixture setup.", reason: "Build persisted Session Archive input history."  }; }
   };
   const runtime = createRuntime({ workspace: input.workspace, dataDir: input.dataDir, provider: bootstrap, tools: createBuiltInTools(), memory: { store: input.memoryStore, scope: benchmarkScope() } });
   try {
@@ -365,8 +364,6 @@ function observeProvider(provider: RuntimeProvider, observations: Observation[])
     ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
     ...(provider.measureTokens === undefined ? {} : { measureTokens: provider.measureTokens.bind(provider) }),
     decide: (context, operation) => invoke("decision", context, () => provider.decide(context, operation)),
-    validate: (context, operation) => invoke("validation", context, () => provider.validate(context, operation)),
-    ...(provider.compact === undefined ? {} : { compact: (context: Parameters<NonNullable<RuntimeProvider["compact"]>>[0], operation: Parameters<NonNullable<RuntimeProvider["compact"]>>[1]) => invoke("compaction", context, () => provider.compact!(context, operation)) }),
     ...(provider.dispose === undefined ? {} : { dispose: provider.dispose.bind(provider) })
   };
 }
@@ -399,7 +396,9 @@ function tokenMetrics(calls: readonly ModelCallRecord[], pricing?: Pricing) {
 }
 
 function latencyMetrics(observations: readonly Observation[]) {
-  return Object.fromEntries((["decision", "validation", "compaction"] as const).map((phase) => [phase, distributionOrNull(observations.filter((item) => item.phase === phase).map((item) => item.latencyMs))]));
+  return {
+    decision: distributionOrNull(observations.map((item) => item.latencyMs))
+  };
 }
 
 function writeAggregate(root: string, createdAt: string, manifestDigest: string, runs: readonly ProviderRunReport[], executionSources: readonly ReturnType<typeof gitSource>[], executionManifests: readonly string[]): string {

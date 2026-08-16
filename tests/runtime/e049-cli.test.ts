@@ -20,23 +20,20 @@ describe("E049 natural-language CLI", () => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
-      const payload = JSON.parse(body.messages.at(-1)!.content) as { mode: string; context: any };
+      const _payload = JSON.parse(body.messages.at(-1)!.content) as { mode: string; context: unknown };
       calls += 1;
       let content: unknown;
-      if (payload.mode === "validate") {
-        content = { passed: true, issues: [] };
-      } else if (calls === 1) {
+      if (calls === 1) {
         content = {
-          intent: {
-            kind: "plan_tasks",
-            taskContract: { goal: "Read the requested target", constraints: [], acceptanceCriteria: ["target.txt was read"] },
-            tasks: [{ objective: "Read target.txt", completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }] }]
+          plan: {
+            goal: "Read the requested target",
+            tasks: [{ objective: "Read target.txt" }]
           }
         };
       } else if (calls === 2) {
-        content = { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: "target.txt" } }] } };
+        content = { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] };
       } else {
-        content = { intent: { kind: "finish", summary: "Read target.txt with verified evidence." } };
+        content = { action: "finish", text: "Read target.txt with verified evidence." };
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
@@ -50,9 +47,7 @@ describe("E049 natural-language CLI", () => {
       NEXORA_MODEL_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
       NEXORA_MODEL_API_KEY: "test-key",
       NEXORA_MODEL_NAME: "qwen3.7-flash",
-      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
-      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
-      NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
     });
     server.close();
 
@@ -60,7 +55,7 @@ describe("E049 natural-language CLI", () => {
     const result = JSON.parse(run.stdout.trim()) as { runId: string; status: string; summary: string | null };
     expect(result.status).toBe("succeeded");
     expect(result.summary).toBe("Read target.txt with verified evidence.");
-    expect(calls).toBe(4);
+    expect(calls).toBe(3);
 
     const inspect = await spawnCli(["inspect", result.runId, "--cwd", workspace, "--json"], {});
     expect(inspect.code).toBe(0);
@@ -75,9 +70,7 @@ describe("E049 natural-language CLI", () => {
       NEXORA_MODEL_BASE_URL: "",
       NEXORA_MODEL_API_KEY: "",
       NEXORA_MODEL_NAME: "",
-      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "",
-      NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "",
-      NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: ""
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: ""
     });
     expect(result.code).toBe(64);
     expect(result.stderr).toContain("MODEL_CONFIG_ERROR");

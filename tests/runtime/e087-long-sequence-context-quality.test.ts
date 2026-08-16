@@ -7,11 +7,11 @@ import {
   type RunEvent,
   type RunSnapshot
 } from "../../packages/runtime/src/contracts.js";
-import { projectRunContext } from "../../packages/runtime/src/context/projection.js";
+import { projectRunContext } from "../../packages/harness/src/context/projection.js";
 import {
   MAX_SESSION_ARCHIVE_MILESTONES,
   projectSessionArchive
-} from "../../packages/runtime/src/context/rehydration.js";
+} from "../../packages/harness/src/context/rehydration.js";
 
 const QUALITY_SCENARIOS = [
   "early-constraint-anchor",
@@ -36,7 +36,7 @@ describe("E087 long-sequence Context quality gate", () => {
     ]);
   });
 
-  it("keeps the current TaskContract authoritative and exposes only uncovered Inputs", () => {
+  it("keeps original Inputs authoritative alongside the current TaskContract", () => {
     const run = longRun(3);
     const covered = {
       ...run,
@@ -54,12 +54,11 @@ describe("E087 long-sequence Context quality gate", () => {
 
     expect(projected.coveredInputCount).toBe(2);
     expect(projected.taskContract?.goal).toBe("Use the corrected output format");
-    expect(projected.inputHistory).toEqual([expect.objectContaining({
-      sequence: 3,
-      text: "Input 3"
-    })]);
-    expect(JSON.stringify(projected.inputHistory)).not.toContain("Input 1");
-    expect(JSON.stringify(projected.inputHistory)).not.toContain("Input 2");
+    expect(projected.inputHistory).toEqual([
+      expect.objectContaining({ sequence: 1, text: "Input 1" }),
+      expect.objectContaining({ sequence: 2, text: "Input 2" }),
+      expect.objectContaining({ sequence: 3, text: "Input 3" })
+    ]);
   });
 
   it("preserves representative navigation anchors under repeated-failure pressure", () => {

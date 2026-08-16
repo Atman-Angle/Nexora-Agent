@@ -4,7 +4,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
+import { GENERAL_AGENT_SYSTEM_KERNEL } from "../../packages/harness/src/prompt.js";
 import {
   ScriptedRuntimeProvider,
   finishFromEvidence,
@@ -20,7 +21,13 @@ afterEach(() => {
 });
 
 describe("E077 Tool decision efficiency", () => {
-  it("advertises one phase-specific Intent while an active Tool check exists", async () => {
+  it("states that a completed partial Plan is not overall completion", () => {
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("Tool execution proves only its returned facts");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("every requirement is satisfied");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("Produced, observed and verified are distinct");
+  });
+
+  it("keeps explicit replanning available without changing the execution Authority", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -43,16 +50,39 @@ describe("E077 Tool decision efficiency", () => {
     runtime.close();
 
     expect(result.status).toBe("succeeded");
-    expect(provider.contexts[0]?.allowedIntents).toEqual(["plan_tasks", "request_input"]);
-    expect(provider.contexts[1]?.allowedIntents).toEqual(["use_capabilities"]);
-    expect(provider.contexts[1]?.intentContract.map((decision) => decision.intent.kind))
-      .toEqual(["use_capabilities"]);
-    expect(provider.contexts[2]?.allowedIntents).toEqual(["finish"]);
-    expect(provider.contexts[2]?.intentContract.map((decision) => decision.intent.kind))
-      .toEqual(["finish"]);
+    expect(provider.contexts).toHaveLength(3);
+    for (const context of provider.contexts) {
+      expect(context.providerContractVersion).toBe(4);
+      expect(context).not.toHaveProperty("allowedIntents");
+      expect(context).not.toHaveProperty("intentContract");
+    }
   });
 
-  it("does not advertise call_tool when the active Step has no Tool result check", async () => {
+  it("lets the model explicitly replace unfinished work without Runtime semantic adaptation", async () => {
+    const workspace = tempRoot();
+    const provider = new ScriptedRuntimeProvider([
+      setPlan(workspace),
+      setPlan(workspace, 1),
+      {
+        type: "request_input",
+        question: "Stop after the explicit revision.",
+        reason: "The fixture observed the revised Plan."
+      }
+    ]);
+    const runtime = createRuntime({ workspace, provider, tools: [successfulReadTool()] });
+
+    const result = await runtime.start({ input: "Read the target." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.toolInvocations).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(provider.contexts[2]?.tools.map((tool) => tool.identity.name)).toContain("filesystem.read");
+  });
+
+  it("keeps user confirmation as the only intent when the active Step requires it", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       {
@@ -82,9 +112,8 @@ describe("E077 Tool decision efficiency", () => {
     runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(provider.contexts[1]?.allowedIntents).toEqual(["request_input"]);
-    expect(provider.contexts[1]?.intentContract.map((decision) => decision.intent.kind))
-      .toEqual(["request_input"]);
+    expect(provider.contexts[1]).not.toHaveProperty("allowedIntents");
+    expect(provider.contexts[1]).not.toHaveProperty("intentContract");
   });
 });
 

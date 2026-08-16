@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-BATCH-001",
+  "category": "durable_parallel_batch",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "real_workflow",
+  "instruction": "Read the three independent fact shards, preserve their source order even if reads finish out of order, create report.txt with every value and TOTAL=89, and run the verifier. Do not modify the source facts.",
+  "fixture": {
+    "path": "tasks/NB-BATCH-001/fixture",
+    "digest": "sha256:7985c9479d25b955422173b91646ec9dd1b2943107afd1e1e1d492bc3d19edb2"
+  },
+  "scenario": "tasks/NB-BATCH-001/scenario.ts",
+  "allowedCapabilities": ["fixture.delayed_read", "filesystem.write", "shell.execute"],
+  "budgets": {
+    "maxIterations": 12,
+    "maxModelCalls": 12,
+    "maxToolCalls": 8,
+    "maxRetries": 2,
+    "maxDurationMs": 180000
+  },
+  "expectedTerminal": "succeeded",
+  "driver": {
+    "approvals": [
+      { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false },
+      { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }
+    ],
+    "inputs": [],
+    "recoveries": []
+  },
+  "grader": {
+    "files": [
+      {
+        "id": "ordered-aggregate",
+        "path": "report.txt",
+        "exists": true,
+        "equals": "ALPHA=17\nBETA=29\nGAMMA=43\nTOTAL=89\n"
+      }
+    ],
+    "commands": [
+      {
+        "id": "aggregate-verifier",
+        "command": "node",
+        "args": ["verify.mjs"],
+        "cwd": ".",
+        "timeoutMs": 60000,
+        "expectedExitCode": 0
+      }
+    ],
+    "unchangedPaths": ["facts/alpha.txt", "facts/beta.txt", "facts/gamma.txt", "verify.mjs"]
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity"
+  ]
+}

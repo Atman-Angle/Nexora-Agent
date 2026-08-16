@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,9 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createRuntime,
   type ModelDecisionContext,
-  type ProviderDecision,
   type RuntimeProvider
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import { createBuiltInTools } from "../../packages/runtime/src/execution/tool-runtime/index.js";
 
 const roots: string[] = [];
@@ -19,20 +18,34 @@ afterEach(() => {
 });
 
 describe("E108 Runtime-owned Intent Compilation", () => {
+  it("rejects misplaced Plan Tasks and continues after a corrected Model Turn", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "VALUE", "utf8");
+    const provider = queuedProvider([{ action: "continue", plan: { goal: "Read target.txt.", tasks: "invalid" } },
+    planDecision(["filesystem.read"]),
+    { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+    { action: "finish", text: "Verified VALUE." }
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
+    const result = await runtime.start({ input: "Read target.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
+  });
+
   it("compiles semantic Plan, capability batch and finish without Provider-owned IDs", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "a.txt"), "A", "utf8");
     writeFileSync(join(root, "b.txt"), "B", "utf8");
     const provider = queuedProvider([
-      planDecision([capability("filesystem.read"), capability("filesystem.read")]),
-      decision({
-        kind: "use_capabilities",
-        calls: [
-          { capability: "filesystem.read", arguments: { path: "a.txt" } },
-          { capability: "filesystem.read", arguments: { path: "b.txt" } }
-        ]
-      }),
-      decision({ kind: "finish", summary: "Verified A and B." })
+      planDecision(["filesystem.read", "filesystem.read"]),
+      { action: "continue", toolCalls: [
+          { name: "filesystem.read", arguments: { path: "a.txt" } },
+          { name: "filesystem.read", arguments: { path: "b.txt" } }
+        ] },
+      { action: "finish", text: "Verified A and B." }
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -47,79 +60,91 @@ describe("E108 Runtime-owned Intent Compilation", () => {
 
     expect(result.status).toBe("succeeded");
     expect(result.failureHandoff).toBeNull();
-    expect(view.snapshot.currentPlan?.orderedSteps[0]).toEqual(expect.objectContaining({
-      id: expect.stringMatching(/^step-/),
-      acceptanceChecks: [
-        expect.objectContaining({ id: expect.stringMatching(/^check-/), toolName: "filesystem.read" }),
-        expect.objectContaining({ id: expect.stringMatching(/^check-/), toolName: "filesystem.read" })
-      ]
-    }));
+    expect(view.snapshot.currentPlan?.orderedSteps).toEqual([
+      expect.objectContaining({
+        id: expect.stringMatching(/^step-/),
+        acceptanceChecks: []
+      })
+    ]);
     expect(view.toolInvocations).toHaveLength(2);
     expect(view.events.map((event) => event.type)).toContain("execute_step.completed");
-    expect(provider.contexts.map((context) => context.allowedIntents)).toEqual([
-      ["plan_tasks", "request_input"],
-      ["use_capabilities"],
-      ["finish"]
-    ]);
     for (const context of provider.contexts) {
-      expect(context.providerContractVersion).toBe(2);
+      expect(context.providerContractVersion).toBe(4);
       expect(context).not.toHaveProperty("allowedActions");
       expect(context).not.toHaveProperty("actionContract");
-      expect(context.intentContract.every((item) => !JSON.stringify(item).includes("stepId"))).toBe(true);
-      expect(context.intentContract.every((item) => !JSON.stringify(item).includes("evidenceIds"))).toBe(true);
+      expect(context).not.toHaveProperty("allowedIntents");
+      expect(context).not.toHaveProperty("intentContract");
     }
   });
 
-  it("normalizes non-authoritative planning arguments and splits calls at active Task boundaries", async () => {
+  it("matches planned capabilities by identity instead of imposing array order", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "VALUE", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.read", "filesystem.list"]),
+      { action: "continue", toolCalls: [
+          { name: "filesystem.list", arguments: { path: "." } },
+          { name: "filesystem.read", arguments: { path: "target.txt" } }
+        ] },
+      { action: "finish", text: "Listed the workspace and verified VALUE." }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "List the workspace and read target.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(view.toolInvocations.map((invocation) => invocation.toolName)).toEqual([
+      "filesystem.list",
+      "filesystem.read"
+    ]);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+  });
+
+  it("can request genuinely missing input after planned work completes without claiming success", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "TARGET", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+      { action: "request_input", question: "What label should accompany the verified value?", reason: "The requested label is not present in Runtime context."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read target.txt, then report it with my preferred label." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(result.stopReason).toBe("INPUT_REQUIRED");
+    expect(view.snapshot.result).toBeNull();
+    expect(provider.contexts[2]).not.toHaveProperty("allowedIntents");
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+  });
+
+  it("rejects non-contract planning fields and continues after an explicit corrected Plan", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "a.txt"), "A", "utf8");
     writeFileSync(join(root, "b.txt"), "B", "utf8");
     const provider = queuedProvider([
-      {
-        reasoningSummary: "r".repeat(3_000),
-        intent: {
-          kind: "plan_tasks",
-          taskContract: {
-            goal: "Read both files.",
-            constraints: [],
-            acceptanceCriteria: ["Both reads have Evidence."],
-            tasks: [
-              {
-                objective: "Read a.txt.",
-                completionRequirements: [{
-                  kind: "capability_result",
-                  capability: "filesystem.read",
-                  args: { path: "a.txt" }
-                }]
-              },
-              {
-                objective: "Read b.txt.",
-                completionRequirements: [{
-                  kind: "capability_result",
-                  capability: "filesystem.read",
-                  arguments: { path: "b.txt" }
-                }]
-              },
-              {
-                objective: "Summarize the verified result.",
-                completionRequirements: [{ kind: "finish" }]
-              }
-            ]
-          }
-        }
-      },
-      decision({
-        kind: "use_capabilities",
-        calls: [
-          { capability: "filesystem.read", arguments: { path: "a.txt" } },
-          { capability: "filesystem.read", arguments: { path: "b.txt" } }
-        ]
-      }),
-      decision({
-        kind: "use_capabilities",
-        calls: [{ capability: "filesystem.read", arguments: { path: "b.txt" } }]
-      }),
-      decision({ kind: "finish", summary: "Verified A and B." })
+      { action: "continue", reasoningSummary: "r".repeat(3_000), plan: { goal: "Read both files.", tasks: "invalid" } },
+      planDecision(["filesystem.read", "filesystem.read"]),
+      { action: "continue", toolCalls: [
+          { name: "filesystem.read", arguments: { path: "a.txt" } }
+        ] },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "b.txt" } }] },
+      { action: "finish", text: "Verified A and B." }
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -137,21 +162,19 @@ describe("E108 Runtime-owned Intent Compilation", () => {
       { path: "a.txt" },
       { path: "b.txt" }
     ]);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
   });
 
-  it("automatically restores an explicitly published Context ref before planning and creates the omitted exact-ref Check", async () => {
+  it("automatically restores an explicitly published Context ref without inventing a Plan Check", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "history.txt"), "HISTORY-MARKER", "utf8");
     const provider = queuedProvider([
-      decision({ kind: "request_input", question: "Publish history?", reason: "fixture" }),
-      decision({ kind: "request_input", question: "State the final goal.", reason: "fixture" }),
-      planDecision([capability("filesystem.read")]),
-      decision({
-        kind: "use_capabilities",
-        calls: [{ capability: "filesystem.read", arguments: { path: "history.txt" } }]
-      }),
-      decision({ kind: "finish", summary: "HISTORY-MARKER" })
+      { action: "request_input", question: "Publish history?", reason: "fixture"  },
+      { action: "request_input", question: "Publish history?", reason: "fixture"  },
+      { action: "request_input", question: "State the final goal.", reason: "fixture"  },
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "history.txt" } }] },
+      { action: "finish", text: "HISTORY-MARKER" }
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -170,32 +193,25 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     await runtime.close();
 
     expect(result.status).toBe("succeeded");
-    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "context_ref", ref: "input:2" }),
-      expect.objectContaining({ kind: "tool_result", toolName: "filesystem.read" })
-    ]));
-    expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["context_ref", "tool_result"]);
-    expect(provider.contexts[2]?.rehydratedFacts).toContainEqual(expect.objectContaining({
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([]);
+    expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["tool_result"]);
+    expect(provider.contexts[3]?.rehydratedFacts).toContainEqual(expect.objectContaining({
       ref: "input:2",
       kind: "input",
       error: null
     }));
     expect(view.events.filter((event) => event.type === "context.rehydrate_requested")).toHaveLength(0);
     expect(view.events.filter((event) => event.type === "context.request_reused")).toHaveLength(0);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
   });
 
-  it("classifies summary repair and succeeds using Runtime-derived Evidence citations", async () => {
+  it("completes an objective-only Plan without a validation call", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "target.txt"), "VALUE-7", "utf8");
     const provider = queuedProvider([
-      planDecision([capability("filesystem.read")]),
-      decision({ kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: "target.txt" } }] }),
-      decision({ kind: "finish", summary: "Read the target." }),
-      decision({ kind: "finish", summary: "Verified VALUE-7 from target.txt." })
-    ], [
-      { passed: false, issues: [{ kind: "incomplete_summary", message: "Summary omits VALUE-7." }] },
-      { passed: true, issues: [] }
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+      { action: "finish", text: "Verified VALUE-7 from target.txt." }
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -209,11 +225,467 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     await runtime.close();
 
     expect(result.status).toBe("succeeded");
-    expect(provider.contexts.at(-1)?.repair?.issues).toContainEqual({
-      kind: "incomplete_summary",
-      message: "Summary omits VALUE-7."
-    });
+    expect(view.modelCalls.every((call) => call.phase === "decision")).toBe(true);
     expect(view.snapshot.result?.evidenceIds).toEqual(view.snapshot.evidence.map((item) => item.id));
+  });
+
+  it("replans unfinished work after a Tool failure while preserving completed Steps and Evidence", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "first.txt"), "FIRST", "utf8");
+    writeFileSync(join(root, "second.txt"), "SECOND", "utf8");
+    const provider = queuedProvider([
+      { action: "continue", plan: { goal: "Read both files.", tasks: [{ objective: "Read first." }, { objective: "Read second." }] } },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "first.txt" } }] },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { action: "continue", plan: { goal: "Complete the requested work.", tasks: [{ objective: "Read the corrected second path." }] } },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "second.txt" } }] },
+      { action: "finish", text: "Verified FIRST and SECOND." }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read first.txt and second.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(provider.contexts[3]?.repair?.kind).toBe("tool_failure");
+    expect(provider.contexts[3]?.tools.length).toBeGreaterThan(0);
+    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.snapshot.stepProgress.every((item) => item.status === "completed")).toBe(true);
+    expect(view.snapshot.evidence).toHaveLength(2);
+    expect(view.toolInvocations.map((item) => item.status)).toEqual(["succeeded", "failed", "succeeded"]);
+  });
+
+  it("marks every objective-only Plan Step complete after the hard gate succeeds", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "VALUE-7", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+      { action: "finish", text: "VALUE-7" }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read target.txt and verify its exact value." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(view.modelCalls.every((call) => call.phase === "decision")).toBe(true);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
+    expect(view.snapshot.stepProgress.every((item) => item.status === "completed")).toBe(true);
+    expect(view.snapshot.evidence).toHaveLength(1);
+  });
+
+  it("allows a confirmed failed idempotent Invocation to be retried under bounded execution budgets", async () => {
+    const root = fixtureRoot();
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { action: "request_input", question: "Provide the correct path.", reason: "The known path failed."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read missing.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.toolInvocations).toHaveLength(2);
+    expect(view.toolInvocations.map((item) => item.status)).toEqual(["failed", "failed"]);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(provider.contexts[3]?.tools.length).toBeGreaterThan(0);
+    expect(provider.contexts[2]?.repair).toEqual(expect.objectContaining({
+      failedObjective: expect.any(String),
+      latestFailedAttempt: expect.objectContaining({
+        toolName: "filesystem.read",
+        status: "failed",
+        errorCode: "FILE_NOT_FOUND"
+      })
+    }));
+  });
+
+  it("allows an explicit Plan revision to retry a previously failed idempotent call", async () => {
+    const root = fixtureRoot();
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { action: "continue", plan: { goal: "Complete the requested work.", tasks: [{ objective: "Retry the unresolved read." }] } },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { action: "request_input", question: "Provide the actual path.", reason: "The unchanged read remains invalid."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read missing.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.toolInvocations).toHaveLength(2);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+  });
+
+  it("projects existing persisted progress Events as archive milestones after Runtime reopen", async () => {
+    const root = fixtureRoot();
+    const dataDir = join(root, ".nexora");
+    writeFileSync(join(root, "target.txt"), "VALUE", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+      { action: "finish", text: "Verified VALUE." }
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir, provider, tools: createBuiltInTools() });
+    const result = await runtime.start({ input: "Read target.txt." });
+    const before = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    const progress = before.events.find((event) => event.type === "tool.succeeded");
+    expect(provider.contexts.at(-1)?.sessionArchive?.milestones).toContainEqual(expect.objectContaining({
+      category: "progress",
+      ref: `event:${progress?.sequence}`
+    }));
+
+    const reopened = createRuntime({
+      workspace: root,
+      dataDir,
+      provider: queuedProvider([]),
+      tools: createBuiltInTools()
+    });
+    const after = await reopened.inspect(result.runId);
+    await reopened.close();
+    expect(after.events.find((event) => event.sequence === progress?.sequence)).toEqual(progress);
+    expect(after.snapshot.status).toBe("succeeded");
+    expect(after.snapshot.evidence).toEqual(before.snapshot.evidence);
+  });
+
+  it("does not classify Plan churn, rejected Actions or failed Tools as progress milestones", async () => {
+    const root = fixtureRoot();
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { action: "request_input", question: "Need a valid path.", reason: "No progress."  }
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
+    const result = await runtime.start({ input: "Read missing.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.events.some((event) => event.type === "plan.set")).toBe(true);
+    expect(view.events.some((event) => event.type === "tool.failed")).toBe(true);
+    expect(view.events.some((event) => event.type === "action.rejected")).toBe(false);
+    expect(provider.contexts.at(-1)?.sessionArchive?.milestones.some((item) => item.category === "progress")).toBe(false);
+  });
+
+  it("allows the same verifier after a successful corrective write changes persisted state", async () => {
+    const root = fixtureRoot();
+    const verifier = join(root, "verify.mjs");
+    writeFileSync(join(root, "target.txt"), "BAD\n", "utf8");
+    writeFileSync(verifier, "import{readFileSync}from'node:fs';process.exit(readFileSync('target.txt','utf8')==='GOOD\\n'?0:1);", "utf8");
+    const provider = queuedProvider([
+      planDecision(["shell.execute"]),
+      { action: "continue", toolCalls: [{ name: "shell.execute", arguments: { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 } }] },
+      { action: "continue", plan: { goal: "Complete the requested work.", tasks: [{ objective: "Correct target.txt." }] } },
+      { action: "continue", toolCalls: [{ name: "filesystem.write", arguments: { path: "target.txt", content: "GOOD\n" } }] },
+      { action: "continue", plan: { goal: "Complete the requested work.", tasks: [{ objective: "Run the verifier again." }] } },
+      { action: "continue", toolCalls: [{ name: "shell.execute", arguments: { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 } }] },
+      { action: "finish", text: "Corrected target.txt and verified it successfully." }
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
+    const first = await runtime.start({ input: "Make target.txt pass verify.mjs." });
+    expect(first.status).toBe("waiting");
+    const approval = (await runtime.inspect(first.runId)).snapshot.pendingRequest!;
+    const completed = await runtime.resume({
+      runId: first.runId,
+      approvalDecision: { requestId: approval.id, approved: true }
+    });
+    let current = completed;
+    for (let index = 0; index < 3 && current.status === "waiting"; index += 1) {
+      const secondApproval = (await runtime.inspect(first.runId)).snapshot.pendingRequest;
+      if (secondApproval?.kind !== "approval") break;
+      current = await runtime.resume({
+        runId: first.runId,
+        approvalDecision: { requestId: secondApproval.id, approved: true }
+      });
+    }
+    const view = await runtime.inspect(first.runId);
+    await runtime.close();
+
+    const verifierInvocations = view.toolInvocations.filter((item) => item.toolName === "shell.execute");
+    const successfulWrite = view.toolInvocations.find((item) => item.toolName === "filesystem.write");
+    expect(verifierInvocations.map((item) => item.status)).toEqual(["failed", "succeeded"]);
+    expect(successfulWrite?.status).toBe("succeeded");
+    expect(view.events.some((event) => event.type === "tool.succeeded")).toBe(true);
+    expect(view.snapshot.currentPlan?.orderedSteps.every((step) => (
+      step.acceptanceChecks.length === 0
+    ))).toBe(true);
+  });
+
+  it("allows a safe capability outside the active Plan checkpoint without satisfying it", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "DISCOVERED", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.patch"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+      { action: "request_input", question: "Stop after discovery.", reason: "Fixture complete."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Inspect before deciding the patch." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.snapshot.currentPlan?.version).toBe(1);
+    expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
+      "Complete the requested work."
+    ]);
+    expect(view.snapshot.stepProgress.map((item) => item.status)).toEqual(["completed"]);
+    expect(view.toolInvocations).toHaveLength(1);
+    expect(view.toolInvocations[0]?.toolName).toBe("filesystem.read");
+    expect(view.snapshot.evidence).toEqual([
+      expect.objectContaining({
+        invocationId: view.toolInvocations[0]!.id,
+        checkId: `invocation:${view.toolInvocations[0]!.id}`
+      })
+    ]);
+    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(provider.contexts[2]?.tools.length).toBeGreaterThan(0);
+  });
+
+  it("lets the model replan normally after safe out-of-plan discovery", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "DISCOVERED", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.patch"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+      { action: "continue", plan: { goal: "Complete the requested work.", tasks: [{ objective: "Read the target before changing it." }] } },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }] },
+      { action: "request_input", question: "Stop after the recovered read.", reason: "Fixture complete."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Inspect before deciding the patch." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(provider.contexts[2]?.tools.length).toBeGreaterThan(0);
+    expect(provider.contexts[3]?.tools.length).toBeGreaterThan(0);
+    expect(provider.contexts[3]?.repair).toBeNull();
+    expect(view.toolInvocations).toHaveLength(2);
+    expect(view.toolInvocations.every((invocation) => invocation.status === "succeeded")).toBe(true);
+  });
+
+  it("executes an independent read batch outside a patch-only checkpoint", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "a.txt"), "A", "utf8");
+    writeFileSync(join(root, "b.txt"), "B", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.patch"]),
+      { action: "continue", toolCalls: [
+          { name: "filesystem.read", arguments: { path: "a.txt" } },
+          { name: "filesystem.read", arguments: { path: "b.txt" } }
+        ] },
+      { action: "request_input", question: "Stop after discovery.", reason: "Fixture complete."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Inspect both files before deciding a patch." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.toolInvocations).toHaveLength(2);
+    expect(view.snapshot.evidence).toHaveLength(2);
+    expect(view.snapshot.evidence.map((item) => item.invocationId)).toEqual(
+      view.toolInvocations.map((item) => item.id)
+    );
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+  });
+
+  it("allows one planned capability Check to bind a bounded batch of distinct arguments", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "a.txt"), "A", "utf8");
+    writeFileSync(join(root, "b.txt"), "B", "utf8");
+    writeFileSync(join(root, "c.txt"), "C", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [
+          { name: "filesystem.read", arguments: { path: "a.txt" } },
+          { name: "filesystem.read", arguments: { path: "b.txt" } },
+          { name: "filesystem.read", arguments: { path: "c.txt" } }
+        ] },
+      { action: "request_input", question: "Stop after reads.", reason: "Fixture complete."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read all three known files." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.toolInvocations).toHaveLength(3);
+    expect(view.toolInvocations.map((invocation) => invocation.inputJson)).toEqual([
+      { path: "a.txt" },
+      { path: "b.txt" },
+      { path: "c.txt" }
+    ]);
+    expect(view.snapshot.currentPlan?.orderedSteps).toHaveLength(1);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Complete the requested work.");
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toHaveLength(0);
+    expect(view.snapshot.stepProgress).toEqual([expect.objectContaining({ status: "completed" })]);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+  });
+
+  it("deduplicates canonical idempotent reads inside one exploration batch", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "TARGET", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.patch"]),
+      { action: "continue", toolCalls: [
+          { name: "filesystem.search", arguments: { query: "TARGET", path: "." } },
+          { name: "filesystem.search", arguments: { path: ".", query: "TARGET" } }
+        ] },
+      { action: "request_input", question: "Stop after rejection.", reason: "Fixture complete."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Search before deciding a patch." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.toolInvocations).toEqual([
+      expect.objectContaining({ toolName: "filesystem.search", status: "succeeded" })
+    ]);
+    expect(view.events.find((event) => event.type === "action.rejected")).toBeUndefined();
+    expect(view.events.find((event) => event.type === "execute_step.completed")?.payload).toEqual(
+      expect.objectContaining({ executedActionCount: 1, cachedActionCount: 1, totalActions: 2 })
+    );
+  });
+
+  it("does not share one action repair allowance across real Tool progress", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "a.txt"), "A", "utf8");
+    const provider = queuedProvider([
+      { action: "continue", plan: { tasks: [] } },
+      planDecision(["filesystem.read", "filesystem.read"]),
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+      { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: {} }] },
+      { action: "request_input", question: "Provide the second path.", reason: "The attempted input was invalid."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({
+      input: "Read two files.",
+      budgets: { maxIterations: 8, maxModelCalls: 8, maxToolCalls: 4, maxRetries: 1, maxDurationMs: 30_000 }
+    });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.snapshot.budgetsUsed.retries).toBe(0);
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(2);
+    expect(provider.contexts[4]?.repair).toEqual(expect.objectContaining({ kind: "invalid_action" }));
+    expect(provider.contexts[4]?.tools.length).toBeGreaterThan(0);
+    expect(provider.contexts[4]?.repair?.issues).not.toContainEqual(expect.objectContaining({
+      kind: "plan_mismatch"
+    }));
+  });
+
+  it("routes an unplanned write through the normal Approval Gate before Effect", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "OLD", "utf8");
+    const provider = queuedProvider([
+      planDecision(["filesystem.read"]),
+      { action: "continue", toolCalls: [{
+          name: "filesystem.patch",
+          arguments: {
+            path: "target.txt",
+            expectedDigest: "sha256:" + "0".repeat(64),
+            find: "OLD",
+            replace: "NEW"
+          }
+        }] },
+      { action: "request_input", question: "Stop after rejection.", reason: "Fixture complete."  }
+    ]);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read before any write." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.toolInvocations).toHaveLength(0);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]).toEqual(expect.objectContaining({
+      objective: "Complete the requested work.",
+      acceptanceChecks: []
+    }));
+    expect(view.snapshot.pendingRequest?.kind).toBe("approval");
+    expect(view.events.some((event) => event.type === "approval.requested")).toBe(true);
+    expect(view.events.some((event) => event.type === "action.rejected")).toBe(false);
+    expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("OLD");
   });
 
   it("fails legacy RuntimeAction output closed and derives a readable non-success handoff", async () => {
@@ -221,9 +693,6 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const provider: RuntimeProvider = {
       async decide() {
         return { type: "set_plan", basedOnVersion: null, orderedSteps: [] };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     };
     const runtime = createRuntime({
@@ -243,7 +712,8 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     await runtime.close();
 
     expect(final.status).toBe("failed");
-    expect(final.summary).toBeNull();
+    expect(final.summary).toBe("No task result was confirmed before INVALID_MODEL_ACTION.");
+    expect(final.delivery).toMatchObject({ outcome: "failed", generatedBy: "deterministic" });
     expect(final.failureHandoff).toEqual(expect.objectContaining({
       originalGoal: "Do the work.",
       resumable: false,
@@ -256,7 +726,8 @@ describe("E108 Runtime-owned Intent Compilation", () => {
   it("uses the latest persisted task input when failure occurs before a Task Contract exists", async () => {
     const root = fixtureRoot();
     const provider = queuedProvider([
-      decision({ kind: "request_input", question: "What is the current task?", reason: "fixture" }),
+      { action: "request_input", question: "What is the current task?", reason: "fixture"  },
+      { type: "set_plan", basedOnVersion: null, orderedSteps: [] },
       { type: "set_plan", basedOnVersion: null, orderedSteps: [] }
     ]);
     const runtime = createRuntime({
@@ -284,32 +755,20 @@ function fixtureRoot(): string {
   return root;
 }
 
-function capability(name: string) {
-  return { kind: "capability_result" as const, capability: name };
-}
-
-function planDecision(requirements: readonly ReturnType<typeof capability>[]): ProviderDecision {
-  return decision({
-    kind: "plan_tasks",
-    taskContract: {
-      goal: "Read the required files and report verified facts.",
-      constraints: ["Do not write files."],
-      acceptanceCriteria: ["Every requested fact has persisted Evidence."]
-    },
-    tasks: [{ objective: "Read the required files.", completionRequirements: [...requirements] }]
-  });
-}
-
-function decision(intent: ProviderDecision["intent"]): ProviderDecision {
-  return { intent };
+function planDecision(_requiredTools: readonly string[]): unknown {
+  return {
+    action: "continue",
+    plan: {
+      goal: "Complete the requested work and report verified facts.",
+      tasks: [{ objective: "Complete the requested work." }]
+    }
+  };
 }
 
 function queuedProvider(
-  decisions: readonly unknown[],
-  validations: readonly Awaited<ReturnType<RuntimeProvider["validate"]>>[] = [{ passed: true, issues: [] }]
+  decisions: readonly unknown[]
 ): RuntimeProvider & { readonly contexts: ModelDecisionContext[] } {
   const queue = [...decisions];
-  const verdicts = [...validations];
   const contexts: ModelDecisionContext[] = [];
   return {
     contexts,
@@ -317,11 +776,6 @@ function queuedProvider(
       contexts.push(structuredClone(context));
       const next = queue.shift();
       if (next === undefined) throw new Error("Decision queue exhausted.");
-      return next;
-    },
-    async validate() {
-      const next = verdicts.shift();
-      if (next === undefined) return { passed: true, issues: [] };
       return next;
     }
   };

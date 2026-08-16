@@ -10,8 +10,8 @@ import {
   defineTool,
   type ModelDecisionContext,
   type RuntimeProvider
-} from "../../packages/runtime/src/index.js";
-import { legacyTestProvider } from "./runtime-testkit.js";
+} from "../../packages/harness/src/index.js";
+import { runtimeActionTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -245,15 +245,12 @@ function successfulProvider(
   input: unknown
 ): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide(context) {
       call += 1;
       if (call === 1) return plan(workspace, toolName);
       if (call === 2) return callTool(toolName, input);
       return finish(context);
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }
@@ -264,7 +261,7 @@ function planToolThenInputProvider(
   input: unknown
 ): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide() {
       call += 1;
       if (call === 1) return plan(workspace, toolName);
@@ -274,9 +271,6 @@ function planToolThenInputProvider(
         question: "Stop after Tool failure.",
         reason: "Failure was observed."
       };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }
@@ -287,15 +281,12 @@ function planAndToolProvider(
   input: unknown
 ): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide() {
       call += 1;
       return call === 1
         ? plan(workspace, toolName)
         : callTool(toolName, input);
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }

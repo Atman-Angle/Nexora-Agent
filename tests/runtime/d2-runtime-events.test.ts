@@ -11,8 +11,8 @@ import {
   type RuntimeEvent,
   type RuntimeProvider,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
-import { legacyTestProvider } from "./runtime-testkit.js";
+} from "../../packages/harness/src/index.js";
+import { runtimeActionTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -50,8 +50,6 @@ describe("D2 persisted Runtime Events", () => {
       "plan.updated",
       "tool.started",
       "tool.succeeded",
-      "validation.started",
-      "validation.passed",
       "run.succeeded"
     ]));
     const sequences = events.map((event) => event.sequence);
@@ -97,9 +95,6 @@ describe("D2 persisted Runtime Events", () => {
       provider: {
         async decide() {
           throw new Error("provider offline");
-        },
-        async validate() {
-          return { passed: true, issues: [] };
         }
       },
       tools: []
@@ -132,33 +127,27 @@ function temporaryWorkspace(): string {
 
 function inputThenReadProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide(context) {
       call += 1;
-      if (call === 1) {
+      if (call <= 2) {
         return {
           type: "request_input",
           question: "Which target should be read?",
           reason: "A target is required."
         };
       }
-      return readDecision(workspace, context, call - 1);
-    },
-    async validate() {
-      return { passed: true, issues: [] };
+      return readDecision(workspace, context, call - 2);
     }
   });
 }
 
 function readProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide(context) {
       call += 1;
       return readDecision(workspace, context, call);
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }

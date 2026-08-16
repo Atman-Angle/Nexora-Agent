@@ -1,27 +1,22 @@
 import { z } from "zod";
 
 import type {
-  CompactionContext,
   ModelDecisionContext,
   RuntimeProvider
-} from "../../packages/runtime/src/providers/model-client.js";
+} from "../../packages/harness/src/providers/model-client.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 
 export class ScriptedRuntimeProvider implements RuntimeProvider {
   readonly contexts: ModelDecisionContext[] = [];
-  readonly validationContexts: Array<Parameters<RuntimeProvider["validate"]>[0]> = [];
-  readonly compactionContexts: CompactionContext[] = [];
+  /** Historical counter retained only so deleted compaction assertions can migrate locally. */
+  readonly compactionContexts: unknown[] = [];
   readonly #actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>;
-  readonly #compactions: Array<unknown | ((context: CompactionContext) => unknown)>;
 
   constructor(
     actions: Array<unknown | ((context: ModelDecisionContext) => unknown)>,
-    options: {
-      readonly compactions?: Array<unknown | ((context: CompactionContext) => unknown)>;
-    } = {}
+    _removedCompactionOptions?: unknown
   ) {
     this.#actions = [...actions];
-    this.#compactions = [...(options.compactions ?? [])];
   }
 
   async decide(context: ModelDecisionContext, _operation?: unknown): Promise<unknown> {
@@ -29,20 +24,9 @@ export class ScriptedRuntimeProvider implements RuntimeProvider {
     const action = this.#actions.shift();
     if (action === undefined) throw new Error("Scripted Provider exhausted.");
     const resolved = typeof action === "function" ? action(context) : action;
-    return legacyTestActionToDecision(resolved, context);
+    return materializeTestTurn(resolved, context);
   }
 
-  async validate(context: Parameters<RuntimeProvider["validate"]>[0], _operation?: unknown): Promise<unknown> {
-    this.validationContexts.push(structuredClone(context));
-    return { passed: context.facts.length > 0, issues: [] };
-  }
-
-  async compact(context: CompactionContext, _operation?: unknown): Promise<unknown> {
-    this.compactionContexts.push(structuredClone(context));
-    const action = this.#compactions.shift();
-    if (action === undefined) throw new Error("Scripted Provider compactions exhausted.");
-    return typeof action === "function" ? action(context) : action;
-  }
 }
 
 export function taskContract() {
@@ -98,54 +82,45 @@ export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
 }
 
 export function finishFromEvidence(summary: string): (context: ModelDecisionContext) => unknown {
-  return (_context) => ({
-    intent: { kind: "finish", summary }
-  });
+  return (_context) => ({ action: "finish", text: summary });
 }
 
-/** Keeps pre-v2 scripted fixtures focused on the Runtime behavior they exercise. */
-export function legacyTestProvider(provider: RuntimeProvider): RuntimeProvider {
+/** Adapts internal Runtime-action test descriptors without widening the production ModelTurn schema. */
+export function runtimeActionTestProvider(provider: RuntimeProvider): RuntimeProvider {
   return {
     ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
     ...(provider.measureTokens === undefined ? {} : { measureTokens: provider.measureTokens }),
     async decide(context, operation) {
-      return legacyTestActionToDecision(await provider.decide(context, operation), context);
+      return materializeTestTurn(await provider.decide(context, operation), context);
     },
-    validate: (context, operation) => provider.validate(context, operation),
-    ...(provider.compact === undefined ? {} : {
-      compact: (context, operation) => provider.compact!(context, operation)
-    }),
     ...(provider.dispose === undefined ? {} : {
       dispose: () => provider.dispose!()
     })
   };
 }
 
-export function legacyTestActionToDecision(value: unknown, context: ModelDecisionContext): unknown {
+export function materializeTestTurn(value: unknown, context: ModelDecisionContext): unknown {
   if (value === null || typeof value !== "object") return value;
-  if ("intent" in value) return value;
   const action = value as Record<string, unknown>;
   if (action.type === "request_context") {
-    return { intent: { kind: "restore_context", refs: action.refs } };
+    return { action: "finish", text: "Continue using the deterministically restored context." };
   }
   if (action.type === "request_input") {
-    return { intent: { kind: "request_input", question: action.question, reason: action.reason } };
+    return { action: "request_input", question: action.question, reason: action.reason };
   }
   if (action.type === "propose_finish") {
-    return { intent: { kind: "finish", summary: action.summary } };
+    return { action: "finish", text: action.summary };
   }
   if (action.type === "call_tool") {
-    return { intent: { kind: "use_capabilities", calls: [{ capability: action.toolName, arguments: action.input }] } };
+    return { action: "continue", toolCalls: [{ name: action.toolName, arguments: action.input }] };
   }
   if (action.type === "execute_step" && Array.isArray(action.actions)) {
     return {
-      intent: {
-        kind: "use_capabilities",
-        calls: action.actions.map((item) => {
-          const call = item as Record<string, unknown>;
-          return { capability: call.toolName, arguments: call.input };
-        })
-      }
+      action: "continue",
+      toolCalls: action.actions.map((item) => {
+        const call = item as Record<string, unknown>;
+        return { name: call.toolName, arguments: call.input };
+      })
     };
   }
   if (action.type !== "set_plan" || !Array.isArray(action.orderedSteps)) return value;
@@ -159,34 +134,13 @@ export function legacyTestActionToDecision(value: unknown, context: ModelDecisio
   const sourceSteps = remaining.length === 0 ? action.orderedSteps : remaining;
   const taskContractValue = action.taskContract as Record<string, unknown> | undefined;
   return {
-    intent: {
-      kind: "plan_tasks",
-      ...(taskContractValue === undefined ? {} : {
-        taskContract: {
-          goal: taskContractValue.goal,
-          constraints: taskContractValue.constraints,
-          acceptanceCriteria: taskContractValue.acceptanceCriteria
-        }
-      }),
+    action: "continue",
+    plan: {
+      ...(typeof taskContractValue?.goal === "string" ? { goal: taskContractValue.goal } : {}),
       tasks: sourceSteps.map((item) => {
         const step = item as Record<string, unknown>;
-        const checks = Array.isArray(step.acceptanceChecks) ? step.acceptanceChecks : [];
-        return {
-          objective: step.objective,
-          completionRequirements: checks.map(legacyCheckToRequirement)
-        };
+        return { objective: step.objective };
       })
     }
   };
-}
-
-function legacyCheckToRequirement(value: unknown): unknown {
-  const check = value as Record<string, unknown>;
-  if (check.kind === "tool_result") return { kind: "capability_result", capability: check.toolName };
-  if (check.kind === "state_assertion") return { kind: "state_assertion", capability: check.toolName, arguments: check.input, assertion: check.assertion };
-  if (check.kind === "artifact_schema") return { kind: "artifact_schema", schemaName: check.schemaName };
-  if (check.kind === "user_confirmation") return { kind: "user_confirmation", prompt: check.prompt };
-  if (check.kind === "semantic_review") return { kind: "semantic_review", criterion: check.criterion };
-  if (check.kind === "context_ref") return { kind: "context_ref", ref: check.ref };
-  return check;
 }

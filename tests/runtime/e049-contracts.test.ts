@@ -7,8 +7,7 @@ import {
   RuntimeActionSchema,
   StructuredPlanSchema,
   TaskContractSchema,
-  createInitialRunSnapshot,
-  runtimeActionContract
+  createInitialRunSnapshot
 } from "../../packages/runtime/src/contracts.js";
 import { actionRejectionDiagnostic } from "../../packages/runtime/src/runtime-helpers.js";
 
@@ -64,12 +63,12 @@ describe("E049 authoritative runtime contracts", () => {
     expect(() => createInitialRunSnapshot({ runId: "run-2", input: "   ", workspace: "D:\\fixture", now })).toThrow();
   });
 
-  it("accepts one sequential structured plan and rejects steps without checks", () => {
+  it("accepts one sequential structured plan including navigation-only steps", () => {
     expect(StructuredPlanSchema.parse(plan()).orderedSteps).toHaveLength(1);
-    expect(() => StructuredPlanSchema.parse({
+    expect(StructuredPlanSchema.parse({
       ...plan(),
       orderedSteps: [{ id: "empty", objective: "Unverifiable", acceptanceChecks: [] }]
-    })).toThrow();
+    }).orderedSteps[0]?.acceptanceChecks).toEqual([]);
   });
 
   it("accepts context_ref checks and Runtime-owned Context Evidence", () => {
@@ -134,7 +133,8 @@ describe("E049 authoritative runtime contracts", () => {
       input: { path: "src/index.ts" }
     })).toThrow();
     expect(RuntimeActionSchema.parse({ type: "request_input", question: "Which target?", reason: "ambiguous" }).type).toBe("request_input");
-    expect(RuntimeActionSchema.parse({ type: "propose_finish", summary: "Done", evidenceIds: ["ev-1"] }).type).toBe("propose_finish");
+    expect(RuntimeActionSchema.parse({ type: "propose_finish", summary: "Done" }).type).toBe("propose_finish");
+    expect(() => RuntimeActionSchema.parse({ type: "propose_finish", summary: "Done", evidenceIds: ["ev-1"] })).toThrow();
     expect(() => RuntimeActionSchema.parse({ type: "update_plan", steps: [] })).toThrow();
     expect(() => RuntimeActionSchema.parse({ type: "complete_step", stepId: "inspect" })).toThrow();
     expect(() => RuntimeActionSchema.parse({ type: "request_approval", toolName: "filesystem.write" })).toThrow();
@@ -158,7 +158,7 @@ describe("E049 authoritative runtime contracts", () => {
     })).toThrow();
   });
 
-  it("renders an actionable step-level repair for empty acceptanceChecks", () => {
+  it("does not reject navigation-only steps with empty acceptanceChecks", () => {
     const input = {
       type: "set_plan",
       basedOnVersion: null,
@@ -177,57 +177,7 @@ describe("E049 authoritative runtime contracts", () => {
         return actionRejectionDiagnostic(error as Parameters<typeof actionRejectionDiagnostic>[0], input).issues;
       }
     })();
-    expect(diagnostics).toContainEqual(expect.objectContaining({
-      path: "orderedSteps.1.acceptanceChecks",
-      code: "empty_acceptance_checks",
-      message: "Step 2 has no verifiable completion condition. Revise Step 2 only."
-    }));
-    expect(diagnostics).toContainEqual(expect.objectContaining({
-      path: "orderedSteps.2.acceptanceChecks",
-      code: "empty_acceptance_checks",
-      message: "Step 3 has no verifiable completion condition. Revise Step 3 only."
-    }));
-  });
-
-  it("projects the current Plan and exact finish Evidence into legal Action examples", () => {
-    const currentPlan = StructuredPlanSchema.parse(plan());
-    const actions = runtimeActionContract(["set_plan", "propose_finish"], {
-      workspace: "D:\\fixture",
-      inputVersion: 1,
-      basedOnVersion: 1,
-      includeTaskContract: false,
-      currentPlan,
-      finishEvidenceIds: ["evidence-full-id-1", "evidence-full-id-2"]
-    });
-    const setPlan = actions.find((action) => action.type === "set_plan");
-    const finish = actions.find((action) => action.type === "propose_finish");
-
-    expect(setPlan).toEqual({
-      type: "set_plan",
-      basedOnVersion: 1,
-      orderedSteps: currentPlan.orderedSteps
-    });
-    expect(finish).toEqual({
-      type: "propose_finish",
-      summary: "<verified-summary>",
-      evidenceIds: ["evidence-full-id-1", "evidence-full-id-2"]
-    });
-  });
-
-  it("keeps the finish placeholder when the Runtime has no complete Evidence set", () => {
-    const actions = runtimeActionContract(["propose_finish"], {
-      workspace: "D:\\fixture",
-      inputVersion: 1,
-      basedOnVersion: 1,
-      includeTaskContract: false,
-      currentPlan: StructuredPlanSchema.parse(plan()),
-      finishEvidenceIds: []
-    });
-    expect(actions[0]).toEqual({
-      type: "propose_finish",
-      summary: "<verified-summary>",
-      evidenceIds: ["<persisted-evidence-id>"]
-    });
+    expect(diagnostics).toEqual([]);
   });
 
   it("requires every evidence record to bind to a plan check and real subject", () => {

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createRuntime, type ModelDecisionContext, type RuntimeTool } from "../../packages/runtime/src/index.js";
+import { createRuntime, type ModelDecisionContext, type RuntimeTool } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe("E085 progressive planning", () => {
-  it("extends a partial discovery-only Plan after a bounced premature finish", async () => {
+  it("extends a partial discovery-only Plan directly after new facts", async () => {
     const workspace = temporaryWorkspace();
     const provider = new ScriptedRuntimeProvider([
       // 1. Partial Plan: only the discovery Step (later reads depend on facts
@@ -35,37 +35,24 @@ describe("E085 progressive planning", () => {
       },
       // 2. Execute discovery.
       { type: "call_tool", stepId: "discover", checkIds: ["check-list"], toolName: "filesystem.list", input: { path: "sources" } },
-      // 3. Premature finish: only discovery Evidence exists, the overall task
-      //    (the report) is not done. The deterministic Completion Gate passes
-      //    (the Plan is complete); the semantic validation backstop rejects it.
-      (context: ModelDecisionContext) => ({ type: "propose_finish", summary: "Listed the sources directory.", evidenceIds: context.run.evidence.map((item) => item.id) }),
-      // 4. After validation.failed, append the read Step. The completed
+      // 3. Append the read Step directly from discovery facts. The completed
       //    discovery Step is preserved byte-identical.
       {
-        intent: {
-          kind: "plan_tasks",
+        action: "continue",
+        plan: {
           tasks: [{
-            objective: "Read every discovered source",
-            completionRequirements: [
-              { kind: "capability_result", capability: "filesystem.read" },
-              { kind: "capability_result", capability: "filesystem.read" }
-            ]
+            objective: "Read every discovered source"
           }]
         }
       },
-      // 5. Batch both reads, one action per check.
+      // 4. Batch both reads, one action per check.
       { type: "execute_step", stepId: "read", actions: [
         { type: "call_tool", stepId: "read", checkIds: ["check-a"], toolName: "filesystem.read", input: { path: "sources/a.md" } },
         { type: "call_tool", stepId: "read", checkIds: ["check-b"], toolName: "filesystem.read", input: { path: "sources/b.md" } }
       ] },
-      // 6. Full finish.
-      (context: ModelDecisionContext) => ({ type: "propose_finish", summary: "Report: a.md headline A, b.md headline B.", evidenceIds: context.run.evidence.map((item) => item.id) })
+      // 5. Full finish.
+      (_context: ModelDecisionContext) => ({ type: "propose_finish", summary: "Report: a.md headline A, b.md headline B." })
     ]);
-    // Validation backstop: reject a finish that cites only discovery facts.
-    provider.validate = async (context) => {
-      const hasRead = context.facts.some((fact) => fact.toolName === "filesystem.read");
-      return hasRead ? { passed: true, issues: [] } : { passed: false, issues: [{ kind: "missing_tool_evidence", message: "Only discovery performed; the report is not produced." }] };
-    };
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [listTool(), readTool()] });
 
     const result = await runtime.start({ input: "List sources, read each, compile a headline report." });
@@ -73,16 +60,20 @@ describe("E085 progressive planning", () => {
 
     expect(result.status).toBe("succeeded");
     expect(result.summary).toContain("Report");
-    expect(view.events.filter((event) => event.type === "validation.failed")).toHaveLength(1);
+    expect(view.modelCalls.every((call) => call.phase === "decision")).toBe(true);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
     expect(view.snapshot.currentPlan?.version).toBe(2);
-    expect(view.snapshot.stepProgress).toEqual([
-      { stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id, status: "completed", evidenceIds: [expect.any(String)] },
-      { stepId: view.snapshot.currentPlan!.orderedSteps[1]!.id, status: "completed", evidenceIds: [expect.any(String), expect.any(String)] }
+    expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
+      "Discover available source files",
+      "Read every discovered source"
     ]);
-    expect(view.snapshot.evidence.map((item) => item.checkId).sort()).toEqual(
-      view.snapshot.currentPlan!.orderedSteps.flatMap((step) => step.acceptanceChecks.map((check) => check.id)).sort()
-    );
+    expect(view.snapshot.stepProgress.every((item) => item.status === "completed")).toBe(true);
+    expect(view.toolInvocations.map((item) => item.toolName)).toEqual([
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.read"
+    ]);
+    expect(view.snapshot.evidence.filter((item) => item.kind === "semantic_review")).toHaveLength(0);
     runtime.close();
   });
 
@@ -112,7 +103,7 @@ describe("E085 progressive planning", () => {
         { type: "call_tool", stepId: "read-all", checkIds: ["check-b"], toolName: "filesystem.read", input: { path: "b.ts" } },
         { type: "call_tool", stepId: "read-all", checkIds: ["check-c"], toolName: "filesystem.read", input: { path: "c.ts" } }
       ] },
-      (context: ModelDecisionContext) => ({ type: "propose_finish", summary: "Read a.ts, b.ts and c.ts.", evidenceIds: context.run.evidence.map((item) => item.id) })
+      (_context: ModelDecisionContext) => ({ type: "propose_finish", summary: "Read a.ts, b.ts and c.ts." })
     ]);
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [readTool()] });
 
@@ -121,10 +112,13 @@ describe("E085 progressive planning", () => {
 
     expect(result.status).toBe("succeeded");
     expect(view.toolInvocations).toHaveLength(3);
-    expect(view.snapshot.evidence.map((item) => item.checkId).sort()).toEqual(
-      view.snapshot.currentPlan!.orderedSteps[0]!.acceptanceChecks.map((check) => check.id).sort()
-    );
-    expect(view.snapshot.stepProgress).toEqual([{ stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id, status: "completed", evidenceIds: [expect.any(String), expect.any(String), expect.any(String)] }]);
+    expect(view.snapshot.evidence.filter((item) => item.kind === "tool_result")).toHaveLength(3);
+    expect(view.snapshot.evidence.filter((item) => item.kind === "semantic_review")).toHaveLength(0);
+    expect(view.snapshot.stepProgress).toEqual([{
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+      status: "completed",
+      evidenceIds: expect.arrayContaining(view.snapshot.evidence.map((item) => item.id))
+    }]);
     expect(view.events.some((event) => event.type === "execute_step.completed")).toBe(true);
     expect(provider.contexts).toHaveLength(3);
     runtime.close();

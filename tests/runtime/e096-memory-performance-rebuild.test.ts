@@ -11,11 +11,12 @@ import {
   openMemoryStore,
   type CreateMemoryInput,
   type MemoryScope
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
-import { buildDecisionContext } from "../../packages/runtime/src/context/decision-context.js";
-import { projectMemoryCandidates } from "../../packages/runtime/src/memory/recall.js";
+import { buildDecisionContext } from "../../packages/harness/src/context/decision-context.js";
+import { projectMemoryCandidates } from "../../packages/harness/src/memory/recall.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
+import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
 
 const roots: string[] = [];
 const BASE = "2026-08-11T00:00:00.000Z";
@@ -137,12 +138,16 @@ describe("E096 Memory performance and derived-index rebuild", () => {
       const listed = memoryStore.list({ scope: TARGET_SCOPE, status: "active", limit: 500 });
       const queryElapsed = performance.now() - queryStarted;
       const contextStarted = performance.now();
+      const artifacts = new ArtifactStore(join(dataDir, "artifacts"));
       const context = buildDecisionContext({
         run,
         store: runStore,
         workspace,
         tools: new Map(),
-        artifactDir: join(dataDir, "artifacts"),
+        artifacts: {
+          getText: (digest) => artifacts.getText(digest),
+          has: (digest) => artifacts.has(digest)
+        },
         memory: { store: memoryStore, scope: TARGET_SCOPE },
         now: BASE
       }).context;

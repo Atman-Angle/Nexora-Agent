@@ -8,10 +8,11 @@ entry points.
 - `http-host.ts` maps a small Node HTTP/SSE boundary to `Runtime` and
   `RunHandle`. It stores no Run state and reopens every Run from its public ID.
 
-Both files import only `@nexora/runtime`. The D5 package tests copy them into
-independent temporary projects, install the same `pnpm pack` tarball, compile
-them with strict NodeNext TypeScript, and execute them outside the monorepo.
+Both files import only `@nexora/harness`. The D5 package tests copy them into
+independent temporary projects, install locally packed `@nexora/runtime` and
+`@nexora/harness` tarballs, compile them with strict NodeNext TypeScript, and
+execute them outside the monorepo.
 
 The HTTP routes are an example application's contract. They are not exported
-by `@nexora/runtime` and are not a Nexora remote-runtime or application
+by `@nexora/harness` and are not a Nexora remote-runtime or application
 framework API.

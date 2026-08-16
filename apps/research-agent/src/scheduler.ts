@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import type { RunInspection, RunOptions } from "@nexora/runtime";
+import type { RunInspection, RunOptions } from "@nexora/harness";
 import { z } from "zod";
 
 import {

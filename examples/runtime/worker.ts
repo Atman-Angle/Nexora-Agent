@@ -1,12 +1,12 @@
 import {
   createBuiltInTools,
-  createRuntime,
+  createAgent,
   type PublicPendingRequest,
   type RunFinalResult,
   type RunInspection,
   type RuntimeEvent,
   type RuntimeProvider
-} from "@nexora/runtime";
+} from "@nexora/harness";
 
 export type RuntimeWorkerOptions = {
   readonly workspace: string;
@@ -29,7 +29,7 @@ export type RuntimeWorkerOutcome = {
 export async function runRuntimeWorker(
   options: RuntimeWorkerOptions
 ): Promise<RuntimeWorkerOutcome> {
-  const runtime = createRuntime({
+  const runtime = createAgent({
     workspace: options.workspace,
     provider: options.provider,
     tools: createBuiltInTools()

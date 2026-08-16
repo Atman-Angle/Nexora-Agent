@@ -4,14 +4,14 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createRuntime, type RuntimeTool } from "../../packages/runtime/src/index.js";
+import { createRuntime, type RuntimeTool } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider, finishFromEvidence } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 describe("E061 capability-driven Tool Contract", () => {
-  it("projects only selection capability before Plan and active input guidance after Plan", async () => {
+  it("projects callable capability guidance, examples and true input Schema before and after Plan creation", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
       plan(workspace),
@@ -27,11 +27,20 @@ describe("E061 capability-driven Tool Contract", () => {
       identity: { name: "test.observe" },
       capability: { purpose: "Observe one known target.", nonGoals: ["Discover an unknown target."] },
       decision: { useWhen: ["The target is known and its fact is required."], avoidWhen: ["The target is unknown or the fact already exists."] },
-      execution: { effect: { kind: "read", description: "Reads the target without changing external state." } },
+      execution: {
+        effect: { kind: "read", description: "Reads the target without changing external state." },
+        inputExample: { target: "known" },
+        inputSchema: {
+          type: "object",
+          properties: { target: { type: "string" } },
+          required: ["target"],
+          additionalProperties: false
+        }
+      },
       evidence: { produces: ["The observed value for the target."] }
     });
-    expect(active).toEqual({ ...initial, execution: { ...initial!.execution, inputExample: { target: "known" } } });
-    expect(JSON.stringify(initial)).not.toMatch(/idempotent|inputSchema|factsSchema/);
+    expect(active).toEqual(initial);
+    expect(JSON.stringify(initial)).not.toMatch(/idempotent|factsSchema/);
     runtime.close();
   });
 
@@ -49,8 +58,8 @@ describe("E061 capability-driven Tool Contract", () => {
 
     expect(result.status).toBe("succeeded");
     expect(view.toolInvocations[0]).toEqual(expect.objectContaining({ status: "succeeded", resultJson: { value: "verified" } }));
-    expect(view.snapshot.evidence).toHaveLength(1);
-    expect(provider.validationContexts[0]?.facts[0]?.facts).toEqual({ value: "verified" });
+    expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["tool_result"]);
+    expect(provider.contexts.at(-1)?.toolObservations[0]?.facts).toEqual({ value: "verified" });
     runtime.close();
   });
 
@@ -100,7 +109,9 @@ function plan(_workspace: string) {
     type: "set_plan",
     basedOnVersion: null,
     taskContract: { goal: "Observe the target", constraints: [], acceptanceCriteria: ["The value is observed"] },
-    orderedSteps: [{ id: "observe", objective: "Observe the target", acceptanceChecks: [{ id: "observed", kind: "tool_result", required: true, toolName: "test.observe", expectedStatus: "success" }] }]
+    orderedSteps: [{ id: "observe", objective: "Observe the target", acceptanceChecks: [
+      { id: "observed", kind: "tool_result", required: true, toolName: "test.observe", expectedStatus: "success" }
+    ] }]
   };
 }
 

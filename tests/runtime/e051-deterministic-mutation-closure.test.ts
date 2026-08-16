@@ -13,7 +13,7 @@ import {
   createOpenAICompatibleProvider,
   createRuntime,
   type RunView
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 
 const roots: string[] = [];
 const servers: Server[] = [];
@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("E051 deterministic mutation closure", () => {
-  it("completes read, patch, validation, cited Evidence, and finish through the reusable Runtime", async () => {
+  it("completes read, patch, verification, derived Evidence, and finish through the reusable Runtime", async () => {
     const fixture = mutationFixture();
     const stub = await providerStub(mutationDecision(fixture, { validationExitCode: 0, citations: "all" }));
     const runtime = createRuntime({
@@ -41,12 +41,8 @@ describe("E051 deterministic mutation closure", () => {
       expect(result.status).toBe("succeeded");
       expect(readFileSync(fixture.path, "utf8")).toBe("after\n");
       expect(view.snapshot.status).toBe("succeeded");
-      const objectivesByStep = new Map(view.snapshot.currentPlan?.orderedSteps.map((step) => [step.id, step.objective]));
-      expect(view.snapshot.evidence.map((item) => objectivesByStep.get(item.stepId))).toEqual([
-        "Read note.txt before mutation",
-        "Patch note.txt",
-        "Run the validation command"
-      ]);
+      expect(view.snapshot.evidence.filter((item) => item.kind === "tool_result")).toHaveLength(3);
+      expect(view.snapshot.evidence.filter((item) => item.kind === "semantic_review")).toHaveLength(0);
       expect(view.snapshot.result?.evidenceIds).toEqual(view.snapshot.evidence.map((item) => item.id));
       expect(view.toolInvocations.map((item) => [item.toolName, item.status])).toEqual([
         ["filesystem.read", "succeeded"],
@@ -65,15 +61,9 @@ describe("E051 deterministic mutation closure", () => {
         "approval.granted",
         "tool.started",
         "tool.succeeded",
-        "validation.requested",
-        "validation.passed",
         "run.succeeded"
       ]);
       expect(stub.decisionCalls).toBe(5);
-      expect(stub.validationContexts).toHaveLength(1);
-      expect(stub.validationContexts[0]!.facts.map((item) => item.toolName))
-        .toEqual(view.toolInvocations.map((item) => item.toolName));
-      expect(stub.validationContexts[0]!.inputs).toEqual(["Change note.txt from before to after and validate it."]);
     } finally {
       runtime.close();
     }
@@ -115,7 +105,6 @@ describe("E051 deterministic mutation closure", () => {
     expect(view.toolInvocations).toHaveLength(3);
     expect(readFileSync(fixture.path, "utf8")).toBe("after\n");
     expect(stub.decisionCalls).toBe(5);
-    expect(stub.validationContexts).toHaveLength(1);
   }, 60_000);
 
   it("stops the real CLI path immediately after a denied mutation", async () => {
@@ -155,12 +144,12 @@ describe("E051 deterministic mutation closure", () => {
     let release!: () => void;
     const releasePromise = new Promise<void>((resolve) => { release = resolve; });
     const stub = await providerStub(async (_context, index) => {
-      if (index === 0) {
-        return { intent: { kind: "request_input", question: "First input?", reason: "Set up the persisted wait." } };
+      if (index <= 1) {
+        return { action: "request_input", question: "First input?", reason: "Set up the persisted wait."  };
       }
       entered();
       await releasePromise;
-      return { intent: { kind: "request_input", question: "Next input?", reason: "Keep the Run waiting." } };
+      return { action: "request_input", question: "Next input?", reason: "Keep the Run waiting."  };
     });
     const environment = providerEnvironment(stub.baseUrl);
 
@@ -188,10 +177,10 @@ describe("E051 deterministic mutation closure", () => {
       "accepted input"
     ]);
     expect(view.events.filter((event) => event.type === "run.resumed")).toHaveLength(1);
-    expect(view.events.filter((event) => event.type === "model.requested")).toHaveLength(2);
+    expect(view.events.filter((event) => event.type === "model.requested")).toHaveLength(3);
   }, 60_000);
 
-  it("derives finish citations from every required persisted Check", async () => {
+  it("derives finish citations from persisted Tool facts", async () => {
     const fixture = mutationFixture();
     const stub = await providerStub(mutationDecision(fixture, { validationExitCode: 0, citations: "read-only" }));
     const runtime = createRuntime({
@@ -209,15 +198,17 @@ describe("E051 deterministic mutation closure", () => {
       expect(view.snapshot.result?.evidenceIds).toEqual(
         view.snapshot.evidence.map((item) => item.id)
       );
-      expect(stub.validationContexts).toHaveLength(1);
+      expect(view.snapshot.evidence).toHaveLength(3);
     } finally {
       runtime.close();
     }
   });
 
-  it("never maps a nonzero real validation command to Evidence or success", async () => {
+  it("never maps a nonzero real verification command to Evidence or success", async () => {
     const fixture = mutationFixture();
-    const stub = await providerStub(mutationDecision(fixture, { validationExitCode: 7, citations: "all" }));
+    const stub = await providerStub(
+      mutationDecision(fixture, { validationExitCode: 7, citations: "all" })
+    );
     const runtime = createRuntime({
       workspace: fixture.workspace,
       dataDir: join(fixture.workspace, ".nexora"),
@@ -233,12 +224,10 @@ describe("E051 deterministic mutation closure", () => {
       expect(result.status).toBe("waiting");
       expect(view.snapshot.result).toBeNull();
       expect(validation?.status).toBe("failed");
-      expect(validation?.errorJson).toEqual(expect.objectContaining({ code: "COMMAND_FAILED" }));
+      expect(validation?.errorJson).toEqual(expect.objectContaining({ code: "PROCESS_EXIT_NONZERO" }));
       expect(view.snapshot.evidence.some((item) => item.stepId === "validate")).toBe(false);
-      expect(view.events.some((event) => event.type === "action.rejected")).toBe(true);
-      expect(view.events.some((event) => event.type === "validation.failed")).toBe(false);
-      expect(view.events.some((event) => event.type === "validation.passed" || event.type === "run.succeeded")).toBe(false);
-      expect(stub.validationContexts).toHaveLength(0);
+      expect(view.events.some((event) => event.type === "action.rejected")).toBe(false);
+      expect(view.events.some((event) => event.type.startsWith("validation.") || event.type === "run.succeeded")).toBe(false);
       expect(readFileSync(fixture.path, "utf8")).toBe("after\n");
     } finally {
       runtime.close();
@@ -277,16 +266,9 @@ type DecisionContext = {
   };
 };
 
-type ValidationContext = {
-  readonly inputs: readonly string[];
-  readonly proposedSummary: string;
-  readonly facts: readonly { readonly toolName: string }[];
-};
-
 type ProviderStub = {
   readonly baseUrl: string;
   readonly decisionCalls: number;
-  readonly validationContexts: readonly ValidationContext[];
 };
 
 function mutationFixture(): MutationFixture {
@@ -299,17 +281,13 @@ function mutationFixture(): MutationFixture {
 
 function mutationPlan(_fixture: MutationFixture) {
   return {
-    intent: {
-      kind: "plan_tasks" as const,
-      taskContract: {
-        goal: "Change note.txt from before to after and validate it",
-        constraints: ["Only change note.txt"],
-        acceptanceCriteria: ["note.txt contains after", "the validation command exits zero"]
-      },
+    action: "continue",
+    plan: {
+      goal: "Change note.txt from before to after and validate it",
       tasks: [
-        { objective: "Read note.txt before mutation", completionRequirements: [{ kind: "capability_result" as const, capability: "filesystem.read" }] },
-        { objective: "Patch note.txt", completionRequirements: [{ kind: "capability_result" as const, capability: "filesystem.patch" }] },
-        { objective: "Run the validation command", completionRequirements: [{ kind: "capability_result" as const, capability: "shell.execute" }] }
+        { objective: "Read note.txt before mutation" },
+        { objective: "Patch note.txt" },
+        { objective: "Run the validation command" }
       ]
     }
   };
@@ -322,22 +300,27 @@ function mutationDecision(
   return (_context, index) => {
     if (index === 0) return mutationPlan(fixture);
     if (index === 1) {
-      return { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.read", arguments: { path: "note.txt" } }] } };
+      return { action: "continue", toolCalls: [{ name: "filesystem.read", arguments: { path: "note.txt" } }] };
     }
     if (index === 2) {
       return {
-        intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: fixture.beforeDigest, find: "before", replace: "after" } }] }
+        action: "continue",
+        toolCalls: [{ name: "filesystem.patch", arguments: { path: "note.txt", expectedDigest: fixture.beforeDigest, find: "before", replace: "after" } }]
       };
     }
     if (index === 3) {
       return {
-        intent: { kind: "use_capabilities", calls: [{ capability: "shell.execute", arguments: { command: process.execPath, args: ["-e", `process.exit(${options.validationExitCode})`], cwd: "." } }] }
+        action: "continue",
+        toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", `process.exit(${options.validationExitCode})`], cwd: "." } }]
       };
     }
     if (index === 4) {
-      return { intent: { kind: "finish", summary: "Changed note.txt and ran validation." } };
+      if (options.validationExitCode !== 0) {
+        return { action: "request_input", question: "The verification command failed. How should I continue?", reason: "No successful verification Evidence exists." };
+      }
+      return { action: "finish", text: "Changed note.txt and ran validation." };
     }
-    return { intent: { kind: "request_input", question: "Required completion evidence is missing. Continue?", reason: "completion rejected" } };
+    return { action: "request_input", question: "Required completion evidence is missing. Continue?", reason: "completion rejected"  };
   };
 }
 
@@ -345,25 +328,14 @@ async function providerStub(
   decide: (context: DecisionContext, index: number) => unknown | Promise<unknown>
 ): Promise<ProviderStub> {
   let decisionCalls = 0;
-  const validationContexts: ValidationContext[] = [];
   const server = createServer(async (request, response) => {
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
-      const payload = JSON.parse(body.messages.at(-1)!.content) as {
-        mode: "decide" | "validate";
-        context: DecisionContext | ValidationContext;
-      };
-      let content: unknown;
-      if (payload.mode === "validate") {
-        const context = payload.context as ValidationContext;
-        validationContexts.push(structuredClone(context));
-        content = { passed: true, issues: [] };
-      } else {
-        content = await decide(payload.context as DecisionContext, decisionCalls);
-        decisionCalls += 1;
-      }
+      const payload = JSON.parse(body.messages.at(-1)!.content) as DecisionContext;
+      const content = await decide(payload, decisionCalls);
+      decisionCalls += 1;
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     } catch (error) {
@@ -377,13 +349,17 @@ async function providerStub(
   if (address === null || typeof address === "string") throw new Error("Provider Stub did not bind.");
   return {
     baseUrl: `http://127.0.0.1:${address.port}/v1`,
-    get decisionCalls() { return decisionCalls; },
-    validationContexts
+    get decisionCalls() { return decisionCalls; }
   };
 }
 
 function provider(baseUrl: string) {
-  return createOpenAICompatibleProvider({ baseUrl, apiKey: "test-key", model: "test-model" });
+  return createOpenAICompatibleProvider({
+    baseUrl,
+    apiKey: "test-key",
+    model: "test-model",
+    transport: "json_actions"
+  });
 }
 
 function providerEnvironment(baseUrl: string): Record<string, string> {
@@ -392,9 +368,8 @@ function providerEnvironment(baseUrl: string): Record<string, string> {
     NEXORA_MODEL_BASE_URL: baseUrl,
     NEXORA_MODEL_API_KEY: "test-key",
     NEXORA_MODEL_NAME: "qwen3.7-flash",
-    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
-    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
-    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
+    NEXORA_MODEL_TOOL_TRANSPORT: "json_actions",
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
   };
 }
 
@@ -452,8 +427,6 @@ function relevantEvents(view: RunView): string[] {
     "tool.succeeded",
     "approval.requested",
     "approval.granted",
-    "validation.requested",
-    "validation.passed",
     "run.succeeded"
   ]);
   return view.events.map((event) => event.type).filter((type) => types.has(type));

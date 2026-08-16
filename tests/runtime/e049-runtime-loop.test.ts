@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider, finishFromEvidence, setPlan, successfulReadTool, taskContract } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -18,7 +18,7 @@ function tempRoot(): string {
 }
 
 describe("E049 one persisted Runtime loop", () => {
-  it("rejects Tool calls before a plan without executing the Tool", async () => {
+  it("executes a registered safe Tool before a Plan without bypassing Invocation authority", async () => {
     const workspace = tempRoot();
     const calls = { calls: 0 };
     const provider = new ScriptedRuntimeProvider([
@@ -31,14 +31,19 @@ describe("E049 one persisted Runtime loop", () => {
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("waiting");
-    expect(calls.calls).toBe(0);
-    expect(view.events.map((event) => event.type)).toContain("action.rejected");
+    expect(calls.calls).toBe(1);
+    expect(view.toolInvocations).toEqual([expect.objectContaining({
+      toolName: "filesystem.read",
+      status: "succeeded"
+    })]);
+    expect(view.events.map((event) => event.type)).not.toContain("action.rejected");
     runtime.close();
   });
 
   it("resumes user input through the same Run and loop", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
+      { type: "request_input", question: "Which file?", reason: "Target missing" },
       { type: "request_input", question: "Which file?", reason: "Target missing" },
       {
         type: "set_plan",
@@ -61,9 +66,7 @@ describe("E049 one persisted Runtime loop", () => {
     expect(view.snapshot.inputHistory.map((entry) => entry.text)).toEqual(["Inspect a file.", "Use src/index.ts"]);
     expect(view.events.filter((event) => event.type === "run.created")).toHaveLength(1);
     expect(view.events.map((event) => event.type)).toContain("run.resumed");
-    expect(provider.validationContexts[0]?.facts).toEqual([
-      expect.objectContaining({ toolName: "filesystem.read", facts: expect.objectContaining({ content: expect.any(String) }) })
-    ]);
+    expect(view.modelCalls.every((call) => call.phase === "decision")).toBe(true);
     runtime.close();
   });
 });

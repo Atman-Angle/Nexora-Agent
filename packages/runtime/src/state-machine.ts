@@ -1,6 +1,7 @@
 import {
   RunStatusSchema,
   type RunSnapshot,
+  type RunDelivery,
   type RunStatus
 } from "./contracts.js";
 
@@ -17,8 +18,8 @@ export type RunStatusTransitionOptions = {
   readonly now: string;
   readonly stopReason?: string;
   readonly pendingRequest?: RunSnapshot["pendingRequest"];
-  readonly validation?: { readonly passed: boolean; readonly evidenceIds: readonly string[] };
   readonly result?: NonNullable<RunSnapshot["result"]>;
+  readonly delivery?: RunDelivery;
 };
 
 export function assertRunStatusTransition(from: RunStatus, to: RunStatus): void {
@@ -40,12 +41,15 @@ export function transitionRunStatus(
     throw new Error("A waiting Run requires a pending request.");
   }
   if (nextStatus === "succeeded") {
-    if (options.validation?.passed !== true || options.validation.evidenceIds.length === 0) {
-      throw new Error("A Run cannot succeed without passed validation evidence.");
-    }
     if (options.result === undefined) {
       throw new Error("A Run cannot succeed without a persisted result.");
     }
+  }
+  if (
+    (nextStatus === "blocked" || nextStatus === "cancelled" || nextStatus === "failed" || nextStatus === "succeeded")
+    && options.delivery === undefined
+  ) {
+    throw new Error(`${nextStatus} requires a persisted Delivery.`);
   }
   if (
     (
@@ -65,6 +69,9 @@ export function transitionRunStatus(
     stopReason: nextStatus === "running" ? null : options.stopReason?.trim() ?? null,
     pendingRequest: nextStatus === "waiting" ? options.pendingRequest ?? null : null,
     result: nextStatus === "succeeded" ? options.result ?? null : run.result,
+    delivery: nextStatus === "running" || nextStatus === "waiting"
+      ? null
+      : options.delivery ?? run.delivery,
     updatedAt: options.now
   };
 }

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider, finishFromEvidence, setPlan, successfulReadTool } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -35,7 +35,10 @@ describe("E059 result summary projection", () => {
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
-      provider: new ScriptedRuntimeProvider([{ type: "request_input", question: "Which file?", reason: "Target missing" }]),
+      provider: new ScriptedRuntimeProvider([
+        { type: "request_input", question: "Which file?", reason: "Target missing" },
+        { type: "request_input", question: "Which file?", reason: "Target missing" }
+      ]),
       tools: [successfulReadTool()]
     });
 

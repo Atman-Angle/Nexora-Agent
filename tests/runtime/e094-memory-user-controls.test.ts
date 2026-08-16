@@ -15,7 +15,7 @@ import {
   type CreateMemoryInput,
   type MemoryRecord,
   type MemoryScope
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];

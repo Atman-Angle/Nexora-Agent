@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider, finishFromEvidence, readStep, setPlan, successfulReadTool } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -40,7 +40,7 @@ describe("E049 single Structured Plan authority", () => {
     expect(view.snapshot.stepProgress).toEqual([{
       stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
       status: "completed",
-      evidenceIds: [result.evidence[0]!.id]
+      evidenceIds: result.evidence.map((item) => item.id)
     }]);
     expect(view.snapshot.currentPlan!.orderedSteps[0]!.id).toMatch(/^step-/);
     expect(view.events.map((event) => event.type)).toEqual(expect.arrayContaining([
@@ -48,14 +48,13 @@ describe("E049 single Structured Plan authority", () => {
       "plan.set",
       "tool.started",
       "tool.succeeded",
-      "validation.passed",
       "run.succeeded"
     ]));
     expect(JSON.stringify(view)).not.toMatch(/profileState|builderState|strategy|ledger|checkpoint|update_plan/);
     runtime.close();
   });
 
-  it("keeps Runtime ownership of versions across semantic plan revisions", async () => {
+  it("accepts explicit consecutive revisions of unfinished work", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -71,12 +70,13 @@ describe("E049 single Structured Plan authority", () => {
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan?.version).toBe(3);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.id).toMatch(/^step-/);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Read the target");
     expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(3);
     runtime.close();
   });
 
-  it("does not accept Provider-supplied Plan identity for a repeated semantic proposal", async () => {
+  it("assigns a new Runtime Plan version to an explicit repeated semantic proposal", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -95,7 +95,7 @@ describe("E049 single Structured Plan authority", () => {
     runtime.close();
   });
 
-  it("accepts a Plan revision that actually changes an unfinished Step", async () => {
+  it("allows the model to replace unfinished work explicitly", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -109,12 +109,13 @@ describe("E049 single Structured Plan authority", () => {
 
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Read the revised target");
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
     expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
     runtime.close();
   });
 
-  it("invalidates evidence from a revised incomplete Step", async () => {
+  it("preserves Invocation Evidence across an explicit Plan revision", async () => {
     const workspace = tempRoot();
     const firstStep = {
       ...readStep(),
@@ -136,12 +137,23 @@ describe("E049 single Structured Plan authority", () => {
 
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan?.version).toBe(2);
-    expect(view.snapshot.evidence).toEqual([]);
-    expect(view.snapshot.stepProgress).toEqual([{
-      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
-      status: "active",
-      evidenceIds: []
-    }]);
+    expect(view.snapshot.evidence).toHaveLength(1);
+    expect(view.snapshot.evidence[0]).toEqual(expect.objectContaining({
+      invocationId: view.toolInvocations[0]!.id,
+      kind: "tool_result"
+    }));
+    expect(view.snapshot.stepProgress).toEqual([
+      {
+        stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+        status: "completed",
+        evidenceIds: [view.snapshot.evidence[0]!.id]
+      },
+      {
+        stepId: view.snapshot.currentPlan!.orderedSteps[1]!.id,
+        status: "active",
+        evidenceIds: []
+      }
+    ]);
     runtime.close();
   });
 
@@ -168,7 +180,7 @@ describe("E049 single Structured Plan authority", () => {
       goal: "Inspect the target",
       workspace,
       constraints: [],
-      acceptanceCriteria: ["The target is inspected"]
+      acceptanceCriteria: ["Read the target"]
     });
     runtime.close();
   });
@@ -200,7 +212,8 @@ describe("E049 single Structured Plan authority", () => {
       inputVersion: 2,
       workspace,
       goal: "Inspect both inputs",
-      constraints: ["Preserve formatting"]
+      constraints: [],
+      acceptanceCriteria: ["Read the target"]
     }));
     runtime.close();
   });
@@ -209,22 +222,15 @@ describe("E049 single Structured Plan authority", () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       {
-        intent: {
-          kind: "plan_tasks",
-          taskContract: {
-            version: 1,
-            inputVersion: 1,
-            goal: "Inspect the target",
-            workspace,
-            constraints: [],
-            acceptanceCriteria: ["The target is inspected"]
-          },
+        plan: {
+          goal: "Inspect the target",
+          version: 1,
           tasks: [{
-            objective: "Read the target",
-            completionRequirements: [{ kind: "capability_result", capability: "filesystem.read" }]
+            objective: "Read the target"
           }]
         }
       },
+      { type: "request_input", question: "Continue?", reason: "test stop" },
       { type: "request_input", question: "Continue?", reason: "test stop" }
     ]);
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [successfulReadTool()] });

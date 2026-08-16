@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-RECOVERY-001",
+  "category": "non_idempotent_unknown_recovery",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "instruction": "Start the non-idempotent external apply exactly once. The Host will cancel while its result is unknown, restart Nexora, and explicitly abandon the Run. Never replay the unknown effect.",
+  "fixture": {
+    "path": "tasks/NB-RECOVERY-001/fixture",
+    "digest": "sha256:c1bafcb09c8e6f3429530adfb92bda166b6fa6f0019eaf841440ae2d4e235870"
+  },
+  "scenario": "tasks/NB-RECOVERY-001/scenario.ts",
+  "allowedCapabilities": ["fixture.uncertain_apply"],
+  "budgets": {
+    "maxIterations": 6,
+    "maxModelCalls": 6,
+    "maxToolCalls": 3,
+    "maxRetries": 1,
+    "maxDurationMs": 120000
+  },
+  "expectedTerminal": "failed",
+  "driver": {
+    "approvals": [
+      { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }
+    ],
+    "inputs": [],
+    "recoveries": [
+      {
+        "occurrence": 1,
+        "outcome": "abandon_run",
+        "reason": "The external result cannot be confirmed safely.",
+        "restartBeforeDecision": true
+      }
+    ],
+    "cancellations": [
+      {
+        "occurrence": 1,
+        "toolName": "fixture.uncertain_apply",
+        "reason": "Cancel while the non-idempotent result is unknown.",
+        "expectUnknown": true
+      }
+    ]
+  },
+  "grader": {
+    "files": [
+      { "id": "single-effect-attempt", "path": "attempts.log", "exists": true, "equals": "apply-once\n" }
+    ],
+    "commands": [],
+    "unchangedPaths": [],
+    "authority": {
+      "requiredEventTypes": ["cancellation.requested", "tool.result_unknown", "recovery.abandoned"],
+      "forbiddenEventTypes": ["tool.succeeded"],
+      "invocations": [
+        { "toolName": "fixture.uncertain_apply", "status": "failed", "count": 1 }
+      ],
+      "evidenceCount": 0
+    }
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity",
+    "scenario_authority"
+  ]
+}

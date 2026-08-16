@@ -1,0 +1,31 @@
+{
+  "name": "@nexora/bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "bench": "pnpm --filter @nexora/harness build && node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/cli.ts run",
+    "bench:dev": "pnpm --filter @nexora/harness build && node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/cli.ts run --split dev",
+    "optimize": "node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/cli.ts optimize",
+    "bench:real": "pnpm --filter @nexora/harness build && node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/cli.ts run --provider real",
+    "test": "vitest run tests --no-file-parallelism",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@nexora/harness": "workspace:*",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
+    "@opentelemetry/sdk-trace-base": "^2.2.0",
+    "@opentelemetry/sdk-trace-node": "^2.2.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.13",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

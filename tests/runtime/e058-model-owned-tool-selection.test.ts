@@ -1,25 +1,16 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createBuiltInTools, createRuntime } from "../../packages/runtime/src/index.js";
-import type { SemanticValidationContext } from "../../packages/runtime/src/providers/model-client.js";
-import { finishFromEvidence, ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { createBuiltInTools, createRuntime } from "../../packages/harness/src/index.js";
+import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
+import { digestTaskContract, validateCompletion } from "../../packages/runtime/src/completion-gate.js";
+import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 function workspace(): string { const root = mkdtempSync(join(tmpdir(), "nexora-e058-")); roots.push(root); return root; }
-
-class OriginalInputValidator extends ScriptedRuntimeProvider {
-  override async validate(context: SemanticValidationContext): Promise<unknown> {
-    this.validationContexts.push(structuredClone(context));
-    const hasRead = context.facts.some((item) => item.toolName === "filesystem.read");
-    return hasRead
-      ? { passed: true, issues: [] }
-      : { passed: false, issues: [{ kind: "missing_tool_evidence", message: "Original input requires reading the matched file, but no read Evidence exists." }] };
-  }
-}
 
 describe("E058 model-owned Tool selection", () => {
   it("accepts a model Plan that treats a Tool mentioned in a prohibition as forbidden, not required", async () => {
@@ -38,24 +29,48 @@ describe("E058 model-owned Tool selection", () => {
     runtime.close();
   });
 
-  it("lets semantic validation reject an omitted user action against original input without false success", async () => {
+  it("lets a mechanical Contract reject an omitted user action without false success", () => {
     const root = workspace();
-    writeFileSync(join(root, "target.txt"), "marker\n", "utf8");
-    const provider = new OriginalInputValidator([{
-      type: "set_plan", basedOnVersion: null,
-      taskContract: { goal: "Search and read the marker", constraints: [], acceptanceCriteria: ["Report the file"] },
-      orderedSteps: [{ id: "search", objective: "Search", acceptanceChecks: [{ id: "search", required: true, kind: "tool_result", toolName: "filesystem.search", expectedStatus: "success" }] }]
-    }, { type: "call_tool", stepId: "search", checkIds: ["search"], toolName: "filesystem.search", input: { query: "marker", path: "." } },
-    finishFromEvidence("Found target.txt"),
-    { type: "request_input", question: "Plan needs a read step", reason: "semantic validation failed" }]);
-    const runtime = createRuntime({ workspace: root, provider, tools: createBuiltInTools() });
-    const result = await runtime.start({ input: "Search for marker, then read the matching file and report its name." });
-    const view = await runtime.inspect(result.runId);
-    expect(result.status).toBe("waiting");
-    expect(provider.validationContexts).toHaveLength(1);
-    expect(view.toolInvocations.map((item) => item.toolName)).toEqual(["filesystem.search"]);
-    expect(view.events.map((event) => event.type)).toContain("validation.failed");
-    expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
-    runtime.close();
+    const taskContract = {
+      version: 1,
+      inputVersion: 1,
+      goal: "Search and read the marker",
+      workspace: root,
+      constraints: [],
+      acceptanceCriteria: ["Report the file"]
+    };
+    const initial = createInitialRunSnapshot({
+      runId: "mechanical-gate",
+      input: "Search and read the marker.",
+      workspace: root,
+      now: "2026-08-16T00:00:00.000Z"
+    });
+    const run = {
+      ...initial,
+      taskContract,
+      currentPlan: {
+        version: 1,
+        basedOnVersion: null,
+        goalDigest: digestTaskContract(taskContract),
+        orderedSteps: [{
+          id: "search",
+          objective: "Search and read",
+          acceptanceChecks: [{
+            id: "read",
+            required: true,
+            kind: "tool_result" as const,
+            toolName: "filesystem.read",
+            expectedStatus: "success" as const
+          }]
+        }]
+      },
+      stepProgress: [{ stepId: "search", status: "active" as const, evidenceIds: [] }]
+    };
+
+    expect(validateCompletion(run, [])).toEqual({
+      passed: false,
+      issues: ["CHECK_UNSATISFIED:search:read"],
+      evidenceIds: []
+    });
   });
 });

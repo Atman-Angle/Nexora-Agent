@@ -6,12 +6,11 @@ import { describe, expect, it } from "vitest";
 
 import type {
   ModelCallRecord,
-  ModelDecisionContext,
   RunEvent,
   RunResult,
   RunView,
   RuntimeProvider
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import type { ToolInvocation } from "../../packages/runtime/src/contracts.js";
 import {
   SHARD_PATHS,
@@ -26,44 +25,25 @@ describe("E097 real Provider continuity canary contract", () => {
     const outputRoot = mkdtempSync(join(tmpdir(), "nexora-e097-canary-"));
     const scripted = new ScriptedRuntimeProvider([
       canaryPlan(),
-      (context: ModelDecisionContext) => ({
-        type: "request_context",
-        refs: [context.memoryCandidates.find((candidate) => candidate.ref === TARGET_MEMORY_REF)!.ref]
-      }),
       {
-        type: "execute_step",
-        stepId: "read-shards",
-        actions: SHARD_PATHS.map((path, index) => ({
-          type: "call_tool" as const,
-          stepId: "read-shards",
-          checkIds: [`read-${index + 1}`],
-          toolName: "filesystem.read",
-          input: { path }
+        action: "continue",
+        toolCalls: SHARD_PATHS.map((path) => ({
+          name: "filesystem.read",
+          arguments: { path }
         }))
       },
-      {
-        type: "call_tool",
-        stepId: "review-codes",
-        checkIds: ["review-all-codes"],
-        toolName: "filesystem.read",
-        input: { path: SHARD_PATHS[0] }
-      },
-      (context: ModelDecisionContext) => ({
-        type: "propose_finish",
-        summary: "Verified all eight ORCHID shard codes from exact file Evidence.",
-        evidenceIds: context.run.evidence.map((evidence) => evidence.id)
-      })
+      { action: "continue", plan: { tasks: [{ objective: "Confirm all eight restored shard outcomes." }] } },
+      { action: "finish", text: "Verified all eight ORCHID shard codes from exact file Evidence." }
     ]);
     const provider: RuntimeProvider = {
       modelProfile: {
         provider: "scripted-canary",
         model: "scripted-canary",
         contextWindowTokens: 12_000,
-        reservedOutputTokens: { decision: 4_096, validation: 1_024, compaction: 4_096 },
+        reservedOutputTokens: { decision: 4_096 },
         softLimitRatio: 0.8
       },
-      decide: scripted.decide.bind(scripted),
-      validate: scripted.validate.bind(scripted)
+      decide: scripted.decide.bind(scripted)
     };
     try {
       const report = await runContinuityCanary({
@@ -81,7 +61,7 @@ describe("E097 real Provider continuity canary contract", () => {
       expect(report, JSON.stringify({ report, repairs: scripted.contexts.map((context) => context.repair) }, null, 2)).toMatchObject({
         passed: true,
         status: "succeeded",
-        stopReason: "VALIDATED",
+        stopReason: "COMPLETED",
         targetMemory: { requested: true, restored: true },
         shardReads: { expected: 8, succeeded: 8, missing: [] },
         safety: { forbiddenInvocations: [], hardLimitViolations: 0 },
@@ -91,11 +71,6 @@ describe("E097 real Provider continuity canary contract", () => {
             contextWindowTokens: [12_000],
             reservedOutputTokens: [4_096],
             hardInputLimitTokens: [7_904]
-          }, {
-            phase: "validation",
-            contextWindowTokens: [12_000],
-            reservedOutputTokens: [1_024],
-            hardInputLimitTokens: [10_976]
           }],
           inconsistentCalls: []
         },
@@ -106,12 +81,12 @@ describe("E097 real Provider continuity canary contract", () => {
             environmentVariable: "NEXORA_CANARY_CONTEXT_WINDOW_TOKENS",
             contextWindowTokens: 12_000
           },
-          effectiveProfile: { contextWindowTokens: 12_000 },
+        effectiveProfile: { contextWindowTokens: 12_000 },
           issues: []
         }
       });
       expect(report.continuity.evictedModelCalls).toBeGreaterThanOrEqual(1);
-      expect(report.modelCalls).toMatchObject({ count: 6, costStatus: "unpriced" });
+      expect(report.modelCalls).toMatchObject({ count: 4, costStatus: "unpriced" });
     } finally {
       rmSync(outputRoot, { recursive: true, force: true });
     }
@@ -129,11 +104,10 @@ describe("E097 real Provider continuity canary contract", () => {
         provider: "scripted-canary",
         model: "qwen3.7-flash",
         contextWindowTokens: 1_000_000,
-        reservedOutputTokens: { decision: 16_384, validation: 8_192, compaction: 8_192 },
+        reservedOutputTokens: { decision: 16_384 },
         softLimitRatio: 0.8
       },
-      decide: scripted.decide.bind(scripted),
-      validate: scripted.validate.bind(scripted)
+      decide: scripted.decide.bind(scripted)
     };
     try {
       const report = await runContinuityCanary({ provider, outputRoot });
@@ -152,7 +126,7 @@ describe("E097 real Provider continuity canary contract", () => {
 
   it("passes only a validated, exact-Memory, bounded long-run result", () => {
     const report = evaluateContinuityCanary({
-      result: result("succeeded", "VALIDATED"),
+      result: result("succeeded", "COMPLETED"),
       view: view({ wrongRef: false, forbiddenTool: false, hardLimit: false }),
       observations: [{
         phase: "decision",
@@ -254,7 +228,7 @@ describe("E097 real Provider continuity canary contract", () => {
       }]
     } as unknown as RunView;
     const report = evaluateContinuityCanary({
-      result: result("succeeded", "VALIDATED"),
+      result: result("succeeded", "COMPLETED"),
       view: overflowView,
       observations: [{
         phase: "decision",
@@ -279,42 +253,13 @@ describe("E097 real Provider continuity canary contract", () => {
 
 function canaryPlan() {
   return {
-    type: "set_plan" as const,
-    basedOnVersion: null,
-    taskContract: {
+    action: "continue",
+    plan: {
       goal: "Use cross-run Memory to identify the preferred stream and read all eight exact shards.",
-      constraints: ["Do not write files or execute commands.", "Do not guess or skip a shard."],
-      acceptanceCriteria: ["All eight files have successful read Evidence.", "Only the preferred stream codes are reported."]
-    },
-    orderedSteps: [
-      {
-        id: "read-shards",
-        objective: "Read every fixed shard and retain exact Evidence for the preferred stream.",
-        acceptanceChecks: [{
-          id: "restore-stream-memory",
-          kind: "context_ref" as const,
-          required: true,
-          ref: TARGET_MEMORY_REF
-        }, ...SHARD_PATHS.map((_path, index) => ({
-          id: `read-${index + 1}`,
-          kind: "tool_result" as const,
-          required: true,
-          toolName: "filesystem.read",
-          expectedStatus: "success" as const
-        }))]
-      },
-      {
-        id: "review-codes",
-        objective: "Report the ordered preferred-stream codes from the eight persisted reads.",
-        acceptanceChecks: [{
-          id: "review-all-codes",
-          kind: "tool_result" as const,
-          required: true,
-          toolName: "filesystem.read",
-          expectedStatus: "success" as const
-        }]
-      }
-    ]
+      tasks: [{
+        objective: "Read every fixed shard and report the ordered preferred-stream codes from persisted facts."
+      }]
+    }
   };
 }
 
@@ -332,6 +277,7 @@ function result(status: RunResult["status"], stopReason: string | null): RunResu
       retryable: false,
       detailsArtifact: null
     },
+    delivery: null,
     failureHandoff: null
   };
 }

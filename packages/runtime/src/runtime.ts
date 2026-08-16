@@ -25,38 +25,34 @@ import {
   removeDirectoryTree,
   snapshotWorkspace
 } from "./store/branch-workspace.js";
-import {
-  requestModel
-} from "./context/request-model.js";
-import {
-  buildDecisionContext
-} from "./context/decision-context.js";
 import type { ForkContext } from "./contracts.js";
 import {
   buildForkBaseInheritedFacts,
-  buildForkBaseInheritedRefs,
-  type RequestContextAction
-} from "./context/rehydration.js";
-import { ProviderDecisionSchema } from "./providers/intent-contract.js";
-import { compileProviderDecision } from "./providers/intent-compiler.js";
+  buildForkBaseInheritedRefs
+} from "./fork-inheritance.js";
 import type {
-  RehydratedFact,
-  RuntimeProvider
-} from "./providers/model-client.js";
-import {
-  resolveProviderModelProfile
-} from "./context/budget.js";
+  AgentAuditEvent,
+  AgentDriver,
+  AgentRuntimePort,
+  AgentStateView,
+  ContextEvidenceFact,
+  ModelCallCompletion,
+  ModelCallStart,
+  ProviderAttemptCompletion,
+  ProviderAttemptStart,
+  RuntimeCommand
+} from "./agent-runtime-port.js";
 import { openRunStore, type RunStore } from "./store/run-store.js";
 import { transitionRunStatus } from "./state-machine.js";
-import { MemoryScopeSchema } from "./memory/index.js";
-import { digestTaskContract, proposeFinish } from "./validation.js";
+import { digestTaskContract, validateCompletion } from "./completion-gate.js";
+import { deriveRunDelivery } from "./delivery.js";
 import {
   ActionRejectedError,
-  allowedActions,
   assertCompletedStepsUnchanged,
   completeSatisfiedSteps,
   deepFreeze,
   digestJson,
+  digestCanonicalJson,
   errorMessage,
   actionRejectionDiagnostic,
   requireWorkspace,
@@ -66,6 +62,8 @@ import {
 } from "./runtime-helpers.js";
 import {
   callTool,
+  executeReadToolBatch,
+  type PreparedReadBatchCall,
   recoverToolInvocation
 } from "./execution/runtime-execution.js";
 import type {
@@ -89,6 +87,7 @@ import type {
   RuntimeObserver,
   RuntimeServices,
   RuntimeSubscription,
+  RuntimeWatch,
   RuntimeTool,
   StartInput,
   SubscribeOptions
@@ -136,10 +135,10 @@ export type {
   RunResult,
   RunView,
   RuntimeObserver,
-  RuntimeMemoryOptions,
   RuntimeEvent,
   RuntimeEventListener,
   RuntimeSubscription,
+  RuntimeWatch,
   SubscribeOptions,
   RuntimeTool,
   RuntimeToolResult,
@@ -158,10 +157,9 @@ export {
 export class RuntimeEngine {
   readonly #workspace: string;
   readonly #dataDir: string;
-  readonly #provider: RuntimeProvider;
+  readonly #driver: AgentDriver;
   readonly #tools: Map<string, RuntimeTool>;
   readonly #store: RunStore;
-  readonly #memory: CreateRuntimeOptions["memory"];
   readonly #now: () => string;
   readonly #createId: () => string;
   readonly #artifactDir: string;
@@ -172,24 +170,14 @@ export class RuntimeEngine {
     string,
     Set<ManagedRuntimeSubscription>
   >();
+  readonly #verifiedJournalHeads = new Map<string, string>();
   /** Branch child runId → isolated workspace root (directory snapshot). */
   readonly #branchWorkspaces = new Map<string, string>();
   readonly #branchWorkspaceCleanups = new Map<string, () => void>();
-  /**
-   * Transient rehydration bookkeeping. Not an authority: pending requests are
-   * rebuilt from the context.rehydrate_requested / context.rehydrated event
-   * pair on resume, and the available-context manifest is republished every
-   * decision turn.
-   */
-  readonly #rehydrationRequests = new Map<
-    string,
-    {
-      readonly requestId: string;
-      readonly refs: readonly string[];
-      readonly memoryDigests: Readonly<Record<string, string>>;
-    }
-  >();
-  readonly #publishedMemoryDigests = new Map<string, Readonly<Record<string, string>>>();
+  /** Run IDs created by this Runtime instance; used only to recognize a real cross-instance continuation. */
+  readonly #localRunIds = new Set<string>();
+  /** Existing Runs opened by this instance and not yet continued. */
+  readonly #reopenedRunIds = new Set<string>();
   #closed = false;
   #closePromise: Promise<void> | null = null;
 
@@ -197,12 +185,11 @@ export class RuntimeEngine {
     try {
       const workspace = requireWorkspace(options.workspace);
       if (
-        options.provider === null
-        || typeof options.provider !== "object"
-        || typeof options.provider.decide !== "function"
-        || typeof options.provider.validate !== "function"
+        options.driver === null
+        || typeof options.driver !== "object"
+        || typeof options.driver.run !== "function"
       ) {
-        throw new Error("Runtime Provider must implement decide() and validate().");
+        throw new Error("Runtime driver must implement run().");
       }
       const tools = new Map<string, RuntimeTool>();
       for (const tool of options.tools) {
@@ -229,25 +216,7 @@ export class RuntimeEngine {
       const dataDir = resolve(options.dataDir ?? join(workspace, ".nexora"));
       this.#workspace = workspace;
       this.#dataDir = dataDir;
-      this.#provider = options.provider;
-      if (options.memory !== undefined) {
-        if (
-          options.memory.store === null
-          || typeof options.memory.store !== "object"
-          || typeof options.memory.store.get !== "function"
-          || typeof options.memory.store.list !== "function"
-          || typeof options.memory.store.isRecallEnabled !== "function"
-        ) {
-          throw new Error("Runtime Memory Store must implement get(), list() and isRecallEnabled().");
-        }
-        this.#memory = {
-          store: options.memory.store,
-          scope: MemoryScopeSchema.parse(options.memory.scope)
-        };
-      } else {
-        this.#memory = undefined;
-      }
-      resolveProviderModelProfile(options.provider);
+      this.#driver = options.driver;
       this.#now = now;
       this.#createId = createId;
       this.#tools = tools;
@@ -280,6 +249,7 @@ export class RuntimeEngine {
   openRun(runId: string): RunHandle {
     this.#assertOpen();
     this.#requireRun(runId);
+    if (!this.#localRunIds.has(runId)) this.#reopenedRunIds.add(runId);
     return this.#createHandle(runId);
   }
 
@@ -321,7 +291,19 @@ export class RuntimeEngine {
         cause: error
       });
     }
-    const created = this.#store.createRun(snapshot, { type: "run.created", occurredAt: now, payload: { inputSequence: 1 } });
+    const created = this.#store.createRun(snapshot, {
+      type: "run.created",
+      occurredAt: now,
+      actorType: "host",
+      causationRef: `input:${snapshot.inputHistory[0]!.id}`,
+      correlationRef: `run:${snapshot.runId}`,
+      payload: {
+        inputSequence: 1,
+        inputId: snapshot.inputHistory[0]!.id,
+        inputDigest: digestCanonicalJson(snapshot.inputHistory[0]!.text)
+      }
+    });
+    this.#localRunIds.add(created.runId);
     this.#notify(created.runId, observer);
     const controller = new AbortController();
     const execution = this.#executeCreatedRun(created, controller, observer);
@@ -364,13 +346,44 @@ export class RuntimeEngine {
   ): Promise<RunResult> {
     let run = initial;
     this.#leases.acquire(run.runId);
+    this.#assertAuditIntegrity(run.runId);
     try {
+      if (this.#reopenedRunIds.delete(run.runId)) {
+        this.#store.recordRunEvent({
+          runId: run.runId,
+          event: {
+            type: "run.reopened",
+            occurredAt: this.#now(),
+            payload: {
+              status: run.status,
+              ...(run.pendingRequest === null
+                ? {}
+                : {
+                    pendingRequestKind: run.pendingRequest.kind,
+                    pendingRequestId: run.pendingRequest.id
+                  })
+            }
+          },
+          fencingToken: this.#leases.requireFencingToken(run.runId)
+        });
+        this.#notify(run.runId, observer);
+      }
       run = await recoverToolInvocation(
         this.#services(controller.signal, run.runId),
         run,
         input.recoveryDecision,
         observer
       );
+      const cancellation = this.#store.getCancellationRequest(run.runId);
+      if (
+        cancellation?.status === "requested"
+        && !this.#hasUnknownInvocation(run.runId)
+        && run.status !== "cancelled"
+        && run.status !== "failed"
+        && run.status !== "succeeded"
+      ) {
+        run = this.#cancelPersistedRun(run, cancellation.reason, observer);
+      }
       if (
         run.status === "cancelled"
         || run.status === "failed"
@@ -482,8 +495,7 @@ export class RuntimeEngine {
         }
       }
       if (run.status !== "running") return toRunResult(run);
-      this.#rebuildRehydrationRequests(run.runId);
-      return await this.#runLoop(run, controller.signal, observer);
+      return await this.#driveRun(run, controller.signal, observer);
     } finally {
       this.#leases.release(run.runId);
     }
@@ -495,6 +507,7 @@ export class RuntimeEngine {
       snapshot: this.#requireRun(runId),
       events: this.#store.listEvents(runId),
       toolInvocations: this.#store.listToolInvocations(runId),
+      toolAttempts: this.#store.listToolAttempts(runId),
       modelCalls: this.#store.listModelCalls(runId)
     };
   }
@@ -545,7 +558,7 @@ export class RuntimeEngine {
       }
     }
     try {
-      await this.#provider.dispose?.();
+      await this.#driver.dispose?.();
     } catch (error) {
       errors.push(error);
     }
@@ -569,8 +582,9 @@ export class RuntimeEngine {
     observer?: RuntimeObserver
   ): Promise<RunResult> {
     this.#leases.acquire(created.runId);
+    this.#assertAuditIntegrity(created.runId);
     try {
-      return await this.#runLoop(created, controller.signal, observer);
+      return await this.#driveRun(created, controller.signal, observer);
     } finally {
       this.#leases.release(created.runId);
     }
@@ -580,12 +594,17 @@ export class RuntimeEngine {
     return Object.freeze({
       id: runId,
       inspect: async () => await this.#inspectHandle(runId),
+      history: async (query = {}) => deepFreeze(this.#store.readAuditHistory(runId, query)),
+      historyRecord: async (sequence) => deepFreeze(this.#store.readAuditRecord(runId, sequence)),
+      modelCallTrace: async (callId) => deepFreeze(this.#store.readModelCallTrace(runId, callId)),
+      verifyHistory: async () => deepFreeze(this.#verifyAuditIntegrity(runId)),
       wait: async () => await this.#waitForHandle(runId),
       result: async () => await this.#resultForHandle(runId),
       subscribe: (
         listener: RuntimeEventListener,
         options?: SubscribeOptions
       ) => this.#subscribeHandle(runId, listener, options),
+      watch: async (listener: RuntimeEventListener) => this.#watchHandle(runId, listener),
       input: async (text: string, options?: RequestOptions) => {
         await this.#inputHandle(runId, text, options);
       },
@@ -645,6 +664,23 @@ export class RuntimeEngine {
     });
     subscriptions.add(subscription);
     return subscription;
+  }
+
+  async #watchHandle(
+    runId: string,
+    listener: RuntimeEventListener
+  ): Promise<RuntimeWatch> {
+    this.#assertOpen();
+    const slice = this.#store.readExecutionSlice(runId);
+    const snapshot = projectRunInspection(
+      slice.run,
+      slice.invocations,
+      slice.lastEventSequence
+    );
+    const subscription = this.#subscribeHandle(runId, listener, {
+      afterSequence: slice.lastEventSequence
+    });
+    return { snapshot, subscription };
   }
 
   async #inputHandle(
@@ -710,26 +746,21 @@ export class RuntimeEngine {
     }
     const unresolved = this.#store.listToolInvocations(runId)
       .filter(
-        (invocation) => invocation.status === "started"
+        (invocation) => invocation.status === "prepared"
+          || invocation.status === "started"
           || invocation.status === "unknown"
       );
     const unknown = unresolved.filter(
       (invocation) => invocation.status === "unknown"
     );
-    if (unknown.length > 1) {
-      throw this.#controlConflict(
-        runId,
-        "Run has multiple unknown Tool Invocations."
-      );
-    }
-    if (unknown.length === 1) {
+    if (unknown.length > 0) {
       if (options.recovery === undefined) {
         throw this.#controlConflict(
           runId,
           "The unknown Tool Invocation requires a Recovery Decision."
         );
       }
-      if (options.recovery.invocationId !== unknown[0]!.id) {
+      if (!unknown.some(({ id }) => id === options.recovery!.invocationId)) {
         throw this.#controlConflict(
           runId,
           "Recovery Decision does not match the current unknown Tool Invocation."
@@ -776,6 +807,7 @@ export class RuntimeEngine {
     const active = this.#activeExecutions.get(runId);
     const controller = this.#executionControllers.get(runId);
     if (active !== undefined && controller !== undefined) {
+      this.#requestCancellation(runId, message);
       if (!controller.signal.aborted) controller.abort(message);
       try {
         await active;
@@ -786,13 +818,8 @@ export class RuntimeEngine {
       return;
     }
 
-    if (this.#hasUnknownInvocation(runId)) {
-      throw this.#toolResultUnknown(runId);
-    }
-
     if (run.status === "running") {
       const interruptedController = new AbortController();
-      interruptedController.abort(message);
       const execution = this.#resumeRun(
         run,
         { runId },
@@ -800,6 +827,9 @@ export class RuntimeEngine {
       );
       this.#trackExecution(runId, execution, interruptedController);
       try {
+        // #resumeRun acquires the Lease synchronously before its first await.
+        this.#requestCancellation(runId, message);
+        interruptedController.abort(message);
         await execution;
       } catch (error) {
         throw this.#mapExecutionBoundaryError(error, runId);
@@ -810,6 +840,7 @@ export class RuntimeEngine {
 
     try {
       this.#leases.acquire(runId);
+      this.#assertAuditIntegrity(runId);
       run = this.#requireRun(runId);
       if (this.#hasUnknownInvocation(runId)) {
         throw this.#toolResultUnknown(runId);
@@ -824,6 +855,7 @@ export class RuntimeEngine {
           `Run became terminal before cancellation: ${run.status}.`
         );
       }
+      this.#requestCancellation(runId, message);
       this.#cancelPersistedRun(run, message);
     } catch (error) {
       throw this.#mapControlBoundaryError(error, runId);
@@ -842,6 +874,18 @@ export class RuntimeEngine {
       });
     }
     return message;
+  }
+
+  #requestCancellation(runId: string, reason: string): void {
+    const existing = this.#store.getCancellationRequest(runId);
+    if (existing !== null) return;
+    this.#store.requestCancellation({
+      requestId: this.#createId(),
+      runId,
+      reason,
+      requestedAt: this.#now()
+    });
+    this.#notify(runId);
   }
 
   #assertCancellationOutcome(runId: string): void {
@@ -902,6 +946,7 @@ export class RuntimeEngine {
   ): Promise<void> {
     try {
       this.#leases.acquire(runId);
+      this.#assertAuditIntegrity(runId);
     } catch (error) {
       throw this.#mapControlBoundaryError(error, runId);
     }
@@ -920,6 +965,7 @@ export class RuntimeEngine {
   #withControlLeaseSync<T>(runId: string, operation: () => T): T {
     try {
       this.#leases.acquire(runId);
+      this.#assertAuditIntegrity(runId);
     } catch (error) {
       throw this.#mapControlBoundaryError(error, runId);
     }
@@ -1004,12 +1050,11 @@ export class RuntimeEngine {
 
   async #inspectHandle(runId: string): Promise<RunInspection> {
     this.#assertOpen();
-    const snapshot = this.#requireRun(runId);
-    const lastEvent = this.#store.getLastEvent(runId);
+    const slice = this.#store.readExecutionSlice(runId);
     return projectRunInspection(
-      snapshot,
-      this.#store.listToolInvocations(runId),
-      lastEvent?.sequence ?? 0
+      slice.run,
+      slice.invocations,
+      slice.lastEventSequence
     );
   }
 
@@ -1107,291 +1152,310 @@ export class RuntimeEngine {
     });
     const cancelled = transitionRunStatus(input, "cancelled", {
       now: this.#now(),
-      stopReason: "CANCELLED"
+      stopReason: "CANCELLED",
+      delivery: deriveRunDelivery({
+        run: input,
+        outcome: "cancelled",
+        now: this.#now(),
+        stopReason: "CANCELLED"
+      })
     });
-    return this.#commit(
-      run,
-      cancelled,
-      "run.cancelled",
-      { reason: message },
-      observer
-    );
+    const request = this.#store.getCancellationRequest(run.runId);
+    if (request !== null && request.status === "requested") {
+      const committed = this.#store.reconcileCancellationAndCommitRun({
+        requestId: request.id,
+        previous: run,
+        next: cancelled,
+        fencingToken: this.#leases.requireFencingToken(run.runId),
+        event: {
+          type: "run.cancelled",
+          occurredAt: cancelled.updatedAt,
+          payload: { reason: message, requestId: request.id }
+        }
+      });
+      this.#notify(run.runId, observer);
+      return committed;
+    }
+    return this.#commit(run, cancelled, "run.cancelled", { reason: message }, observer);
   }
 
-  async #runLoop(
+  async #driveRun(
     initial: RunSnapshot,
     signal: AbortSignal,
     observer?: RuntimeObserver
   ): Promise<RunResult> {
-    let run = initial;
-    const activeStartedAt = Date.parse(this.#now());
-    while (run.status === "running") {
-      if (signal.aborted) {
-        run = this.#cancelPersistedRun(
-          run,
-          cancellationReason(signal),
-          observer
-        );
-        break;
-      }
-      const budgetFailure = this.#budgetFailure(run, activeStartedAt);
-      if (budgetFailure !== null) {
-        run = this.#fail(run, budgetFailure, budgetFailure, observer);
-        break;
-      }
-
-      const pendingRequest = this.#rehydrationRequests.get(run.runId);
-      let decisionResult = buildDecisionContext({
-        run,
-        store: this.#store,
-        workspace: this.#workspaceFor(run.runId),
-        tools: this.#tools,
-        artifactDir: this.#artifactDir,
-        ...(this.#memory === undefined ? {} : { memory: this.#memory, now: this.#now() }),
-        ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs }),
-        ...(pendingRequest === undefined ? {} : { rehydrateMemoryDigests: pendingRequest.memoryDigests }),
-        forkContext: this.#forkContextFor(run.runId)
-      });
-      const runWithContextEvidence = this.#recordContextRefEvidence(
-        run,
-        decisionResult.context.rehydratedFacts,
-        observer
-      );
-      if (runWithContextEvidence !== run) {
-        run = runWithContextEvidence;
-        decisionResult = buildDecisionContext({
-          run,
-          store: this.#store,
-          workspace: this.#workspaceFor(run.runId),
-          tools: this.#tools,
-          artifactDir: this.#artifactDir,
-          ...(this.#memory === undefined ? {} : { memory: this.#memory, now: this.#now() }),
-          ...(pendingRequest === undefined ? {} : { rehydrateRequests: pendingRequest.refs }),
-          ...(pendingRequest === undefined ? {} : { rehydrateMemoryDigests: pendingRequest.memoryDigests }),
-          forkContext: this.#forkContextFor(run.runId)
-        });
-      }
-      this.#publishedMemoryDigests.set(run.runId, Object.fromEntries(
-        decisionResult.context.memoryCandidates.map((candidate) => [candidate.ref, candidate.digest])
-      ));
-      const modelCall = await requestModel(
-        {
-          provider: this.#provider,
-          store: this.#store,
-          workspace: this.#workspaceFor(run.runId),
-          tools: this.#tools,
-          artifactDir: this.#artifactDir,
-          now: () => this.#now(),
-          createId: () => this.#createId(),
-          requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
-          withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
-          notify: (runId, obs) => this.#notify(runId, obs),
-          forkContext: this.#forkContextFor(run.runId),
-          ...(this.#memory === undefined ? {} : { memory: this.#memory })
-        },
-        run,
-        "decision",
-        decisionResult.context,
-        { allowedIntents: decisionResult.context.allowedIntents },
-        signal,
-        observer,
-        true
-      );
-      run = modelCall.run;
-      if (modelCall.outcome === "budget_exceeded") break;
-      if (modelCall.outcome === "failed") {
-        const error = modelCall.error;
-        if (signal.aborted) {
-          run = this.#cancelPersistedRun(
-            run,
-            cancellationReason(signal),
-            observer
-          );
-          break;
-        }
-        run = this.#blockForProvider(run, error, observer);
-        break;
-      }
-      const rawAction = modelCall.output;
-      if (signal.aborted) {
-        run = this.#cancelPersistedRun(
-          run,
-          cancellationReason(signal),
-          observer
-        );
-        break;
-      }
-
-      try {
-        const decision = ProviderDecisionSchema.parse(rawAction);
-        const compiled = compileProviderDecision({
-          decision,
-          run,
-          createId: () => this.#createId(),
-          rehydratedRefs: decisionResult.injectedRehydratedRefs
-        });
-        this.#store.recordRunEvent({
-          runId: run.runId,
-          event: {
-            type: "intent.compiled",
-            occurredAt: this.#now(),
-            payload: {
-              intentKind: decision.intent.kind,
-              compiledActionType: compiled.type,
-              reasoningSummaryPresent: decision.reasoningSummary !== undefined
-            }
-          },
-          fencingToken: this.#leases.requireFencingToken(run.runId)
-        });
-        this.#notify(run.runId, observer);
-        if (compiled.type === "request_context") {
-          run = await this.#handleRequestContext(run, compiled, signal, observer);
-          continue;
-        }
-        const action: RuntimeAction = RuntimeActionSchema.parse(compiled);
-        run = await this.#handleAction(run, action, signal, observer);
-        if (action.type === "set_plan" && decisionResult.context.rehydratedFacts.length > 0) {
-          run = this.#recordContextRefEvidence(
-            run,
-            decisionResult.context.rehydratedFacts,
-            observer
-          );
-        }
-        const consumedRehydration = action.type !== "propose_finish" || run.status === "succeeded";
-        if (pendingRequest !== undefined && consumedRehydration) {
-          this.#completeRehydrationRequest(
-            run.runId,
-            pendingRequest.requestId,
-            pendingRequest.refs,
-            observer
-          );
-        }
-      } catch (error) {
-        if (
-          error instanceof RuntimeError
-          && error.code === "CANCELLED"
-        ) {
-          run = this.#requireRun(run.runId);
-          run = this.#cancelPersistedRun(
-            run,
-            error.message.replace(/^CANCELLED:\s*/, ""),
-            observer
-          );
-          break;
-        }
-        if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
-        run = this.#rejectAction(run, error, rawAction, observer);
-      }
-    }
-    return toRunResult(run);
+    return await this.#driver.run(
+      this.#agentRuntimePort(),
+      initial,
+      signal,
+      observer
+    );
   }
 
-  /**
-   * Harness handler for the request_context control action. Validates the
-   * requested refs against the manifest of refs published to the model last
-   * turn (only refs the model actually saw, with matching digest), records a
-   * context.rehydrate_requested audit event, and queues the accepted refs for
-   * the next decision turn. The Run snapshot is never modified.
-   */
-  async #handleRequestContext(
-    run: RunSnapshot,
-    action: RequestContextAction,
-    signal: AbortSignal,
-    observer?: RuntimeObserver
-  ): Promise<RunSnapshot> {
-    signal.throwIfAborted();
-    const pending = this.#rehydrationRequests.get(run.runId);
-    if (pending !== undefined && action.refs.every((ref) => pending.refs.includes(ref))) {
-      const reusedCount = this.#store.listEvents(run.runId).filter((event) => (
-        event.type === "context.request_reused"
-        && JSON.stringify(event.payload.refs) === JSON.stringify(action.refs)
-      )).length;
-      if (reusedCount >= run.budgets.maxRetries) {
-        return this.#fail({
-          ...run,
-          lastError: {
-            code: "CONTEXT_INTENT_STALLED",
-            message: `Provider repeatedly requested already-visible Context refs: ${action.refs.join(", ")}`,
-            retryable: false,
-            detailsArtifact: null
-          }
-        }, "CONTEXT_INTENT_STALLED", "CONTEXT_INTENT_STALLED", observer);
-      }
-      // Contract v2 normalization: the exact facts are already visible. Keep
-      // the pending fact projection alive, perform no Store read and consume no
-      // Action-repair budget. The next decision can use the existing facts.
-      this.#store.recordRunEvent({
-        runId: run.runId,
-        event: {
-          type: "context.request_reused",
-          occurredAt: this.#now(),
-          payload: { refs: action.refs }
-        },
-        fencingToken: this.#leases.requireFencingToken(run.runId)
-      });
-      this.#notify(run.runId, observer);
-      return run;
-    }
-    // Every requested ref is queued; the next decision turn resolves each one
-    // against that turn's manifest (ref already published + digest matches) and
-    // reports the outcome back in rehydratedFacts. Refs that were never
-    // published, belong to another Run, or drifted resolve to REF_UNAVAILABLE
-    // without disclosing whether the object exists.
-    const requestId = this.#createId();
-    const publishedMemoryDigests = this.#publishedMemoryDigests.get(run.runId) ?? {};
-    const refs = [...new Set([...(pending?.refs ?? []), ...action.refs])];
-    const memoryDigests = {
-      ...(pending?.memoryDigests ?? {}),
-      ...Object.fromEntries(action.refs.flatMap((ref) => (
-      publishedMemoryDigests[ref] === undefined ? [] : [[ref, publishedMemoryDigests[ref]]]
-      )))
-    };
-    this.#store.recordRunEvent({
-      runId: run.runId,
-      event: {
-        type: "context.rehydrate_requested",
-        occurredAt: this.#now(),
-        payload: { requestId, refs, memoryDigests }
+  #agentRuntimePort(): AgentRuntimePort {
+    return {
+      now: () => this.#now(),
+      createId: () => this.#createId(),
+      readState: (runId) => this.#readAgentState(runId),
+      readArtifactText: (digest) => new ArtifactStore(this.#artifactDir).getText(digest),
+      artifactExists: (digest) => new ArtifactStore(this.#artifactDir).has(digest),
+      commitPlan: (run, proposal, observer) => this.#setPlan(run, proposal, observer),
+      dispatch: async (run, command, signal, observer) => (
+        await this.#handleAction(run, command, signal, observer)
+      ),
+      recordContextEvidence: (run, facts, observer) => (
+        this.#recordContextRefEvidence(run, facts, observer)
+      ),
+      rejectModelAction: (run, error, rawAction, observer) => {
+        if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
+        return this.#rejectAction(run, error, rawAction, observer);
       },
-      fencingToken: this.#leases.requireFencingToken(run.runId)
+      cancel: (run, message, observer) => this.#cancelPersistedRun(run, message, observer),
+      enforceBudget: (run, activeStartedAt, observer) => {
+        const failure = this.#budgetFailure(run, activeStartedAt);
+        return failure === null ? null : this.#fail(run, failure, failure, observer);
+      },
+      finalizeBudget: (run, activeStartedAt, summary, observer) => {
+        const failure = this.#budgetFailure(run, activeStartedAt);
+        if (failure === null) throw new Error("Budget finalization requires an exhausted Runtime budget.");
+        return this.#fail(run, failure, failure, observer, summary);
+      },
+      blockForProvider: (run, error, observer) => (
+        this.#blockForProvider(run, error, observer)
+      ),
+      beginModelCall: (run, input, observer) => this.#beginModelCall(run, input, observer),
+      completeModelCall: (runId, input) => this.#completeModelCall(runId, input),
+      beginProviderAttempt: (runId, input) => this.#beginProviderAttempt(runId, input),
+      completeProviderAttempt: (runId, input) => this.#completeProviderAttempt(runId, input),
+      recordAgentEvent: (runId, event, observer) => (
+        this.#recordAgentEvent(runId, event, observer)
+      ),
+      withHeartbeat: (runId, operation) => this.#leases.withHeartbeat(runId, operation),
+      completeRun: (run, input, observer) => this.#completeAgentRun(run, input, observer)
+    };
+  }
+
+  #readAgentState(runId: string): AgentStateView {
+    const run = this.#requireRun(runId);
+    const latestModelCall = this.#store.listModelCalls(runId).at(-1);
+    const forkContext = this.#forkContextFor(runId);
+    const parentRun = forkContext === null ? null : this.#store.getRun(forkContext.parentRunId);
+    return Object.freeze({
+      run,
+      workspace: this.#workspaceFor(runId),
+      tools: Object.freeze(
+        [...this.#tools.values()].map((tool) => Object.freeze({ contract: tool.contract }))
+      ),
+      invocations: Object.freeze(this.#store.listToolInvocations(runId)),
+      attempts: Object.freeze(this.#store.listToolAttempts(runId)),
+      events: Object.freeze(this.#store.listEvents(runId)),
+      forkContext,
+      parentRun,
+      parentInvocations: Object.freeze(
+        parentRun === null ? [] : this.#store.listToolInvocations(parentRun.runId)
+      ),
+      latestModelCallAudit: latestModelCall === undefined
+        ? null
+        : this.#store.getModelCallAudit(latestModelCall.id)
+    });
+  }
+
+  #beginModelCall(
+    run: RunSnapshot,
+    input: ModelCallStart,
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    this.#assertAuditIntegrity(run.runId);
+    const requestCapture = input.capturePolicy === "metadata"
+      ? { digest: input.manifest.projectionDigest }
+      : this.#captureAuditPayload(input.requestPayload, input.capturePolicy);
+    const next = RunSnapshotSchema.parse({
+      ...run,
+      budgetsUsed: {
+        ...run.budgetsUsed,
+        iterations: run.budgetsUsed.iterations + (input.countIteration ? 1 : 0),
+        modelCalls: run.budgetsUsed.modelCalls + 1
+      },
+      updatedAt: this.#now()
+    });
+    const persisted = this.#store.beginModelCallAndCommitRun({
+      intent: input.intent,
+      manifest: input.manifest,
+      capturePolicy: input.capturePolicy,
+      requestDigest: requestCapture.digest,
+      ...(requestCapture.artifactRef === undefined ? {} : { requestArtifactRef: requestCapture.artifactRef }),
+      previous: run,
+      next,
+      fencingToken: this.#leases.requireFencingToken(run.runId),
+      event: {
+        type: input.eventType,
+        occurredAt: this.#now(),
+        payload: { callId: input.intent.id, ...input.eventPayload }
+      }
     });
     this.#notify(run.runId, observer);
-    if (pending !== undefined) {
-      this.#completeRehydrationRequest(
-        run.runId,
-        pending.requestId,
-        pending.refs,
-        observer,
-        false
-      );
-    }
-    this.#rehydrationRequests.set(run.runId, { requestId, refs, memoryDigests });
-    return run;
+    return persisted.run;
   }
 
-  #completeRehydrationRequest(
+  #completeModelCall(runId: string, input: ModelCallCompletion): void {
+    const audit = this.#store.getModelCallAudit(input.callId);
+    if (audit === null) throw new Error(`Model call audit is missing: ${input.callId}`);
+    const outputCapture = input.outputPayload === undefined
+      ? undefined
+      : this.#captureAuditPayload(input.outputPayload, audit.capturePolicy);
+    const errorCapture = input.errorPayload === undefined
+      ? undefined
+      : this.#captureAuditPayload(input.errorPayload, audit.capturePolicy);
+    this.#store.completeModelCall({
+      ...input,
+      ...(outputCapture === undefined ? {} : {
+        outputDigest: outputCapture.digest,
+        ...(outputCapture.artifactRef === undefined ? {} : { outputArtifactRef: outputCapture.artifactRef })
+      }),
+      ...(errorCapture === undefined ? {} : {
+        errorDigest: errorCapture.digest,
+        ...(errorCapture.artifactRef === undefined ? {} : { errorArtifactRef: errorCapture.artifactRef })
+      }),
+      completedAt: this.#now(),
+      fencingToken: this.#leases.requireFencingToken(runId)
+    });
+    this.#trustCurrentJournalHead(runId);
+  }
+
+  #beginProviderAttempt(runId: string, input: ProviderAttemptStart) {
+    this.#assertAuditIntegrity(runId);
+    const attempt = this.#store.beginProviderAttempt({
+      ...input,
+      runId,
+      startedAt: this.#now(),
+      fencingToken: this.#leases.requireFencingToken(runId)
+    });
+    this.#trustCurrentJournalHead(runId);
+    return attempt;
+  }
+
+  #completeProviderAttempt(runId: string, input: ProviderAttemptCompletion) {
+    const audit = this.#store.getModelCallAudit(
+      input.callId
+    );
+    const responseCapture = input.responsePayload === undefined
+      ? undefined
+      : this.#captureAuditPayload(input.responsePayload, audit?.capturePolicy ?? "metadata");
+    const attempt = this.#store.completeProviderAttempt({
+      ...input,
+      ...(responseCapture === undefined ? {} : {
+        responseDigest: responseCapture.digest,
+        ...(responseCapture.artifactRef === undefined ? {} : { responseArtifactRef: responseCapture.artifactRef })
+      }),
+      completedAt: this.#now(),
+      fencingToken: this.#leases.requireFencingToken(runId)
+    });
+    this.#trustCurrentJournalHead(runId);
+    return attempt;
+  }
+
+  #captureAuditPayload(value: unknown, policy: "metadata" | "redacted"): {
+    readonly digest: string;
+    readonly artifactRef?: string;
+  } {
+    const digest = digestCanonicalJson(value);
+    if (policy === "metadata") return { digest };
+    const artifact = new ArtifactStore(this.#artifactDir).putText(
+      JSON.stringify(value),
+      "application/json"
+    );
+    return { digest, artifactRef: artifact.digest };
+  }
+
+  #verifyAuditIntegrity(runId: string) {
+    const artifacts = new ArtifactStore(this.#artifactDir);
+    return this.#store.verifyAuditIntegrity(runId, (digest) => artifacts.verify(digest));
+  }
+
+  #assertAuditIntegrity(runId: string): void {
+    const currentHead = this.#store.getLastEvent(runId)?.recordDigest;
+    if (currentHead !== undefined && this.#verifiedJournalHeads.get(runId) === currentHead) return;
+    const integrity = this.#verifyAuditIntegrity(runId);
+    if (!integrity.valid) {
+      throw new RuntimeError({
+        code: "INTERNAL",
+        message: `Run Journal integrity verification failed: ${integrity.error ?? "unknown error"}`,
+        runId
+      });
+    }
+    this.#trustCurrentJournalHead(runId);
+  }
+
+  #trustCurrentJournalHead(runId: string): void {
+    const digest = this.#store.getLastEvent(runId)?.recordDigest;
+    if (digest !== undefined) this.#verifiedJournalHeads.set(runId, digest);
+  }
+
+  #recordAgentEvent(
     runId: string,
-    requestId: string,
-    refs: readonly string[],
-    observer?: RuntimeObserver,
-    clearPending = true
+    event: AgentAuditEvent,
+    observer?: RuntimeObserver
   ): void {
     this.#store.recordRunEvent({
       runId,
       event: {
-        type: "context.rehydrated",
+        type: event.type,
         occurredAt: this.#now(),
-        payload: { requestId, refs }
+        payload: { ...event.payload }
       },
       fencingToken: this.#leases.requireFencingToken(runId)
     });
-    if (clearPending) this.#rehydrationRequests.delete(runId);
     this.#notify(runId, observer);
+  }
+
+  #completeAgentRun(
+    run: RunSnapshot,
+    input: { readonly summary: string },
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    const validation = validateCompletion(
+      run,
+      this.#store.listToolInvocations(run.runId),
+      (digest) => new ArtifactStore(this.#artifactDir).verify(digest)
+    );
+    if (!validation.passed) {
+      throw new ActionRejectedError(`Completion is not valid: ${validation.issues.join(", ")}`);
+    }
+    const evidenceIds = validation.evidenceIds;
+    const completedNavigation = RunSnapshotSchema.parse({
+      ...run,
+      stepProgress: run.stepProgress.map((progress) => ({
+        ...progress,
+        status: "completed" as const
+      })),
+      lastError: null,
+      updatedAt: this.#now()
+    });
+    const succeeded = transitionRunStatus(completedNavigation, "succeeded", {
+      now: this.#now(),
+      stopReason: "COMPLETED",
+      result: { summary: input.summary, resultArtifact: null, evidenceIds: [...evidenceIds] },
+      delivery: deriveRunDelivery({
+        run: completedNavigation,
+        outcome: "succeeded",
+        now: this.#now(),
+        stopReason: "COMPLETED",
+        summary: input.summary,
+        generatedBy: "model"
+      })
+    });
+    return this.#commit(
+      run,
+      succeeded,
+      "run.succeeded",
+      { evidenceIds, completionGate: "deterministic" },
+      observer
+    );
   }
 
   #recordContextRefEvidence(
     run: RunSnapshot,
-    facts: readonly RehydratedFact[],
+    facts: readonly ContextEvidenceFact[],
     observer?: RuntimeObserver
   ): RunSnapshot {
     const plan = run.currentPlan;
@@ -1435,51 +1499,12 @@ export class RuntimeEngine {
     }, observer);
   }
 
-  /**
-   * Rebuilds transient rehydration requests from the audit event stream on
-   * resume: a context.rehydrate_requested event without a matching
-   * context.rehydrated event was not yet consumed by an accepted follow-up
-   * action, so its accepted refs are queued for the next decision turn. No
-   * authority table is involved.
-   */
-  #rebuildRehydrationRequests(runId: string): void {
-    const events = this.#store.listEvents(runId);
-    const fulfilled = new Set<string>();
-    for (const event of events) {
-      if (event.type !== "context.rehydrated") continue;
-      const requestId = event.payload.requestId;
-      if (typeof requestId === "string") fulfilled.add(requestId);
-    }
-    for (const event of events) {
-      if (event.type !== "context.rehydrate_requested") continue;
-      const requestId = event.payload.requestId;
-      if (typeof requestId !== "string" || fulfilled.has(requestId)) continue;
-      const refs = Array.isArray(event.payload.refs)
-        ? event.payload.refs.filter((item): item is string => typeof item === "string")
-        : [];
-      const memoryDigests = event.payload.memoryDigests !== null
-        && typeof event.payload.memoryDigests === "object"
-        && !Array.isArray(event.payload.memoryDigests)
-        ? Object.fromEntries(Object.entries(event.payload.memoryDigests).filter(
-            (entry): entry is [string, string] => typeof entry[1] === "string"
-          ))
-        : {};
-      if (refs.length > 0) {
-        this.#rehydrationRequests.set(runId, { requestId, refs, memoryDigests });
-      }
-    }
-  }
-
   async #handleAction(
     run: RunSnapshot,
-    action: RuntimeAction,
+    action: RuntimeCommand,
     signal: AbortSignal,
     observer?: RuntimeObserver
   ): Promise<RunSnapshot> {
-    if (!allowedActions(run).includes(action.type)) {
-      throw new ActionRejectedError(`${action.type} is not allowed in the current Run state.`);
-    }
-    if (action.type === "set_plan") return this.#setPlan(run, action, observer);
     if (action.type === "execute_step") return this.#handleExecuteStep(run, action, signal, observer);
     if (action.type === "request_input") {
       const now = this.#now();
@@ -1498,19 +1523,10 @@ export class RuntimeEngine {
     if (action.type === "call_tool") {
       return callTool(this.#services(signal, run.runId), run, action, observer);
     }
-    return proposeFinish(this.#services(signal, run.runId), run, action, observer);
+    throw new ActionRejectedError("Unsupported Runtime command.");
   }
 
-  /**
-   * Harness-level orchestration action: the model proposes, in one Decision,
-   * multiple Tool Actions that are already determinable within the active Step.
-   * The whole batch is pre-validated (so a malformed batch never partially
-   * executes), then executed serially through the existing callTool chain —
-   * each sub-action keeps full approval / Evidence / sourceRefs / persistence /
-   * recovery authority. Execution stops at the first Tool failure, the first
-   * action requiring approval, or once the Step completes; dropped actions are
-   * not executed and the next Decision re-decides on the latest facts.
-   */
+  /** A pre-validated Tool batch. Plan provenance may create Evidence but never authorizes execution. */
   async #handleExecuteStep(
     run: RunSnapshot,
     action: Extract<RuntimeAction, { type: "execute_step" }>,
@@ -1520,47 +1536,98 @@ export class RuntimeEngine {
     signal.throwIfAborted();
     const services = this.#services(signal, run.runId);
     const plan = run.currentPlan;
-    if (plan === null) throw new ActionRejectedError("A Tool cannot run without a Plan.");
-    const active = run.stepProgress.find((item) => item.status === "active");
-    if (active === undefined || active.stepId !== action.stepId) {
-      throw new ActionRejectedError("execute_step does not target the active Step.");
-    }
-    const step = plan.orderedSteps.find((item) => item.id === action.stepId);
-    if (step === undefined) throw new ActionRejectedError("Active Step is missing from the Plan.");
+    const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
+    const step = plan?.orderedSteps.find((item) => (
+      item.id === activeStepId && item.id === action.stepId
+    ));
+    const planVersion = plan?.version ?? 1;
 
     // Pre-flight: validate every sub-action so a malformed batch is rejected as
     // a whole (repair budget) before any sub-action executes.
     const seenIdempotency = new Set<string>();
+    const preparedCalls: PreparedReadBatchCall[] = [];
+    let cachedReadCount = 0;
     for (const sub of action.actions) {
       if (sub.stepId !== action.stepId) {
         throw new ActionRejectedError("execute_step sub-action does not target the active Step.");
       }
-      const checks = sub.checkIds.map((id) => step.acceptanceChecks.find((check) => check.id === id));
-      if (checks.some((check) => check === undefined)) {
-        throw new ActionRejectedError("execute_step sub-action references an unknown Acceptance Check.");
-      }
-      if (checks.some((check) => check?.kind !== "tool_result" || check.toolName !== sub.toolName)) {
-        throw new ActionRejectedError("execute_step sub-action is not bound to a matching Tool Result Check.");
-      }
+      const checkIds = step === undefined
+        ? []
+        : sub.checkIds.filter((id) => step.acceptanceChecks.some((check) => check.id === id));
       const tool = this.#tools.get(sub.toolName);
       if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${sub.toolName}`);
       const parsedInput = JsonValueSchema.parse(tool.contract.execution.inputSchema.parse(sub.input));
-      const key = `${run.runId}:${plan.version}:${step.id}:${tool.contract.identity.name}:${digestJson(parsedInput)}`;
-      if (seenIdempotency.has(key)) {
+      const parsedInputDigest = digestJson(parsedInput);
+      const baseKey = `${run.runId}:${planVersion}:${action.stepId}:${tool.contract.identity.name}:${parsedInputDigest}`;
+      if (seenIdempotency.has(baseKey)) {
+        if (tool.contract.execution.effect.kind === "read" && tool.contract.execution.idempotent) {
+          cachedReadCount += 1;
+          continue;
+        }
         throw new ActionRejectedError("execute_step contains duplicate Tool Invocations.");
       }
-      seenIdempotency.add(key);
-      if (this.#store.listToolInvocations(run.runId).some((item) => item.idempotencyKey === key)) {
-        throw new ActionRejectedError("execute_step duplicates an existing persisted Invocation.");
+      seenIdempotency.add(baseKey);
+      const persistedInvocations = this.#store.listToolInvocations(run.runId);
+      const matching = persistedInvocations.filter(
+        (item) => item.idempotencyKey === baseKey || item.idempotencyKey.startsWith(`${baseKey}:`)
+      );
+      const repeatableRead = tool.contract.execution.effect.kind === "read"
+        && tool.contract.execution.idempotent;
+      const duplicate = repeatableRead
+        ? undefined
+        : persistedInvocations.find((item) => (
+            item.toolName === tool.contract.identity.name
+            && item.inputDigest === parsedInputDigest
+            && item.status !== "failed"
+          ));
+      if (duplicate !== undefined) {
+        throw new ActionRejectedError(
+          `execute_step duplicates an existing persisted Invocation with status ${duplicate.status}; do not repeat it.`
+        );
       }
+      const key = matching.length === 0
+        ? baseKey
+        : repeatableRead
+          ? `${baseKey}:observation:${matching.length}`
+          : `${baseKey}:retry:${matching.length}`;
+      preparedCalls.push({
+        action: { ...sub, checkIds, input: parsedInput },
+        tool,
+        parsedInput,
+        inputDigest: parsedInputDigest,
+        idempotencyKey: key
+      });
     }
-    if (run.budgetsUsed.toolCalls + action.actions.length > run.budgets.maxToolCalls) {
-      throw new ActionRejectedError("execute_step exceeds the remaining Tool-call budget.");
+    if (run.budgetsUsed.toolCalls + preparedCalls.length > run.budgets.maxToolCalls) {
+      const remaining = Math.max(0, run.budgets.maxToolCalls - run.budgetsUsed.toolCalls);
+      throw new ActionRejectedError(
+        `execute_step requested ${preparedCalls.length} new Tool call(s), but only ${remaining} remain; submit at most ${remaining}.`
+      );
     }
 
-    // Serial execution with fail-fast: at most one in-flight invocation at any
-    // time (keeps Recovery's exactly-one unresolved invocation invariant), and
-    // the batch stops at the first Tool failure, approval, or Step completion.
+    if (preparedCalls.every(({ tool }) => tool.contract.execution.effect.kind === "read")) {
+      const current = await executeReadToolBatch(services, run, preparedCalls, observer);
+      this.#store.recordRunEvent({
+        runId: run.runId,
+        event: {
+          type: "execute_step.completed",
+          occurredAt: this.#now(),
+          payload: {
+            stepId: action.stepId,
+            executedActionCount: preparedCalls.length,
+            cachedActionCount: cachedReadCount,
+            totalActions: action.actions.length,
+            stoppedReason: current.lastError === null ? "completed" : "tool_failed"
+          }
+        },
+        fencingToken: this.#leases.requireFencingToken(run.runId)
+      });
+      this.#notify(run.runId, observer);
+      return current;
+    }
+
+    // Write, execute and mixed batches preserve the existing serial Approval
+    // boundary. Only all-read batches enter the concurrent Effect path above.
     let current = run;
     let executed = 0;
     let stoppedReason: "completed" | "step_completed" | "approval_required" | "tool_failed" | "run_status_changed" = "completed";
@@ -1569,13 +1636,8 @@ export class RuntimeEngine {
         stoppedReason = current.status === "waiting" ? "approval_required" : "run_status_changed";
         break;
       }
-      if (current.lastError !== null) {
+      if (executed > 0 && current.lastError !== null) {
         stoppedReason = "tool_failed";
-        break;
-      }
-      const nowActive = current.stepProgress.find((item) => item.status === "active")?.stepId;
-      if (nowActive !== action.stepId) {
-        stoppedReason = "step_completed";
         break;
       }
       const executedBefore = current.budgetsUsed.toolCalls;
@@ -1594,11 +1656,6 @@ export class RuntimeEngine {
       stoppedReason = current.status === "waiting" ? "approval_required" : "run_status_changed";
     } else if (current.lastError !== null) {
       stoppedReason = "tool_failed";
-    } else if (
-      executed < action.actions.length
-      && current.stepProgress.find((item) => item.status === "active")?.stepId !== action.stepId
-    ) {
-      stoppedReason = "step_completed";
     }
 
     this.#store.recordRunEvent({
@@ -1668,7 +1725,14 @@ export class RuntimeEngine {
       lastError: null,
       updatedAt: this.#now()
     });
-    return this.#commit(run, next, "plan.set", { version, basedOnVersion: action.basedOnVersion }, observer);
+    return this.#commit(run, next, "plan.set", {
+      version,
+      basedOnVersion: action.basedOnVersion,
+      inputVersion: contract.inputVersion,
+      goalDigest: plan.goalDigest,
+      taskContract: contract,
+      plan
+    }, observer);
   }
 
   /**
@@ -1687,32 +1751,41 @@ export class RuntimeEngine {
   }
 
   #rejectAction(run: RunSnapshot, error: z.ZodError | ActionRejectedError, rawAction: unknown, observer?: RuntimeObserver): RunSnapshot {
-    const retries = run.budgetsUsed.retries + 1;
     const diagnostic = actionRejectionDiagnostic(error, rawAction);
     const message = JSON.stringify(diagnostic);
     const detailsArtifact = new ArtifactStore(this.#artifactDir).putText(serializeRejectedAction(rawAction), "application/json").digest;
-    if (retries > run.budgets.maxRetries) {
-      return this.#fail({
-        ...run,
-        budgetsUsed: { ...run.budgetsUsed, retries },
-        lastError: { code: "INVALID_MODEL_ACTION", message, retryable: false, detailsArtifact }
-      }, "ACTION_REPAIR_EXHAUSTED", "INVALID_MODEL_ACTION", observer);
-    }
     const next = RunSnapshotSchema.parse({
       ...run,
-      budgetsUsed: { ...run.budgetsUsed, retries },
       lastError: { code: "INVALID_MODEL_ACTION", message, retryable: true, detailsArtifact },
       updatedAt: this.#now()
     });
     return this.#commit(run, next, "action.rejected", { message, diagnostic, detailsArtifact }, observer);
   }
 
-  #fail(run: RunSnapshot, stopReason: string, errorCode: string, observer?: RuntimeObserver): RunSnapshot {
+  #fail(
+    run: RunSnapshot,
+    stopReason: string,
+    errorCode: string,
+    observer?: RuntimeObserver,
+    deliverySummary?: string
+  ): RunSnapshot {
     const failedInput = RunSnapshotSchema.parse({
       ...run,
       lastError: run.lastError ?? { code: errorCode, message: stopReason, retryable: false, detailsArtifact: null }
     });
-    const failed = transitionRunStatus(failedInput, "failed", { now: this.#now(), stopReason });
+    const failed = transitionRunStatus(failedInput, "failed", {
+      now: this.#now(),
+      stopReason,
+      delivery: deriveRunDelivery({
+        run: failedInput,
+        outcome: "failed",
+        now: this.#now(),
+        stopReason,
+        ...(deliverySummary === undefined
+          ? {}
+          : { summary: deliverySummary, generatedBy: "model" as const })
+      })
+    });
     return this.#commit(run, failed, "run.failed", { stopReason, errorCode }, observer);
   }
 
@@ -1721,7 +1794,16 @@ export class RuntimeEngine {
       ...run,
       lastError: { code: "PROVIDER_UNAVAILABLE", message: errorMessage(error), retryable: true, detailsArtifact: null }
     });
-    const blocked = transitionRunStatus(blockedInput, "blocked", { now: this.#now(), stopReason: "PROVIDER_UNAVAILABLE" });
+    const blocked = transitionRunStatus(blockedInput, "blocked", {
+      now: this.#now(),
+      stopReason: "PROVIDER_UNAVAILABLE",
+      delivery: deriveRunDelivery({
+        run: blockedInput,
+        outcome: "blocked",
+        now: this.#now(),
+        stopReason: "PROVIDER_UNAVAILABLE"
+      })
+    });
     return this.#commit(run, blocked, "run.blocked", { stopReason: "PROVIDER_UNAVAILABLE" }, observer);
   }
 
@@ -1736,14 +1818,13 @@ export class RuntimeEngine {
   #services(signal: AbortSignal, runId?: string): RuntimeServices {
     return {
       workspace: this.#workspaceFor(runId),
-      provider: this.#provider,
       tools: this.#tools,
       store: this.#store,
-      ...(this.#memory === undefined ? {} : { memory: this.#memory }),
       now: () => this.#now(),
       createId: () => this.#createId(),
       signal,
       fencingToken: (runId) => this.#leases.requireFencingToken(runId),
+      assertAuditIntegrity: (runId) => this.#assertAuditIntegrity(runId),
       notify: (runId, observer) => this.#notify(runId, observer),
       ...(runId === undefined ? {} : { forkContext: this.#forkContextFor(runId) }),
       withHeartbeat: (runId, operation) => (
@@ -1756,39 +1837,11 @@ export class RuntimeEngine {
         );
         return { digest: artifact.digest, byteLength: artifact.byteLength };
       },
-      requestModel: (run, phase, context, eventPayload, observer, countIteration) => (
-          requestModel(
-            {
-              provider: this.#provider,
-              store: this.#store,
-              workspace: this.#workspaceFor(run.runId),
-              tools: this.#tools,
-              artifactDir: this.#artifactDir,
-              now: () => this.#now(),
-              createId: () => this.#createId(),
-              requireFencingToken: (runId) => this.#leases.requireFencingToken(runId),
-              withLeaseHeartbeat: (runId, op) => this.#leases.withHeartbeat(runId, op),
-              notify: (runId, obs) => this.#notify(runId, obs),
-              forkContext: this.#forkContextFor(run.runId),
-              ...(this.#memory === undefined ? {} : { memory: this.#memory })
-            },
-          run,
-          phase,
-          context,
-          eventPayload,
-          signal,
-          observer,
-          countIteration
-        )
-      ),
       commit: (previous, next, type, payload, observer) => (
         this.#commit(previous, next, type, payload, observer)
       ),
       fail: (run, stopReason, errorCode, observer) => (
         this.#fail(run, stopReason, errorCode, observer)
-      ),
-      blockForProvider: (run, error, observer) => (
-        this.#blockForProvider(run, error, observer)
       )
     };
   }
@@ -1813,6 +1866,7 @@ export class RuntimeEngine {
   #notify(runId: string, observer?: RuntimeObserver): void {
     const event = this.#store.getLastEvent(runId);
     if (event === null) return;
+    if (event.recordDigest !== undefined) this.#verifiedJournalHeads.set(runId, event.recordDigest);
     observer?.(event);
     for (const subscription of this.#subscriptions.get(runId) ?? []) {
       subscription.notify();
@@ -2064,6 +2118,7 @@ export class RuntimeEngine {
     // `plan.goalDigest === digestTaskContract(taskContract)` stays intact for
     // the child (completion validation relies on it).
     const child = this.#store.createRunFromSnapshot(parent, childRunId, now);
+    this.#localRunIds.add(child.runId);
     const redirectedContract = child.taskContract === null
       ? null
       : { ...child.taskContract, workspace: snapshot!.root };
@@ -2219,8 +2274,4 @@ export class RuntimeEngine {
     }
   }
 
-}
-
-export function createRuntime(options: CreateRuntimeOptions): RuntimeEngine {
-  return new RuntimeEngine(options);
 }

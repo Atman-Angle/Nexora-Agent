@@ -26,10 +26,14 @@ describe("D2 packed interactive consumer", () => {
       ["--filter", "@nexora/runtime", "pack", "--pack-destination", root],
       { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
     );
-    const tarball = join(
-      root,
-      readdirSync(root).find((name) => name.endsWith(".tgz"))!
+    execFileSync(
+      "pnpm",
+      ["--filter", "@nexora/harness", "pack", "--pack-destination", root],
+      { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
     );
+    const tarballs = readdirSync(root)
+      .filter((name) => name.endsWith(".tgz"))
+      .map((name) => join(root, name));
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify({ private: true, type: "module" }),
@@ -37,7 +41,7 @@ describe("D2 packed interactive consumer", () => {
     );
     execFileSync(
       "npm",
-      ["install", "--offline", tarball],
+      ["install", "--offline", ...tarballs],
       { cwd: root, stdio: "pipe", shell: process.platform === "win32" }
     );
     writeFileSync(
@@ -93,7 +97,7 @@ import {
   type ModelDecisionContext,
   type RuntimeEvent,
   type RuntimeProvider
-} from "@nexora/runtime";
+} from "@nexora/harness";
 
 const workspace = ${JSON.stringify(workspace)};
 let call = 0;
@@ -101,34 +105,25 @@ const provider: RuntimeProvider = {
   async decide(_context: ModelDecisionContext) {
     call += 1;
     if (call === 1) return {
-      intent: {
-        kind: "plan_tasks",
-        taskContract: {
-          goal: "Write D2 output",
-          constraints: [],
-          acceptanceCriteria: ["write evidence"]
-        },
+      action: "continue",
+      plan: {
+        goal: "Write D2 output",
         tasks: [{
-          objective: "Write output",
-          completionRequirements: [{ kind: "capability_result", capability: "filesystem.write" }]
+          objective: "Write output"
         }]
       }
     };
     if (call === 2) return {
-      intent: {
-        kind: "use_capabilities",
-        calls: [{
-          capability: "filesystem.write",
+      action: "continue",
+      toolCalls: [{
+          name: "filesystem.write",
           arguments: { path: "d2-output.txt", content: "trusted D2 output" }
         }]
-      }
     };
     return {
-      intent: { kind: "finish", summary: "D2 write verified" }
+      action: "finish",
+      text: "D2 write verified"
     };
-  },
-  async validate() {
-    return { passed: true, issues: [] };
   }
 };
 

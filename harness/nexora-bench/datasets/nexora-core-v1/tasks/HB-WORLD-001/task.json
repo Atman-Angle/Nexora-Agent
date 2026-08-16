@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "HB-WORLD-001",
+  "category": "harbor_file_creation",
+  "horizon": "atomic",
+  "split": "validation",
+  "source": "real_workflow",
+  "instruction": "Create a file called hello.txt with \"Hello, world!\" as the content.",
+  "fixture": { "path": "tasks/HB-WORLD-001/fixture", "digest": "sha256:c1bafcb09c8e6f3429530adfb92bda166b6fa6f0019eaf841440ae2d4e235870" },
+  "scenario": "tasks/HB-WORLD-001/scenario.ts",
+  "allowedCapabilities": ["filesystem.write"],
+  "budgets": { "maxIterations": 8, "maxModelCalls": 8, "maxToolCalls": 4, "maxRetries": 1, "maxDurationMs": 120000 },
+  "expectedTerminal": "succeeded",
+  "driver": { "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
+  "grader": { "files": [{ "id": "hello-content", "path": "hello.txt", "exists": true, "equals": "Hello, world!" }], "commands": [], "unchangedPaths": [] },
+  "hardGates": ["task_grader_passed", "expected_terminal", "no_false_success", "no_unauthorized_effect", "no_duplicate_non_idempotent_effect", "evidence_integrity", "result_evidence_integrity"]
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
+import { deriveRunDelivery } from "../../packages/runtime/src/delivery.js";
 import { assertRunStatusTransition, transitionRunStatus } from "../../packages/runtime/src/state-machine.js";
 
 const now = "2026-07-22T00:00:00.000Z";
@@ -29,31 +30,37 @@ describe("E049 Run status authority", () => {
     expect(transitionRunStatus(waiting, "running", { now: later }).pendingRequest).toBeNull();
   });
 
-  it("does not permit success without a passed Validation Gate", () => {
-    expect(() => transitionRunStatus(runningRun(), "succeeded", { now: later })).toThrow(/validation/i);
+  it("does not permit success without a persisted Result and Delivery", () => {
     expect(() => transitionRunStatus(runningRun(), "succeeded", {
       now: later,
-      validation: { passed: true, evidenceIds: ["ev-final"] },
-      stopReason: "VALIDATED"
+      delivery: deriveRunDelivery({ run: runningRun(), outcome: "succeeded", now: later, summary: "Verified result", stopReason: "COMPLETED" }),
+      stopReason: "COMPLETED"
     })).toThrow(/result/i);
+    expect(() => transitionRunStatus(runningRun(), "succeeded", {
+      now: later,
+      result: { summary: "Verified result", resultArtifact: null, evidenceIds: [] },
+      stopReason: "COMPLETED"
+    })).toThrow(/delivery/i);
     const succeeded = transitionRunStatus(runningRun(), "succeeded", {
       now: later,
-      validation: { passed: true, evidenceIds: ["ev-final"] },
-      result: { summary: "Verified result", resultArtifact: null, evidenceIds: ["ev-final"] },
-      stopReason: "VALIDATED"
+      result: { summary: "Verified result", resultArtifact: null, evidenceIds: [] },
+      delivery: deriveRunDelivery({ run: runningRun(), outcome: "succeeded", now: later, summary: "Verified result", stopReason: "COMPLETED" }),
+      stopReason: "COMPLETED"
     });
     expect(succeeded.status).toBe("succeeded");
-    expect(succeeded.stopReason).toBe("VALIDATED");
+    expect(succeeded.stopReason).toBe("COMPLETED");
     expect(succeeded.result?.summary).toBe("Verified result");
   });
 
   it("requires a reason for cancellation and keeps every terminal state terminal", () => {
     expect(() => transitionRunStatus(runningRun(), "cancelled", {
-      now: later
+      now: later,
+      delivery: deriveRunDelivery({ run: runningRun(), outcome: "cancelled", now: later })
     })).toThrow(/stop reason/i);
     const cancelled = transitionRunStatus(runningRun(), "cancelled", {
       now: later,
-      stopReason: "USER_REQUESTED"
+      stopReason: "USER_REQUESTED",
+      delivery: deriveRunDelivery({ run: runningRun(), outcome: "cancelled", now: later, stopReason: "USER_REQUESTED" })
     });
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.stopReason).toBe("USER_REQUESTED");
@@ -64,29 +71,40 @@ describe("E049 Run status authority", () => {
     })).toThrow();
     expect(() => transitionRunStatus(cancelled, "succeeded", {
       now: later,
-      validation: { passed: true, evidenceIds: ["ev-final"] },
       result: {
         summary: "Late result",
         resultArtifact: null,
-        evidenceIds: ["ev-final"]
+        evidenceIds: []
       },
-      stopReason: "VALIDATED"
+      stopReason: "COMPLETED"
     })).toThrow();
 
-    const failed = transitionRunStatus(runningRun(), "failed", { now: later, stopReason: "BUDGET_EXCEEDED" });
+    const failed = transitionRunStatus(runningRun(), "failed", {
+      now: later,
+      stopReason: "BUDGET_EXCEEDED",
+      delivery: deriveRunDelivery({ run: runningRun(), outcome: "failed", now: later, stopReason: "BUDGET_EXCEEDED" })
+    });
     expect(() => transitionRunStatus(failed, "running", { now: later })).toThrow();
     const succeeded = transitionRunStatus(runningRun(), "succeeded", {
       now: later,
-      validation: { passed: true, evidenceIds: ["ev-final"] },
-      result: { summary: "Verified result", resultArtifact: null, evidenceIds: ["ev-final"] },
-      stopReason: "VALIDATED"
+      result: { summary: "Verified result", resultArtifact: null, evidenceIds: [] },
+      delivery: deriveRunDelivery({ run: runningRun(), outcome: "succeeded", now: later, summary: "Verified result", stopReason: "COMPLETED" }),
+      stopReason: "COMPLETED"
     });
     expect(() => transitionRunStatus(succeeded, "running", { now: later })).toThrow();
   });
 
   it("allows a blocked Run to resume or fail with an explicit reason", () => {
-    const blocked = transitionRunStatus(runningRun(), "blocked", { now: later, stopReason: "TOOL_RESULT_UNKNOWN" });
+    const blocked = transitionRunStatus(runningRun(), "blocked", {
+      now: later,
+      stopReason: "TOOL_RESULT_UNKNOWN",
+      delivery: deriveRunDelivery({ run: runningRun(), outcome: "blocked", now: later, stopReason: "TOOL_RESULT_UNKNOWN" })
+    });
     expect(transitionRunStatus(blocked, "running", { now: later }).status).toBe("running");
-    expect(transitionRunStatus(blocked, "failed", { now: later, stopReason: "RECOVERY_ABANDONED" }).status).toBe("failed");
+    expect(transitionRunStatus(blocked, "failed", {
+      now: later,
+      stopReason: "RECOVERY_ABANDONED",
+      delivery: deriveRunDelivery({ run: blocked, outcome: "failed", now: later, stopReason: "RECOVERY_ABANDONED" })
+    }).status).toBe("failed");
   });
 });

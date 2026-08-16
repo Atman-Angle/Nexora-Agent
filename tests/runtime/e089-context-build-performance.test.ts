@@ -8,12 +8,13 @@ import {
   RunSnapshotSchema,
   createInitialRunSnapshot
 } from "../../packages/runtime/src/contracts.js";
-import { buildDecisionContext } from "../../packages/runtime/src/context/decision-context.js";
+import { buildDecisionContext } from "../../packages/harness/src/context/decision-context.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
-import {
-  CONTEXT_CONTINUITY_DATASET_V1,
-  percentile
-} from "./e089-multi-cycle-context-continuity.fixture.js";
+import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
+const CONTEXT_CONTINUITY_DATASET_V1 = {
+  scenarioId: "e089-deterministic-context-build-v2",
+  performance: { warmups: 5, samples: 20 }
+} as const;
 
 const roots: string[] = [];
 
@@ -93,6 +94,7 @@ describe("E089 persisted long-history Context build performance", () => {
     const reopened = store.getRun(run.runId)!;
     const samples: number[] = [];
     let contextBytesMax = 0;
+    const artifacts = new ArtifactStore(join(dataDir, "artifacts"));
     const build = () => {
       const started = performance.now();
       const context = buildDecisionContext({
@@ -100,7 +102,10 @@ describe("E089 persisted long-history Context build performance", () => {
         store,
         workspace,
         tools: new Map(),
-        artifactDir: join(dataDir, "artifacts")
+        artifacts: {
+          getText: (digest) => artifacts.getText(digest),
+          has: (digest) => artifacts.has(digest)
+        }
       }).context;
       const elapsed = performance.now() - started;
       contextBytesMax = Math.max(
@@ -137,4 +142,9 @@ describe("E089 persisted long-history Context build performance", () => {
 
 function timestamp(offsetMilliseconds: number): string {
   return new Date(Date.UTC(2026, 7, 11, 0, 0, 0, offsetMilliseconds)).toISOString();
+}
+
+function percentile(values: readonly number[], ratio: number): number {
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * ratio))] ?? 0;
 }

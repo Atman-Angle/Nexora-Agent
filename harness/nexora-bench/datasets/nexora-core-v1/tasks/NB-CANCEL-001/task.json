@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-CANCEL-001",
+  "category": "durable_cancellation",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "instruction": "Read checkpoint.txt first. Only after that succeeds, use its exact token to start the slow source read. The Host will cancel the slow read; preserve the already confirmed checkpoint result and do not modify either source file.",
+  "fixture": {
+    "path": "tasks/NB-CANCEL-001/fixture",
+    "digest": "sha256:dcaa00bff32fcaf1cc06b1a81eea725d0560486d54de9be967777473e11dbde6"
+  },
+  "scenario": "tasks/NB-CANCEL-001/scenario.ts",
+  "allowedCapabilities": ["fixture.checkpoint_read", "fixture.cancellable_read"],
+  "budgets": {
+    "maxIterations": 8,
+    "maxModelCalls": 8,
+    "maxToolCalls": 4,
+    "maxRetries": 1,
+    "maxDurationMs": 120000
+  },
+  "expectedTerminal": "cancelled",
+  "driver": {
+    "approvals": [],
+    "inputs": [],
+    "recoveries": [],
+    "cancellations": [
+      {
+        "occurrence": 1,
+        "toolName": "fixture.cancellable_read",
+        "reason": "Cancel the slow read after preserving the checkpoint.",
+        "expectUnknown": false
+      }
+    ]
+  },
+  "grader": {
+    "files": [],
+    "commands": [],
+    "unchangedPaths": ["checkpoint.txt", "slow-source.txt"],
+    "authority": {
+      "requiredEventTypes": ["cancellation.requested", "run.cancelled"],
+      "forbiddenEventTypes": ["tool.result_unknown"],
+      "invocations": [
+        { "toolName": "fixture.checkpoint_read", "status": "succeeded", "count": 1 },
+        { "toolName": "fixture.cancellable_read", "status": "failed", "count": 1 }
+      ],
+      "evidenceCount": 1
+    }
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity",
+    "scenario_authority"
+  ]
+}

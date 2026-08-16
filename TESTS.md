@@ -115,7 +115,7 @@ CR-read
 CR-search
 CR-mutation
 CR-approval
-CR-validation
+CR-completion
 CR-context
 CR-recovery
 CR-cli
@@ -139,7 +139,7 @@ L3 / Release → 全部 Core Regression
 ```text
 UAT-01 Search / Read
 UAT-02 Literal Search
-UAT-03 Mutation / Approval / Validation
+UAT-03 Mutation / Approval / Verification
 UAT-04 Denial Safety
 ```
 
@@ -151,8 +151,8 @@ UAT-04 Denial Safety
 - 写操作未批准前不执行；
 - 拒绝操作不误报成功；
 - 修改仅发生在允许范围；
-- 只有 succeeded / VALIDATED 才视为成功；
-- Runtime 或验证失败时没有成功 Result。
+- 只有 `succeeded / COMPLETED` 才视为成功；
+- Runtime、Tool 验证或 Completion Gate 失败时没有成功 Result。
 
 ### 4.1 Feature Core 与真实 Provider 验收边界
 
@@ -182,6 +182,18 @@ External Environment Acceptance
 如果 Runtime 正确持久化 blocked/failed、没有假成功、没有越权 Effect、保留已有 Invocation/Evidence 且可恢复，则特定 Provider 的 timeout、Action repair 次数、交互收敛轮数和并发成功率属于 External Environment Acceptance。
 
 External Acceptance 失败必须继续记录为失败或 `verification_blocked`，不能被确定性测试通过覆盖；但它不自动否定已由独立证据证明的 Runtime Feature Core。
+
+### 4.2 Durable Journal 长时等价验证
+
+长时 Run 不等待 500 小时墙钟完成 Feature Core。确定性门禁必须覆盖：虚拟时钟至少 500 小时、100,000 条 Journal Record、有界分页与重复读取、v6 legacy migration、digest/Artifact 漂移、Provider Attempt 中断、Lease/Fencing/并发和脱敏 secret fixture。1–4 小时真实 soak、真实 Provider 多 Attempt、部署加密/备份/保留策略仍是独立 Release/External Environment Gate；未执行时必须明确记录，不能由虚拟时间测试替代。
+
+### 4.3 Progressive Agent Execution 验收
+
+Agent Loop、Provider Contract 或 Completion Gate 改动必须固定验证：无 Plan 的 Tool → Observation → finish；首轮 Plan + Tool 且总计两次 decision；先只读探索再建 Plan；零 validation Model Call；重启后首轮恢复最新 Tool Outcome；最终文本字段修复不重复 Tool 或修订 Plan；Tool 参数字段修复不重复成功 batch sibling；unknown 非幂等 Effect 仍保持 blocked。历史 validation Event/Model Call 只做旧数据可读性测试，不属于新执行路径。
+
+### 4.4 General Agent Prompt / Profile 验收
+
+Prompt、Profile、Tool Schema、ModelTurn 或 Provider Transport 改动必须固定验证：Kernel/Host/Profile/Project/Tool 语义优先级；Profile 不能改变 Tool、权限、Approval、Evidence 或 Completion；canonical stable prefix 和 Tool ordering；真实 Zod JSON Schema；native/JSON 单 Transport wire；显式 `continue/request_input/finish`；reopen strategy continuity；逐 Attempt cache usage 持久化；Bench provenance 与六种 cache status 口径。`unsupported/disabled/unknown` 不进入 zero-hit 分母。L3 还必须保留真实 Provider before/after 结果，并把缓存门槛、Provider 不返回指标和外部模型失败如实区分。
 
 ## 5. 完成证据
 

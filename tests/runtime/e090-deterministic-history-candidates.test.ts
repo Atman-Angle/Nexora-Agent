@@ -12,19 +12,19 @@ import {
   type RunSnapshot,
   type ToolInvocation
 } from "../../packages/runtime/src/contracts.js";
-import { evictDecisionContextOnce } from "../../packages/runtime/src/context/eviction.js";
+import { evictDecisionContextOnce } from "../../packages/harness/src/context/eviction.js";
 import {
   MAX_HISTORY_CANDIDATES,
   MAX_HISTORY_CANDIDATE_BYTES,
   projectHistoryCandidates
-} from "../../packages/runtime/src/context/history-candidates.js";
+} from "../../packages/harness/src/context/history-candidates.js";
 import {
   createOpenAICompatibleProvider,
   createRuntime,
   type HistoryCandidate,
   type ModelDecisionContext,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import { digestJson } from "../../packages/runtime/src/runtime-helpers.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
@@ -191,7 +191,7 @@ describe("E090 deterministic history candidates", () => {
     expect(JSON.stringify(candidates)).not.toContain("sibling");
   });
 
-  it("keeps candidates as navigation until request_context restores the exact Authority fact", async () => {
+  it("restores an exact history candidate when the latest user Input names its published ref", async () => {
     const workspace = fixture();
     let selectedRef = "";
     const provider = new ScriptedRuntimeProvider([
@@ -202,16 +202,17 @@ describe("E090 deterministic history candidates", () => {
         selectedRef = context.historyCandidates.find(
           (candidate) => candidate.category === "evidence"
         )?.ref ?? "";
-        return { type: "request_context", refs: selectedRef === "" ? [] : [selectedRef] };
+        return { type: "request_input", question: "Use the selected history ref?", reason: "Candidate selected." };
       },
       { type: "request_input", question: "Stop.", reason: "Candidate restored." }
     ]);
     const runtime = createRuntime({ workspace, provider, tools: [failingTool()] });
 
-    const result = await runtime.start({ input: "Use related history to diagnose src/context.ts." });
+    const waiting = await runtime.start({ input: "Use related history to diagnose src/context.ts." });
     const candidateContext = provider.contexts.find((context) => context.historyCandidates.length > 0);
+    const result = await runtime.resume({ runId: waiting.runId, input: `Use the published ref ${selectedRef}.` });
     const restoredContext = provider.contexts.find((context) => context.rehydratedFacts.some(
-      (fact) => fact.ref === selectedRef && fact.origin === "model_request"
+      (fact) => fact.ref === selectedRef && fact.origin === "harness_required"
     ));
     await runtime.close();
 
@@ -222,24 +223,24 @@ describe("E090 deterministic history candidates", () => {
       lastError: context.run.lastError
     })))).toMatch(/^evidence:/);
     expect(candidateContext!.rehydratedFacts).not.toContainEqual(
-      expect.objectContaining({ ref: selectedRef, origin: "model_request" })
+      expect.objectContaining({ ref: selectedRef })
     );
     expect(candidateContext!.historyCandidates).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ref: selectedRef,
         category: "evidence",
-        reasons: expect.arrayContaining(["same_step", "same_tool", "same_path", "linked_evidence"])
+        reasons: expect.arrayContaining(["same_tool", "same_path", "linked_evidence"])
       })
     ]));
     expect(restoredContext?.rehydratedFacts, JSON.stringify(provider.contexts.map((context) => ({
       candidates: context.historyCandidates.map((item) => item.ref),
       facts: context.rehydratedFacts.map((item) => ({ ref: item.ref, origin: item.origin, error: item.error })),
-      actions: context.allowedIntents
+      providerContractVersion: context.providerContractVersion
     })))).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ref: selectedRef,
         kind: "evidence",
-        origin: "model_request",
+        origin: "harness_required",
         error: null,
         content: expect.objectContaining({
           id: selectedRef.slice("evidence:".length),
@@ -249,7 +250,7 @@ describe("E090 deterministic history candidates", () => {
     ]));
   });
 
-  it("projects candidates onto the production wire and preserves them through Eviction", async () => {
+  it("keeps navigation candidates out of the production wire and evicts them before task facts", async () => {
     const bodies: Array<{ readonly messages: readonly { readonly role: string; readonly content: string }[] }> = [];
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example/v1",
@@ -259,7 +260,7 @@ describe("E090 deterministic history candidates", () => {
         bodies.push(JSON.parse(String(init?.body)));
         return new Response(JSON.stringify({
           choices: [{ message: { content: JSON.stringify({
-            type: "request_input",
+            action: "request_input",
             question: "Stop?",
             reason: "Candidate wire captured."
           }) } }]
@@ -271,18 +272,16 @@ describe("E090 deterministic history candidates", () => {
     await provider.decide(context, { signal: new AbortController().signal });
     const payload = JSON.parse(
       bodies[0]!.messages.find((message) => message.role === "user")!.content
-    ) as { readonly context: { readonly historyCandidates: readonly HistoryCandidate[] } };
-    const systemPrompt = bodies[0]!.messages.find((message) => message.role === "system")!.content;
+    ) as Record<string, unknown>;
     const evicted = evictDecisionContextOnce(context)!;
     const { projection, ...facts } = evicted;
 
-    expect(payload.context.historyCandidates).toEqual(context.historyCandidates.map((candidate) => ({
-      ref: candidate.ref,
-      category: candidate.category,
-      hint: candidate.hint
-    })));
-    expect(systemPrompt).toContain("Candidates are navigation only");
-    expect(evicted.historyCandidates).toEqual(context.historyCandidates);
+    expect(JSON.stringify(payload)).not.toContain("historyCandidates");
+    expect(payload).toMatchObject({
+      observationsAndRepair: { memoryCandidates: [] }
+    });
+    expect(JSON.stringify(payload)).not.toContain("sessionArchive");
+    expect(evicted.historyCandidates).toEqual([]);
     expect(projection.digest).toBe(digestJson(facts));
   });
 });
@@ -482,9 +481,8 @@ function decisionContext(): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:placeholder" },
-    providerContractVersion: 2,
-    allowedIntents: ["request_input"],
-    intentContract: [{ intent: { kind: "request_input", question: "<question>", reason: "<reason>" } }],
+    providerContractVersion: 4,
+    activeInvocations: [],
     toolObservations: [{
       invocationId: "current",
       planVersion: 1,
@@ -508,7 +506,6 @@ function decisionContext(): ModelDecisionContext {
       },
       digest: "sha256:current"
     }],
-    contextCheckpoint: null,
     rehydratedFacts: [],
     historyCandidates: [candidate],
     memoryCandidates: [],

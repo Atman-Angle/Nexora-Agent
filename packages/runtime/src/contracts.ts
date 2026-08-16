@@ -105,7 +105,7 @@ export type AcceptanceCheck = z.infer<typeof AcceptanceCheckSchema>;
 export const PlanStepSchema = z.object({
   id: NonEmptyString,
   objective: NonEmptyString,
-  acceptanceChecks: z.array(AcceptanceCheckSchema).min(1)
+  acceptanceChecks: z.array(AcceptanceCheckSchema)
 }).strict().superRefine((step, context) => {
   const ids = new Set<string>();
   for (const check of step.acceptanceChecks) {
@@ -141,10 +141,12 @@ const SetPlanActionSchema = z.object({
   orderedSteps: OrderedStepsSchema
 }).strict();
 
+export const UNPLANNED_STEP_ID = "run-unplanned";
+
 export const CallToolActionSchema = z.object({
   type: z.literal("call_tool"),
-  stepId: NonEmptyString,
-  checkIds: z.array(NonEmptyString).min(1),
+  stepId: NonEmptyString.default(UNPLANNED_STEP_ID),
+  checkIds: z.array(NonEmptyString).default([]),
   toolName: NonEmptyString,
   input: JsonValueSchema
 }).strict();
@@ -165,16 +167,7 @@ const RequestInputActionSchema = z.object({
 
 const ProposeFinishActionSchema = z.object({
   type: z.literal("propose_finish"),
-  summary: NonEmptyString,
-  evidenceIds: z.array(NonEmptyString).min(1).superRefine((ids, context) => {
-    const seen = new Set<string>();
-    for (const id of ids) {
-      if (seen.has(id)) {
-        context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate finish Evidence ID: ${id}` });
-      }
-      seen.add(id);
-    }
-  })
+  summary: NonEmptyString
 }).strict();
 
 export const RuntimeActionSchema = z.discriminatedUnion("type", [
@@ -198,86 +191,6 @@ export const RuntimeActionSchema = z.discriminatedUnion("type", [
 });
 export type RuntimeAction = z.infer<typeof RuntimeActionSchema>;
 export type RuntimeActionType = RuntimeAction["type"];
-
-const RuntimeActionExamples: Record<RuntimeActionType, RuntimeAction> = {
-  set_plan: RuntimeActionSchema.parse({
-    type: "set_plan",
-    basedOnVersion: null,
-    taskContract: {
-      goal: "<goal>",
-      constraints: [],
-      acceptanceCriteria: ["<verifiable-criterion>"]
-    },
-    orderedSteps: [{
-      id: "<step-id>",
-      objective: "<step-objective>",
-      acceptanceChecks: [{
-        id: "<check-id>",
-        kind: "tool_result",
-        required: true,
-        toolName: "<registered-tool-name>",
-        expectedStatus: "success"
-      }]
-    }]
-  }),
-  call_tool: RuntimeActionSchema.parse({
-    type: "call_tool",
-    stepId: "<active-step-id>",
-    checkIds: ["<matching-check-id>"],
-    toolName: "<matching-registered-tool-name>",
-    input: {}
-  }),
-  execute_step: RuntimeActionSchema.parse({
-    type: "execute_step",
-    stepId: "<active-step-id>",
-    actions: [{
-      type: "call_tool",
-      stepId: "<active-step-id>",
-      checkIds: ["<matching-check-id>"],
-      toolName: "<matching-registered-tool-name>",
-      input: {}
-    }]
-  }),
-  request_input: RuntimeActionSchema.parse({
-    type: "request_input",
-    question: "<question>",
-    reason: "<blocking-reason>"
-  }),
-  propose_finish: RuntimeActionSchema.parse({
-    type: "propose_finish",
-    summary: "<verified-summary>",
-    evidenceIds: ["<persisted-evidence-id>"]
-  })
-};
-
-export function runtimeActionContract(
-  allowedActions: readonly RuntimeActionType[],
-  context: {
-    readonly workspace: string;
-    readonly inputVersion: number;
-    readonly basedOnVersion: number | null;
-    readonly includeTaskContract: boolean;
-    readonly currentPlan: StructuredPlan | null;
-    readonly finishEvidenceIds: readonly string[];
-  }
-): readonly RuntimeAction[] {
-  return allowedActions.map((type) => {
-    const example = structuredClone(RuntimeActionExamples[type]);
-    if (example.type === "set_plan" && example.taskContract !== undefined) {
-      example.basedOnVersion = context.basedOnVersion;
-      if (!context.includeTaskContract) {
-        delete example.taskContract;
-      }
-      if (context.currentPlan !== null) {
-        example.orderedSteps = structuredClone(context.currentPlan.orderedSteps);
-      }
-    }
-    if (example.type === "propose_finish" && context.finishEvidenceIds.length > 0) {
-      example.evidenceIds = [...context.finishEvidenceIds];
-    }
-    return example;
-  });
-}
 
 export const EvidenceSchema = z.object({
   id: NonEmptyString,
@@ -338,6 +251,23 @@ export const RunErrorSchema = z.object({
   detailsArtifact: NonEmptyString.nullable()
 }).strict();
 
+export const RunDeliverySchema = z.object({
+  outcome: z.enum(["succeeded", "failed", "cancelled", "blocked"]),
+  summary: NonEmptyString,
+  producedArtifacts: z.array(NonEmptyString),
+  confirmedFacts: z.array(NonEmptyString),
+  unfinishedWork: z.array(NonEmptyString),
+  exactCause: z.object({
+    code: NonEmptyString,
+    message: NonEmptyString,
+    stopReason: NonEmptyString.nullable()
+  }).strict(),
+  nextAction: NonEmptyString,
+  generatedBy: z.enum(["model", "deterministic"]),
+  createdAt: IsoDateTime
+}).strict();
+export type RunDelivery = z.infer<typeof RunDeliverySchema>;
+
 export const RunSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   runId: NonEmptyString,
@@ -352,6 +282,7 @@ export const RunSnapshotSchema = z.object({
   budgets: RuntimeBudgetsSchema,
   budgetsUsed: BudgetUsageSchema,
   result: RunResultRecordSchema.nullable(),
+  delivery: RunDeliverySchema.nullable().default(null),
   evidence: z.array(EvidenceSchema),
   lastError: RunErrorSchema.nullable(),
   createdAt: IsoDateTime,
@@ -359,16 +290,91 @@ export const RunSnapshotSchema = z.object({
 }).strict();
 export type RunSnapshot = z.infer<typeof RunSnapshotSchema>;
 
+export const AuditRecordTypeSchema = z.enum([
+  "action.rejected",
+  "approval.denied",
+  "approval.granted",
+  "approval.requested",
+  "approval.required",
+  "branch.created",
+  "branch.discarded",
+  "branch.failed",
+  "branch.merged",
+  "branch.resumed",
+  "cancellation.requested",
+  "context.checkpointed",
+  "context.evidence_recorded",
+  "context.rehydrate_requested",
+  "context.rehydrated",
+  "execute_step.completed",
+  "input.received",
+  "input.required",
+  "model.action_rejected",
+  "model.completed",
+  "model.interrupted",
+  "model.requested",
+  "model.turn",
+  "model.turn.field_rejected",
+  "plan.set",
+  "provider.attempt.cancelled",
+  "provider.attempt.failed",
+  "provider.attempt.interrupted",
+  "provider.attempt.started",
+  "provider.attempt.succeeded",
+  "recovery.abandoned",
+  "recovery.confirmed_failed",
+  "recovery.confirmed_succeeded",
+  "recovery.required",
+  "recovery.resolved",
+  "run.blocked",
+  "run.cancelled",
+  "run.created",
+  "run.failed",
+  "run.reopened",
+  "run.resumed",
+  "run.succeeded",
+  "run.waiting",
+  "runtime.event",
+  "runtime.lifecycle",
+  "tool.attempt.failed",
+  "tool.attempt.started",
+  "tool.attempt.succeeded",
+  "tool.batch.finalized",
+  "tool.batch.prepared",
+  "tool.failed",
+  "tool.result_unknown",
+  "tool.retried",
+  "tool.started",
+  "tool.succeeded",
+  "validation.failed",
+  "validation.passed",
+  "validation.requested",
+  "validation.started"
+]);
+export type AuditRecordType = z.infer<typeof AuditRecordTypeSchema>;
+
+export const AuditActorTypeSchema = z.enum(["host", "runtime", "harness"]);
+export const AuditCompletenessSchema = z.enum(["complete", "legacy_partial"]);
+
 export const RunEventInputSchema = z.object({
   type: NonEmptyString,
   occurredAt: IsoDateTime,
-  payload: z.record(JsonValueSchema)
+  payload: z.record(JsonValueSchema),
+  actorType: AuditActorTypeSchema.optional(),
+  causationRef: NonEmptyString.nullable().optional(),
+  correlationRef: NonEmptyString.nullable().optional(),
+  payloadArtifactRef: NonEmptyString.nullable().optional()
 }).strict();
 export type RunEventInput = z.infer<typeof RunEventInputSchema>;
 
 export const RunEventSchema = RunEventInputSchema.extend({
   runId: NonEmptyString,
-  sequence: z.number().int().positive()
+  sequence: z.number().int().positive(),
+  schemaVersion: z.number().int().positive().optional(),
+  payloadDigest: NonEmptyString.optional(),
+  previousRecordDigest: NonEmptyString.nullable().optional(),
+  recordDigest: NonEmptyString.optional(),
+  completeness: AuditCompletenessSchema.optional()
 }).strict();
 export type RunEvent = z.infer<typeof RunEventSchema>;
 
@@ -377,14 +383,16 @@ export const ToolInvocationSchema = z.object({
   runId: NonEmptyString,
   planVersion: z.number().int().positive(),
   stepId: NonEmptyString,
-  checkIds: z.array(NonEmptyString).min(1),
+  checkIds: z.array(NonEmptyString),
   toolName: NonEmptyString,
   inputJson: JsonValueSchema,
   inputDigest: NonEmptyString,
   idempotencyKey: NonEmptyString,
   idempotent: z.boolean(),
+  batchId: NonEmptyString.nullable().optional(),
+  batchOrdinal: z.number().int().nonnegative().nullable().optional(),
   fencingToken: z.number().int().positive(),
-  status: z.enum(["started", "succeeded", "failed", "unknown"]),
+  status: z.enum(["prepared", "started", "succeeded", "failed", "unknown"]),
   startedAt: IsoDateTime,
   completedAt: IsoDateTime.nullable(),
   resultJson: JsonValueSchema.nullable(),
@@ -402,6 +410,37 @@ export type ToolInvocationIntent = Omit<
   | "payloadDigest"
   | "payloadArtifactRef"
 >;
+
+export const ToolAttemptSchema = z.object({
+  id: NonEmptyString,
+  invocationId: NonEmptyString,
+  runId: NonEmptyString,
+  attemptNumber: z.number().int().positive(),
+  status: z.enum(["started", "succeeded", "failed", "unknown", "interrupted"]),
+  startedAt: IsoDateTime,
+  completedAt: IsoDateTime.nullable(),
+  backoffUntil: IsoDateTime.nullable(),
+  subjectRef: NonEmptyString.nullable(),
+  resultJson: JsonValueSchema.nullable(),
+  errorJson: JsonValueSchema.nullable(),
+  payloadDigest: NonEmptyString.nullable(),
+  payloadArtifactRef: NonEmptyString.nullable()
+}).strict();
+export type ToolAttempt = z.infer<typeof ToolAttemptSchema>;
+export type ToolAttemptIntent = Pick<
+  ToolAttempt,
+  "id" | "invocationId" | "runId" | "attemptNumber" | "startedAt"
+>;
+
+export const CancellationRequestSchema = z.object({
+  id: NonEmptyString,
+  runId: NonEmptyString,
+  reason: NonEmptyString,
+  status: z.enum(["requested", "reconciled"]),
+  requestedAt: IsoDateTime,
+  reconciledAt: IsoDateTime.nullable()
+}).strict();
+export type CancellationRequest = z.infer<typeof CancellationRequestSchema>;
 
 export const ModelCallRecordSchema = z.object({
   id: NonEmptyString,
@@ -438,6 +477,91 @@ export type ModelCallIntent = Omit<
   | "errorCode"
   | "completedAt"
 >;
+
+export const ContextManifestSourceSchema = z.object({
+  ref: NonEmptyString,
+  digest: NonEmptyString,
+  ordinal: z.number().int().nonnegative(),
+  trust: z.enum(["authority", "untrusted_external", "untrusted_memory_data"])
+}).strict();
+
+export const ContextManifestSchema = z.object({
+  schemaVersion: z.literal(1),
+  projectionDigest: NonEmptyString,
+  sources: z.array(ContextManifestSourceSchema),
+  measuredInputTokens: z.number().int().nonnegative(),
+  measurementMethod: z.enum(["exact", "estimated"]),
+  meter: NonEmptyString,
+  strategy: JsonValueSchema.optional()
+}).strict();
+export type ContextManifest = z.infer<typeof ContextManifestSchema>;
+
+export const PayloadCapturePolicySchema = z.enum(["metadata", "redacted"]);
+export type PayloadCapturePolicy = z.infer<typeof PayloadCapturePolicySchema>;
+
+export const ModelCallAuditSchema = z.object({
+  callId: NonEmptyString,
+  runId: NonEmptyString,
+  manifest: ContextManifestSchema,
+  manifestDigest: NonEmptyString,
+  capturePolicy: PayloadCapturePolicySchema,
+  requestDigest: NonEmptyString,
+  requestArtifactRef: NonEmptyString.nullable(),
+  outputDigest: NonEmptyString.nullable(),
+  outputArtifactRef: NonEmptyString.nullable(),
+  errorDigest: NonEmptyString.nullable(),
+  errorArtifactRef: NonEmptyString.nullable(),
+  captureStatus: z.enum(["metadata_only", "redacted_captured", "not_available"])
+}).strict();
+export type ModelCallAudit = z.infer<typeof ModelCallAuditSchema>;
+
+export const ProviderAttemptSchema = z.object({
+  id: NonEmptyString,
+  runId: NonEmptyString,
+  callId: NonEmptyString,
+  attemptNumber: z.number().int().positive(),
+  provider: NonEmptyString,
+  model: NonEmptyString,
+  configFingerprint: NonEmptyString,
+  status: z.enum(["started", "succeeded", "failed", "cancelled", "interrupted"]),
+  startedAt: IsoDateTime,
+  completedAt: IsoDateTime.nullable(),
+  errorCode: NonEmptyString.nullable(),
+  responseDigest: NonEmptyString.nullable(),
+  responseArtifactRef: NonEmptyString.nullable(),
+  actualInputTokens: z.number().int().nonnegative().nullable(),
+  actualOutputTokens: z.number().int().nonnegative().nullable(),
+  actualTotalTokens: z.number().int().nonnegative().nullable(),
+  providerUsage: JsonValueSchema.nullable()
+}).strict();
+export type ProviderAttempt = z.infer<typeof ProviderAttemptSchema>;
+
+export type ModelCallTrace = {
+  readonly call: ModelCallRecord;
+  readonly audit: ModelCallAudit | null;
+  readonly attempts: readonly ProviderAttempt[];
+  readonly completeness: "complete" | "legacy_partial";
+};
+
+export const AuditHistoryQuerySchema = z.object({
+  afterSequence: z.number().int().nonnegative().default(0),
+  limit: z.number().int().positive().max(200).default(50),
+  types: z.array(AuditRecordTypeSchema).min(1).max(32).optional()
+}).strict();
+export type AuditHistoryQuery = z.input<typeof AuditHistoryQuerySchema>;
+
+export type AuditHistoryPage = {
+  readonly records: readonly RunEvent[];
+  readonly nextCursor: number | null;
+  readonly completeness: "complete" | "legacy_partial";
+};
+
+export type AuditIntegrityResult = {
+  readonly valid: boolean;
+  readonly checkedThroughSequence: number;
+  readonly completeness: "complete" | "legacy_partial";
+  readonly error: string | null;
+};
 
 export const BranchStatusSchema = z.enum(["creating", "active", "merged", "discarded", "failed"]);
 export type BranchStatus = z.infer<typeof BranchStatusSchema>;
@@ -542,6 +666,7 @@ export function createInitialRunSnapshot(input: {
     budgets: input.budgets ?? DEFAULT_RUNTIME_BUDGETS,
     budgetsUsed: { iterations: 0, modelCalls: 0, toolCalls: 0, retries: 0, startedAt: now },
     result: null,
+    delivery: null,
     evidence: [],
     lastError: null,
     createdAt: now,

@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": "packages/harness/src",
+    "outDir": "packages/harness/dist",
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["packages/harness/src/**/*.ts"],
+  "exclude": ["tests/**"]
+}

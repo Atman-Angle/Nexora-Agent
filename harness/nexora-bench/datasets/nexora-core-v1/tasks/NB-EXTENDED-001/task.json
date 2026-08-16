@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-EXTENDED-001",
+  "category": "extended_restart_sequence",
+  "horizon": "long",
+  "split": "validation",
+  "source": "real_workflow",
+  "instruction": "Read all 24 sequence values exactly once, write their count and total, survive two approval-time Runtime restarts, and validate the aggregate.",
+  "fixture": {
+    "path": "tasks/NB-EXTENDED-001/fixture",
+    "digest": "sha256:7b473f48da8b3116163c9e93899775e86652af0ee7f4580b11e9895eb4565606"
+  },
+  "scenario": "tasks/NB-EXTENDED-001/scenario.ts",
+  "allowedCapabilities": ["fixture.sequence_read", "filesystem.write", "fixture.sequence_validate"],
+  "budgets": {
+    "maxIterations": 12,
+    "maxModelCalls": 12,
+    "maxToolCalls": 30,
+    "maxRetries": 2,
+    "maxDurationMs": 180000
+  },
+  "expectedTerminal": "succeeded",
+  "driver": {
+    "approvals": [
+      { "occurrence": 1, "decision": "approve", "restartBeforeDecision": true },
+      { "occurrence": 2, "decision": "approve", "restartBeforeDecision": true }
+    ],
+    "inputs": [],
+    "recoveries": [],
+    "cancellations": []
+  },
+  "grader": {
+    "files": [{ "id": "extended-summary", "path": "summary.txt", "exists": true, "equals": "COUNT=24\nTOTAL=300\n" }],
+    "commands": [],
+    "unchangedPaths": ["seed.txt"],
+    "authority": {
+      "requiredEventTypes": ["run.reopened", "run.succeeded"],
+      "forbiddenEventTypes": ["validation.requested", "validation.passed"],
+      "eventCounts": [{ "type": "run.reopened", "count": 2 }],
+      "invocations": [
+        { "toolName": "fixture.sequence_read", "status": "succeeded", "count": 24 },
+        { "toolName": "filesystem.write", "status": "succeeded", "count": 1 },
+        { "toolName": "fixture.sequence_validate", "status": "succeeded", "count": 1 }
+      ],
+      "evidenceCount": 26
+    }
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity",
+    "scenario_authority"
+  ]
+}

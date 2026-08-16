@@ -13,12 +13,11 @@ import {
   type ModelCallRecord,
   type ModelDecisionContext,
   type ProviderModelProfile,
-  type RunEvent,
   type RunResult,
   type RunView,
   type RuntimeProvider
-} from "../../packages/runtime/src/index.js";
-import { memoryRef } from "../../packages/runtime/src/memory/recall.js";
+} from "../../packages/harness/src/index.js";
+import { memoryRef } from "../../packages/harness/src/memory/recall.js";
 
 export const CONTINUITY_CANARY_ID = "context-memory-continuity-v1";
 export const TARGET_MEMORY_ID = "continuity-stream-orchid";
@@ -29,7 +28,7 @@ export const SHARD_PATHS = Object.freeze(Array.from(
 ));
 
 type ProviderObservation = {
-  readonly phase: "decision" | "validation" | "compaction";
+  readonly phase: "decision";
   readonly latencyMs: number;
   readonly actionType: string | null;
   readonly requestedRefs: readonly string[];
@@ -177,16 +176,13 @@ export function evaluateContinuityCanary(input: {
   const evictedModelCalls = input.view.events.filter((event) => (
     event.type === "model.requested" && Number(event.payload.tokenEvictionCount ?? 0) > 0
   )).length;
-  const rehydrationRequests = eventsOfType(input.view.events, "context.rehydrate_requested").length;
-  const rehydrations = eventsOfType(input.view.events, "context.rehydrated").length;
-  const checkpoints = eventsOfType(input.view.events, "context.checkpointed").length;
   const actionRejections = input.view.events.filter((event) => event.type === "action.rejected").length;
   const tokens = tokenMetrics(input.view.modelCalls, input.pricing);
   const contextBudget = contextBudgetMetrics(input.view.modelCalls);
   const providerLatency = latencyMetrics(input.observations);
   const targetRequested = requestedMemoryRefs.includes(TARGET_MEMORY_REF);
   const passed = input.result.status === "succeeded"
-    && input.result.stopReason === "VALIDATED"
+    && input.result.stopReason === "COMPLETED"
     && targetRequested
     && targetRestored
     && wrongMemoryRefs.length === 0
@@ -227,9 +223,6 @@ export function evaluateContinuityCanary(input: {
     continuity: {
       evictionRequired: input.requireEviction ?? true,
       evictedModelCalls,
-      checkpoints,
-      rehydrationRequests,
-      rehydrations,
       actionRejections
     },
     modelCalls: tokens,
@@ -243,7 +236,7 @@ export function evaluateContinuityCanary(input: {
 }
 
 function contextBudgetMetrics(modelCalls: readonly ModelCallRecord[]) {
-  const phases = ["decision", "validation", "compaction"] as const;
+  const phases = ["decision"] as const;
   const inconsistentCalls = modelCalls.flatMap((call) => {
     const expectedHard = call.contextWindowTokens - call.reservedOutputTokens;
     const expectedDecision = call.measuredInputTokens > call.hardInputLimitTokens
@@ -317,31 +310,31 @@ function observeProvider(
 ): RuntimeProvider {
   const invoke = async (
     phase: ProviderObservation["phase"],
-    context: Parameters<RuntimeProvider["decide"]>[0] | Parameters<RuntimeProvider["validate"]>[0],
+    context: Parameters<RuntimeProvider["decide"]>[0],
     operation: Parameters<RuntimeProvider["decide"]>[1],
     call: () => Promise<unknown>
   ): Promise<unknown> => {
     const started = performance.now();
     const result = await call();
-    const decision = result as {
-      readonly type?: unknown;
-      readonly refs?: unknown;
-      readonly intent?: { readonly kind?: unknown; readonly refs?: unknown };
-    };
-    const actionType = typeof decision.intent?.kind === "string"
-      ? decision.intent.kind
-      : typeof decision.type === "string" ? decision.type : null;
-    const requestedRefs = decision.intent?.kind === "restore_context"
-      ? decision.intent.refs
-      : decision.refs;
     const decisionContext = phase === "decision" ? context as ModelDecisionContext : null;
+    const turn = phase === "decision" && typeof result === "object" && result !== null
+      ? result as { readonly plan?: unknown; readonly toolCalls?: unknown; readonly requestInput?: unknown; readonly text?: unknown }
+      : null;
+    const actionType = turn?.plan !== undefined
+      ? "plan"
+      : Array.isArray(turn?.toolCalls) && turn.toolCalls.length > 0
+        ? "tool_calls"
+        : turn?.requestInput !== undefined
+          ? "request_input"
+          : typeof turn?.text === "string" ? "text" : null;
+    const restoredRefs = decisionContext?.rehydratedFacts.flatMap((fact) => (
+      fact.error === null ? [fact.ref] : []
+    )) ?? [];
     observations.push({
       phase,
       latencyMs: performance.now() - started,
       actionType,
-      requestedRefs: Array.isArray(requestedRefs)
-        ? requestedRefs.filter((ref): ref is string => typeof ref === "string")
-        : [],
+      requestedRefs: restoredRefs,
       memoryCandidateRefs: decisionContext?.memoryCandidates.map((candidate) => candidate.ref) ?? [],
       restoredMemoryRefs: decisionContext?.rehydratedFacts.flatMap((fact) => (
         fact.kind === "memory" && fact.error === null ? [fact.ref] : []
@@ -357,26 +350,6 @@ function observeProvider(
     decide: (context, operation) => invoke(
       "decision", context, operation, () => provider.decide(context, operation)
     ),
-    validate: (context, operation) => invoke(
-      "validation", context, operation, () => provider.validate(context, operation)
-    ),
-    ...(provider.compact === undefined
-      ? {}
-      : {
-          compact: async (context, operation) => {
-            const started = performance.now();
-            const result = await provider.compact!(context, operation);
-            observations.push({
-              phase: "compaction",
-              latencyMs: performance.now() - started,
-              actionType: null,
-              requestedRefs: [],
-              memoryCandidateRefs: [],
-              restoredMemoryRefs: []
-            });
-            return result;
-          }
-        }),
     ...(provider.dispose === undefined ? {} : { dispose: provider.dispose.bind(provider) })
   };
 }
@@ -438,7 +411,7 @@ function tokenMetrics(modelCalls: readonly ModelCallRecord[], pricing?: Pricing)
 }
 
 function latencyMetrics(observations: readonly ProviderObservation[]) {
-  const phases = ["decision", "validation", "compaction"] as const;
+  const phases = ["decision"] as const;
   return Object.fromEntries(phases.map((phase) => {
     const samples = observations.filter((item) => item.phase === phase).map((item) => item.latencyMs);
     return [phase, samples.length === 0 ? null : distribution(samples)];
@@ -455,10 +428,6 @@ function distribution(samples: readonly number[]) {
 
 function sumAvailable(values: readonly (number | null)[]): number {
   return values.reduce<number>((total, value) => total + (value ?? 0), 0);
-}
-
-function eventsOfType(events: readonly RunEvent[], type: string): RunEvent[] {
-  return events.filter((event) => event.type === type);
 }
 
 function seedMemory(store: ReturnType<typeof openMemoryStore>, now: string): void {

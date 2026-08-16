@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-core-v1",
+  "version": 11,
+  "description": "Reproducible multi-step Nexora Runtime tasks with deterministic external and authority grading.",
+  "tasks": [
+    "tasks/NB-CODE-001/task.json",
+    "tasks/NB-LONG-001/task.json",
+    "tasks/NB-CONVERGE-001/task.json",
+    "tasks/NB-SAFETY-001/task.json",
+    "tasks/NB-BATCH-001/task.json",
+    "tasks/NB-RETRY-001/task.json",
+    "tasks/NB-CANCEL-001/task.json",
+    "tasks/NB-RECOVERY-001/task.json",
+    "tasks/NB-ARTIFACT-001/task.json",
+    "tasks/NB-EXTENDED-001/task.json",
+    "tasks/NB-BATCH-CANCEL-001/task.json",
+    "tasks/HB-WORLD-001/task.json",
+    "tasks/HB-MULTI-001/task.json",
+    "tasks/HB-WORKDIR-001/task.json",
+    "tasks/QB-GCD-001/task.json",
+    "tasks/QB-MAXSUM-001/task.json"
+  ]
+}

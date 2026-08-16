@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createRuntime, type RuntimeTool } from "../../packages/runtime/src/index.js";
+import { createRuntime, type RuntimeTool } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 describe("E076 repeated Tool Action safety", () => {
@@ -51,6 +51,12 @@ describe("E076 repeated Tool Action safety", () => {
       },
       repeatedAction,
       repeatedAction,
+      repeatedAction,
+      repeatedAction,
+      repeatedAction,
+      repeatedAction,
+      repeatedAction,
+      repeatedAction,
       repeatedAction
     ]);
     const runtime = createRuntime({
@@ -80,16 +86,20 @@ describe("E076 repeated Tool Action safety", () => {
       const view = await runtime.inspect(waiting.runId);
 
       expect(result.status).toBe("failed");
-      expect(result.stopReason).toBe("ACTION_REPAIR_EXHAUSTED");
-      expect(result.summary).toBeNull();
+      expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
+      expect(result.summary).toBe("Completed 1 planned item(s) and preserved 1 confirmed fact(s) before INVALID_MODEL_ACTION.");
+      expect(result.delivery).toEqual(expect.objectContaining({
+        outcome: "failed",
+        generatedBy: "deterministic"
+      }));
       expect(result.lastError?.code).toBe("INVALID_MODEL_ACTION");
       expect(effects.count).toBe(1);
-      expect(view.snapshot.budgetsUsed.retries).toBe(2);
+      expect(view.snapshot.budgetsUsed.retries).toBe(0);
       expect(view.toolInvocations).toHaveLength(1);
       expect(view.toolInvocations[0]?.status).toBe("succeeded");
       expect(view.events.filter((event) => event.type === "approval.requested")).toHaveLength(1);
       expect(view.events.filter((event) => event.type === "approval.granted")).toHaveLength(1);
-      expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
+      expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(7);
       expect(view.events.filter((event) => event.type === "run.failed")).toHaveLength(1);
       expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
       expect(view.snapshot.result).toBeNull();

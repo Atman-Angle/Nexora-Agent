@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createRuntime, ProviderDecisionSchema } from "../../packages/runtime/src/index.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import {
   ScriptedRuntimeProvider,
@@ -125,7 +125,7 @@ describe("E066 execute_step granularity", () => {
     }));
   });
 
-  it("stops the batch at the first Tool failure and keeps prior Evidence", async () => {
+  it("settles every read in the batch and keeps successful sibling Evidence", async () => {
     const workspace = tempRoot();
     const state = { calls: 0 };
     const provider = new ScriptedRuntimeProvider([
@@ -142,14 +142,16 @@ describe("E066 execute_step granularity", () => {
     const view = await runtime.inspect(result.runId);
     runtime.close();
 
-    expect(state.calls).toBe(2);
-    expect(view.toolInvocations).toHaveLength(2);
+    expect(state.calls).toBe(3);
+    expect(view.toolInvocations).toHaveLength(3);
     expect(view.toolInvocations[0]?.status).toBe("succeeded");
     expect(view.toolInvocations[1]?.status).toBe("failed");
+    expect(view.toolInvocations[2]?.status).toBe("succeeded");
+    expect(view.snapshot.evidence).toHaveLength(2);
     expect(view.snapshot.lastError?.code).toBe("READ_FAILED");
     expect(provider.contexts).toHaveLength(3);
     expect(executeStepEvent(view)?.payload).toEqual(expect.objectContaining({
-      executedActionCount: 2,
+      executedActionCount: 3,
       totalActions: 3,
       stoppedReason: "tool_failed"
     }));
@@ -201,13 +203,13 @@ describe("E066 execute_step granularity", () => {
     }));
   });
 
-  it("rejects a capability batch with more calls than unsatisfied Checks", async () => {
+  it("deduplicates an exact idempotent read within one batch", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       { type: "set_plan", basedOnVersion: null, taskContract: taskContract(), orderedSteps: [readStepChecks(1)] },
       executeStep([
         { checkId: "read-0", path: "a.ts" },
-        { checkId: "read-0", path: "b.ts" }
+        { checkId: "read-0", path: "a.ts" }
       ]),
       { type: "request_input", question: "Stop after step completion", reason: "test" }
     ]);
@@ -216,11 +218,15 @@ describe("E066 execute_step granularity", () => {
     const view = await runtime.inspect(result.runId);
     runtime.close();
 
-    expect(view.toolInvocations).toHaveLength(0);
-    expect(view.snapshot.stepProgress[0]?.status).toBe("active");
+    expect(view.toolInvocations).toHaveLength(1);
+    expect(view.snapshot.stepProgress[0]?.status).toBe("completed");
     expect(provider.contexts).toHaveLength(3);
-    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(1);
-    expect(executeStepEvent(view)).toBeUndefined();
+    expect(view.events.filter((event) => event.type === "action.rejected")).toHaveLength(0);
+    expect(executeStepEvent(view)?.payload).toEqual(expect.objectContaining({
+      executedActionCount: 1,
+      cachedActionCount: 1,
+      totalActions: 2
+    }));
   });
 
   it("advertises a parseable capability intent without internal execute_step fields", async () => {
@@ -234,15 +240,10 @@ describe("E066 execute_step granularity", () => {
     runtime.close();
 
     expect(result.status).toBe("waiting");
-    const contract = provider.contexts[1]?.intentContract ?? [];
-    expect(contract.map((decision) => decision.intent.kind)).toEqual(["use_capabilities"]);
-    const example = contract.find((decision) => decision.intent.kind === "use_capabilities");
-    expect(example).toBeDefined();
-    const parsed = ProviderDecisionSchema.parse(example);
-    expect(parsed.intent.kind).toBe("use_capabilities");
-    expect(JSON.stringify(parsed)).not.toContain("stepId");
-    expect(JSON.stringify(parsed)).not.toContain("checkIds");
-    expect(JSON.stringify(parsed)).not.toContain("execute_step");
+    const context = provider.contexts[1]!;
+    expect(context.tools.map((tool) => tool.identity.name)).toContain("filesystem.read");
+    expect(context).not.toHaveProperty("allowedIntents");
+    expect(context).not.toHaveProperty("intentContract");
   });
 
   it("rejects a malformed execute_step as a whole before executing any sub-action", async () => {
@@ -287,7 +288,7 @@ describe("E066 execute_step granularity", () => {
     expect(view.snapshot.stepProgress[0]?.status).toBe("completed");
   });
 
-  it("exposes batch observations to the decision after the Step completes", async () => {
+  it("exposes batch observations after navigation progress completes the Step", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       { type: "set_plan", basedOnVersion: null, taskContract: taskContract(), orderedSteps: [readStepChecks(3)] },
@@ -303,8 +304,8 @@ describe("E066 execute_step granularity", () => {
     runtime.close();
 
     expect(result.status).toBe("waiting");
-    // Decision #3 is issued after the batch completed the Step: the batch's
-    // observations must remain visible even though no active Step exists.
+    // Decision #3 is issued after the batch while the objective still awaits
+    // Every persisted observation remains visible for the next decision.
     const postBatch = provider.contexts[2]!;
     expect(postBatch.run.stepProgress.map((item) => item.status)).toEqual(["completed"]);
     expect(postBatch.toolObservations).toHaveLength(3);

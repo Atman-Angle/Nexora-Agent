@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createBuiltInTools, type RuntimeTool } from "../../packages/runtime/src/index.js";
+import { createBuiltInTools, type RuntimeTool } from "../../packages/harness/src/index.js";
 
 const roots: string[] = [];
 

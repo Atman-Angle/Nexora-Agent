@@ -12,20 +12,16 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./testing": {
-      "types": "./dist/testing/index.d.ts",
-      "import": "./dist/testing/index.js"
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js"
     }
   },
   "files": [
     "dist/*.js",
     "dist/*.d.ts",
-    "dist/context",
     "dist/execution",
-    "dist/memory",
-    "dist/providers",
-    "dist/store",
-    "dist/testing"
+    "dist/store"
   ],
   "scripts": {
     "build": "node ./scripts/build.mjs",

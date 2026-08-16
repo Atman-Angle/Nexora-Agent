@@ -9,12 +9,11 @@ import {
   createBuiltInTools,
   createOpenAICompatibleProvider,
   createRuntime,
-  type ModelDecisionContext,
   type RuntimeEvent,
   type RuntimeProvider,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
-import { legacyTestProvider } from "./runtime-testkit.js";
+} from "../../packages/harness/src/index.js";
+import { runtimeActionTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -32,9 +31,6 @@ describe("D3 persisted cancellation", () => {
         entered.resolve(operation.signal);
         await aborted(operation.signal);
         throw operation.signal.reason;
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     };
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -102,31 +98,6 @@ describe("D3 persisted cancellation", () => {
     expect(approvalInspection.invocations).toHaveLength(0);
     expect(effects.calls).toBe(0);
     await approvalRuntime.close();
-  });
-
-  it("cancels semantic validation without accepting a late verdict", async () => {
-    const workspace = temporaryWorkspace();
-    const validationEntered = deferred<AbortSignal>();
-    const provider = successfulReadProvider(workspace, {
-      async validate(_context, operation) {
-        validationEntered.resolve(operation.signal);
-        await aborted(operation.signal);
-        return { passed: true, issues: [] };
-      }
-    });
-    const runtime = createRuntime({
-      workspace,
-      provider,
-      tools: [immediateReadTool()]
-    });
-    const run = runtime.run("Read then cancel validation.");
-    await validationEntered.promise;
-
-    await run.cancel("validation no longer needed");
-
-    expect((await run.result()).status).toBe("cancelled");
-    expect((await run.inspect()).evidence).toHaveLength(1);
-    await runtime.close();
   });
 
   it("persists a cancelled idempotent Tool Invocation before cancelling the Run", async () => {
@@ -253,9 +224,6 @@ describe("D3 persisted cancellation", () => {
           entered.resolve(operation.signal);
           await aborted(operation.signal);
           throw operation.signal.reason;
-        },
-        async validate() {
-          return { passed: true, issues: [] };
         }
       },
       tools: []
@@ -346,16 +314,13 @@ function temporaryWorkspace(): string {
 }
 
 function requestInputProvider(): RuntimeProvider {
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide() {
       return {
         type: "request_input",
         question: "Provide more input.",
         reason: "Input is required."
       };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }
@@ -365,7 +330,7 @@ function protectedToolProvider(
   toolName: string
 ): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide(context) {
       call += 1;
       if (call === 1) return plan(workspace, toolName);
@@ -383,38 +348,7 @@ function protectedToolProvider(
         summary: "Effect completed.",
         evidenceIds: context.run.evidence.map((item) => item.id)
       };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
-  });
-}
-
-function successfulReadProvider(
-  workspace: string,
-  validation: Pick<RuntimeProvider, "validate">
-): RuntimeProvider {
-  let call = 0;
-  return legacyTestProvider({
-    async decide(context: ModelDecisionContext) {
-      call += 1;
-      if (call === 1) return plan(workspace, "test.read");
-      if (call === 2) {
-        return {
-          type: "call_tool",
-          stepId: "effect",
-          checkIds: ["effect-check"],
-          toolName: "test.read",
-          input: {}
-        };
-      }
-      return {
-        type: "propose_finish",
-        summary: "Read completed.",
-        evidenceIds: context.run.evidence.map((item) => item.id)
-      };
-    },
-    validate: validation.validate
   });
 }
 
@@ -443,7 +377,7 @@ function plan(workspace: string, toolName: string) {
 
 function shellProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide() {
       call += 1;
       if (call === 1) return plan(workspace, "shell.execute");
@@ -459,24 +393,8 @@ function shellProvider(workspace: string): RuntimeProvider {
           timeoutMs: 30_000
         }
       };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
-}
-
-function immediateReadTool(): RuntimeTool {
-  return {
-    ...toolContract("test.read", "read", true),
-    async execute() {
-      return {
-        status: "success",
-        subjectRef: "read:known",
-        facts: { completed: true }
-      };
-    }
-  };
 }
 
 function controlledTool(input: {

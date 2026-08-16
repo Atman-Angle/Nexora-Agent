@@ -7,15 +7,15 @@ import { z } from "zod";
 import {
   defineTool,
   type RuntimeEvent
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import {
   assertEventSequence,
   assertRuntimeError,
   assertSucceeded,
-  createRuntimeHarness,
+  createAgentHarness,
   createScriptedProvider,
-  runtimeActions
-} from "../../packages/runtime/src/testing/index.js";
+  modelTurns
+} from "../../packages/harness/src/testing/index.js";
 
 describe("D4 Runtime Testing Kit", () => {
   it("runs a trusted closure through production Runtime and real temporary SQLite", async () => {
@@ -40,33 +40,21 @@ describe("D4 Runtime Testing Kit", () => {
       }
     });
     const provider = createScriptedProvider({
-      decisions: [
-        runtimeActions.plan({
+      modelTurns: [
+        modelTurns.plan({
           goal: "Read fixture",
-          acceptanceCriteria: ["fixture evidence exists"],
           steps: [{
-            id: "read",
-            objective: "Read fixture",
-            checks: [{
-              id: "read-check",
-              toolName: "fixture.read"
-            }]
+            objective: "Read fixture"
           }]
         }),
-        runtimeActions.tool({
-          stepId: "read",
-          checkIds: ["read-check"],
+        modelTurns.tool({
           toolName: "fixture.read",
           input: { path: "values/example.txt" }
         }),
-        runtimeActions.finish({
-          summary: "Fixture was read.",
-          evidence: "all"
-        })
-      ],
-      validations: [{ passed: true, issues: [] }]
+        modelTurns.finish({ summary: "Fixture was read." })
+      ]
     });
-    const harness = await createRuntimeHarness({
+    const harness = await createAgentHarness({
       provider,
       tools: [tool],
       fixtures: {
@@ -108,16 +96,15 @@ describe("D4 Runtime Testing Kit", () => {
   });
 
   it("keeps malformed scripted output on the production Action repair path", async () => {
-    const harness = await createRuntimeHarness({
+    const harness = await createAgentHarness({
       provider: createScriptedProvider({
-        decisions: [
-          runtimeActions.raw("malformed"),
-          runtimeActions.input({
+        modelTurns: [
+          modelTurns.raw({ invalid: "turn" }),
+          modelTurns.input({
             question: "Repair observed?",
             reason: "Stop after repair."
           })
-        ],
-        validations: []
+        ]
       }),
       tools: []
     });
@@ -136,11 +123,8 @@ describe("D4 Runtime Testing Kit", () => {
   });
 
   it("exhausts scripts as Provider failure and assertions reject false claims", async () => {
-    const harness = await createRuntimeHarness({
-      provider: createScriptedProvider({
-        decisions: [],
-        validations: []
-      }),
+    const harness = await createAgentHarness({
+      provider: createScriptedProvider({ modelTurns: [] }),
       tools: []
     });
     try {

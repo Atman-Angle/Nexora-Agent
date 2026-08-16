@@ -9,27 +9,27 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-describe("E049 reusable @nexora/runtime package", () => {
+describe("E049 reusable @nexora/harness package", () => {
   it("packs and runs from an external ESM consumer without legacy source paths", () => {
     const root = mkdtempSync(join(tmpdir(), "nexora-e049-consumer-"));
     roots.push(root);
     execFileSync("pnpm", ["--filter", "@nexora/runtime", "pack", "--pack-destination", root], { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" });
-    const tarball = join(root, readdirSync(root).find((name) => name.endsWith(".tgz"))!);
+    execFileSync("pnpm", ["--filter", "@nexora/harness", "pack", "--pack-destination", root], { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" });
+    const tarballs = readdirSync(root).filter((name) => name.endsWith(".tgz")).map((name) => join(root, name));
     writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module", private: true }), "utf8");
-    execFileSync("npm", ["install", "--offline", tarball], { cwd: root, stdio: "pipe", shell: process.platform === "win32" });
+    execFileSync("npm", ["install", "--offline", ...tarballs], { cwd: root, stdio: "pipe", shell: process.platform === "win32" });
     writeFileSync(join(root, "target.txt"), "external consumer\n", "utf8");
     writeFileSync(join(root, "consumer.mjs"), `
-import { createBuiltInTools, createRuntime } from "@nexora/runtime";
+import { createBuiltInTools, createRuntime } from "@nexora/harness";
 let call = 0;
 const workspace = ${JSON.stringify(root)};
 const provider = {
   async decide() {
     call += 1;
-    if (call === 1) return { intent: { kind: "plan_tasks", taskContract: { goal: "Search target", constraints: [], acceptanceCriteria: ["search"] }, tasks: [{ objective: "Search", completionRequirements: [{ kind: "capability_result", capability: "filesystem.search" }] }] } };
-    if (call === 2) return { intent: { kind: "use_capabilities", calls: [{ capability: "filesystem.search", arguments: { query: "external consumer", path: "." } }] } };
-    return { intent: { kind: "finish", summary: "Verified" } };
-  },
-  async validate() { return { passed: true, issues: [] }; }
+    if (call === 1) return { action: "continue", plan: { goal: "Search target", tasks: [{ objective: "Search" }] } };
+    if (call === 2) return { action: "continue", toolCalls: [{ name: "filesystem.search", arguments: { query: "external consumer", path: "." } }] };
+    return { action: "finish", text: "Verified" };
+  }
 };
 const runtime = createRuntime({ workspace, provider, tools: createBuiltInTools() });
 const result = await runtime.start({ input: "Search for external consumer" });

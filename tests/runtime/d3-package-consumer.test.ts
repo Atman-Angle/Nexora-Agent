@@ -30,10 +30,14 @@ describe("D3 packed cancellation consumer", () => {
       ["--filter", "@nexora/runtime", "pack", "--pack-destination", root],
       windowsCommand({ cwd: process.cwd(), stdio: "pipe", encoding: "utf8" })
     );
-    const tarball = join(
-      root,
-      readdirSync(root).find((name) => name.endsWith(".tgz"))!
+    execFileSync(
+      "pnpm",
+      ["--filter", "@nexora/harness", "pack", "--pack-destination", root],
+      windowsCommand({ cwd: process.cwd(), stdio: "pipe", encoding: "utf8" })
     );
+    const tarballs = readdirSync(root)
+      .filter((name) => name.endsWith(".tgz"))
+      .map((name) => join(root, name));
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify({
@@ -45,7 +49,7 @@ describe("D3 packed cancellation consumer", () => {
     );
     execFileSync(
       "npm",
-      ["install", "--offline", tarball],
+      ["install", "--offline", ...tarballs],
       windowsCommand({ cwd: root, stdio: "pipe", encoding: "utf8" })
     );
     writeFileSync(
@@ -89,11 +93,20 @@ describe("D3 packed cancellation consumer", () => {
       providerDisposed: 1
     });
 
-    const packageRoot = join(root, "node_modules", "@nexora", "runtime");
-    const packageJson = JSON.parse(
-      readFileSync(join(packageRoot, "package.json"), "utf8")
+    const runtimePackage = JSON.parse(
+      readFileSync(
+        join(root, "node_modules", "@nexora", "runtime", "package.json"),
+        "utf8"
+      )
     ) as { exports: Record<string, unknown> };
-    expect(Object.keys(packageJson.exports).sort()).toEqual([".", "./testing"]);
+    const harnessPackage = JSON.parse(
+      readFileSync(
+        join(root, "node_modules", "@nexora", "harness", "package.json"),
+        "utf8"
+      )
+    ) as { exports: Record<string, unknown> };
+    expect(Object.keys(runtimePackage.exports).sort()).toEqual([".", "./internal"]);
+    expect(Object.keys(harnessPackage.exports).sort()).toEqual([".", "./testing"]);
   }, 60_000);
 });
 
@@ -104,9 +117,9 @@ import {
   createRuntime,
   type RuntimeEvent,
   type RuntimeProvider
-} from "@nexora/runtime";
+} from "@nexora/harness";
 // @ts-expect-error internal paths remain blocked
-import type { RuntimeEngine as InternalRuntime } from "@nexora/runtime/dist/runtime.js";
+import type { RuntimeEngine as InternalRuntime } from "@nexora/harness/dist/runtime.js";
 
 let providerDisposed = 0;
 const provider: RuntimeProvider = {
@@ -115,9 +128,6 @@ const provider: RuntimeProvider = {
       operation.signal.addEventListener("abort", resolve, { once: true });
     });
     throw operation.signal.reason;
-  },
-  async validate() {
-    return { passed: true, issues: [] };
   },
   async dispose() {
     providerDisposed += 1;

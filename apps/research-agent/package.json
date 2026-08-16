@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@nexora/runtime": "workspace:*",
+    "@nexora/harness": "workspace:*",
     "zod": "^3.25.76"
   }
 }

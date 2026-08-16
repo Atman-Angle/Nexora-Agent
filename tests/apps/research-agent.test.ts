@@ -14,8 +14,8 @@ import {
 import {
   assertSucceeded,
   createScriptedProvider,
-  runtimeActions
-} from "../../packages/runtime/src/testing/index.js";
+  modelTurns
+} from "../../packages/harness/src/testing/index.js";
 
 const roots: string[] = [];
 
@@ -54,31 +54,24 @@ describe("Automated Daily Research Agent", () => {
     roots.push(workspace);
     const profile = researchProfile();
     const provider = createScriptedProvider({
-      decisions: [
-        runtimeActions.plan({
+      modelTurns: [
+        modelTurns.plan({
           goal: "Generate the configured daily media outputs.",
-          acceptanceCriteria: ["covered and selected discovery", "conflict analysis", "validated outputs"],
           steps: [
-            { id: "discover", objective: "Discover daily candidates.", checks: [{ id: "discover-evidence", toolName: "news.discover" }] },
-            { id: "analyze", objective: "Analyze source agreement and conflict.", checks: [{ id: "analysis-evidence", toolName: "news.analyze_selection" }] },
-            { id: "deliver", objective: "Validate configured outputs.", checks: [{ id: "output-evidence", toolName: "news.validate_output" }] }
+            { objective: "Discover daily candidates." },
+            { objective: "Analyze source agreement and conflict." },
+            { objective: "Validate configured outputs." }
           ]
         }),
-        runtimeActions.tool({
-          stepId: "discover",
-          checkIds: ["discover-evidence"],
+        modelTurns.tool({
           toolName: "news.discover",
           input: { query: "人工智能 模型", since: "2026-08-01T00:00:00.000Z", limit: 20, excludeKeywords: ["招聘"] }
         }),
-        runtimeActions.tool({
-          stepId: "analyze",
-          checkIds: ["analysis-evidence"],
+        modelTurns.tool({
           toolName: "news.analyze_selection",
           input: { items: [first, second] }
         }),
-        runtimeActions.tool({
-          stepId: "deliver",
-          checkIds: ["output-evidence"],
+        modelTurns.tool({
           toolName: "news.validate_output",
           input: {
             deliverables: [
@@ -87,9 +80,8 @@ describe("Automated Daily Research Agent", () => {
             ]
           }
         }),
-        runtimeActions.finish({ summary: `${draftArticle}\n\n${draftScript}`, evidence: "all" })
-      ],
-      validations: [{ passed: true, issues: [] }]
+        modelTurns.finish({ summary: `${draftArticle}\n\n${draftScript}` })
+      ]
     });
     const agent = createResearchAgent({
       workspace,
@@ -122,15 +114,12 @@ describe("Automated Daily Research Agent", () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-research-citation-"));
     roots.push(workspace);
     const provider = createScriptedProvider({
-      decisions: [
-        runtimeActions.plan({
+      modelTurns: [
+        modelTurns.plan({
           goal: "Validate one generated article.",
-          acceptanceCriteria: ["all citations belong to selected sources"],
-          steps: [{ id: "validate", objective: "Validate citations.", checks: [{ id: "citation-check", toolName: "news.validate_output" }] }]
+          steps: [{ objective: "Validate citations." }]
         }),
-        runtimeActions.tool({
-          stepId: "validate",
-          checkIds: ["citation-check"],
+        modelTurns.tool({
           toolName: "news.validate_output",
           input: {
             deliverables: [{
@@ -141,8 +130,7 @@ describe("Automated Daily Research Agent", () => {
             }]
           }
         })
-      ],
-      validations: []
+      ]
     });
     const profile = { ...researchProfile(), outputs: ["article"] as const };
     const agent = createResearchAgent({ workspace, provider, sources: [source("alpha", first)], profile });

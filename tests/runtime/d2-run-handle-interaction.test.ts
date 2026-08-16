@@ -18,10 +18,10 @@ import {
   type RuntimeEvent,
   type RuntimeProvider,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
-import { digestTaskContract } from "../../packages/runtime/src/validation.js";
-import { legacyTestProvider } from "./runtime-testkit.js";
+import { digestTaskContract } from "../../packages/runtime/src/completion-gate.js";
+import { runtimeActionTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -66,7 +66,7 @@ describe("D2 RunHandle interaction", () => {
     const workspace = temporaryWorkspace();
     const effects = { count: 0 };
     let call = 0;
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide(context) {
         call += 1;
         if (call <= 2) return writeDecision(workspace, context, call);
@@ -75,9 +75,6 @@ describe("D2 RunHandle interaction", () => {
           question: "Choose a safe alternative.",
           reason: "The write was denied."
         };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const runtime = createRuntime({
@@ -103,7 +100,7 @@ describe("D2 RunHandle interaction", () => {
     const workspace = temporaryWorkspace();
     const secondDecision = deferred<void>();
     let call = 0;
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide() {
         call += 1;
         if (call === 1) {
@@ -119,9 +116,6 @@ describe("D2 RunHandle interaction", () => {
           question: "Provide newer input.",
           reason: "More input required."
         };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -157,7 +151,7 @@ describe("D2 RunHandle interaction", () => {
     const dataDir = join(workspace, ".nexora");
     const resumedDecision = deferred<void>();
     let call = 0;
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide() {
         call += 1;
         if (call === 1) {
@@ -173,9 +167,6 @@ describe("D2 RunHandle interaction", () => {
           question: "Provide more input.",
           reason: "More input required."
         };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const firstRuntime = createRuntime({
@@ -219,9 +210,6 @@ describe("D2 RunHandle interaction", () => {
       provider: {
         async decide() {
           throw new Error("provider offline");
-        },
-        async validate() {
-          return { passed: true, issues: [] };
         }
       },
       tools: [readTool()]
@@ -246,16 +234,13 @@ describe("D2 RunHandle interaction", () => {
   it("projects unknown Invocation recovery and accepts only its matching decision", async () => {
     const workspace = temporaryWorkspace();
     const invocationId = seedInterruptedNonIdempotentInvocation(workspace);
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide(context) {
         return {
           type: "propose_finish",
           summary: "External result confirmed",
           evidenceIds: context.run.evidence.map((evidence) => evidence.id)
         };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const runtime = createRuntime({
@@ -331,13 +316,10 @@ function deferred<T>(): {
 
 function writeProvider(workspace: string): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide(context) {
       call += 1;
       return writeDecision(workspace, context, call);
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }
@@ -421,7 +403,7 @@ function writeTool(effects: { count: number }): RuntimeTool {
 
 function readProvider(_workspace: string): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide(context) {
       call += 1;
       if (call === 1) {
@@ -460,9 +442,6 @@ function readProvider(_workspace: string): RuntimeProvider {
         summary: "Read verified",
         evidenceIds: context.run.evidence.map((evidence) => evidence.id)
       };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }

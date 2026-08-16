@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-LONG-001",
+  "category": "long_sequence_recovery",
+  "horizon": "long",
+  "split": "dev",
+  "source": "real_workflow",
+  "instruction": "Read the three fact shards, create an ordered aggregate report with their total, survive the approval-time restart, and validate the final report.",
+  "fixture": {
+    "path": "tasks/NB-LONG-001/fixture",
+    "digest": "sha256:61d2a975a28809b146d2ac7a48b25a2445ca65da8036bc90c74158f64b7d5538"
+  },
+  "scenario": "tasks/NB-LONG-001/scenario.ts",
+  "allowedCapabilities": ["filesystem.list", "filesystem.read", "filesystem.patch", "shell.execute"],
+  "budgets": {
+    "maxIterations": 20,
+    "maxModelCalls": 20,
+    "maxToolCalls": 16,
+    "maxRetries": 2,
+    "maxDurationMs": 300000
+  },
+  "expectedTerminal": "succeeded",
+  "driver": {
+    "approvals": [
+      { "occurrence": 1, "decision": "approve", "restartBeforeDecision": true },
+      { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false },
+      { "occurrence": 3, "decision": "approve", "restartBeforeDecision": false },
+      { "occurrence": 4, "decision": "approve", "restartBeforeDecision": false },
+      { "occurrence": 5, "decision": "approve", "restartBeforeDecision": false }
+    ],
+    "inputs": [],
+    "recoveries": []
+  },
+  "grader": {
+    "files": [
+      {
+        "id": "aggregate-report",
+        "path": "report.txt",
+        "exists": true,
+        "equals": "ALPHA=17\nBETA=29\nGAMMA=43\nTOTAL=89\n"
+      }
+    ],
+    "commands": [
+      {
+        "id": "aggregate-validation",
+        "command": "node",
+        "args": ["verify.mjs"],
+        "cwd": ".",
+        "timeoutMs": 60000,
+        "expectedExitCode": 0
+      }
+    ],
+    "unchangedPaths": ["facts/alpha.txt", "facts/beta.txt", "facts/gamma.txt", "verify.mjs"]
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity"
+  ]
+}

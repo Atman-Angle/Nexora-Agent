@@ -57,9 +57,9 @@ console.log(JSON.stringify({
   ]),
   firstEvent: outcome.events[0]?.type,
   lastEvent: outcome.events.at(-1)?.type,
-  validationPassed: outcome.events.some(
-    (event) => event.type === "validation.passed"
-  )
+  validationEventCount: outcome.events.filter(
+    (event) => event.type.startsWith("validation.")
+  ).length
 }));
 
 function requiredEnvironment(name: string): string {

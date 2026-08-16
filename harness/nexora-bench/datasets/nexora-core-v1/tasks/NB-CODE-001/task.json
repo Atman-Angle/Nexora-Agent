@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-CODE-001",
+  "category": "code_repair",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "instruction": "The pagination helper uses an inclusive end offset and returns the wrong boundary. Locate the defect, fix it without changing the public API, and run the provided tests.",
+  "fixture": {
+    "path": "tasks/NB-CODE-001/fixture",
+    "digest": "sha256:cdc997b5593a3f6fa681377a518f99e5c5ff60d27b6f5d5fd0f6e796f5ba6850"
+  },
+  "scenario": "tasks/NB-CODE-001/scenario.ts",
+  "allowedCapabilities": ["filesystem.list", "filesystem.search", "filesystem.read", "filesystem.patch", "shell.execute"],
+  "budgets": {
+    "maxIterations": 16,
+    "maxModelCalls": 16,
+    "maxToolCalls": 12,
+    "maxRetries": 2,
+    "maxDurationMs": 300000
+  },
+  "expectedTerminal": "succeeded",
+  "driver": {
+    "approvals": [
+      { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false },
+      { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }
+    ],
+    "inputs": [],
+    "recoveries": []
+  },
+  "grader": {
+    "files": [
+      {
+        "id": "exclusive-boundary",
+        "path": "src/paginate.js",
+        "exists": true,
+        "includes": ["Math.min(start + pageSize, total)"],
+        "excludes": ["start + pageSize - 1"]
+      }
+    ],
+    "commands": [
+      {
+        "id": "hidden-regression",
+        "command": "node",
+        "args": ["--test", "tests/verify.mjs"],
+        "cwd": ".",
+        "timeoutMs": 60000,
+        "expectedExitCode": 0
+      }
+    ],
+    "unchangedPaths": ["package.json", "tests/verify.mjs"]
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity"
+  ]
+}

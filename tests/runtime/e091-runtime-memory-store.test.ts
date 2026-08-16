@@ -10,7 +10,7 @@ import {
   openMemoryStore,
   type CreateMemoryInput,
   type MemoryScope
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 
 const roots: string[] = [];
 const BASE = "2026-08-11T00:00:00.000Z";

@@ -1,6 +1,6 @@
 # Nexora 1.1 当前用户指南
 
-Nexora 1.1 当前只有两个正式入口：接受自然语言目标的 CLI，以及可供 Node.js/TypeScript 程序调用的 `@nexora/runtime`。两者共享同一个持久化 Runtime、Structured Plan、状态机、Tool Invocation、Evidence 和完成门。
+Nexora 1.1 当前有两个正式入口：接受自然语言目标的 CLI，以及可供 Node.js/TypeScript 程序调用的 `@nexora/harness`。两者共享同一个 Harness Agent Loop 和同一个持久化 Runtime；Runtime 不调用 Provider，Structured Plan、状态机、Tool Invocation、Evidence 和完成 hard gate 仍只有一份。
 
 ## 1. 安装与 Provider 配置
 
@@ -48,7 +48,7 @@ pnpm nexora resume <run-id> --cwd D:\project --deny <request-id> --reason "请�
 
 批准只对应 Pending Request 中持久化的精确 Tool Action。该 input 已在 Approval 前通过真实 Tool Schema 并展开默认值；批准前应核对 path、command、args、cwd 和 timeout 等字段。错误或过期的 Request ID 不会执行 Tool，resume 会重新校验 persisted Action 后才创建 Invocation。
 
-交互拒绝时可以输入原因。非空原因会与`approval.denied`一起持久化，并作为新的`inputHistory`进入下一轮模型、Task Contract和最终语义验证。Run处于`waiting`期间的人工时间不计入`maxDurationMs`；每次start/resume活跃执行段仍受时长限制，模型/Tool/iteration/retry计数继续跨resume累计。
+交互拒绝时可以输入原因。非空原因会与`approval.denied`一起持久化，并作为新的`inputHistory`进入下一轮模型和 Task Contract。Run处于`waiting`期间的人工时间不计入`maxDurationMs`；每次start/resume活跃执行段仍受时长限制，模型/Tool/iteration/retry计数继续跨resume累计。
 
 ### 回复模型请求的补充输入
 
@@ -85,12 +85,12 @@ pnpm nexora resume <run-id> --cwd D:\project --abandon <invocation-id>
 ```ts
 import {
   createBuiltInTools,
-  createRuntime,
+  createAgent,
   openAICompatibleProviderFromEnv
-} from "@nexora/runtime";
+} from "@nexora/harness";
 
 const workspace = "D:\\project";
-const runtime = createRuntime({
+const runtime = createAgent({
   workspace,
   provider: openAICompatibleProviderFromEnv(),
   tools: createBuiltInTools()
@@ -122,7 +122,7 @@ try {
 }
 ```
 
-`openAICompatibleProviderFromEnv()` 根据模型名自动匹配总上下文窗口，并要求显式设置 decision、validation、compaction 三个请求输出预算。模型能力未知，或任一输出预算缺失、非法、超过模型最大输出能力时，Runtime 会在创建 Run 前报告 Provider 配置错误。
+`openAICompatibleProviderFromEnv()` 根据模型名自动匹配总上下文窗口，并要求显式设置 decision 请求输出预算。模型能力未知，或输出预算缺失、非法、超过模型最大输出能力时，Harness 会在创建 Run 前报告 Provider 配置错误。
 
 Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runtime](BUILD_WITH_NEXORA_RUNTIME.md)。
 
@@ -146,25 +146,23 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 
 默认数据目录是 `<workspace>/.nexora`：
 
-- `runtime-v1.1.db`：`runs`、`run_events`、`tool_invocations` 三张表；
+- `runtime-v1.1.db`：Run、Journal、Invocation、Model Call、Provider Attempt 和 Branch Authority；
 - `artifacts/`：内容寻址的大内容和被拒绝原始 Action。
 
 成功链必须满足：
 
 ```text
-currentPlan required Checks
-→ succeeded Tool Invocations
-→ persisted Evidence
-→ propose_finish 明确引证全部 required Evidence
-→ deterministic completion passed
-→ independent semantic validation passed
-→ validation.passed
+ModelTurn.action = "finish" + ModelTurn.text
+→ Harness 编译只含 summary 的 propose_finish
+→ Runtime 从真实 Invocation / Evidence / Artifact 自动派生 provenance
+→ required mechanical Checks + pending/unknown safety gate
+→ deterministic Completion Gate passed
 → run.succeeded
 ```
 
-最终semantic validation只接收全部用户输入、候选summary和已引用Tool的输入/输出事实；Plan、TaskContract、Evidence/Invocation ID、digest、Fencing等执行元数据由Runtime确定性检查，不交给模型作语义推断。
+完成阶段不再调用同步语义 Validator。Plan、TaskContract、Evidence/Invocation ID、digest、Fencing 和 Result provenance 都由 Runtime 确定性检查，不交给模型生成或判断。objective-only Plan Step 是导航，不自动产生 required Check；只有 Host/Tool Contract 明确声明的机械 Check 才能阻塞完成。
 
-空/部分/未知 Evidence 引证、非零命令、failed/unknown Invocation、Provider 失败或未完成 Step 均不能成为成功。
+跨 Run 或 digest 不一致的 Evidence、started/unknown Invocation、未决 Approval、未满足的 required mechanical Check、非零命令和 Provider 失败均不能成为成功。历史 failed Invocation 本身不阻塞模型采用其他真实路径完成；无 Tool 的直接回答可以空 provenance，但不能伪造 Evidence。
 
 ## 7. 当前限制
 

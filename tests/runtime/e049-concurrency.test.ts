@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
-import { createRuntime, type ModelDecisionContext, type RuntimeProvider } from "../../packages/runtime/src/index.js";
+import { deriveRunDelivery } from "../../packages/runtime/src/delivery.js";
+import { createRuntime, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { transitionRunStatus } from "../../packages/runtime/src/state-machine.js";
 
@@ -28,12 +29,9 @@ class PausedProvider implements RuntimeProvider {
   async decide(_context: ModelDecisionContext): Promise<unknown> {
     this.entered();
     await this.releasePromise;
-    return { intent: { kind: "request_input", question: "Pause", reason: "test" } };
+    return { action: "request_input", question: "Pause", reason: "test"  };
   }
 
-  async validate(): Promise<unknown> {
-    return { passed: false, issues: ["not used"] };
-  }
 }
 
 describe("E049 lease and fencing", () => {
@@ -46,9 +44,8 @@ describe("E049 lease and fencing", () => {
         await new Promise((resolve) => setTimeout(resolve, 15));
         return calls < 30
           ? { type: "unknown_action" }
-          : { intent: { kind: "request_input", question: "Continue?", reason: "lease test" } };
-      },
-      async validate() { return { passed: false, issues: [] }; }
+          : { action: "request_input", question: "Continue?", reason: "lease test"  };
+      }
     };
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [], leaseTtlMs: 300 });
     const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 40, maxModelCalls: 40, maxToolCalls: 1, maxRetries: 40, maxDurationMs: 10_000 } });
@@ -73,7 +70,7 @@ describe("E049 lease and fencing", () => {
     const second = createRuntime({
       workspace,
       dataDir,
-      provider: { async decide() { return { intent: { kind: "request_input", question: "x", reason: "x" } }; }, async validate() { return { passed: false, issues: [] }; } },
+      provider: { async decide() { return { action: "request_input", question: "x", reason: "x"  }; } },
       tools: []
     });
     await expect(second.resume({ runId })).rejects.toThrow(/RUN_BUSY/);
@@ -95,7 +92,17 @@ describe("E049 lease and fencing", () => {
     const second = store.acquireLease({ runId: initial.runId, ownerId: "owner-2", now: "2026-07-22T00:00:02.000Z", ttlMs: 1000 });
     expect(second.fencingToken).toBeGreaterThan(first.fencingToken);
 
-    const blocked = transitionRunStatus(initial, "blocked", { now: "2026-07-22T00:00:02.000Z", stopReason: "PROVIDER_UNAVAILABLE" });
+    const blockedAt = "2026-07-22T00:00:02.000Z";
+    const blocked = transitionRunStatus(initial, "blocked", {
+      now: blockedAt,
+      stopReason: "PROVIDER_UNAVAILABLE",
+      delivery: deriveRunDelivery({
+        run: initial,
+        outcome: "blocked",
+        now: blockedAt,
+        stopReason: "PROVIDER_UNAVAILABLE"
+      })
+    });
     expect(() => store.commitRun({
       previous: initial,
       next: blocked,

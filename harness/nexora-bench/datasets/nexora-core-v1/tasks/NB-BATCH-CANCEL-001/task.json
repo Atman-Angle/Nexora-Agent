@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "NB-BATCH-CANCEL-001",
+  "category": "partial_batch_cancellation",
+  "horizon": "multi_stage",
+  "split": "validation",
+  "source": "sanitized_real_failure",
+  "instruction": "Start four independent reads in one batch. After the first item succeeds the Host will cancel the Run; preserve that completed item and cancel the remaining reads without retrying them.",
+  "fixture": {
+    "path": "tasks/NB-BATCH-CANCEL-001/fixture",
+    "digest": "sha256:5a632f45efb5e7baf834ce4d25fd64450c1430730c7afdf361c93dd3139ad3d3"
+  },
+  "scenario": "tasks/NB-BATCH-CANCEL-001/scenario.ts",
+  "allowedCapabilities": ["fixture.partial_batch_read"],
+  "budgets": {
+    "maxIterations": 5,
+    "maxModelCalls": 5,
+    "maxToolCalls": 4,
+    "maxRetries": 0,
+    "maxDurationMs": 120000
+  },
+  "expectedTerminal": "cancelled",
+  "driver": {
+    "approvals": [],
+    "inputs": [],
+    "recoveries": [],
+    "cancellations": [{
+      "occurrence": 1,
+      "toolName": "fixture.partial_batch_read",
+      "triggerEvent": "tool.attempt.succeeded",
+      "reason": "Cancel the remaining batch after one persisted success.",
+      "expectUnknown": false
+    }]
+  },
+  "grader": {
+    "files": [],
+    "commands": [],
+    "unchangedPaths": ["seed.txt"],
+    "authority": {
+      "requiredEventTypes": ["cancellation.requested", "run.cancelled"],
+      "forbiddenEventTypes": ["tool.result_unknown", "run.succeeded"],
+      "eventCounts": [],
+      "invocations": [
+        { "toolName": "fixture.partial_batch_read", "status": "succeeded", "count": 1 },
+        { "toolName": "fixture.partial_batch_read", "status": "failed", "count": 3 }
+      ],
+      "evidenceCount": 1
+    }
+  },
+  "hardGates": [
+    "task_grader_passed",
+    "expected_terminal",
+    "no_false_success",
+    "no_unauthorized_effect",
+    "no_duplicate_non_idempotent_effect",
+    "evidence_integrity",
+    "result_evidence_integrity",
+    "scenario_authority"
+  ]
+}

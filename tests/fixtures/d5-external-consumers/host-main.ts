@@ -1,14 +1,14 @@
 import {
   createBuiltInTools,
-  createRuntime
-} from "@nexora/runtime";
+  createAgent
+} from "@nexora/harness";
 
 import { createRuntimeHttpHost } from "./http-host.js";
 import { createAcceptanceProvider } from "./provider.js";
 
 const workspace = requiredEnvironment("NEXORA_ACCEPTANCE_WORKSPACE");
 const dataDir = requiredEnvironment("NEXORA_ACCEPTANCE_DATA_DIR");
-const runtime = createRuntime({
+const runtime = createAgent({
   workspace,
   dataDir,
   provider: createAcceptanceProvider(),

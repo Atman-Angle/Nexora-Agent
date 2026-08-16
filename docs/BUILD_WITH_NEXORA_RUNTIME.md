@@ -1,20 +1,21 @@
 # Build with Nexora Runtime
 
-`@nexora/runtime` 是 Nexora 唯一受支持的 Node.js/TypeScript 包入口。1.2 当前黄金路径是 `createRuntime → runtime.run → RunHandle → result → close`；交互宿主在同一个 Handle 上使用 `subscribe/input/approve/deny/resume/cancel`。它不依赖 CLI、UI 框架或具体宿主应用；新 API、兼容 API 与 CLI 共享同一个持久化执行循环和安全边界。
+`@nexora/harness` 是 Agent 应用受支持的 Node.js/TypeScript 入口；它依赖只负责机械执行可靠性的 `@nexora/runtime`。当前黄金路径是 `createAgent → agent.run → RunHandle → result → close`；交互宿主在同一个 Handle 上使用 `subscribe/input/approve/deny/resume/cancel`。`createRuntime()` 只保留一个迁移版本，并直接调用 `createAgent()`，不存在旧 Agent Loop。
 
 ## 安装
 
 发布包：
 
 ```powershell
-npm install @nexora/runtime
+npm install @nexora/harness
 ```
 
 从当前仓库生成并安装本地候选：
 
 ```powershell
 pnpm --filter @nexora/runtime pack --pack-destination D:\tmp\nexora-package
-npm install D:\tmp\nexora-package\nexora-runtime-1.1.0.tgz
+pnpm --filter @nexora/harness pack --pack-destination D:\tmp\nexora-package
+npm install D:\tmp\nexora-package\nexora-runtime-1.1.0.tgz D:\tmp\nexora-package\nexora-harness-1.1.0.tgz
 ```
 
 ## 完整宿主示例
@@ -25,21 +26,23 @@ npm install D:\tmp\nexora-package\nexora-runtime-1.1.0.tgz
 - [`examples/runtime/http-host.ts`](../examples/runtime/http-host.ts)：长驻 HTTP/SSE Host，通过 Run ID 在每次请求中 `openRun()`，支持 inspect、Event cursor、input、approval、cancel、resume 和 result；
 - [`examples/runtime/README.md`](../examples/runtime/README.md)：安装、启动、HTTP 路由和安全边界说明。
 
-这些文件是包外应用示例，不属于 `@nexora/runtime` 的 package exports，也不是 Nexora 应用框架或远程 Runtime 协议。它们只演示宿主如何组合公开 API；Run、Pending Request、Event、Result 和完成判断仍由 Runtime 的持久化 Authority 提供。
+这些文件是包外应用示例，不属于 `@nexora/harness` 的 package exports，也不是 Nexora 应用框架或远程 Runtime 协议。它们只演示宿主如何组合公开 API；Run、Pending Request、Event 和 Result 仍由 Runtime 的持久化 Authority 提供，语义决策由 Harness 负责。
 
 ## 最小调用
 
 ```ts
 import {
   createBuiltInTools,
-  createRuntime,
+  createAgent,
   openAICompatibleProviderFromEnv
-} from "@nexora/runtime";
+} from "@nexora/harness";
 
-const runtime = createRuntime({
+const runtime = createAgent({
   workspace: "D:\\project",
   provider: openAICompatibleProviderFromEnv(),
   tools: createBuiltInTools(),
+  // 可选；默认 metadata。redacted 会保存确定性脱敏后的审计 Artifact。
+  payloadCapturePolicy: "metadata",
   // 可选；默认 <workspace>/.nexora
   dataDir: "D:\\project\\.nexora"
 });
@@ -62,24 +65,22 @@ try {
 - `NEXORA_MODEL_API_KEY`；
 - `NEXORA_MODEL_NAME`；
 - `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`；
-- `NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS`；
-- `NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS`；
 - 可选 `NEXORA_MODEL_TIMEOUT_MS`；
 
-三个输出预算必须是正整数、小于模型总上下文，并且不超过模型最大输出能力。总上下文窗口由 Adapter 根据 `NEXORA_MODEL_NAME` 的已验证能力自动匹配，不接受生产环境手工覆盖；未知模型会在创建 Run 前失败，不能猜测窗口。
+decision 输出预算必须是正整数、小于模型总上下文，并且不超过模型最大输出能力。总上下文窗口由 Adapter 根据 `NEXORA_MODEL_NAME` 的已验证能力自动匹配，不接受生产环境手工覆盖；未知模型会在创建 Run 前失败，不能猜测窗口。
 
-例如 qwen3.7-flash 的 1M 总窗口不应被写成 Canary 压力测试使用的 12K。模型声明的 128K 最大输出是能力上限，不代表每个 Runtime phase 都需要预留 128K；应按实际决策/校验/压缩需要设置较小的请求输出预算，并为思考模式采用更低的最大输入边界。
+例如 qwen3.7-flash 的 1M 总窗口不应被写成 Canary 压力测试使用的 12K。模型声明的 128K 最大输出是能力上限，不代表每次请求都需要预留 128K；应按实际决策需要设置较小的请求输出预算，并为思考模式采用更低的最大输入边界。
 
-仓库 CLI 的 start/resume 会自动加载启动目录 `.env`；但 `@nexora/runtime` 不读取文件或修改环境。包调用方必须显式提供进程环境，或直接调用 `createOpenAICompatibleProvider(...)` 传入配置。
+仓库 CLI 的 start/resume 会自动加载启动目录 `.env`；但 `@nexora/harness` 和 `@nexora/runtime` 都不读取 `.env` 或修改环境。包调用方必须显式提供进程环境，或直接调用 `createOpenAICompatibleProvider(...)` 传入配置。
 
 也可调用 `createOpenAICompatibleProvider(options)` 显式传入连接配置、自定义 `fetch`、`contextWindowTokens`、各 phase 的 `reservedOutputTokens`、`softLimitRatio`，以及能读取最终序列化 Provider Request 的 `tokenMeter`。该高级程序化入口用于自定义 Provider、测试夹具和显式 Canary 压力窗口；真实环境入口以模型能力目录为准。未提供精确 Tokenizer 时，Adapter 使用标记为 `estimated` 的 UTF-8 字节估算，不会伪装成精确计量。
 
 ## Memory Store
 
-`@nexora/runtime` 提供与 Run Store 分离的通用 Memory Contract。Host 必须显式提供稳定 scope identity 和存储目录；打开 Store 只创建 `<stateDir>/memory-v1.db`，不会创建或迁移 `runtime-v1.1.db`：
+`@nexora/harness` 提供与 Run Store 分离的通用 Memory Contract。Host 必须显式提供稳定 scope identity 和存储目录；打开 Store 只创建 `<stateDir>/memory-v1.db`，不会创建或迁移 `runtime-v1.1.db`：
 
 ```ts
-import { openMemoryStore } from "@nexora/runtime";
+import { openMemoryStore } from "@nexora/harness";
 
 const memory = openMemoryStore({ stateDir: "D:\\agent-state" });
 try {
@@ -121,10 +122,10 @@ try {
 
 不可信内容应以 `candidate` 创建。`promote` 接受带 actor/time 的 `explicit` 决定，或要求 Memory 已 verified 的 `verified` 决定；同 scope 的 type/statement/sensitivity 完全相同时只保留一个 active Memory。内容更新不能原地修改：先创建 replacement candidate，再调用 `supersede`，一个 predecessor 表示 update，多个表示 merge。Store 在一个事务中保存 replacement 的 `supersedesMemoryIds` 和 predecessor 的 `supersededByMemoryId`。`revalidate` 和 `expire` 分别处理重新验证与到期，通用 `setStatus` 只允许 `archived | invalidated`，不能绕过生命周期。
 
-Runtime 不会自动从 Run 提取 Memory。要启用有界召回，Host 显式把共享 Store 和 exact scope 注入 Runtime；Runtime 不负责关闭该 Store：
+Harness 不会自动从 Run 提取 Memory。要启用有界召回，Host 显式把共享 Store 和 exact scope 注入 Agent；Harness 和 Runtime 都不负责关闭该 Store：
 
 ```ts
-const runtime = createRuntime({
+const runtime = createAgent({
   workspace,
   provider,
   tools,
@@ -135,12 +136,12 @@ const runtime = createRuntime({
 });
 ```
 
-Decision Context 的 `memoryCandidates` 最多 6 条，并同时受 768 estimated tokens / 4 KiB 硬上限约束；只来自 exact scope 内 active、未过期、normal sensitivity 的记录。候选包含 ref、type、reasons、source、verification、lifecycle 和 record digest，但不包含 statement。Runtime 在 Provider 决策前自动选择最高相关候选，重验 scope/lifecycle/expiry/sensitivity/digest，并以 `rehydratedFacts(kind="memory")` 交付完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 和 Evidence 永远优先。
+Decision Context 的 `memoryCandidates` 最多 6 条，并同时受 768 estimated tokens / 4 KiB 硬上限约束；只来自 exact scope 内 active、未过期、normal sensitivity 的记录。候选包含 ref、type、reasons、source、verification、lifecycle 和 record digest，但不包含 statement。Harness 在 Provider 决策前自动选择最高相关候选，重验 scope/lifecycle/expiry/sensitivity/digest，并以 `rehydratedFacts(kind="memory")` 交付完整 MemoryRecord。当前 Input、TaskContract、Plan、Progress 和 Evidence 永远优先。
 
 面向用户的动作应使用 `MemoryControls`，不要把底层 CRUD 直接暴露成产品控制：
 
 ```ts
-import { createMemoryControls } from "@nexora/runtime";
+import { createMemoryControls } from "@nexora/harness";
 
 const controls = createMemoryControls(memory);
 const view = controls.inspect({ scope, memoryId, asOf: new Date().toISOString() });
@@ -202,6 +203,21 @@ console.log(
 ```
 
 `RunInspection` 每次从持久化 Run、Event 和 Tool Invocation 投影，并在类型与运行时都不可修改。它不包含 Store、fencing token 或内部 Pending Runtime Action。
+
+### `RunHandle.history` 与完整性验证
+
+```ts
+const page = await run.history({
+  afterSequence: 0,
+  limit: 100,
+  types: ["model.requested", "provider.attempt.failed"]
+});
+const record = await run.historyRecord(page.records[0]!.sequence);
+const trace = await run.modelCallTrace(String(record?.payload.callId));
+const integrity = await run.verifyHistory();
+```
+
+`limit` 默认 50、最大 200；只能读取单 Run，并可按已注册 record type 过滤。没有读取完整 Journal 的快捷方法。`modelCallTrace` 返回一个 logical call、Context Manifest 和其物理 Provider Attempts；legacy call 没有创建时不存在的数据时明确返回 `legacy_partial`。`verifyHistory` 同时校验 Event digest chain 与审计 Artifact 内容 digest。历史是只读审计数据，不能作为 Approval、Evidence、权限或完成结论。
 
 ### `RunHandle.wait` 与 `result`
 
@@ -283,7 +299,7 @@ if (request?.kind === "approval") {
 `requestId` 可省略并绑定当前唯一请求，但异步 UI 应始终传入看到的 ID。过期、重复、类型不匹配或状态不允许的控制会抛出 `RunControlError`：
 
 ```ts
-import { RunControlError } from "@nexora/runtime";
+import { RunControlError } from "@nexora/harness";
 
 try {
   await run.approve({ requestId: clickedRequestId });
@@ -330,7 +346,7 @@ unknown non-idempotent Effect 必须绑定当前 `inspection.recovery.invocation
 ### 取消与 typed error
 
 ```ts
-import { RuntimeError } from "@nexora/runtime";
+import { RuntimeError } from "@nexora/harness";
 
 try {
   await run.cancel("宿主请求停止");
@@ -349,7 +365,7 @@ try {
 
 ### 分支（Context Branching / Fork）
 
-从父 Run 的当前 revision 创建**隔离的探索分支**：子分支拥有独立的 Run（`child_run_id`）、独立的 workspace 目录快照、独立的 Checkpoint/Rehydration/执行历史，以及只读的 Fork Base 继承边界（fork 点之前的父 facts）。父 Run 的 Authority（revision/Plan/Evidence/Invocation/完成状态）永不被分支修改。
+从父 Run 的当前 revision 创建**隔离的探索分支**：子分支拥有独立的 Run（`child_run_id`）、独立的 workspace 目录快照、独立的 Context/Rehydration/执行历史，以及只读的 Fork Base 继承边界（fork 点之前的父 facts）。父 Run 的 Authority（revision/Plan/Evidence/Invocation/完成状态）永不被分支修改。
 
 ```ts
 const branch = await runtime.fork(parentRunId);      // 也可能返回 null（快照不可靠）
@@ -393,14 +409,14 @@ const view = await runtime.inspect(result.runId);
 
 ### `close`
 
-每个 Runtime 实例使用完毕后调用 `await runtime.close()` 或 `await runtime[Symbol.asyncDispose]()`。第一次 close 立即拒绝新操作，向本实例的活跃执行发送取消，关闭 subscriptions，等待 Run 到达 persisted terminal 或 unknown-Recovery 边界，再各调用一次 Tool/Provider `dispose()` 并关闭 SQLite。重复或并发 close 复用同一结果；关闭后公共操作返回 `RUNTIME_CLOSED`。Run 数据保留，可由使用相同 workspace/dataDir 的新实例打开。
+每个 Agent 实例使用完毕后调用 `await runtime.close()` 或 `await runtime[Symbol.asyncDispose]()`。第一次 close 立即拒绝新操作，向活跃执行发送取消，关闭 subscriptions，等待 Run 到达 persisted terminal 或 unknown-Recovery 边界；Runtime 释放 Tool/SQLite，Harness driver 释放 Provider。重复或并发 close 复用同一结果；关闭后公共操作返回 `RUNTIME_CLOSED`。
 
 ## 自定义 Provider
 
 普通 Provider 只实现一次 completion transport：
 
 ```ts
-import { defineProviderAdapter } from "@nexora/runtime";
+import { defineProviderAdapter } from "@nexora/harness";
 
 const provider = defineProviderAdapter({
   async complete(request, operation) {
@@ -418,11 +434,11 @@ const provider = defineProviderAdapter({
 });
 ```
 
-`request.phase` 是 `"decision"`、`"validation"` 或 `"compaction"`，用于 transport 记录和模型参数选择。Adapter 负责 Nexora 的 prompt、bounded context、JSON parse、malformed response 和 validation failure 语义。Provider 不能直接写 Run、Plan、Invocation、Evidence 或成功状态；`operation.signal` 只通知当前 completion 停止，不是 Run 状态 Authority。
+`request.phase` 固定为 `"decision"`，用于 transport 记录和模型参数选择。Adapter 负责 Nexora 的 prompt、bounded context、JSON parse 和 malformed response 语义。Provider 不能直接写 Run、Plan、Invocation、Evidence 或成功状态；`operation.signal` 只通知当前 completion 停止，不是 Run 状态 Authority。
 
-Decision Provider 接收 `ProjectedRunContext`，不是完整 `RunSnapshot`：
+Decision Provider 接收 Harness 构建的 `AgentWorkingContext`，不是完整 `RunSnapshot`：
 
-- `providerContractVersion` 固定为 `2`，`allowedIntents/intentContract` 是本轮唯一可输出边界；
+- `providerContractVersion` 标识公开 Context 版本，输出边界是显式 `action` 判别的单一 `ModelTurn`；
 - `run.inputCount` 是持久化输入总数；
 - `run.coveredInputCount` 是当前 Task Contract 已覆盖的输入数；
 - `run.inputHistory` 只包含尚未覆盖的 `{ sequence, text }`；
@@ -430,19 +446,21 @@ Decision Provider 接收 `ProjectedRunContext`，不是完整 `RunSnapshot`：
 - `toolObservations` 只包含 active Step/Check 和已完成前置 Evidence 所需的有界事实；
 - `projection.digest` 是当前完整决策投影的稳定摘要，可用于缓存键、日志关联和确定性测试，不能作为 Evidence。
 
-Provider 的 `plan_tasks` 只提交 `goal/constraints/acceptanceCriteria` 与有序语义 Task；Runtime 根据 `run.inputCount` 生成 `inputVersion`，并生成 Plan version、Step/Check ID 和 binding。阶段式 wire 在规划/新输入时只暴露 `plan_tasks | request_input`，active Tool Task 只暴露 `use_capabilities`，用户确认阶段只暴露 `request_input`，Evidence 齐全时只暴露 `finish`。`use_capabilities` 只提交 Capability 名称与完整业务参数，`finish` 只提交 verified summary。任何旧 `set_plan/call_tool/execute_step/propose_finish` Provider 输出都会在边界 fail closed。Semantic Validation 仍收到完整原始 inputs，因此 Decision Projection 不会降低最终完成校验范围。
+Provider 的 `ModelTurn.plan` 只提交可选 `goal` 与有序 `{ objective }` Task；Harness 编译 Plan/Step identity，Runtime 负责持久化、version/CAS 与完成前缀一致性。objective 默认没有 Acceptance Check。`ModelTurn.toolCalls` 可与 Plan 同轮出现，也可在没有 Plan 时调用已注册 Tool；任何内部 `set_plan/call_tool/execute_step/propose_finish` 输出都会在 Harness 边界拒绝。
 
-Decision Context 的公开 `historyCandidates` 字段提供当前任务相关的历史导航。每条候选包含 `ref`、最多 4 个 `relatedRefs`、`category`、确定性 `reasons`、短 `hint` 和 `occurredAt`；全集最多 8 条且不超过 4 KiB。候选只来自当前 Run Authority 或 Branch 的显式 Fork Base，并按同 Check、Step、Tool、精确 Input、路径、错误码、Evidence/Artifact、Approval/Fork Base 关系排序。它不会复制 Tool 结果、错误正文或 Artifact 内容；最新 Input 明确点名已发布 ref，或 active `context_ref` Check 要求该 ref 时，Runtime 在决策前注入精确 `rehydratedFacts`。其他 Run、sibling Branch 与 parent post-fork ref 不会成为候选。
+生产 `ModelTurn` 只接受三种显式动作：`{ action: "continue", plan?, toolCalls? }`、`{ action: "request_input", question, reason }` 和 `{ action: "finish", text }`。任意普通文本、旧式顶层 `requestInput` 或混合 native/content Tool 协议都不会隐式完成或执行。
 
-Compaction phase 接收 `CompactionContext.previousCheckpoint`：第一次为 `null`，之后为 Runtime 针对当前 Authority 完整重验过的 latest `{ digest, summary }`。Adapter 会把它放入真实 wire 的 `context.previousCheckpoint`，但不会公开 `checkpointId`、`sourceDigests` 或 `coveredInvocations`。Provider 必须生成一份完整替代 Summary；不能返回 delta、嵌套 previous Summary，或把 Checkpoint ID/digest 当作 SourceRef。旧 Summary 仍有效的内容只能通过原始 SourceRef 延续；同 Plan/Step/Check 后来已有成功 Invocation 时，旧失败必须从 `unresolvedIssues` 删除。该字段是可丢弃的连续性候选，不是事实或完成依据。
+`createAgent()` 还可接收 Host Policy、由 `createAgentProfileSnapshot()` 创建的版本化 Profile，以及 Host 授权的 Project Instructions。Prompt Compiler 以 Kernel/Transport/Host/Profile/Project/Tool 的稳定顺序编译请求，Profile 仅是 strategy-only 内容，不能改变 Tool、权限、Approval、Evidence、Completion Gate 或 Run Status。Provider Adapter 每个请求只选择 native tools 或 JSON actions 一种 Transport，并把实际 cache usage 按 Attempt 写入审计。
 
-需要完全控制 `decide/validate` 的高级调用方仍可实现完整 `RuntimeProvider`。两种写法最终都进入同一个生产 Provider port 和 Runtime Loop；Adapter 不创建 Session、Registry、fallback 或第二执行协议。内置 `createOpenAICompatibleProvider()` 也构建在同一个 Adapter 上。
+Decision Context 的公开 `historyCandidates` 字段提供当前任务相关的历史导航。候选只来自 Runtime 提供的当前 Run Authority 或 Branch Fork Base；Harness 负责排序、预算和精确 Rehydration。其他 Run、sibling Branch 与 parent post-fork ref 不会成为候选。
+
+需要完全控制 `decide/validate` 的高级调用方仍可实现完整 `RuntimeProvider`。两种写法最终都进入同一个 Harness Provider port 和唯一 Agent Loop；Runtime 不持有也不调用 Provider。内置 `createOpenAICompatibleProvider()` 也构建在同一个 Adapter 上。
 
 ## 自定义 Tool
 
 ```ts
 import { z } from "zod";
-import { defineTool } from "@nexora/runtime";
+import { defineTool } from "@nexora/harness";
 
 const lookup = defineTool({
   name: "example.lookup",
@@ -488,38 +506,32 @@ const lookup = defineTool({
 测试辅助只从独立子路径导入：
 
 ```ts
-import type { RuntimeEvent } from "@nexora/runtime";
+import type { RuntimeEvent } from "@nexora/harness";
 import {
   assertEventSequence,
   assertSucceeded,
-  createRuntimeHarness,
+  createAgentHarness,
   createScriptedProvider,
-  runtimeActions
-} from "@nexora/runtime/testing";
+  modelTurns
+} from "@nexora/harness/testing";
 
 const provider = createScriptedProvider({
-  decisions: [
-    runtimeActions.plan({
+  modelTurns: [
+    modelTurns.plan({
       goal: "读取一个值",
-      acceptanceCriteria: ["存在可信 lookup Evidence"],
       steps: [{
-        id: "lookup",
-        objective: "读取值",
-        checks: [{ id: "lookup-ok", toolName: "example.lookup" }]
+        objective: "读取值并基于可信事实确认结果"
       }]
     }),
-    runtimeActions.tool({
-      stepId: "lookup",
-      checkIds: ["lookup-ok"],
+    modelTurns.tool({
       toolName: "example.lookup",
       input: { key: "example" }
     }),
-    runtimeActions.finish({ summary: "读取完成", evidence: "all" })
-  ],
-  validations: [{ passed: true, issues: [] }]
+    modelTurns.finish({ summary: "读取完成" })
+  ]
 });
 
-await using harness = await createRuntimeHarness({
+await using harness = await createAgentHarness({
   provider,
   tools: [lookup]
 });
@@ -533,22 +545,22 @@ await subscription.closed;
 assertEventSequence(events);
 ```
 
-Harness 使用生产 `createRuntime()`、真实临时 workspace 和 SQLite；close 后释放资源并删除目录。Testing Kit 不提供 Memory Store、Snapshot 写入、Runtime Action submit、Approval bypass 或 Completion shortcut，因此测试代码仍只能通过公开 Runtime/RunHandle 完成闭环。
+Testing Kit 使用生产 `createAgent()`、真实临时 workspace 和 SQLite；close 后释放资源并删除目录。Testing Kit 不提供 Memory Store、Snapshot 写入、Runtime Action submit、Approval bypass 或 Completion shortcut，因此测试代码仍只能通过公开 Agent/RunHandle 完成闭环。
 
 ## 成功与证据 Contract
 
-Provider Contract v2 只提交语义 Task 与 Completion Requirement；Runtime 生成 Structured Plan、Step/Check ID 并把 Capability 绑定到 required Check。成功 Tool Invocation 生成 persisted Evidence；Provider 的 `finish` 只提交 verified summary，Runtime 从 required Checks 确定性派生完整 Evidence citations，并把同一组 ID 交给独立语义验证、Result 和成功 Event。
+Provider Contract v4 只提交显式 `finish.text`、`continue` 中的可选 goal/ordered objective-only Tasks 与 Tool name/arguments，或 `request_input` 的用户问题。Harness 从原始输入和 objective 派生 Runtime Task Contract，但不自动生成 Acceptance Check。Provider 的最终 `text` 只成为 summary；Runtime 从真实 Evidence、Invocation 和 Artifact 自动派生 provenance，并直接执行 deterministic Completion Gate。新生产路径没有同步 Validator。
 
 以下情况都不会成功：
 
 - 任一 required Check 缺少合法 persisted Evidence；
-- failed/unknown Tool Invocation；
+- started/unknown Tool Invocation；
 - 非零 `shell.execute`；
-- 未完成 Plan Step；
-- Provider 不可用或语义验证失败；
+- 未满足的 required mechanical Check；
+- Provider 不可用；
 - 失效 Lease/Fencing Token。
 
-唯一成功判断是 `result.status === "succeeded"`，并可由 RunHandle Inspection 中的 Result、Evidence 和 Invocation，以及兼容审计 View 中的 validation/run.succeeded Event 反查。
+唯一成功判断是 `result.status === "succeeded"` 且 `stopReason === "COMPLETED"`，并可由 RunHandle Inspection 中的 Result、Evidence、Invocation 和 `run.succeeded` Event 反查。旧 Run 的 validation Event 仍可只读审计，但不参与新完成判断。
 
 ## 权威与持久化
 
@@ -560,18 +572,12 @@ Provider Contract v2 只提交语义 Task 与 Completion Requirement；Runtime �
 - 大内容：内容寻址 Artifact。
 - 模型调用与 Token 审计：独立 `model_calls` Ledger；它不参与任务完成判断。
 
-`runtime.inspect(runId).modelCalls` 按调用顺序返回 decision/validation/compaction 的 Provider、模型、projection digest、计量方法、软/硬预算决策、调用状态，以及 Provider 可用时返回的实际 input/output/total usage。硬上限拒绝不会调用 Provider，也不会消耗 `budgetsUsed.modelCalls`，但会持久化 `refused` Ledger 行用于审计。
+`runtime.inspect(runId).modelCalls` 按调用顺序返回 decision 的 Provider、模型、projection digest、计量方法、软/硬预算决策、调用状态，以及 Provider 可用时返回的实际 input/output/total usage。旧数据库中既有的 validation/compaction/refused Ledger 行仍可读取，但生产代码不再创建 validation 或 compaction 调用，也不因 Context hard-limit 判定写 refused 或直接失败 Run。Harness 收缩到最小合法投影后仍调用 Provider；若 Provider 拒绝容量，则按真实 Provider 失败处理。
 
-Decision Context 中的 Tool Observation 使用确定性 Eviction：active Check、未解决错误和安全失败高于普通 predecessor；同 class 采用稳定的 Step/Invocation/ID tie-breaker。8 条是普通候选默认值，约 32 KiB 是保险丝，实际收缩会根据 Provider Token Meter 的 soft limit 反复重测。`payloadMode: "fragment"` 只含固定算法片段，`reference` 完全省略 payload；两者都不能推断成完整事实。大型 success/failure payload 会按 object key 规范化后的 canonical JSON digest 存入 Artifact，Invocation 保存 provenance；只有合法成功 Evidence 才引用同一 Artifact。Eviction 过程不调用 LLM，并且只改变 `toolObservations`：当前 Checkpoint、恢复事实、History Candidates、Session Archive 和 `repair` 在每次重建中保持不变并进入新 digest。
+Decision Context 中的 Tool Observation 使用确定性 Eviction：active Check、未解决错误和安全失败高于普通 predecessor；同 class 采用稳定的 Step/Invocation/ID tie-breaker。8 条是普通候选默认值，约 32 KiB 是保险丝，实际收缩会根据 Provider Token Meter 的 soft limit 反复重测。`payloadMode: "fragment"` 只含固定算法片段，`reference` 完全省略 payload；两者都不能推断成完整事实。大型 success/failure payload 会按 object key 规范化后的 canonical JSON digest 存入 Artifact，Invocation 保存 provenance；只有合法成功 Evidence 才引用同一 Artifact。收缩过程不调用 LLM、不写 Checkpoint，只改变可重建投影；恢复事实、History Candidates、Session Archive 和 `repair` 在每次重建中按预算重新纳入 digest。
 
-当 Eviction 耗尽且 Decision 上下文仍超过 Token 预算时，Runtime 调用 Provider 的可选 `compact(context)` 生成结构化 Summary。Provider 必须返回严格匹配 `CompactionSummarySchema` 的 JSON：`schemaVersion: 1`，包含 `goal`、`constraints`、`completedWork`、`keyDecisions`、`unresolvedIssues`、`relatedArtifacts`，每条 `statement` 都携带原始 `sourceRefs`（`input:<sequence>` / `invocation:<id>` / `evidence:<id>` / `event:<sequence>` / `artifact:sha256:<hex>`）。第一次调用没有历史缓存；以后只携带已完整重验的 latest previous Checkpoint，并要求 Provider 输出完整替代 Summary，而不是累积嵌套结构。
+Rehydration 由 Harness 在构建 Context 时完成，恢复结果随后与其他字段一起进入确定性收缩。Harness 从 Runtime port 读取 published Run refs，从独立 Memory Store 读取 exact-scope eligible Memory，并执行既有 digest/预算校验；最新 Input 点名的 ref、active `context_ref`、最高相关 Memory 与关键 Tool facts 可自动触发恢复。匹配 required Check 时请求 Runtime 生成 Run-owned Context Evidence。错误语义和预算值保持不变，生产 Adapter 只携带当前决策必要的事实和 ModelTurn Contract。
 
-Runtime 在提交新 Summary 前严格校验 Schema、引用存在性与 Run 归属、Source Digest、section 与 Authority 的一致性：`completedWork` 必须引用已完成 Step 的 success Invocation；`unresolvedIssues` 只能引用仍未解决的 failed/unknown Invocation 或 safety 失败证据。若同一 Plan/Step/Check 后来已有成功 Invocation，旧失败已经 resolved，继续携带会被拒绝。下一次使用该缓存前，Runtime 会再次验证 `checkpoint.digest` 等于 canonical Summary digest，重新验证完整 Summary，并精确比较重新派生的 Source Digest map 与 covered Invocation multiset；修改 Summary、来源或 coverage 中任一部分都会使缓存失效。
+E090 在上述 `availableContextRefs` 并集中加入 `historyCandidates.ref` 与 `relatedRefs`。候选本身不进入 Rehydration 内容预算；只有最新 Input 明确点名或 active `context_ref` Check 要求的精确 ref 才自动读取，其他候选仍只是 Harness 内部导航。生产 OpenAI-compatible Adapter 不投影 `historyCandidates`、`memoryCandidates` 或 Session Archive；它们仍参与 Provider-neutral Context 的确定性构建、收缩和 digest。
 
-全部校验通过后，Store 在单个事务内删除该 Run 的旧 Checkpoint 行并插入唯一新行。有效 Checkpoint 会替换被其 `coveredInvocations` 覆盖的 Observation，并把 `contextCheckpoint: { checkpointId, digest, summary }` 注入 Decision Context；重建后的上下文重新计量 Token。如果 Provider 输出无效，旧缓存不被替换，Decision 走既有安全回退；如果重建后仍超过 hard limit，Runtime 安全阻塞并写入 `refused` Ledger 行，Decision Provider 不会被调用。Checkpoint 是可删除的 Prompt 派生缓存，从不拥有 TaskContract、Plan、Invocation、Evidence、Approval、Run Status 或 Completion；删除全部 Checkpoint 后，同一 Run 的 Decision Projection 必须从 Authority 确定性重建。
-
-Rehydration 是 Eviction/Compaction 之后的精确恢复层。Runtime 构建本轮 `availableContextRefs`（`toolObservations.sourceRefs` ∪ `contextCheckpoint.summary` 的 refs ∪ `run.evidence` 的 refs ∪ History Candidates ∪ 当前 Run 的 Input/Event sequence 范围 → digest），并在 Provider 决策前自动恢复最新 Input 明确点名的已发布 ref、最高相关 eligible Memory 和 active Task 未满足的 `context_ref` Check。结果直接注入 `context.rehydratedFacts`（`ref` / `kind` / `digest` / `content` / `error`），匹配 required Check 时生成真实 Run-owned Context Evidence。错误语义和准入预算不变：`INVALID_REF`、`REF_UNAVAILABLE`、`REHYDRATION_BUDGET_EXCEEDED`，`maxRefsPerRequest=8`、`maxRehydratedTokensPerTurn=4096`、`maxSingleFactTokens=2048`。`restore_context` 仅保留在兼容 Schema/编译路径，正常 phase-directed Provider wire 不暴露也不依赖它。生产 Adapter 按 phase 省略空集合、内部 ID/version、Evidence、Plan/Step/Check 结构与 provenance，只携带当前决策必要的事实和 Intent Contract。
-
-E090 在上述 `availableContextRefs` 并集中加入 `historyCandidates.ref` 与 `relatedRefs`。候选本身不进入 Rehydration 内容预算；只有最新 Input 明确点名或 active `context_ref` Check 要求的精确 ref 才自动读取，其他候选仍只是导航。生产 OpenAI-compatible Adapter 按需投影 `historyCandidates`，Eviction 重建必须保持 Provider-neutral Context 一致并纳入新的 projection digest。
-
-Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v5 在原有 Authority 表旁保留 `model_calls`（phase 现支持 `decision` / `validation` / `compaction`），为 `tool_invocations` 增加 payload digest/Artifact provenance，新增 `context_checkpoints` 表持久化结构化 Summary，并新增 `branches` / `branch_fork_base` 表持久化 Context Branching 的 lineage、fork point 与只读继承边界（`inheritedRefs` + `inheritedFacts`）；旧 schema 可原地迁移，无 Summary、Context Store、Profile Store 或第二套 Runtime。
+Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v7 在原有 Authority 表旁保留 `model_calls`，以 `model_call_audits` 保存 Context Manifest/capture provenance，以 `provider_attempts` 保存物理请求；`run_events` 原位增加版本化 digest chain 和 completeness。`branches` / `branch_fork_base` 继续持久化 Context Branching lineage；v4 `context_checkpoints` 仅为旧数据库兼容保留。旧 Event 原位迁移为 `legacy_partial`，不补造旧 Provider Attempt、Plan revision 或 payload。

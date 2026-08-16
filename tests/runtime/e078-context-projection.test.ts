@@ -10,8 +10,8 @@ import {
   type ModelDecisionContext,
   type RuntimeProvider,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
-import { legacyTestActionToDecision } from "./runtime-testkit.js";
+} from "../../packages/harness/src/index.js";
+import { materializeTestTurn } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -61,7 +61,7 @@ describe("E078 bounded decision context projection", () => {
     }
   });
 
-  it("projects only inputs not yet covered by the current Task Contract", async () => {
+  it("keeps original inputs visible after the current Task Contract covers them", async () => {
     const workspace = fixture();
     const provider = new CapturingProvider((context, call) => {
       if (call === 0) return setPlan(null, 1);
@@ -85,17 +85,23 @@ describe("E078 bounded decision context projection", () => {
       expect(provider.contexts[1]!.run).toMatchObject({
         inputCount: 1,
         coveredInputCount: 1,
-        inputHistory: []
+        inputHistory: [{ sequence: 1, text: "Inspect the target." }]
       });
       expect(provider.contexts[2]!.run).toMatchObject({
         inputCount: 2,
         coveredInputCount: 1,
-        inputHistory: [{ sequence: 2, text: "Do not modify files." }]
+        inputHistory: [
+          { sequence: 1, text: "Inspect the target." },
+          { sequence: 2, text: "Do not modify files." }
+        ]
       });
       expect(provider.contexts[3]!.run).toMatchObject({
         inputCount: 2,
         coveredInputCount: 2,
-        inputHistory: []
+        inputHistory: [
+          { sequence: 1, text: "Inspect the target." },
+          { sequence: 2, text: "Do not modify files." }
+        ]
       });
       expect(new Set(provider.contexts.map((context) => context.projection.digest)).size).toBe(4);
     } finally {
@@ -103,7 +109,32 @@ describe("E078 bounded decision context projection", () => {
     }
   });
 
-  it("keeps active-step dependencies and excludes observations from removed unfinished steps", async () => {
+  it("projects successful Tool observations before a Plan exists", async () => {
+    const workspace = fixture();
+    const provider = new CapturingProvider((_context, call) => (
+      call === 0
+        ? { type: "call_tool", stepId: "run-unplanned", checkIds: [], toolName: "test.read", input: {} }
+        : { type: "request_input", question: "Pause.", reason: "Projection captured" }
+    ));
+    const runtime = createRuntime({ workspace, provider, tools: [tool("read", true)] });
+
+    try {
+      await runtime.start({ input: "Read before planning." });
+
+      expect(provider.contexts[1]!.run.currentPlan).toBeNull();
+      expect(provider.contexts[1]!.toolObservations).toEqual([
+        expect.objectContaining({
+          toolName: "test.read",
+          status: "succeeded",
+          facts: { value: "read" }
+        })
+      ]);
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it("keeps recent Tool outcomes visible across a Plan revision", async () => {
     const workspace = fixture();
     const provider = new CapturingProvider((context, call) => {
       if (call === 0) return toolPlan(workspace, null, ["read", "obsolete", "finish"]);
@@ -126,8 +157,10 @@ describe("E078 bounded decision context projection", () => {
         "test.read",
         "test.obsolete"
       ]);
-      expect(provider.contexts[4]!.toolObservations.map((item) => item.toolName)).toEqual(["test.read"]);
-      expect(provider.contexts[4]!.toolObservations[0]?.status).toBe("succeeded");
+      expect(provider.contexts[4]!.toolObservations.map((item) => item.toolName)).toEqual([
+        "test.read",
+        "test.obsolete"
+      ]);
     } finally {
       await runtime.close();
     }
@@ -142,8 +175,7 @@ describe("E078 bounded decision context projection", () => {
       if (call === 3) return callTool("three");
       return {
         type: "propose_finish",
-        summary: "All three steps complete",
-        evidenceIds: context.run.evidence.map((item) => item.id)
+        summary: "All three steps complete"
       };
     });
     const runtime = createRuntime({
@@ -155,10 +187,10 @@ describe("E078 bounded decision context projection", () => {
     try {
       const result = await runtime.start({ input: "Complete all three steps." });
       expect(result.status).toBe("succeeded");
-      // The completion decision (propose_finish) has no active Step, yet it must
-      // still see every completed Step's observation as visible facts.
+      // The completion decision still sees every persisted observation after
+      // navigation progress has completed.
       const completion = provider.contexts[4]!;
-      expect(completion.run.stepProgress.every((item) => item.status === "completed")).toBe(true);
+      expect(completion.run.stepProgress.map((item) => item.status)).toEqual(["completed", "completed", "completed"]);
       expect(completion.toolObservations.map((item) => item.toolName)).toEqual(["test.one", "test.two", "test.three"]);
     } finally {
       await runtime.close();
@@ -179,12 +211,9 @@ class CapturingProvider implements RuntimeProvider {
     const call = this.contexts.length;
     this.frozen.push(Object.isFrozen(context) && Object.isFrozen(context.run));
     this.contexts.push(structuredClone(context));
-    return legacyTestActionToDecision(this.#decide(context, call), context);
+    return materializeTestTurn(this.#decide(context, call), context);
   }
 
-  async validate(): Promise<unknown> {
-    return { passed: true, issues: [] };
-  }
 }
 
 function fixture(): string {

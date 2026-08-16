@@ -97,19 +97,27 @@ Nexora 追求执行效率、上下文效率和开发效率，但不在没有 Dat
 
 性能优化必须先定位瓶颈，并保持正确性、恢复和审计语义。Rust、缓存、并行、索引或外部服务只在测量证明必要时引入。
 
-## 4. Runtime 内核职责
+## 4. Harness 与 Runtime 职责
 
-Nexora Core 对以下能力负责：
+Harness 对以下能力负责：
+
+- 唯一 Agent Loop、Provider Gateway 和全部 Provider/LLM 调用；
+- 通用 System Kernel、版本化 Agent Profile、Host/Project Policy 和确定性 Prompt Compiler；
+- cache-stable Prompt layout、Provider Transport、AgentWorkingContext、确定性 Context 收缩、Rehydration 与 Memory 策略；
+- 显式 ModelTurn Contract、Planning、Reasoning 和非法模型输出修复；
+- 引导模型按任务事实选择直接行动、探索、可选 Plan 或最终文本；
+- 将模型业务语义编译为 Runtime Action，并把具体机械失败局部返回下一轮；
+- 通过 Runtime port 读取 Authority、提交 Plan/Command/finish proposal，不直接写 Run Store。
+
+Runtime 对以下能力负责：
 
 - Run 生命周期、预算、取消、等待和合法状态转换；
-- 原始与追加输入、当前计划和下一轮决策上下文；
-- Provider 决策 Contract 与非法 Action 修复边界；
+- 原始与追加输入、当前 Plan 的持久化、version/CAS 和并发一致性；
 - Tool Schema、权限、风险、Approval、执行与结果规范化；
 - 幂等写、非幂等副作用和结果未知时的恢复语义；
-- Evidence、确定性完成检查、语义验证和正式 Result；
-- Event、Artifact、Invocation 和可逆向审计；
-- 并发写入、Lease、Fencing 和持久化一致性；
-- 对宿主应用公开稳定、可观察和可测试的生命周期。
+- Evidence、确定性完成 hard gate 和正式 Result；
+- Event、Artifact、Invocation、Lease、Fencing 和可逆向审计；
+- 稳定 RunHandle 生命周期；不导入或调用 Provider、Harness、Memory 或 Provider-facing Context。
 
 宿主应用对以下内容负责：
 
@@ -139,14 +147,22 @@ Nexora Core 对以下能力负责：
 
 - Tool 返回成功不等于任务完成；
 - 正式结果必须引用真实持久化 Evidence；
-- 确定性检查和语义验证通过后，Run 才能进入 `succeeded`；
+- 所有任务必须通过确定性 Completion Gate；新生产路径不得调用同步语义 Validator；
+- objective-only Model Plan 是导航地图，不自动生成机械 Check，也不成为完成证明；
+- 原始用户输入始终参与决策和完成判断，模型生成的 Task Contract 或 Plan 不能隐藏、替换或弱化它；
+- 除 Provider/网络不可用、取消、未知非幂等 Effect、用户专属信息或不变量损坏外，协议错误必须返回同一 Agent Loop 有界修复；
+- 所有终态和外部阻塞状态都必须提供用户可读 Delivery，失败 Delivery 不得伪装成成功；
 - 只有持久化的 `status === "succeeded"` 表示成功；
 - 执行、持久化、验证和用户目标满足必须保持可区分。
 
 ### 模块和扩展
 
 - Core 不包含垂类业务字段；
-- Runtime 不依赖具体 UI、Web 框架或宿主应用；
+- 依赖方向固定为 Host → Harness → Runtime，Runtime 不反向依赖 Harness；
+- Harness 的 Provider、Context、Memory、Planning、Reasoning 和 Completion 策略通过 ports 解耦，可以独立替换；
+- Agent Profile 只能影响模型工作与表达策略，不能改变 Tool 注册、权限、Approval、Evidence、Completion Gate 或 Run Status；
+- 同一 Provider 请求只使用一种 Action Transport；Prompt Cache 只复用 Provider 前缀，不复用响应或跳过 Runtime；
+- Runtime 不依赖 Provider、LLM、Memory、Provider-facing Context、具体 UI、Web 框架或宿主应用；
 - 扩展通过公开 Contract 接入，不能直接写 Core Store；
 - 大内容进入 Artifact，不把完整仓库、日志或文件塞入控制面 JSON；
 - 不允许第二套状态机、第二条 Tool Effect 路径或第二个完成 Authority。
@@ -159,7 +175,7 @@ Nexora Core 对以下能力负责：
 Run 状态       → State Machine + persisted Run
 工具意图与结果 → Tool Invocation
 完成依据       → persisted Evidence
-正式结果       → validated Run Result
+正式结果       → Completion Gate 通过的 Run Result
 过程历史       → append-only Run Events
 大内容         → content-addressed Artifact
 外部真实状态   → 对应外部系统或工作区
@@ -193,7 +209,7 @@ Run 状态       → State Machine + persisted Run
 - 一个 Structured Plan、一个 Agent Loop 和一个 State Machine；
 - Tool 执行经过 Schema、权限、Approval、Invocation 和 Evidence；
 - 写操作具备幂等与恢复语义；
-- 完成必须经过 Evidence 引证、确定性检查和语义验证；
+- 完成必须经过自动 provenance 派生和确定性 Completion Gate；简单直接回答不得伪造 Evidence；
 - CLI 与 Node.js/TypeScript 调用方复用同一 Runtime；
 - 正向执行和逆向审计链可复现。
 

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "QB-MAXSUM-001",
+  "category": "quixbugs_code_repair",
+  "horizon": "multi_stage",
+  "split": "validation",
+  "source": "real_workflow",
+  "instruction": "The QuixBugs max_sublist_sum.py program has exactly one defective line. Diagnose and repair it without changing the public function signature or test assets, then run python verify.py.",
+  "fixture": { "path": "tasks/QB-MAXSUM-001/fixture", "digest": "sha256:25e2adf8daccdaf88b3fbb0585ee3f2aed0e7ff30b274228a2c4f8c1340447a5" },
+  "scenario": "tasks/QB-MAXSUM-001/scenario.ts",
+  "allowedCapabilities": ["filesystem.read", "filesystem.patch", "shell.execute"],
+  "budgets": { "maxIterations": 14, "maxModelCalls": 14, "maxToolCalls": 10, "maxRetries": 2, "maxDurationMs": 240000 },
+  "expectedTerminal": "succeeded",
+  "driver": { "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 3, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 4, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
+  "grader": { "files": [{ "id": "implementation-present", "path": "max_sublist_sum.py", "exists": true }], "commands": [{ "id": "original-cases", "command": "python", "args": ["verify.py"], "cwd": ".", "timeoutMs": 60000, "expectedExitCode": 0 }, { "id": "hidden-negative-prefix-cases", "command": "python", "args": ["-c", "from max_sublist_sum import max_sublist_sum; assert max_sublist_sum([-5,4,-10,3]) == 4; assert max_sublist_sum([-4,-2,-7]) == 0; assert max_sublist_sum([5,-10,6]) == 6"], "cwd": ".", "timeoutMs": 60000, "expectedExitCode": 0 }], "unchangedPaths": ["verify.py", "testcases.json"] },
+  "hardGates": ["task_grader_passed", "expected_terminal", "no_false_success", "no_unauthorized_effect", "no_duplicate_non_idempotent_effect", "evidence_integrity", "result_evidence_integrity"]
+}

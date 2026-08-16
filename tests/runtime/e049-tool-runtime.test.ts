@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createBuiltInTools, type RuntimeTool } from "../../packages/runtime/src/index.js";
+import { createBuiltInTools, type RuntimeTool } from "../../packages/harness/src/index.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -77,6 +77,12 @@ describe("E049 built-in Tool Runtime", () => {
 
     const digest = `sha256:${createHash("sha256").update("before").digest("hex")}`;
     const patch = tool(tools, "filesystem.patch");
+    expect(() => patch.contract.execution.inputSchema.parse({
+      path: "note.txt",
+      expectedDigest: digest,
+      find: "before",
+      replace: "before"
+    })).toThrow(/must differ/);
     await expect(execute(patch, root, { path: "note.txt", expectedDigest: digest, find: "before", replace: "after" }))
       .resolves.toEqual(expect.objectContaining({ status: "success" }));
     await expect(execute(patch, root, { path: "note.txt", expectedDigest: digest, find: "before", replace: "after" }))
@@ -98,10 +104,32 @@ describe("E049 built-in Tool Runtime", () => {
     })).resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "TOOL_TIMEOUT" }) }));
     await expect(execute(tool(tools, "shell.execute"), root, {
       command: process.execPath,
-      args: ["-e", "process.exit(7)"],
+      args: ["-e", "process.stderr.write('expected=0 actual=7'); process.exit(7)"],
       cwd: ".",
       timeoutMs: 10_000
-    })).resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "COMMAND_FAILED" }) }));
+    })).resolves.toEqual({
+      status: "failure",
+      subjectRef: "shell.execute",
+      error: {
+        code: "PROCESS_EXIT_NONZERO",
+        message: "Process started and exited with code 7. Inspect error details before changing the command or workspace.",
+        retryable: false
+      }
+    });
+    await expect(execute(tool(tools, "shell.execute"), root, {
+      command: `nexora-missing-executable-${Date.now()}`,
+      args: [],
+      cwd: ".",
+      timeoutMs: 10_000
+    })).resolves.toEqual({
+      status: "failure",
+      subjectRef: "shell.execute",
+      error: {
+        code: "PROCESS_START_FAILED",
+        message: expect.stringContaining("Process could not be started:"),
+        retryable: false
+      }
+    });
     await expect(execute(tool(tools, "git.status"), root, {}))
       .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ stdout: expect.stringContaining("tracked.txt") }) }));
     expect(tool(tools, "git.status").contract.execution.effect.kind).toBe("read");

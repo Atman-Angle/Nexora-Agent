@@ -2,7 +2,6 @@ export {
   RuntimeEngine,
   RunControlError,
   RuntimeError,
-  createRuntime,
   type ApprovalDecision,
   type RecoveryDecision,
   type PublicEvidence,
@@ -23,10 +22,10 @@ export {
   type RunResult,
   type RunView,
   type RuntimeObserver,
-  type RuntimeMemoryOptions,
   type RuntimeEvent,
   type RuntimeEventListener,
   type RuntimeSubscription,
+  type RuntimeWatch,
   type SubscribeOptions,
   type RequestOptions,
   type DenialOptions,
@@ -43,133 +42,52 @@ export {
 } from "./runtime.js";
 
 export type {
+  AgentAuditEvent,
+  AgentDriver,
+  AgentRuntimePort,
+  AgentStateView,
+  AgentToolDescriptor,
+  ContextEvidenceFact,
+  FinishProposal,
+  ModelCallCompletion,
+  ModelCallStart,
+  ProviderAttemptCompletion,
+  ProviderAttemptStart,
+  PlanProposal,
+  RuntimeCommand,
+  RuntimeDispatchOutcome
+} from "./agent-runtime-port.js";
+
+export type {
+  AuditHistoryPage,
+  AuditHistoryQuery,
+  AuditIntegrityResult,
+  AuditRecordType,
   BranchForkBase,
   BranchRecord,
   BranchStatus,
-  ForkContext,
-  InheritedFactProjection
-} from "./contracts.js";
-
-export type {
-  CompactionContext,
-  HistoryCandidate,
-  HistoryCandidateReason,
-  MemoryCandidate,
-  MemoryCandidateReason,
-  ModelDecisionContext,
-  ModelCallPhase,
-  ProjectedRunContext,
-  ProviderModelProfile,
-  ProviderTokenMeasurement,
-  ProviderTokenMeter,
-  ProviderTokenUsage,
-  ReasoningPolicy,
-  RuntimeProvider,
-  SessionArchive,
-  SessionArchiveMilestone,
-  SessionArchiveRange,
-  SemanticValidationContext,
-  SemanticValidationVerdict,
-  ToolObservation
-} from "./providers/model-client.js";
-
-export {
-  ProviderDecisionSchema,
-  ProviderIntentSchema,
-  CapabilityCallSchema,
-  SemanticCompletionRequirementSchema,
-  SemanticTaskSchema,
-  ValidationIssueKindSchema,
-  type ProviderDecision,
-  type ProviderIntent,
-  type ProviderIntentKind,
-  type SemanticCompletionRequirement,
-  type SemanticTask,
-  type SemanticValidationIssue,
-  type ValidationIssueKind
-} from "./providers/intent-contract.js";
-
-export type {
   Evidence,
+  ForkContext,
+  InheritedFactProjection,
   ModelCallRecord,
+  ModelCallAudit,
+  ModelCallTrace,
+  ProviderAttempt,
+  ContextManifest,
+  PayloadCapturePolicy,
   RunEvent,
   RunSnapshot,
   RunStatus,
   RuntimeAction,
   RuntimeBudgets,
   StructuredPlan,
-  TaskContract
+  TaskContract,
+  ToolAttempt
 } from "./contracts.js";
 
 export { createBuiltInTools } from "./execution/tool-runtime/index.js";
-export {
-  ModelConfigError,
-  createOpenAICompatibleProvider,
-  openAICompatibleProviderFromEnv,
-  type OpenAICompatibleProviderOptions
-} from "./providers/openai-compatible.js";
-
-export {
-  defineProviderAdapter,
-  type ProviderAdapterDefinition,
-  type ProviderCompletionOperation,
-  type ProviderCompletionRequest,
-  type ProviderRequestTokenMeter
-} from "./providers/adapter.js";
-
 export {
   defineTool,
   type ToolBuilderContext,
   type ToolBuilderDefinition
 } from "./execution/tool-builder.js";
-
-export {
-  MemoryConflictError,
-  MemoryControlConflictError,
-  MemoryControlEventSchema,
-  MemoryControlInputSchema,
-  MemoryControls,
-  MemoryDigestSchema,
-  MemoryExpirationInputSchema,
-  MemoryIdSchema,
-  MemoryLifecycleError,
-  MemoryListOptionsSchema,
-  MemoryRecordSchema,
-  MemoryPromotionInputSchema,
-  MemoryPromotionSchema,
-  MemoryRevalidationInputSchema,
-  MemoryScopeSchema,
-  MemorySensitivitySchema,
-  MemorySourceSchema,
-  MemoryStatusSchema,
-  MemoryStatusUpdateSchema,
-  MemorySupersedeInputSchema,
-  MemorySupersessionSchema,
-  MemoryStore,
-  MemoryVerificationSchema,
-  openMemoryStore,
-  createMemoryControls,
-  type CreateMemoryInput,
-  type MemoryControlEvent,
-  type MemoryControlInput,
-  type MemoryControlResult,
-  type MemoryInspection,
-  type MemoryRecallEligibilityReason,
-  type MemoryExpirationInput,
-  type MemoryLifecycleErrorCode,
-  type MemoryListOptions,
-  type MemoryRecord,
-  type MemoryPromotion,
-  type MemoryPromotionInput,
-  type MemoryPromotionResult,
-  type MemoryRevalidationInput,
-  type MemoryScope,
-  type MemorySensitivity,
-  type MemorySource,
-  type MemoryStatus,
-  type MemoryStatusUpdate,
-  type MemorySupersedeInput,
-  type MemorySupersedeResult,
-  type MemorySupersession,
-  type MemoryVerification
-} from "./memory/index.js";

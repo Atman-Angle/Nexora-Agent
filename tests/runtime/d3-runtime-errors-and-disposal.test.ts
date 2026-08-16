@@ -12,7 +12,7 @@ import {
   createRuntime,
   type RuntimeProvider,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
+} from "../../packages/harness/src/index.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -87,9 +87,6 @@ describe("D3 typed Runtime errors and disposal", () => {
         await aborted(operation.signal);
         throw operation.signal.reason;
       },
-      async validate() {
-        return { passed: true, issues: [] };
-      },
       async dispose() {
         providerDisposed.calls += 1;
       }
@@ -140,12 +137,7 @@ describe("D3 typed Runtime errors and disposal", () => {
     const disposed: string[] = [];
     const provider: RuntimeProvider = {
       async decide() {
-        return {
-          intent: { kind: "request_input", question: "Wait.", reason: "test" }
-        };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
+        return { action: "request_input", question: "Wait.", reason: "test"  };
       },
       async dispose() {
         disposed.push("provider");
@@ -208,12 +200,7 @@ function temporaryWorkspace(): string {
 function inputProvider(): RuntimeProvider {
   return {
     async decide() {
-      return {
-        intent: { kind: "request_input", question: "Provide input.", reason: "test" }
-      };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
+      return { action: "request_input", question: "Provide input.", reason: "test"  };
     }
   };
 }

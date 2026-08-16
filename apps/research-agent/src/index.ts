@@ -3,14 +3,15 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import {
-  createRuntime,
+  createAgent,
+  createAgentProfileSnapshot,
   defineTool,
   type RunHandle,
   type RunOptions,
   type RuntimeEngine,
   type RuntimeProvider,
   type RuntimeTool
-} from "@nexora/runtime";
+} from "@nexora/harness";
 
 import { validateDailySchedule } from "./schedule.js";
 
@@ -51,6 +52,28 @@ const SampleNewsItem: NewsItem = {
   summary: "Example attributed news summary.",
   claims: [{ subject: "Example topic", stance: "reported", statement: "An example event occurred." }]
 };
+
+const RESEARCH_AGENT_PROMPT_PROFILE = createAgentProfileSnapshot({
+  schemaVersion: 1,
+  id: "nexora-research-agent",
+  version: "1",
+  role: {
+    identity: "Research and editorial analysis agent",
+    objective: "Produce current, attributable research outputs from configured sources.",
+    expertise: ["source comparison", "claim attribution", "time-sensitive synthesis"]
+  },
+  strategy: {
+    principles: [
+      "Distinguish source facts, cross-source agreement and inference.",
+      "Preserve attribution and publication-time context.",
+      "Use only configured source and output capabilities."
+    ]
+  },
+  communication: {
+    audience: "The audience and platforms selected by the Host profile.",
+    outputGuidance: ["State source limitations and unresolved conflicts explicitly."]
+  }
+}, { kind: "host", ref: "apps/research-agent" });
 
 export type NewsSearchRequest = {
   readonly query: string;
@@ -133,9 +156,10 @@ export type ResearchAgent = {
 
 export function createResearchAgent(options: ResearchAgentOptions): ResearchAgent {
   validateResearchProfile(options.profile);
-  const runtime = createRuntime({
+  const runtime = createAgent({
     workspace: options.workspace,
     provider: options.provider,
+    profile: RESEARCH_AGENT_PROMPT_PROFILE,
     tools: createResearchTools(options.sources, options.profile)
   });
   return Object.freeze({

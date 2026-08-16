@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 import {
   ModelConfigError,
   createBuiltInTools,
-  createRuntime,
+  createAgent,
+  createAgentProfileSnapshot,
   openAICompatibleProviderFromEnv,
   type ApprovalDecision,
   type RecoveryDecision,
@@ -15,18 +16,37 @@ import {
   type RunInspection,
   type RuntimeEvent,
   type RuntimeProvider
-} from "../../../packages/runtime/src/index.js";
+} from "../../../packages/harness/src/index.js";
+
+const CLI_AGENT_PROFILE = createAgentProfileSnapshot({
+  schemaVersion: 1,
+  id: "nexora-workspace-agent",
+  version: "1",
+  role: {
+    identity: "Workspace development agent",
+    objective: "Complete the user's workspace task while preserving repository contracts."
+  },
+  strategy: {
+    principles: [
+      "Inspect current workspace facts and existing conventions before changing files.",
+      "Keep changes scoped to the requested outcome.",
+      "Verify changed behavior proportionately."
+    ]
+  },
+  communication: { audience: "Software project contributors", tone: "Direct and factual" }
+}, { kind: "host", ref: "apps/cli" });
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
-  let runtime: ReturnType<typeof createRuntime> | undefined;
+  let runtime: ReturnType<typeof createAgent> | undefined;
   try {
     const parsed = parseArguments(argv);
     if (parsed.command !== "inspect") loadCliEnvironment();
     const workspace = resolve(parsed.cwd ?? process.cwd());
     const provider = parsed.command === "inspect" ? inspectionProvider : openAICompatibleProviderFromEnv();
-    runtime = createRuntime({
+    runtime = createAgent({
       workspace,
       provider,
+      profile: CLI_AGENT_PROFILE,
       tools: createBuiltInTools({ artifactDir: resolve(workspace, ".nexora", "artifacts") })
     });
 
@@ -230,8 +250,7 @@ function toCliResult(inspection: RunInspection): {
 function exitCode(status: ReturnType<typeof toCliResult>["status"]): number { return status === "succeeded" ? 0 : status === "waiting" ? 2 : status === "blocked" ? 3 : 4; }
 
 const inspectionProvider: RuntimeProvider = {
-  async decide() { throw new Error("Provider is unavailable in inspect mode."); },
-  async validate() { throw new Error("Provider is unavailable in inspect mode."); }
+  async decide() { throw new Error("Provider is unavailable in inspect mode."); }
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

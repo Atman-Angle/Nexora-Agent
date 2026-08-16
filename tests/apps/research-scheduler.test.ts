@@ -17,8 +17,8 @@ import {
 } from "../../apps/research-agent/src/scheduler.js";
 import {
   createScriptedProvider,
-  runtimeActions
-} from "../../packages/runtime/src/testing/index.js";
+  modelTurns
+} from "../../packages/harness/src/testing/index.js";
 
 const roots: string[] = [];
 
@@ -130,39 +130,31 @@ describe("Research Agent application scheduler", () => {
 
 function createSuccessfulAgent(profile: ResearchProfile, workspace: string) {
   const provider = createScriptedProvider({
-    decisions: [
-      runtimeActions.plan({
+    modelTurns: [
+      modelTurns.plan({
         goal: "Generate one scheduled daily article.",
-        acceptanceCriteria: ["discovered", "analyzed", "validated"],
         steps: [
-          { id: "discover", objective: "Discover.", checks: [{ id: "discover-check", toolName: "news.discover" }] },
-          { id: "analyze", objective: "Analyze.", checks: [{ id: "analyze-check", toolName: "news.analyze_selection" }] },
-          { id: "validate", objective: "Validate.", checks: [{ id: "validate-check", toolName: "news.validate_output" }] }
+          { objective: "Discover." },
+          { objective: "Analyze." },
+          { objective: "Validate." }
         ]
       }),
-      runtimeActions.tool({
-        stepId: "discover",
-        checkIds: ["discover-check"],
+      modelTurns.tool({
         toolName: "news.discover",
         input: { query: "AI", since: "2026-08-01T00:00:00.000Z", limit: 10, excludeKeywords: [] }
       }),
-      runtimeActions.tool({
-        stepId: "analyze",
-        checkIds: ["analyze-check"],
+      modelTurns.tool({
         toolName: "news.analyze_selection",
         input: { items: newsItems }
       }),
-      runtimeActions.tool({
-        stepId: "validate",
-        checkIds: ["validate-check"],
+      modelTurns.tool({
         toolName: "news.validate_output",
         input: {
           deliverables
         }
       }),
-      runtimeActions.finish({ summary: "All four configured daily research outputs were validated and archived.", evidence: "all" })
-    ],
-    validations: [{ passed: true, issues: [] }]
+      modelTurns.finish({ summary: "All four configured daily research outputs were validated and archived." })
+    ]
   });
   return createResearchAgent({ workspace, profile, provider, sources: [newsSource] });
 }

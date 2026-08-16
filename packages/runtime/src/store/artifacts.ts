@@ -37,11 +37,23 @@ export class ArtifactStore {
   }
 
   getText(digest: string): string {
-    return readFileSync(this.#pathForDigest(digest), "utf8");
+    const content = readFileSync(this.#pathForDigest(digest));
+    const actual = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    if (actual !== digest) throw new Error(`Artifact digest mismatch: ${digest}`);
+    return content.toString("utf8");
   }
 
   has(digest: string): boolean {
     return existsSync(this.#pathForDigest(digest));
+  }
+
+  verify(digest: string): boolean {
+    try {
+      this.getText(digest);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   #pathForDigest(digest: string): string {

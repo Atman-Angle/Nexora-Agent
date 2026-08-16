@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import { createRuntime, type RuntimeTool } from "../../packages/runtime/src/index.js";
+import { createRuntime, type RuntimeTool } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];

@@ -8,6 +8,13 @@ export {
   executeToolInvocation,
   recoverToolInvocation
 } from "./runtime-execution.js";
+export {
+  isRetryableTransientToolFailure,
+  reduceRecoveryState,
+  type RecoveryAction,
+  type RecoveryIssue,
+  type RecoveryState
+} from "./recovery-reducer.js";
 
 export {
   defineTool,

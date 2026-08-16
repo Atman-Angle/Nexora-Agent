@@ -26,15 +26,18 @@
 
 ## Agent 应用下面的执行层
 
-一个 Agent 产品包含三类不同职责：
+一个 Agent 产品包含四类不同职责：
 
 | 层 | 负责什么 |
 | --- | --- |
 | **你的应用** | 定义目标、领域 Prompt、Tool、数据、UI 和产品行为。 |
-| **模型 Provider** | 观察当前上下文，提出 Agent 下一步应该做什么。 |
-| **Nexora Runtime** | 安全执行决策、持久化真实过程、处理交互和恢复，并判断任务是否真正完成。 |
+| **Nexora Harness** | 负责 Agent Loop、通用 Prompt Compiler、版本化 Agent Profile、Context、Memory 策略、Planning、Provider Transport 和 ModelTurn 编译。 |
+| **模型 Provider** | 接收 Harness 的有界请求，提出 Agent 下一步应该做什么。 |
+| **Nexora Runtime** | 安全执行已批准命令，负责持久状态、Tool Invocation、恢复、Evidence 和机械完成门。 |
 
-Nexora 是第三层。它不是另一个 Agent 人格，也不会替换你的应用框架。它把不稳定的模型调用和 Tool 调用转换成一个持久、可审计的 **Run**。
+Nexora 提供 Harness 与 Runtime 两层。它不是另一个 Agent 人格，也不会替换你的应用框架。Harness 把模型响应编译为 Runtime 命令；Runtime 把命令和 Tool Effect 转换成一个持久、可审计的 **Run**。
+
+这里的“机械”指确定性代码，不是另一轮 LLM 判断。Runtime 从不调用 Provider：它校验 Schema 与权限，记录 Invocation 和 Evidence，执行状态转换与完成不变量，并持久化结果。所有模型调用和语义决策都属于 Harness。
 
 ```text
 目标
@@ -60,28 +63,36 @@ Nexora 是第三层。它不是另一个 Agent 人格，也不会替换你的应
 
 对于简单、无状态的一次性聊天调用，Nexora 可能没有必要。它面向具有状态、副作用、人工交互或明确完成 Contract 的 Agent。
 
+全部原始用户输入在 Run 内持续可见；模型生成的 Task Contract 或 Plan 不能替换它们。Harness 按已有事实、Tool 探寻、有界重试和换路径的顺序消解不确定性，最后才询问用户。存在可用 Tool 且尚未尝试时，第一次输入请求会返回模型做一次自主纠错；真正属于用户的选择仍会暂停 Run。
+
+每个终态或外部阻塞的 Run 都暴露用户可读 **Delivery**。成功 Delivery 使用已验证的模型结果；失败、取消和阻塞 Run 使用确定性 Delivery，说明已产生 Artifact、已确认事实、未完成工作、确切原因和下一步，绝不把部分进度改写成成功。
+
+## 通用 Prompt 与 Agent Profile
+
+Nexora 每次模型请求都由稳定通用 Kernel、单一 Provider Transport、Host Policy、可选版本化 Agent Profile、Project Instructions、canonical Tool JSON Schema 和动态 Run Context 编译而成。Profile 描述角色、策略、工作流与沟通偏好，但不能注册 Tool、授予权限、批准 Effect、制造 Evidence 或宣布 Run 完成。
+
+每次 Model Call 都审计稳定策略前缀 digest。Provider cache 遥测记录 eligible/cached/write tokens 和 `unsupported`、`disabled`、`miss`、`partial_hit`、`hit`、`unknown`；只有 Provider 明确报告且口径可比的调用进入 cached-input ratio。缓存复用不会跳过 Provider 调用或任何 Runtime gate。
+
 ## Context：Run 持久状态的有界视图
 
-Nexora 不把模型 Prompt 当作 Agent 的记忆或事实源。每次调用 Provider 前，Runtime 都会从持久化 Authority 重新构建 **Projected Run Context**：当前输入与 Task Contract、Run-owned Plan 和进度、相关 Tool Observation、Evidence、交互状态与恢复事实。Projection 是可丢弃视图；删除它不会删除或改写真实执行历史。
+Nexora 不把模型 Prompt 当作 Agent 的记忆或事实源。每次调用 Provider 前，Harness 都会从 Runtime Authority 重新构建有界的 **Agent Working Context**：当前输入与 Task Contract、Run-owned Plan 和进度、相关 Tool Observation、Evidence、交互状态与恢复事实。Projection 是可丢弃视图；删除它不会删除或改写真实执行历史。
 
 ```text
 持久化 Run Authority
-  → 按 phase 投影
+  → 有界工作投影
   → Token 计量
   → 必要时确定性 Eviction
-  → 必要时生成并校验 Checkpoint
   → 精确 Rehydration
   → 有界 Provider Request
 ```
 
 | 机制 | 工作方式 |
 | --- | --- |
-| **按 phase 投影** | Decision、Validation 与 Compaction 调用只接收该阶段真正需要的字段。内部 ID、版本、workspace 信息、完整 Plan 结构和无关 provenance 不进入生产 wire。 |
-| **可计量 Token 预算** | 最终序列化 Request 会按 Provider Profile 的 soft / hard limit 计量。真实 hard-limit overflow 会记录为 refused model call，并且不会调用 Provider。 |
+| **有界投影** | Decision 只接收面向当前任务的工作 Context，同时保留全部原始用户输入和最近相关 Tool Outcome。内部 ID、版本、workspace 信息、完整 Plan 结构和无关 provenance 不进入生产 wire。 |
+| **可计量 Token 预算** | 最终序列化 Request 会按 Provider Profile 的 soft / hard limit 计量。Harness 在发送前做确定性收缩，并把最终预算判定写入 model-call Ledger；Context 预算判定本身不会使 Run 失败。 |
 | **确定性 Eviction** | 低价值 Tool payload 按稳定优先级从 full 收缩为 fragment、reference 或省略。Active Check、未解决失败、安全事实、Evidence 和当前工作优先于普通历史；整个过程不调用 LLM。 |
-| **结构化 Compaction** | Eviction 仍不够时，Provider 可以生成严格 Schema 的 Summary，每条陈述必须引用原始 SourceRef。Nexora 在持久化唯一替代 Checkpoint 前验证归属、digest、已完成工作、未解决问题及覆盖的 Invocation。Checkpoint 只是缓存，不是 Evidence 或完成 Authority。 |
-| **历史导航与精确恢复** | 有界 `historyCandidates` 只提供 ref 和短 hint，不复制大段内容。Runtime 自动恢复用户明确点名的 ref 与 active `context_ref` 要求，生成经过 digest 校验的 `rehydratedFacts`；不可用、被篡改或超预算的事实以类型化错误失败，不允许猜测。 |
-| **重启与 Branch 隔离** | 进程重启后，Context 从持久化 Authority 重建。Branch 只读继承 fork base，同时独立拥有 workspace、Checkpoint、历史、Evidence 和完成状态，因此不能修改或完成父 Run。 |
+| **历史导航与精确恢复** | 有界 `historyCandidates` 只作为 Harness 内部导航元数据，生产 Adapter 不发送它。Harness 自动恢复最新输入点名的已发布 ref、active `context_ref` 要求、最高相关 eligible Memory 与关键 Tool 事实，生成经过 digest 校验的 `rehydratedFacts`；不可用、被篡改或超预算的事实保留为类型化 unavailable 数据，不允许猜测，也不会直接中止 Run。 |
+| **重启与 Branch 隔离** | 进程重启后，Context 从持久化 Authority 重建。Branch 只读继承 fork base，同时独立拥有 workspace、历史、Evidence 和完成状态，因此不能修改或完成父 Run。 |
 
 优先级是刻意设计的：当前任务和权威 Evidence 在前，可重建历史在后。Context 管理可以改变模型在某一次调用中看到什么，但不能改变 Run Status、Plan、Invocation、Evidence、Approval 或 Completion Gate。
 
@@ -103,7 +114,7 @@ Memory 与 Run Store 相互独立。宿主打开专用 Memory Store，并注入�
 | --- | --- |
 | **生命周期与 provenance** | 新知识从 candidate 开始，经显式或 Evidence 支持的 promotion 变为 active。修正和合并会创建新记录，并在单个事务中 supersede 前序记录，不会静默原地修改 statement；记录还可以 expire、archive、invalidate 或 delete。 |
 | **精确 Scope 隔离** | 创建、查询、更新、召回和审计都包含完整 scope。跨用户、跨项目、跨 workspace、sibling branch、敏感、过期、已删除或已禁用的记录均不能召回。 |
-| **有界 Candidate 投影** | Runtime 对 active、相关且 normal-sensitivity 的记录做确定性排序，最多暴露 6 条，并受 768 estimated tokens 与 4 KiB 限制。Candidate 只含 ref、类型、原因、生命周期与 digest 元数据，不含 Memory statement。 |
+| **有界 Candidate 投影** | Harness 对 active、相关且 normal-sensitivity 的记录做确定性排序，最多暴露 6 条，并受 768 estimated tokens 与 4 KiB 限制。Candidate 只含 ref、类型、原因、生命周期与 digest 元数据，不含 Memory statement。 |
 | **精确恢复** | 使用前重新检查 scope、生命周期、过期时间、敏感级别和 digest，再将选中记录恢复为 `rehydratedFacts(kind="memory")`。已删除或内容漂移的记录会变为 unavailable，不会泄漏陈旧内容。 |
 | **天然不可信** | 恢复精确字节只能证明 provenance，不能提升 Authority。Memory 内容始终标记为不可信数据，不能覆盖 Policy、请求 Tool、绕过 Approval、制造 Evidence 或宣布完成。召回内容建议的任何操作仍必须经过 Runtime 正常门禁。 |
 | **用户控制与审计** | 宿主可以在精确 scope 内进行 correct、invalidate、delete、clear、导出审计或禁用 recall。控制操作具有幂等语义，并追加不复制敏感 statement 正文的审计事件。 |
@@ -136,7 +147,8 @@ pnpm benchmark:context-memory:provider
 
 | 概念 | 含义 |
 | --- | --- |
-| `Runtime` | 配置好的执行环境：workspace、Provider、Tools、持久化和生命周期。 |
+| `Agent` | `createAgent()` 组合的 Harness 策略、Provider、Tools 与唯一 Runtime。 |
+| `Runtime` | 不依赖 Provider 的机械执行引擎，负责持久 Run、Effect、恢复与完成不变量。 |
 | `Run` | 为实现一个目标进行的一次持久执行；只有它的 State Machine 可以改变 Run Status。 |
 | `RunHandle` | 宿主使用的公共控制面：观察事件、提供输入或批准、取消、恢复并读取结果。 |
 | `Provider` | 提出决策的模型适配器；不能直接执行 Tool 或写 Run 状态。 |
@@ -163,11 +175,11 @@ pnpm typecheck
 ```ts
 import {
   createBuiltInTools,
-  createRuntime,
+  createAgent,
   openAICompatibleProviderFromEnv
-} from "@nexora/runtime";
+} from "@nexora/harness";
 
-const runtime = createRuntime({
+const runtime = createAgent({
   workspace: "D:/my-agent-workspace",
   provider: openAICompatibleProviderFromEnv(),
   tools: createBuiltInTools()
@@ -208,7 +220,7 @@ Provider 适配、领域 Tool、事件、取消与恢复详见 [使用 Nexora Ru
 3. Tool 请求经过校验；需要批准时，Run 会等待用户决定。
 4. Nexora 记录 Tool Invocation 及其 Evidence，然后才继续执行。
 5. 输入、失败、取消或进程重启都通过同一个持久 Run 处理。
-6. Completion Gate 检查 Run-owned Plan 和 Evidence，满足条件后 State Machine 才能将 Run 标记为成功。
+6. Completion Gate 检查持久化 Evidence，并在存在 Plan 时检查 Run-owned Plan；满足条件后 State Machine 才能将 Run 标记为成功。
 
 <p align="center">
   <img src="./assets/readme/runtime-architecture.png" width="100%" alt="宿主应用、Nexora Runtime 与已验证输出之间的 Authority 边界">
@@ -221,7 +233,7 @@ Provider 适配、领域 Tool、事件、取消与恢复详见 [使用 Nexora Ru
 [`apps/research-agent`](apps/research-agent) 是基于 Nexora 公共 API 构建的真实应用 Harness。研究 Profile、Tavily、新闻 Tool、Scheduler 和生成内容全部属于应用；Nexora 负责它们下面的 Run 生命周期。
 
 ```ts
-const runtime = createRuntime({ workspace, provider, tools });
+const runtime = createAgent({ workspace, provider, tools });
 const run = runtime.run(buildResearchGoal(profile));
 const result = await run.result();
 ```
@@ -235,7 +247,8 @@ const result = await run.result();
 ```text
 Nexora-Agent/
 ├─ packages/
-│  └─ runtime/                       # 公共可嵌入 Runtime
+│  ├─ harness/                       # Agent Loop、Provider、Context、Memory
+│  └─ runtime/                       # 可靠 Effect Runtime
 ├─ apps/
 │  ├─ cli/                           # 薄命令行宿主
 │  └─ research-agent/                # 真实应用 Harness
@@ -246,7 +259,7 @@ Nexora-Agent/
 │  ├─ benchmarks/                    # 确定性与真实 Provider Harness
 │  ├─ canaries/                      # 真实 Provider 连续性 Canary
 │  ├─ fixtures/                      # 共享确定性测试数据
-│  └─ runtime/                       # Runtime、Context 与 Memory Contract
+│  └─ runtime/                       # Runtime 与 Harness Contract
 ├─ docs/                             # 公共指南与验证参考
 └─ assets/readme/                    # GitHub README 配图
 ```

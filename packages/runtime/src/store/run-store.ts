@@ -6,30 +6,50 @@ import Database from "better-sqlite3";
 import {
   BranchForkBaseSchema,
   BranchRecordSchema,
+  CancellationRequestSchema,
+  AuditRecordTypeSchema,
+  AuditHistoryQuerySchema,
+  ContextManifestSchema,
+  JsonValueSchema,
+  ModelCallAuditSchema,
   ModelCallRecordSchema,
+  ProviderAttemptSchema,
   RunEventInputSchema,
   RunEventSchema,
   RunSnapshotSchema,
   ToolInvocationSchema,
+  ToolAttemptSchema,
   type BranchForkBase,
   type BranchRecord,
+  type CancellationRequest,
+  type AuditHistoryPage,
+  type AuditIntegrityResult,
+  type ContextManifest,
   type InheritedFactProjection,
   type ModelCallIntent,
   type ModelCallRecord,
+  type ModelCallAudit,
+  type PayloadCapturePolicy,
+  type ProviderAttempt,
   type RunEvent,
   type RunEventInput,
   type RunSnapshot,
   type ToolInvocation,
-  type ToolInvocationIntent
+  type ToolInvocationIntent,
+  type ToolAttempt,
+  type ToolAttemptIntent
 } from "../contracts.js";
-import { CompactionSummarySchema, type PersistedCheckpoint } from "../context/compaction.js";
+import { digestCanonicalJson } from "../runtime-helpers.js";
 import { assertRunStatusTransition } from "../state-machine.js";
 import {
   v1CoreSchemaSql,
   v2ModelCallSchemaSql,
   v3PayloadProvenanceMigrationSql,
   v4ContextCheckpointSchemaSql,
-  v5BranchSchemaSql
+  v5BranchSchemaSql,
+  v6DurableToolExecutionMigrationSql,
+  v7DurableRunJournalMigrationSql,
+  v8ProviderUsageMigrationSql
 } from "./schema/index.js";
 
 type RunRow = {
@@ -39,7 +59,22 @@ type RunRow = {
   lease_until?: string | null;
   fencing_token?: number;
 };
-type EventRow = { run_id: string; sequence: number; type: string; occurred_at: string; payload_json: string };
+type EventRow = {
+  run_id: string;
+  sequence: number;
+  type: string;
+  occurred_at: string;
+  payload_json: string;
+  schema_version: number | null;
+  actor_type: string | null;
+  causation_ref: string | null;
+  correlation_ref: string | null;
+  payload_digest: string | null;
+  payload_artifact_ref: string | null;
+  previous_record_digest: string | null;
+  record_digest: string | null;
+  completeness: string;
+};
 type ToolRow = {
   invocation_id: string;
   run_id: string;
@@ -59,6 +94,31 @@ type ToolRow = {
   error_json: string | null;
   payload_digest: string | null;
   payload_artifact_ref: string | null;
+  batch_id: string | null;
+  batch_ordinal: number | null;
+};
+type ToolAttemptRow = {
+  attempt_id: string;
+  invocation_id: string;
+  run_id: string;
+  attempt_number: number;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  backoff_until: string | null;
+  subject_ref: string | null;
+  result_json: string | null;
+  error_json: string | null;
+  payload_digest: string | null;
+  payload_artifact_ref: string | null;
+};
+type CancellationRow = {
+  request_id: string;
+  run_id: string;
+  reason: string;
+  status: string;
+  requested_at: string;
+  reconciled_at: string | null;
 };
 type ModelCallRow = {
   call_id: string;
@@ -84,16 +144,20 @@ type ModelCallRow = {
   started_at: string;
   completed_at: string | null;
 };
-type CheckpointRow = {
-  checkpoint_id: string;
-  run_id: string;
-  plan_version: number;
-  revision: number;
-  summary_json: string;
-  digest: string;
-  source_digests_json: string;
-  covered_invocations_json: string;
-  created_at: string;
+type ModelCallAuditRow = {
+  call_id: string; run_id: string; manifest_json: string; manifest_digest: string;
+  capture_policy: string; request_digest: string; request_artifact_ref: string | null;
+  output_digest: string | null; output_artifact_ref: string | null;
+  error_digest: string | null; error_artifact_ref: string | null; capture_status: string;
+};
+type ProviderAttemptRow = {
+  attempt_id: string; run_id: string; call_id: string; attempt_number: number;
+  provider: string; model: string; config_fingerprint: string; status: string;
+  started_at: string; completed_at: string | null; error_code: string | null;
+  response_digest: string | null; response_artifact_ref: string | null;
+  actual_input_tokens: number | null; actual_output_tokens: number | null;
+  actual_total_tokens: number | null;
+  provider_usage_json: string | null;
 };
 type BranchRow = {
   branch_id: string;
@@ -112,6 +176,25 @@ type ForkBaseRow = {
   fork_event_sequence: number;
   inherited_refs_json: string;
   inherited_facts_json: string;
+};
+
+export type ToolInvocationFinalization = {
+  readonly invocationId: string;
+  readonly status: "succeeded" | "failed";
+  readonly completedAt: string;
+  readonly subjectRef?: string;
+  readonly resultJson?: unknown;
+  readonly errorJson?: unknown;
+  readonly payloadDigest: string;
+  readonly payloadArtifactRef?: string;
+};
+
+export type PersistedExecutionSlice = {
+  readonly run: RunSnapshot;
+  readonly invocations: readonly ToolInvocation[];
+  readonly attempts: readonly ToolAttempt[];
+  readonly cancellation: CancellationRequest | null;
+  readonly lastEventSequence: number;
 };
 
 export class RunStore {
@@ -159,16 +242,10 @@ export class RunStore {
 
   listEvents(runId: string): RunEvent[] {
     const rows = this.#database.prepare(`
-      SELECT run_id, sequence, type, occurred_at, payload_json
+      SELECT *
       FROM run_events WHERE run_id = ? ORDER BY sequence
     `).all(runId) as EventRow[];
-    return rows.map((row) => RunEventSchema.parse({
-      runId: row.run_id,
-      sequence: row.sequence,
-      type: row.type,
-      occurredAt: row.occurred_at,
-      payload: JSON.parse(row.payload_json)
-    }));
+    return rows.map((row) => this.#parseEventRow(row));
   }
 
   listEventsAfter(runId: string, afterSequence: number): RunEvent[] {
@@ -176,32 +253,106 @@ export class RunStore {
       throw new Error("Event sequence cursor must be a non-negative integer.");
     }
     const rows = this.#database.prepare(`
-      SELECT run_id, sequence, type, occurred_at, payload_json
+      SELECT *
       FROM run_events
       WHERE run_id = ? AND sequence > ?
       ORDER BY sequence
     `).all(runId, afterSequence) as EventRow[];
-    return rows.map((row) => RunEventSchema.parse({
-      runId: row.run_id,
-      sequence: row.sequence,
-      type: row.type,
-      occurredAt: row.occurred_at,
-      payload: JSON.parse(row.payload_json)
-    }));
+    return rows.map((row) => this.#parseEventRow(row));
+  }
+
+  readAuditHistory(runId: string, queryInput: unknown = {}): AuditHistoryPage {
+    const query = AuditHistoryQuerySchema.parse(queryInput);
+    this.#requireRunRow(runId);
+    const filters = query.types === undefined ? "" : ` AND type IN (${query.types.map(() => "?").join(", ")})`;
+    const rows = this.#database.prepare(`
+      SELECT * FROM run_events
+      WHERE run_id = ? AND sequence > ?${filters}
+      ORDER BY sequence LIMIT ?
+    `).all(runId, query.afterSequence, ...(query.types ?? []), query.limit + 1) as EventRow[];
+    const hasMore = rows.length > query.limit;
+    const records = rows.slice(0, query.limit).map((row) => this.#parseEventRow(row));
+    const completeness = records.some((record) => record.completeness === "legacy_partial")
+      || this.#runHasLegacyRecords(runId)
+      ? "legacy_partial" as const
+      : "complete" as const;
+    return {
+      records,
+      nextCursor: hasMore ? records.at(-1)!.sequence : null,
+      completeness
+    };
+  }
+
+  readAuditRecord(runId: string, sequence: number): RunEvent | null {
+    if (!Number.isInteger(sequence) || sequence <= 0) throw new Error("Audit sequence must be a positive integer.");
+    this.#requireRunRow(runId);
+    const row = this.#database.prepare(
+      "SELECT * FROM run_events WHERE run_id = ? AND sequence = ?"
+    ).get(runId, sequence) as EventRow | undefined;
+    return row === undefined ? null : this.#parseEventRow(row);
+  }
+
+  readModelCallTrace(runId: string, callId: string) {
+    const call = this.#requireModelCall(callId);
+    if (call.runId !== runId) throw new Error(`Model Call does not belong to Run ${runId}.`);
+    const audit = this.getModelCallAudit(callId);
+    return {
+      call,
+      audit,
+      attempts: this.listProviderAttempts(callId),
+      completeness: audit === null ? "legacy_partial" as const : "complete" as const
+    };
+  }
+
+  verifyAuditIntegrity(runId: string, artifactExists?: (digest: string) => boolean): AuditIntegrityResult {
+    this.#requireRunRow(runId);
+    const iterator = this.#database.prepare(
+      "SELECT * FROM run_events WHERE run_id = ? ORDER BY sequence"
+    ).iterate(runId) as Iterable<EventRow>;
+    let previousDigest: string | null = null;
+    let sequence = 0;
+    let completeness: "complete" | "legacy_partial" = "complete";
+    for (const row of iterator) {
+      sequence = row.sequence;
+      if (row.completeness === "legacy_partial") completeness = "legacy_partial";
+      const payload = JSON.parse(row.payload_json) as unknown;
+      const payloadDigest = digestCanonicalJson(payload);
+      if (payloadDigest !== row.payload_digest) {
+        return { valid: false, checkedThroughSequence: sequence, completeness, error: `Payload digest mismatch at sequence ${sequence}.` };
+      }
+      if (row.previous_record_digest !== previousDigest) {
+        return { valid: false, checkedThroughSequence: sequence, completeness, error: `Previous record digest mismatch at sequence ${sequence}.` };
+      }
+      const expected = this.#eventRecordDigest(row, payloadDigest, previousDigest);
+      if (expected !== row.record_digest) {
+        return { valid: false, checkedThroughSequence: sequence, completeness, error: `Record digest mismatch at sequence ${sequence}.` };
+      }
+      if (artifactExists !== undefined && row.payload_artifact_ref !== null && !artifactExists(row.payload_artifact_ref)) {
+        return { valid: false, checkedThroughSequence: sequence, completeness, error: `Audit Artifact is missing at sequence ${sequence}.` };
+      }
+      previousDigest = row.record_digest;
+    }
+    if (artifactExists !== undefined) {
+      const refs = this.#database.prepare(`
+        SELECT request_artifact_ref AS ref FROM model_call_audits WHERE run_id = ? AND request_artifact_ref IS NOT NULL
+        UNION ALL SELECT output_artifact_ref FROM model_call_audits WHERE run_id = ? AND output_artifact_ref IS NOT NULL
+        UNION ALL SELECT error_artifact_ref FROM model_call_audits WHERE run_id = ? AND error_artifact_ref IS NOT NULL
+        UNION ALL SELECT response_artifact_ref FROM provider_attempts WHERE run_id = ? AND response_artifact_ref IS NOT NULL
+      `).all(runId, runId, runId, runId) as Array<{ ref: string }>;
+      const missing = refs.find(({ ref }) => !artifactExists(ref));
+      if (missing !== undefined) {
+        return { valid: false, checkedThroughSequence: sequence, completeness, error: `Audit Artifact is missing: ${missing.ref}.` };
+      }
+    }
+    return { valid: true, checkedThroughSequence: sequence, completeness, error: null };
   }
 
   getLastEvent(runId: string): RunEvent | null {
     const row = this.#database.prepare(`
-      SELECT run_id, sequence, type, occurred_at, payload_json
+      SELECT *
       FROM run_events WHERE run_id = ? ORDER BY sequence DESC LIMIT 1
     `).get(runId) as EventRow | undefined;
-    return row === undefined ? null : RunEventSchema.parse({
-      runId: row.run_id,
-      sequence: row.sequence,
-      type: row.type,
-      occurredAt: row.occurred_at,
-      payload: JSON.parse(row.payload_json)
-    });
+    return row === undefined ? null : this.#parseEventRow(row);
   }
 
   beginToolInvocationAndCommitRun(input: {
@@ -222,33 +373,7 @@ export class RunStore {
     });
     if (invocation.fencingToken !== input.fencingToken) throw new Error("Tool intent Fencing Token mismatch.");
     const transaction = this.#database.transaction(() => {
-      this.#database.prepare(`
-        INSERT INTO tool_invocations (
-          invocation_id, run_id, plan_version, step_id, check_ids_json,
-          tool_name, input_json, input_digest, idempotency_key, idempotent,
-          fencing_token, status, started_at, completed_at, result_json, error_json,
-          payload_digest, payload_artifact_ref
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        invocation.id,
-        invocation.runId,
-        invocation.planVersion,
-        invocation.stepId,
-        JSON.stringify(invocation.checkIds),
-        invocation.toolName,
-        JSON.stringify(invocation.inputJson),
-        invocation.inputDigest,
-        invocation.idempotencyKey,
-        invocation.idempotent ? 1 : 0,
-        invocation.fencingToken,
-        invocation.status,
-        invocation.startedAt,
-        null,
-        null,
-        null,
-        null,
-        null
-      );
+      this.#insertToolInvocation(invocation);
       const run = this.#commitRunInTransaction({
         previous: input.previous,
         next: input.next,
@@ -266,61 +391,299 @@ export class RunStore {
   }
 
   listToolInvocations(runId: string): ToolInvocation[] {
-    const rows = this.#database.prepare("SELECT * FROM tool_invocations WHERE run_id = ? ORDER BY started_at, invocation_id").all(runId) as ToolRow[];
+    const rows = this.#database.prepare(`
+      SELECT * FROM tool_invocations WHERE run_id = ?
+      ORDER BY rowid
+    `).all(runId) as ToolRow[];
     return rows.map((row) => this.#parseToolRow(row));
   }
 
-  /**
-   * Persists a Context Checkpoint without changing the Run snapshot. The write
-   * is fenced and revision-guarded: a stale revision, an expired Lease or an
-   * obsolete Fencing Token cannot write. Any prior Checkpoint for the Run is
-   * replaced atomically.
-   */
-  commitCheckpoint(input: {
-    readonly checkpoint: PersistedCheckpoint;
-    readonly previous: RunSnapshot;
-    readonly fencingToken?: number;
-    readonly event: RunEventInput;
-  }): PersistedCheckpoint {
-    const transaction = this.#database.transaction(() => {
-      const row = this.#requireRunRow(input.checkpoint.runId);
-      this.#assertFencing(row, input.fencingToken, input.event.occurredAt);
-      if (row.revision !== input.previous.revision) {
-        throw new Error(`Run revision conflict: expected ${input.previous.revision}, found ${row.revision}`);
-      }
-      this.#database.prepare(
-        "DELETE FROM context_checkpoints WHERE run_id = ?"
-      ).run(input.checkpoint.runId);
-      this.#database.prepare(`
-        INSERT INTO context_checkpoints (
-          checkpoint_id, run_id, plan_version, revision, summary_json, digest,
-          source_digests_json, covered_invocations_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        input.checkpoint.checkpointId,
-        input.checkpoint.runId,
-        input.checkpoint.planVersion,
-        input.checkpoint.revision,
-        JSON.stringify(input.checkpoint.summary),
-        input.checkpoint.digest,
-        JSON.stringify(input.checkpoint.sourceDigests),
-        JSON.stringify(input.checkpoint.coveredInvocations),
-        input.checkpoint.createdAt
-      );
-      this.#insertEvent(
-        input.checkpoint.runId,
-        this.#nextSequence(input.checkpoint.runId),
-        input.event
-      );
+  readExecutionSlice(runId: string): PersistedExecutionSlice {
+    const transaction = this.#database.transaction((): PersistedExecutionSlice => {
+      const run = this.getRun(runId);
+      if (run === null) throw new Error(`Run not found: ${runId}`);
+      return {
+        run,
+        invocations: this.listToolInvocations(runId),
+        attempts: this.listToolAttempts(runId),
+        cancellation: this.getCancellationRequest(runId),
+        lastEventSequence: this.getLastEvent(runId)?.sequence ?? 0
+      };
     });
-    transaction();
-    return input.checkpoint;
+    return transaction.immediate();
+  }
+
+  prepareToolInvocationsAndCommitRun(input: {
+    readonly intents: readonly ToolInvocationIntent[];
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly invocations: readonly ToolInvocation[] } {
+    if (input.intents.length === 0) throw new Error("A Tool batch must contain at least one Invocation intent.");
+    const invocations = input.intents.map((intent) => ToolInvocationSchema.parse({
+      ...intent,
+      batchId: intent.batchId ?? null,
+      batchOrdinal: intent.batchOrdinal ?? null,
+      status: "prepared",
+      completedAt: null,
+      resultJson: null,
+      errorJson: null,
+      payloadDigest: null,
+      payloadArtifactRef: null
+    }));
+    if (invocations.some((invocation) => invocation.runId !== input.previous.runId)) {
+      throw new Error("Tool batch contains an Invocation for another Run.");
+    }
+    if (invocations.some((invocation) => invocation.fencingToken !== input.fencingToken)) {
+      throw new Error("Tool batch intent Fencing Token mismatch.");
+    }
+    const transaction = this.#database.transaction(() => {
+      for (const invocation of invocations) {
+        this.#insertToolInvocation(invocation);
+        this.#insertEvent(invocation.runId, this.#nextSequence(invocation.runId), {
+          type: "tool.started",
+          occurredAt: invocation.startedAt,
+          payload: {
+            invocationId: invocation.id,
+            toolName: invocation.toolName,
+            stepId: invocation.stepId,
+            batchId: invocation.batchId,
+            batchOrdinal: invocation.batchOrdinal
+          }
+        });
+      }
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, invocations };
+    });
+    return transaction();
+  }
+
+  beginToolAttempt(input: {
+    readonly intent: ToolAttemptIntent;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): { readonly invocation: ToolInvocation; readonly attempt: ToolAttempt } {
+    const attempt = ToolAttemptSchema.parse({
+      ...input.intent,
+      status: "started",
+      completedAt: null,
+      backoffUntil: null,
+      subjectRef: null,
+      resultJson: null,
+      errorJson: null,
+      payloadDigest: null,
+      payloadArtifactRef: null
+    });
+    const transaction = this.#database.transaction(() => {
+      const invocation = this.#requireToolInvocation(attempt.invocationId);
+      if (invocation.runId !== attempt.runId) throw new Error("Tool attempt Run mismatch.");
+      if (invocation.status !== "prepared" && invocation.status !== "started") {
+        throw new Error(`Tool invocation cannot start another attempt: ${invocation.id}`);
+      }
+      const expected = this.#nextToolAttemptNumber(invocation.id);
+      if (attempt.attemptNumber !== expected) {
+        throw new Error(`Tool attempt sequence is not contiguous: expected ${expected}, received ${attempt.attemptNumber}.`);
+      }
+      const runRow = this.#requireRunRow(invocation.runId);
+      this.#assertFencing(runRow, input.fencingToken, attempt.startedAt);
+      this.#database.prepare(`
+        INSERT INTO tool_attempts (
+          attempt_id, invocation_id, run_id, attempt_number, status, started_at,
+          completed_at, backoff_until, subject_ref, result_json, error_json,
+          payload_digest, payload_artifact_ref
+        ) VALUES (?, ?, ?, ?, 'started', ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+      `).run(attempt.id, attempt.invocationId, attempt.runId, attempt.attemptNumber, attempt.startedAt);
+      const updated = this.#database.prepare(`
+        UPDATE tool_invocations SET status = 'started', fencing_token = ?
+        WHERE invocation_id = ? AND status IN ('prepared', 'started')
+      `).run(input.fencingToken, invocation.id);
+      if (updated.changes !== 1) throw new Error(`Tool invocation cannot start: ${invocation.id}`);
+      this.#insertEvent(invocation.runId, this.#nextSequence(invocation.runId), input.event);
+      return {
+        invocation: this.#requireToolInvocation(invocation.id),
+        attempt: this.#requireToolAttempt(attempt.id)
+      };
+    });
+    return transaction();
+  }
+
+  completeToolAttempt(input: {
+    readonly attemptId: string;
+    readonly status: "succeeded" | "failed" | "unknown";
+    readonly completedAt: string;
+    readonly fencingToken: number;
+    readonly backoffUntil?: string;
+    readonly subjectRef?: string;
+    readonly resultJson?: unknown;
+    readonly errorJson?: unknown;
+    readonly payloadDigest?: string;
+    readonly payloadArtifactRef?: string;
+    readonly event: RunEventInput;
+  }): ToolAttempt {
+    const transaction = this.#database.transaction(() => {
+      const attempt = this.#requireToolAttempt(input.attemptId);
+      const runRow = this.#requireRunRow(attempt.runId);
+      this.#assertFencing(runRow, input.fencingToken, input.completedAt);
+      const update = this.#database.prepare(`
+        UPDATE tool_attempts
+        SET status = ?, completed_at = ?, backoff_until = ?, subject_ref = ?,
+            result_json = ?, error_json = ?, payload_digest = ?, payload_artifact_ref = ?
+        WHERE attempt_id = ? AND status = 'started'
+      `).run(
+        input.status,
+        input.completedAt,
+        input.backoffUntil ?? null,
+        input.subjectRef ?? null,
+        input.resultJson === undefined ? null : JSON.stringify(input.resultJson),
+        input.errorJson === undefined ? null : JSON.stringify(input.errorJson),
+        input.payloadDigest ?? null,
+        input.payloadArtifactRef ?? null,
+        input.attemptId
+      );
+      if (update.changes !== 1) throw new Error(`Tool attempt is not active: ${input.attemptId}`);
+      this.#insertEvent(attempt.runId, this.#nextSequence(attempt.runId), input.event);
+      return this.#requireToolAttempt(input.attemptId);
+    });
+    return transaction();
+  }
+
+  listToolAttempts(runId: string): ToolAttempt[] {
+    const rows = this.#database.prepare(`
+      SELECT * FROM tool_attempts WHERE run_id = ?
+      ORDER BY invocation_id, attempt_number
+    `).all(runId) as ToolAttemptRow[];
+    return rows.map((row) => this.#parseToolAttemptRow(row));
+  }
+
+  finalizeToolInvocationsAndCommitRun(input: {
+    readonly finalizations: readonly ToolInvocationFinalization[];
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly invocationEvents: readonly RunEventInput[];
+    readonly event: RunEventInput;
+  }): { readonly run: RunSnapshot; readonly invocations: readonly ToolInvocation[] } {
+    if (input.finalizations.length === 0) throw new Error("Tool finalization cannot be empty.");
+    if (input.finalizations.length !== input.invocationEvents.length) {
+      throw new Error("Every Tool finalization requires one ordered Event.");
+    }
+    const transaction = this.#database.transaction(() => {
+      const finalized: ToolInvocation[] = [];
+      for (const [index, finalization] of input.finalizations.entries()) {
+        const invocation = this.#requireToolInvocation(finalization.invocationId);
+        if (invocation.runId !== input.previous.runId) throw new Error("Tool finalization Run mismatch.");
+        const runRow = this.#requireRunRow(invocation.runId);
+        this.#assertFencing(runRow, input.fencingToken, finalization.completedAt);
+        const update = this.#database.prepare(`
+          UPDATE tool_invocations
+          SET status = ?, completed_at = ?, result_json = ?, error_json = ?,
+              payload_digest = ?, payload_artifact_ref = ?, fencing_token = ?
+          WHERE invocation_id = ? AND status IN ('prepared', 'started')
+        `).run(
+          finalization.status,
+          finalization.completedAt,
+          finalization.resultJson === undefined ? null : JSON.stringify(finalization.resultJson),
+          finalization.errorJson === undefined ? null : JSON.stringify(finalization.errorJson),
+          finalization.payloadDigest,
+          finalization.payloadArtifactRef ?? null,
+          input.fencingToken,
+          invocation.id
+        );
+        if (update.changes !== 1) throw new Error(`Tool invocation is not finalizable: ${invocation.id}`);
+        this.#insertEvent(invocation.runId, this.#nextSequence(invocation.runId), input.invocationEvents[index]!);
+        finalized.push(this.#requireToolInvocation(invocation.id));
+      }
+      const run = this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+      return { run, invocations: finalized };
+    });
+    return transaction();
+  }
+
+  requestCancellation(input: {
+    readonly requestId: string;
+    readonly runId: string;
+    readonly reason: string;
+    readonly requestedAt: string;
+  }): CancellationRequest {
+    const request = CancellationRequestSchema.parse({
+      id: input.requestId,
+      runId: input.runId,
+      reason: input.reason,
+      status: "requested",
+      requestedAt: input.requestedAt,
+      reconciledAt: null
+    });
+    const transaction = this.#database.transaction(() => {
+      const existing = this.getCancellationRequest(request.runId);
+      if (existing !== null) return existing;
+      const run = this.getRun(request.runId);
+      if (run === null) throw new Error(`Run not found: ${request.runId}`);
+      if (run.status === "cancelled" || run.status === "failed" || run.status === "succeeded") {
+        throw new Error(`Run is already terminal: ${run.status}.`);
+      }
+      this.#database.prepare(`
+        INSERT INTO cancellation_requests (
+          request_id, run_id, reason, status, requested_at, reconciled_at
+        ) VALUES (?, ?, ?, 'requested', ?, NULL)
+      `).run(request.id, request.runId, request.reason, request.requestedAt);
+      this.#insertEvent(request.runId, this.#nextSequence(request.runId), {
+        type: "cancellation.requested",
+        occurredAt: request.requestedAt,
+        payload: { requestId: request.id, reason: request.reason }
+      });
+      return this.getCancellationRequest(request.runId)!;
+    });
+    return transaction();
+  }
+
+  getCancellationRequest(runId: string): CancellationRequest | null {
+    const row = this.#database.prepare(`
+      SELECT * FROM cancellation_requests WHERE run_id = ?
+    `).get(runId) as CancellationRow | undefined;
+    return row === undefined ? null : this.#parseCancellationRow(row);
+  }
+
+  reconcileCancellationAndCommitRun(input: {
+    readonly requestId: string;
+    readonly previous: RunSnapshot;
+    readonly next: RunSnapshot;
+    readonly fencingToken: number;
+    readonly event: RunEventInput;
+  }): RunSnapshot {
+    const transaction = this.#database.transaction(() => {
+      const request = this.getCancellationRequest(input.previous.runId);
+      if (request === null || request.id !== input.requestId || request.status !== "requested") {
+        throw new Error("Cancellation request is not pending.");
+      }
+      const update = this.#database.prepare(`
+        UPDATE cancellation_requests SET status = 'reconciled', reconciled_at = ?
+        WHERE request_id = ? AND status = 'requested'
+      `).run(input.event.occurredAt, request.id);
+      if (update.changes !== 1) throw new Error("Cancellation request is not pending.");
+      return this.#commitRunInTransaction({
+        previous: input.previous,
+        next: input.next,
+        fencingToken: input.fencingToken,
+        event: input.event
+      });
+    });
+    return transaction();
   }
 
   /**
    * Appends an audit event without changing the Run snapshot. Fenced like
-   * every other write; used by the Harness for rehydration bookkeeping
-   * (context.rehydrate_requested / context.rehydrated).
+   * every other write; used by the Harness for bounded Agent audit events.
    */
   recordRunEvent(input: {
     readonly runId: string;
@@ -334,9 +697,9 @@ export class RunStore {
 
   /**
    * Deep-copies the parent's current snapshot into a fresh revision-0 child
-   * Run. Authority content (inputHistory, taskContract, currentPlan,
-   * stepProgress, evidence, budgets) is inherited as an immutable fork-point
-   * snapshot; transient state (pendingRequest, lastError, result) is cleared
+   * Run. Inputs, Plan navigation and budgets are inherited at the fork point.
+   * Parent Evidence remains available only through Fork Base facts because it
+   * cannot become same-Run provenance in the child. Transient state is cleared
    * so the child can explore a new path from this point.
    */
   createRunFromSnapshot(parent: RunSnapshot, childRunId: string, now: string): RunSnapshot {
@@ -349,12 +712,15 @@ export class RunStore {
       inputHistory: structuredClone(parent.inputHistory),
       taskContract: parent.taskContract === null ? null : structuredClone(parent.taskContract),
       currentPlan: parent.currentPlan === null ? null : structuredClone(parent.currentPlan),
-      stepProgress: structuredClone(parent.stepProgress),
+      stepProgress: parent.stepProgress.map((progress) => ({
+        ...structuredClone(progress),
+        evidenceIds: []
+      })),
       pendingRequest: null,
       budgets: structuredClone(parent.budgets),
       budgetsUsed: structuredClone(parent.budgetsUsed),
       result: null,
-      evidence: structuredClone(parent.evidence),
+      evidence: [],
       lastError: null,
       createdAt: now,
       updatedAt: now
@@ -515,45 +881,6 @@ export class RunStore {
     };
   }
 
-  getLatestCheckpoint(runId: string): PersistedCheckpoint | null {
-    const row = this.#database.prepare(`
-      SELECT * FROM context_checkpoints
-      WHERE run_id = ?
-      ORDER BY created_at DESC, checkpoint_id DESC
-      LIMIT 1
-    `).get(runId) as CheckpointRow | undefined;
-    return row === undefined ? null : this.#parseCheckpointRow(row);
-  }
-
-  listCheckpoints(runId: string): PersistedCheckpoint[] {
-    const rows = this.#database.prepare(`
-      SELECT * FROM context_checkpoints
-      WHERE run_id = ?
-      ORDER BY created_at, checkpoint_id
-    `).all(runId) as CheckpointRow[];
-    return rows.map((row) => this.#parseCheckpointRow(row));
-  }
-
-  deleteCheckpoints(runId: string): void {
-    this.#database.prepare(
-      "DELETE FROM context_checkpoints WHERE run_id = ?"
-    ).run(runId);
-  }
-
-  #parseCheckpointRow(row: CheckpointRow): PersistedCheckpoint {
-    return {
-      checkpointId: row.checkpoint_id,
-      runId: row.run_id,
-      planVersion: row.plan_version,
-      revision: row.revision,
-      summary: CompactionSummarySchema.parse(JSON.parse(row.summary_json)),
-      digest: row.digest,
-      sourceDigests: JSON.parse(row.source_digests_json) as Readonly<Record<string, string>>,
-      coveredInvocations: JSON.parse(row.covered_invocations_json) as readonly string[],
-      createdAt: row.created_at
-    };
-  }
-
   listModelCalls(runId: string): ModelCallRecord[] {
     const rows = this.#database.prepare(`
       SELECT * FROM model_calls WHERE run_id = ? ORDER BY sequence
@@ -563,36 +890,34 @@ export class RunStore {
 
   beginModelCallAndCommitRun(input: {
     readonly intent: ModelCallIntent;
+    readonly manifest?: ContextManifest;
+    readonly capturePolicy?: PayloadCapturePolicy;
+    readonly requestDigest?: string;
+    readonly requestArtifactRef?: string;
     readonly previous: RunSnapshot;
     readonly next: RunSnapshot;
     readonly fencingToken: number;
     readonly event: RunEventInput;
   }): { readonly run: RunSnapshot; readonly call: ModelCallRecord } {
     const transaction = this.#database.transaction(() => {
-      const call = this.#insertModelCall(input.intent, "started", null);
-      const run = this.#commitRunInTransaction({
-        previous: input.previous,
-        next: input.next,
-        fencingToken: input.fencingToken,
-        event: input.event
+      const call = this.#insertModelCall(input.intent);
+      const manifest = ContextManifestSchema.parse(input.manifest ?? {
+        schemaVersion: 1,
+        projectionDigest: input.intent.projectionDigest ?? digestCanonicalJson(null),
+        sources: [],
+        measuredInputTokens: input.intent.measuredInputTokens,
+        measurementMethod: input.intent.measurementMethod,
+        meter: input.intent.meter
       });
-      return { run, call };
-    });
-    return transaction();
-  }
-
-  refuseModelCallAndCommitRun(input: {
-    readonly intent: ModelCallIntent;
-    readonly previous: RunSnapshot;
-    readonly next: RunSnapshot;
-    readonly fencingToken: number;
-    readonly event: RunEventInput;
-  }): { readonly run: RunSnapshot; readonly call: ModelCallRecord } {
-    const transaction = this.#database.transaction(() => {
-      const call = this.#insertModelCall(
-        input.intent,
-        "refused",
-        "CONTEXT_BUDGET_EXCEEDED"
+      this.#database.prepare(`
+        INSERT INTO model_call_audits (
+          call_id, run_id, manifest_json, manifest_digest, capture_policy,
+          request_digest, request_artifact_ref, capture_status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        call.id, call.runId, JSON.stringify(manifest), digestCanonicalJson(manifest),
+        input.capturePolicy ?? "metadata", input.requestDigest ?? manifest.projectionDigest, input.requestArtifactRef ?? null,
+        input.requestArtifactRef === undefined ? "metadata_only" : "redacted_captured"
       );
       const run = this.#commitRunInTransaction({
         previous: input.previous,
@@ -614,6 +939,10 @@ export class RunStore {
     readonly actualOutputTokens?: number;
     readonly actualTotalTokens?: number;
     readonly errorCode?: string;
+    readonly outputDigest?: string;
+    readonly outputArtifactRef?: string;
+    readonly errorDigest?: string;
+    readonly errorArtifactRef?: string;
   }): ModelCallRecord {
     const transaction = this.#database.transaction(() => {
       const call = this.#requireModelCall(input.callId);
@@ -636,7 +965,137 @@ export class RunStore {
       if (update.changes !== 1) {
         throw new Error(`Model call is not active: ${input.callId}`);
       }
+      const auditUpdate = this.#database.prepare(`
+        UPDATE model_call_audits
+        SET output_digest = ?, output_artifact_ref = ?, error_digest = ?,
+            error_artifact_ref = ?, capture_status = ?
+        WHERE call_id = ?
+      `).run(
+        input.outputDigest ?? null,
+        input.outputArtifactRef ?? null,
+        input.errorDigest ?? null,
+        input.errorArtifactRef ?? null,
+        input.outputArtifactRef !== undefined || input.errorArtifactRef !== undefined
+          ? "redacted_captured"
+          : "metadata_only",
+        input.callId
+      );
+      if (auditUpdate.changes !== 1) throw new Error(`Model call audit is missing: ${input.callId}`);
+      this.#insertEvent(call.runId, this.#nextSequence(call.runId), {
+        type: "model.completed",
+        occurredAt: input.completedAt,
+        actorType: "harness",
+        causationRef: `model-call:${call.id}`,
+        correlationRef: `model-call:${call.id}`,
+        payload: {
+          callId: call.id,
+          status: input.status,
+          ...(input.outputDigest === undefined ? {} : { outputDigest: input.outputDigest }),
+          ...(input.errorDigest === undefined ? {} : { errorDigest: input.errorDigest })
+        }
+      });
       return this.#requireModelCall(input.callId);
+    });
+    return transaction();
+  }
+
+  getModelCallAudit(callId: string): ModelCallAudit | null {
+    const row = this.#database.prepare("SELECT * FROM model_call_audits WHERE call_id = ?")
+      .get(callId) as ModelCallAuditRow | undefined;
+    return row === undefined ? null : ModelCallAuditSchema.parse({
+      callId: row.call_id,
+      runId: row.run_id,
+      manifest: JSON.parse(row.manifest_json),
+      manifestDigest: row.manifest_digest,
+      capturePolicy: row.capture_policy,
+      requestDigest: row.request_digest,
+      requestArtifactRef: row.request_artifact_ref,
+      outputDigest: row.output_digest,
+      outputArtifactRef: row.output_artifact_ref,
+      errorDigest: row.error_digest,
+      errorArtifactRef: row.error_artifact_ref,
+      captureStatus: row.capture_status
+    });
+  }
+
+  listProviderAttempts(callId: string): ProviderAttempt[] {
+    const rows = this.#database.prepare(
+      "SELECT * FROM provider_attempts WHERE call_id = ? ORDER BY attempt_number"
+    ).all(callId) as ProviderAttemptRow[];
+    return rows.map((row) => this.#parseProviderAttemptRow(row));
+  }
+
+  beginProviderAttempt(input: Omit<ProviderAttempt, "status" | "completedAt" | "errorCode" | "responseDigest" | "responseArtifactRef" | "actualInputTokens" | "actualOutputTokens" | "actualTotalTokens" | "providerUsage"> & { readonly fencingToken: number }): ProviderAttempt {
+    const transaction = this.#database.transaction(() => {
+      const call = this.#requireModelCall(input.callId);
+      if (call.runId !== input.runId || call.status !== "started") throw new Error(`Model call is not active: ${input.callId}`);
+      this.#assertFencing(this.#requireRunRow(input.runId), input.fencingToken, input.startedAt);
+      const expected = this.listProviderAttempts(input.callId).length + 1;
+      if (input.attemptNumber !== expected) throw new Error(`Provider Attempt sequence conflict: expected ${expected}.`);
+      this.#database.prepare(`
+        INSERT INTO provider_attempts (
+          attempt_id, run_id, call_id, attempt_number, provider, model,
+          config_fingerprint, status, started_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'started', ?)
+      `).run(input.id, input.runId, input.callId, input.attemptNumber, input.provider, input.model, input.configFingerprint, input.startedAt);
+      this.#insertEvent(input.runId, this.#nextSequence(input.runId), {
+        type: "provider.attempt.started",
+        occurredAt: input.startedAt,
+        actorType: "harness",
+        causationRef: `model-call:${input.callId}`,
+        correlationRef: `provider-attempt:${input.id}`,
+        payload: { callId: input.callId, attemptId: input.id, attemptNumber: input.attemptNumber, provider: input.provider, model: input.model }
+      });
+      return this.#requireProviderAttempt(input.id);
+    });
+    return transaction();
+  }
+
+  completeProviderAttempt(input: {
+    readonly attemptId: string;
+    readonly callId?: string;
+    readonly fencingToken: number;
+    readonly status: "succeeded" | "failed" | "cancelled";
+    readonly completedAt: string;
+    readonly errorCode?: string;
+    readonly responseDigest?: string;
+    readonly responseArtifactRef?: string;
+    readonly actualInputTokens?: number;
+    readonly actualOutputTokens?: number;
+    readonly actualTotalTokens?: number;
+    readonly providerUsage?: unknown;
+  }): ProviderAttempt {
+    const transaction = this.#database.transaction(() => {
+      const attempt = this.#requireProviderAttempt(input.attemptId);
+      if (input.callId !== undefined && input.callId !== attempt.callId) {
+        throw new Error(`Provider Attempt does not belong to Model Call ${input.callId}.`);
+      }
+      this.#assertFencing(this.#requireRunRow(attempt.runId), input.fencingToken, input.completedAt);
+      const update = this.#database.prepare(`
+        UPDATE provider_attempts SET status = ?, completed_at = ?, error_code = ?,
+          response_digest = ?, response_artifact_ref = ?, actual_input_tokens = ?,
+          actual_output_tokens = ?, actual_total_tokens = ?, provider_usage_json = ?
+        WHERE attempt_id = ? AND status = 'started'
+      `).run(input.status, input.completedAt, input.errorCode ?? null, input.responseDigest ?? null,
+        input.responseArtifactRef ?? null, input.actualInputTokens ?? null,
+        input.actualOutputTokens ?? null, input.actualTotalTokens ?? null,
+        input.providerUsage === undefined ? null : JSON.stringify(JsonValueSchema.parse(input.providerUsage)),
+        input.attemptId);
+      if (update.changes !== 1) throw new Error(`Provider Attempt is not active: ${input.attemptId}`);
+      this.#insertEvent(attempt.runId, this.#nextSequence(attempt.runId), {
+        type: `provider.attempt.${input.status}` as "provider.attempt.succeeded" | "provider.attempt.failed" | "provider.attempt.cancelled",
+        occurredAt: input.completedAt,
+        actorType: "harness",
+        causationRef: `model-call:${attempt.callId}`,
+        correlationRef: `provider-attempt:${attempt.id}`,
+        payload: {
+          callId: attempt.callId, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
+          status: input.status,
+          ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
+          ...(input.responseDigest === undefined ? {} : { responseDigest: input.responseDigest })
+        }
+      });
+      return this.#requireProviderAttempt(input.attemptId);
     });
     return transaction();
   }
@@ -808,11 +1267,55 @@ export class RunStore {
       this.#database.prepare(`
         UPDATE runs SET lease_owner = ?, lease_until = ?, fencing_token = ? WHERE run_id = ?
       `).run(input.ownerId, leaseUntil, fencingToken, input.runId);
+      const interruptedCalls = this.#database.prepare(
+        "SELECT call_id FROM model_calls WHERE run_id = ? AND status = 'started' ORDER BY sequence"
+      ).all(input.runId) as Array<{ call_id: string }>;
+      const interruptedProviderAttempts = this.#database.prepare(
+        "SELECT attempt_id, call_id, attempt_number FROM provider_attempts WHERE run_id = ? AND status = 'started' ORDER BY call_id, attempt_number"
+      ).all(input.runId) as Array<{ attempt_id: string; call_id: string; attempt_number: number }>;
       this.#database.prepare(`
         UPDATE model_calls
         SET status = 'interrupted', completed_at = ?, error_code = 'PROCESS_INTERRUPTED'
         WHERE run_id = ? AND status = 'started'
       `).run(input.now, input.runId);
+      this.#database.prepare(`
+        UPDATE provider_attempts
+        SET status = 'interrupted', completed_at = ?, error_code = 'PROCESS_INTERRUPTED'
+        WHERE run_id = ? AND status = 'started'
+      `).run(input.now, input.runId);
+      this.#database.prepare(`
+        UPDATE tool_attempts
+        SET status = 'interrupted', completed_at = ?, error_json = ?
+        WHERE run_id = ? AND status = 'started'
+      `).run(
+        input.now,
+        JSON.stringify({
+          code: "PROCESS_INTERRUPTED",
+          message: "The previous Runtime lost its Lease before recording a Tool result.",
+          retryable: true
+        }),
+        input.runId
+      );
+      for (const attempt of interruptedProviderAttempts) {
+        this.#insertEvent(input.runId, this.#nextSequence(input.runId), {
+          type: "provider.attempt.interrupted",
+          occurredAt: input.now,
+          actorType: "runtime",
+          causationRef: `model-call:${attempt.call_id}`,
+          correlationRef: `provider-attempt:${attempt.attempt_id}`,
+          payload: { callId: attempt.call_id, attemptId: attempt.attempt_id, attemptNumber: attempt.attempt_number, errorCode: "PROCESS_INTERRUPTED" }
+        });
+      }
+      for (const call of interruptedCalls) {
+        this.#insertEvent(input.runId, this.#nextSequence(input.runId), {
+          type: "model.interrupted",
+          occurredAt: input.now,
+          actorType: "runtime",
+          causationRef: `model-call:${call.call_id}`,
+          correlationRef: `model-call:${call.call_id}`,
+          payload: { callId: call.call_id, errorCode: "PROCESS_INTERRUPTED" }
+        });
+      }
       return { ownerId: input.ownerId, fencingToken, leaseUntil };
     });
     return transaction();
@@ -847,10 +1350,96 @@ export class RunStore {
   }
 
   #insertEvent(runId: string, sequence: number, event: RunEventInput): void {
+    const parsed = RunEventInputSchema.parse(event);
+    AuditRecordTypeSchema.parse(parsed.type);
+    const payloadDigest = digestCanonicalJson(parsed.payload);
+    const previousRecordDigest = sequence === 1
+      ? null
+      : (this.#database.prepare(
+          "SELECT record_digest FROM run_events WHERE run_id = ? AND sequence = ?"
+        ).get(runId, sequence - 1) as { record_digest: string | null } | undefined)?.record_digest ?? null;
+    if (sequence > 1 && previousRecordDigest === null) {
+      throw new Error(`Journal predecessor is missing for ${runId} sequence ${sequence}.`);
+    }
+    const actorType = parsed.actorType ?? this.#actorForEvent(parsed.type);
+    const envelope = {
+      runId,
+      sequence,
+      recordType: parsed.type,
+      schemaVersion: 1,
+      occurredAt: parsed.occurredAt,
+      actorType,
+      causationRef: parsed.causationRef ?? null,
+      correlationRef: parsed.correlationRef ?? null,
+      payloadDigest,
+      payloadArtifactRef: parsed.payloadArtifactRef ?? null,
+      previousRecordDigest,
+      completeness: "complete" as const
+    };
+    const recordDigest = digestCanonicalJson(envelope);
     this.#database.prepare(`
-      INSERT INTO run_events (run_id, sequence, type, occurred_at, payload_json)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(runId, sequence, event.type, event.occurredAt, JSON.stringify(event.payload));
+      INSERT INTO run_events (
+        run_id, sequence, type, occurred_at, payload_json, schema_version,
+        actor_type, causation_ref, correlation_ref, payload_digest,
+        payload_artifact_ref, previous_record_digest, record_digest, completeness
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      runId, sequence, parsed.type, parsed.occurredAt, JSON.stringify(parsed.payload),
+      1, actorType, parsed.causationRef ?? null, parsed.correlationRef ?? null,
+      payloadDigest, parsed.payloadArtifactRef ?? null, previousRecordDigest,
+      recordDigest, "complete"
+    );
+  }
+
+  #parseEventRow(row: EventRow): RunEvent {
+    if (row.schema_version === null || row.payload_digest === null || row.record_digest === null) {
+      throw new Error(`Journal envelope is incomplete at ${row.run_id}:${row.sequence}.`);
+    }
+    return RunEventSchema.parse({
+      runId: row.run_id,
+      sequence: row.sequence,
+      type: row.type,
+      occurredAt: row.occurred_at,
+      payload: JSON.parse(row.payload_json),
+      schemaVersion: row.schema_version,
+      ...(row.actor_type === null ? {} : { actorType: row.actor_type }),
+      causationRef: row.causation_ref,
+      correlationRef: row.correlation_ref,
+      payloadDigest: row.payload_digest,
+      payloadArtifactRef: row.payload_artifact_ref,
+      previousRecordDigest: row.previous_record_digest,
+      recordDigest: row.record_digest,
+      completeness: row.completeness
+    });
+  }
+
+  #eventRecordDigest(row: EventRow, payloadDigest: string, previousRecordDigest: string | null): string {
+    return digestCanonicalJson({
+      runId: row.run_id,
+      sequence: row.sequence,
+      recordType: row.type,
+      schemaVersion: row.schema_version,
+      occurredAt: row.occurred_at,
+      actorType: row.actor_type,
+      causationRef: row.causation_ref,
+      correlationRef: row.correlation_ref,
+      payloadDigest,
+      payloadArtifactRef: row.payload_artifact_ref,
+      previousRecordDigest,
+      completeness: row.completeness
+    });
+  }
+
+  #actorForEvent(type: string): "host" | "runtime" | "harness" {
+    if (type.startsWith("model.") || type.startsWith("validation.")) return "harness";
+    if (type === "input.received" || type === "approval.granted" || type === "approval.denied") return "host";
+    return "runtime";
+  }
+
+  #runHasLegacyRecords(runId: string): boolean {
+    return this.#database.prepare(
+      "SELECT 1 AS found FROM run_events WHERE run_id = ? AND completeness = 'legacy_partial' LIMIT 1"
+    ).get(runId) !== undefined;
   }
 
   #parseToolRow(row: ToolRow): ToolInvocation {
@@ -865,6 +1454,8 @@ export class RunStore {
       inputDigest: row.input_digest,
       idempotencyKey: row.idempotency_key,
       idempotent: row.idempotent === 1,
+      batchId: row.batch_id,
+      batchOrdinal: row.batch_ordinal,
       fencingToken: row.fencing_token,
       status: row.status,
       startedAt: row.started_at,
@@ -873,6 +1464,68 @@ export class RunStore {
       errorJson: row.error_json === null ? null : JSON.parse(row.error_json),
       payloadDigest: row.payload_digest,
       payloadArtifactRef: row.payload_artifact_ref
+    });
+  }
+
+  #insertToolInvocation(invocationInput: ToolInvocation): void {
+    const invocation = ToolInvocationSchema.parse(invocationInput);
+    this.#database.prepare(`
+      INSERT INTO tool_invocations (
+        invocation_id, run_id, plan_version, step_id, check_ids_json,
+        tool_name, input_json, input_digest, idempotency_key, idempotent,
+        fencing_token, status, started_at, completed_at, result_json, error_json,
+        payload_digest, payload_artifact_ref, batch_id, batch_ordinal
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      invocation.id,
+      invocation.runId,
+      invocation.planVersion,
+      invocation.stepId,
+      JSON.stringify(invocation.checkIds),
+      invocation.toolName,
+      JSON.stringify(invocation.inputJson),
+      invocation.inputDigest,
+      invocation.idempotencyKey,
+      invocation.idempotent ? 1 : 0,
+      invocation.fencingToken,
+      invocation.status,
+      invocation.startedAt,
+      invocation.completedAt,
+      invocation.resultJson === null ? null : JSON.stringify(invocation.resultJson),
+      invocation.errorJson === null ? null : JSON.stringify(invocation.errorJson),
+      invocation.payloadDigest,
+      invocation.payloadArtifactRef,
+      invocation.batchId ?? null,
+      invocation.batchOrdinal ?? null
+    );
+  }
+
+  #parseToolAttemptRow(row: ToolAttemptRow): ToolAttempt {
+    return ToolAttemptSchema.parse({
+      id: row.attempt_id,
+      invocationId: row.invocation_id,
+      runId: row.run_id,
+      attemptNumber: row.attempt_number,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      backoffUntil: row.backoff_until,
+      subjectRef: row.subject_ref,
+      resultJson: row.result_json === null ? null : JSON.parse(row.result_json),
+      errorJson: row.error_json === null ? null : JSON.parse(row.error_json),
+      payloadDigest: row.payload_digest,
+      payloadArtifactRef: row.payload_artifact_ref
+    });
+  }
+
+  #parseCancellationRow(row: CancellationRow): CancellationRequest {
+    return CancellationRequestSchema.parse({
+      id: row.request_id,
+      runId: row.run_id,
+      reason: row.reason,
+      status: row.status,
+      requestedAt: row.requested_at,
+      reconciledAt: row.reconciled_at
     });
   }
 
@@ -903,10 +1556,37 @@ export class RunStore {
     });
   }
 
+  #parseProviderAttemptRow(row: ProviderAttemptRow): ProviderAttempt {
+    return ProviderAttemptSchema.parse({
+      id: row.attempt_id,
+      runId: row.run_id,
+      callId: row.call_id,
+      attemptNumber: row.attempt_number,
+      provider: row.provider,
+      model: row.model,
+      configFingerprint: row.config_fingerprint,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      errorCode: row.error_code,
+      responseDigest: row.response_digest,
+      responseArtifactRef: row.response_artifact_ref,
+      actualInputTokens: row.actual_input_tokens,
+      actualOutputTokens: row.actual_output_tokens,
+      actualTotalTokens: row.actual_total_tokens,
+      providerUsage: row.provider_usage_json === null ? null : JSON.parse(row.provider_usage_json)
+    });
+  }
+
+  #requireProviderAttempt(attemptId: string): ProviderAttempt {
+    const row = this.#database.prepare("SELECT * FROM provider_attempts WHERE attempt_id = ?")
+      .get(attemptId) as ProviderAttemptRow | undefined;
+    if (row === undefined) throw new Error(`Provider Attempt not found: ${attemptId}`);
+    return this.#parseProviderAttemptRow(row);
+  }
+
   #insertModelCall(
-    intentInput: ModelCallIntent,
-    status: "started" | "refused",
-    errorCode: string | null
+    intentInput: ModelCallIntent
   ): ModelCallRecord {
     const intent = ModelCallRecordSchema.omit({
       sequence: true,
@@ -921,7 +1601,6 @@ export class RunStore {
       SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence
       FROM model_calls WHERE run_id = ?
     `).get(intent.runId) as { sequence: number }).sequence;
-    const completedAt = status === "refused" ? intent.startedAt : null;
     this.#database.prepare(`
       INSERT INTO model_calls (
         call_id, run_id, sequence, phase, provider, model, projection_digest,
@@ -936,8 +1615,8 @@ export class RunStore {
       intent.model, intent.projectionDigest, intent.contextWindowTokens,
       intent.reservedOutputTokens, intent.softInputLimitTokens,
       intent.hardInputLimitTokens, intent.measuredInputTokens,
-      intent.measurementMethod, intent.meter, intent.budgetDecision, status,
-      null, null, null, errorCode, intent.startedAt, completedAt
+      intent.measurementMethod, intent.meter, intent.budgetDecision, "started",
+      null, null, null, null, intent.startedAt, null
     );
     return this.#requireModelCall(intent.id);
   }
@@ -1000,6 +1679,30 @@ export class RunStore {
     return invocation;
   }
 
+  #requireToolAttempt(attemptId: string): ToolAttempt {
+    const row = this.#database.prepare(
+      "SELECT * FROM tool_attempts WHERE attempt_id = ?"
+    ).get(attemptId) as ToolAttemptRow | undefined;
+    if (row === undefined) throw new Error(`Tool attempt not found: ${attemptId}`);
+    return this.#parseToolAttemptRow(row);
+  }
+
+  #nextToolAttemptNumber(invocationId: string): number {
+    const active = this.#database.prepare(`
+      SELECT attempt_id FROM tool_attempts
+      WHERE invocation_id = ? AND status = 'started'
+      LIMIT 1
+    `).get(invocationId) as { attempt_id: string } | undefined;
+    if (active !== undefined) {
+      throw new Error(`Tool invocation already has an active attempt: ${invocationId}`);
+    }
+    const row = this.#database.prepare(`
+      SELECT COALESCE(MAX(attempt_number), 0) AS attempt_number
+      FROM tool_attempts WHERE invocation_id = ?
+    `).get(invocationId) as { attempt_number: number };
+    return row.attempt_number + 1;
+  }
+
   #requireModelCall(callId: string): ModelCallRecord {
     const row = this.#database.prepare(
       "SELECT * FROM model_calls WHERE call_id = ?"
@@ -1010,8 +1713,8 @@ export class RunStore {
 
   #migrate(): void {
     const version = this.#database.pragma("user_version", { simple: true }) as number;
-    if (version > 5) {
-      throw new Error(`Runtime database schema ${version} is newer than supported schema 5.`);
+    if (version > 8) {
+      throw new Error(`Runtime database schema ${version} is newer than supported schema 8.`);
     }
     const migrate = this.#database.transaction(() => {
       if (version < 1) {
@@ -1033,6 +1736,61 @@ export class RunStore {
       if (version < 5) {
         this.#database.exec(v5BranchSchemaSql);
         this.#database.pragma("user_version = 5");
+      }
+      if (version < 6) {
+        this.#database.exec(v6DurableToolExecutionMigrationSql);
+        const toolColumns = this.#database.prepare("PRAGMA table_info(tool_invocations)").all() as Array<{ name: string }>;
+        if (toolColumns.some(({ name }) => name === "run_id")) {
+          this.#database.exec(`
+            CREATE INDEX IF NOT EXISTS tool_invocations_run_batch
+            ON tool_invocations (run_id, batch_id, batch_ordinal)
+          `);
+        }
+        this.#database.pragma("user_version = 6");
+      }
+      if (version < 7) {
+        this.#database.exec(v7DurableRunJournalMigrationSql);
+        const eventColumns = new Set(
+          (this.#database.prepare("PRAGMA table_info(run_events)").all() as Array<{ name: string }>)
+            .map(({ name }) => name)
+        );
+        if (["type", "occurred_at", "payload_json"].every((name) => eventColumns.has(name))) {
+          this.#database.exec(`
+            CREATE INDEX IF NOT EXISTS run_events_run_type_sequence
+            ON run_events (run_id, type, sequence)
+          `);
+          const runIds = this.#database.prepare("SELECT run_id FROM runs ORDER BY run_id")
+            .all() as Array<{ run_id: string }>;
+          const update = this.#database.prepare(`
+            UPDATE run_events SET schema_version = 1, payload_digest = ?,
+              previous_record_digest = ?, record_digest = ?, completeness = 'legacy_partial'
+            WHERE run_id = ? AND sequence = ?
+          `);
+          for (const { run_id: runId } of runIds) {
+            const rows = this.#database.prepare(
+              "SELECT * FROM run_events WHERE run_id = ? ORDER BY sequence"
+            ).all(runId) as EventRow[];
+            let previousRecordDigest: string | null = null;
+            for (const row of rows) {
+              const payloadDigest = digestCanonicalJson(JSON.parse(row.payload_json));
+              const migratedRow: EventRow = {
+                ...row,
+                schema_version: 1,
+                payload_digest: payloadDigest,
+                previous_record_digest: previousRecordDigest,
+                completeness: "legacy_partial"
+              };
+              const recordDigest = this.#eventRecordDigest(migratedRow, payloadDigest, previousRecordDigest);
+              update.run(payloadDigest, previousRecordDigest, recordDigest, runId, row.sequence);
+              previousRecordDigest = recordDigest;
+            }
+          }
+        }
+        this.#database.pragma("user_version = 7");
+      }
+      if (version < 8) {
+        this.#database.exec(v8ProviderUsageMigrationSql);
+        this.#database.pragma("user_version = 8");
       }
     });
     migrate();

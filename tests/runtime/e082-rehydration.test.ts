@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
 import {
   createInitialRunSnapshot,
   type RunEvent,
@@ -15,9 +15,8 @@ import {
   MAX_SESSION_ARCHIVE_MILESTONES,
   MAX_SESSION_MILESTONE_LABEL_LENGTH,
   projectSessionArchive
-} from "../../packages/runtime/src/context/rehydration.js";
+} from "../../packages/harness/src/context/rehydration.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
-import type { ModelDecisionContext } from "../../packages/runtime/src/providers/model-client.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -67,7 +66,7 @@ describe("E082 rehydration", () => {
     expect(JSON.stringify(archive)).not.toContain("x".repeat(2_000));
   });
 
-  it("auto-rehydrates the full error of an unresolved safety failure as harness_required", async () => {
+  it("keeps a failed Tool outcome and repair details visible to the next decision", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1)]),
@@ -85,63 +84,44 @@ describe("E082 rehydration", () => {
     const finalContext = provider.contexts.at(-1)!;
 
     expect(result.status).toBe("waiting");
-    const requiredFacts = finalContext.rehydratedFacts.filter((fact) => fact.origin === "harness_required");
-    expect(requiredFacts.length).toBeGreaterThan(0);
-    const invocationFact = requiredFacts.find((fact) => fact.kind === "invocation");
-    expect(invocationFact).toEqual(expect.objectContaining({
-      origin: "harness_required",
-      error: null,
-      content: expect.objectContaining({
-        status: "failed",
-        error: expect.objectContaining({ code: "SECURITY_DENIED" })
-      })
+    expect(finalContext.toolObservations).toContainEqual(expect.objectContaining({
+      invocationId: view.toolInvocations[0]!.id,
+      status: "failed",
+      sourceRefs: expect.arrayContaining([`invocation:${view.toolInvocations[0]!.id}`])
     }));
+    expect(finalContext.repair).toEqual(expect.objectContaining({ kind: "tool_failure" }));
+    expect(view.toolInvocations[0]?.errorJson).toEqual(expect.objectContaining({ code: "SECURITY_DENIED" }));
     expect(view.snapshot.revision).toBeGreaterThanOrEqual(0);
     await runtime.close();
   });
 
-  it("restores a requested invocation via request_context without changing authoritative state", async () => {
+  it("projects a bounded predecessor directly from Invocation authority", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1), step(2)]),
       call(step(1), 1),
-      (context: ModelDecisionContext) => {
-        const ref = context.toolObservations[0]?.sourceRefs.find((item) => item.startsWith("invocation:"));
-        return { type: "request_context", refs: ref === undefined ? [] : [ref] };
-      },
       { type: "request_input", question: "Stop.", reason: "Inspect restored facts." }
     ]);
     const runtime = createRuntime({
       workspace,
       provider,
-      tools: [largeTool({ payloadBytes: 100 })]
+      tools: [largeTool({ payloadBytes: 5_000 })]
     });
 
     const result = await runtime.start({ input: "Produce a large predecessor fact then request it." });
     const view = await runtime.inspect(result.runId);
-    const before = await runtime.inspect(result.runId);
-    const requestContexts = provider.contexts.filter((context) => context.rehydratedFacts.length > 0);
-    const after = await runtime.inspect(result.runId);
+    const finalContext = provider.contexts.at(-1)!;
 
     expect(result.status).toBe("waiting");
-    expect(requestContexts.length).toBeGreaterThan(0);
-    const modelFacts = requestContexts.at(-1)!.rehydratedFacts.filter(
-      (fact) => fact.origin === "model_request"
-    );
-    expect(modelFacts.length).toBeGreaterThan(0);
-    expect(modelFacts[0]).toEqual(expect.objectContaining({
-      kind: "invocation",
-      error: null,
-      content: expect.objectContaining({ status: "succeeded" })
+    expect(finalContext.toolObservations).toContainEqual(expect.objectContaining({
+      invocationId: view.toolInvocations[0]!.id,
+      status: "succeeded",
+      truncated: true,
+      payloadMode: "reference",
+      payloadFragment: null
     }));
-    // request_context must not change any authoritative state.
-    expect(after.snapshot.revision).toBe(before.snapshot.revision);
-    expect(after.snapshot.stepProgress).toEqual(before.snapshot.stepProgress);
-    expect(after.snapshot.evidence.map((item) => item.id)).toEqual(
-      before.snapshot.evidence.map((item) => item.id)
-    );
-    expect(view.events.some((event) => event.type === "context.rehydrate_requested")).toBe(true);
-    expect(view.events.some((event) => event.type === "context.rehydrated")).toBe(true);
+    expect(view.events.some((event) => event.type === "context.rehydrate_requested")).toBe(false);
+    expect(view.events.some((event) => event.type === "context.rehydrated")).toBe(false);
     await runtime.close();
   });
 
@@ -150,7 +130,6 @@ describe("E082 rehydration", () => {
     const earlyConstraint = `Preserve this exact early constraint: ${"x".repeat(1_000)}`;
     const provider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1)]),
-      { type: "request_context", refs: ["input:1", "event:1"] },
       { type: "request_input", question: "Stop.", reason: "Inspect session recall." }
     ]);
     const runtime = createRuntime({
@@ -159,14 +138,15 @@ describe("E082 rehydration", () => {
       tools: [largeTool({ payloadBytes: 100 })]
     });
 
-    const result = await runtime.start({ input: earlyConstraint });
+    const result = await runtime.start({ input: `${earlyConstraint} Use input:1 and event:1.` });
     const archiveContext = provider.contexts[1]!;
     const restoredContext = provider.contexts.find((context) => (
       context.rehydratedFacts.some((fact) => fact.ref === "input:1")
     ));
 
     expect(result.status).toBe("waiting");
-    expect(archiveContext.intentContract.map((decision) => decision.intent.kind)).toEqual(["use_capabilities"]);
+    expect(archiveContext).not.toHaveProperty("allowedIntents");
+    expect(archiveContext).not.toHaveProperty("intentContract");
     expect(archiveContext.sessionArchive).toEqual(expect.objectContaining({
       schemaVersion: 1,
       inputs: {
@@ -193,7 +173,7 @@ describe("E082 rehydration", () => {
         ref: "input:1",
         kind: "input",
         error: null,
-        content: { sequence: 1, text: earlyConstraint }
+        content: { sequence: 1, text: `${earlyConstraint} Use input:1 and event:1.` }
       }),
       expect.objectContaining({
         ref: "event:1",
@@ -223,7 +203,6 @@ describe("E082 rehydration", () => {
 
     const secondProvider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1)]),
-      { type: "request_context", refs: ["input:1"] },
       { type: "request_input", question: "Stop B.", reason: "Inspect Run B recall." }
     ]);
     const secondRuntime = createRuntime({
@@ -232,7 +211,7 @@ describe("E082 rehydration", () => {
       provider: secondProvider,
       tools: [largeTool()]
     });
-    const result = await secondRuntime.start({ input: "Run B own input." });
+    const result = await secondRuntime.start({ input: "Run B own input. Reuse input:1." });
     const recalled = secondProvider.contexts.find((context) => (
       context.rehydratedFacts.some((fact) => fact.ref === "input:1")
     ));
@@ -242,22 +221,17 @@ describe("E082 rehydration", () => {
       expect.objectContaining({
         ref: "input:1",
         error: null,
-        content: { sequence: 1, text: "Run B own input." }
+        content: { sequence: 1, text: "Run B own input. Reuse input:1." }
       })
     ]));
     expect(JSON.stringify(recalled?.rehydratedFacts)).not.toContain("Run A private input.");
     await secondRuntime.close();
   });
 
-  it("refuses an unexposed ref as REF_UNAVAILABLE and a malformed ref as INVALID_REF", async () => {
+  it("ignores unexposed and malformed refs without leaking whether Authority data exists", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1)]),
-      call(step(1), 1),
-      {
-        type: "request_context",
-        refs: ["invocation:never-published-id", "input:999", "event:999", "garbage-not-a-ref"]
-      },
       { type: "request_input", question: "Stop.", reason: "Inspect refusal." }
     ]);
     const runtime = createRuntime({
@@ -266,48 +240,24 @@ describe("E082 rehydration", () => {
       tools: [largeTool({ payloadBytes: 100 })]
     });
 
-    const result = await runtime.start({ input: "Request refs that were never published." });
+    const guessed = ["invocation:never-published-id", "input:999", "event:999", "garbage-not-a-ref"];
+    const result = await runtime.start({ input: `Do not expose guessed refs: ${guessed.join(" ")}.` });
     await runtime.inspect(result.runId);
     const feedbackContext = provider.contexts.find((context) => (
-      context.rehydratedFacts.some((fact) => fact.error !== null)
+      context.rehydratedFacts.some((fact) => guessed.includes(fact.ref))
     ));
 
     expect(result.status).toBe("waiting");
-    expect(feedbackContext).toBeDefined();
-    const byRef = new Map(
-      feedbackContext!.rehydratedFacts.map((fact) => [fact.ref, fact])
-    );
-    expect(byRef.get("invocation:never-published-id")).toEqual(expect.objectContaining({
-      error: "REF_UNAVAILABLE",
-      content: null
-    }));
-    expect(byRef.get("input:999")).toEqual(expect.objectContaining({
-      error: "REF_UNAVAILABLE",
-      content: null
-    }));
-    expect(byRef.get("event:999")).toEqual(expect.objectContaining({
-      error: "REF_UNAVAILABLE",
-      content: null
-    }));
-    expect(byRef.get("garbage-not-a-ref")).toEqual(expect.objectContaining({
-      error: "INVALID_REF",
-      content: null
-    }));
+    expect(feedbackContext).toBeUndefined();
     await runtime.close();
   });
 
-  it("keeps harness_required facts when a large model request exceeds the rehydration budget", async () => {
+  it("keeps the latest failed outcome when predecessor payloads exceed the context budget", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1), step(2)]),
       call(step(1), 1),
       call(step(2), 2),
-      (context: ModelDecisionContext) => {
-        const artifactRef = context.toolObservations.find((obs) => (
-          obs.sourceRefs.some((item) => item.startsWith("artifact:"))
-        ))?.sourceRefs.find((item) => item.startsWith("artifact:"));
-        return { type: "request_context", refs: artifactRef === undefined ? [] : [artifactRef] };
-      },
       { type: "request_input", question: "Stop.", reason: "Inspect budget handling." }
     ]);
     const runtime = createRuntime({
@@ -317,32 +267,24 @@ describe("E082 rehydration", () => {
     });
 
     const result = await runtime.start({ input: "Request a large artifact while a safety fact is required." });
-    const feedback = provider.contexts.find((context) => (
-      context.rehydratedFacts.some((fact) => fact.origin === "model_request")
-    ));
+    const feedback = provider.contexts.at(-1);
 
     expect(result.status).toBe("waiting");
     expect(feedback).toBeDefined();
-    const required = feedback!.rehydratedFacts.filter((fact) => fact.origin === "harness_required");
-    const modelRequested = feedback!.rehydratedFacts.filter((fact) => fact.origin === "model_request");
-    expect(required.some((fact) => fact.error === null)).toBe(true);
-    expect(modelRequested.some((fact) => fact.error === "REHYDRATION_BUDGET_EXCEEDED")).toBe(true);
+    expect(feedback!.toolObservations).toContainEqual(expect.objectContaining({
+      status: "failed",
+      payloadMode: "full",
+      error: expect.objectContaining({ code: "SECURITY_DENIED" })
+    }));
+    expect(feedback!.repair).toEqual(expect.objectContaining({ kind: "tool_failure" }));
     await runtime.close();
   });
 
-  it("rebuilds an unconsumed rehydration request from events after resume", async () => {
+  it("rebuilds deterministic explicit-ref restoration after resume", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
-    // The request_context is the last scripted action: the next decision call
-    // (after the request is queued) will exhaust the provider and block the
-    // run before the request is ever consumed.
     const provider = new ScriptedRuntimeProvider([
-      plan(workspace, [step(1), step(2)]),
-      call(step(1), 1),
-      (context: ModelDecisionContext) => {
-        const ref = context.toolObservations[0]?.sourceRefs.find((item) => item.startsWith("invocation:"));
-        return { type: "request_context", refs: ref === undefined ? ["input:1"] : [ref, "input:1"] };
-      }
+      plan(workspace, [step(1), step(2)])
     ]);
     const runtime = createRuntime({
       workspace,
@@ -351,13 +293,12 @@ describe("E082 rehydration", () => {
       tools: [largeTool({ payloadBytes: 100 })]
     });
 
-    const result = await runtime.start({ input: "Request a context restoration before a crash." });
+    const initialInput = "Restore input:1 deterministically before and after restart.";
+    const result = await runtime.start({ input: initialInput });
     expect(result.status).toBe("blocked");
     expect(result.stopReason).toBe("PROVIDER_UNAVAILABLE");
     await runtime.close();
 
-    // Reopen and resume: the unconsumed request (context.rehydrate_requested
-    // without a matching context.rehydrated) must be rebuilt from events.
     const resumedProvider = new ScriptedRuntimeProvider([
       { type: "request_input", question: "Continue.", reason: "Resume after reopen." }
     ]);
@@ -365,52 +306,24 @@ describe("E082 rehydration", () => {
       workspace,
       dataDir,
       provider: resumedProvider,
-      tools: []
+      tools: [largeTool({ payloadBytes: 100 })]
     });
     const resumed = await reopened.resume({ runId: result.runId });
     expect(resumed.status).toBe("waiting");
     const restored = resumedProvider.contexts.find((context) => (
-      context.rehydratedFacts.some((fact) => fact.origin === "model_request" && fact.error === null)
+      context.rehydratedFacts.some((fact) => fact.origin === "harness_required" && fact.error === null)
     ));
     expect(restored).toBeDefined();
     expect(restored!.rehydratedFacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         ref: "input:1",
         error: null,
-        content: { sequence: 1, text: "Request a context restoration before a crash." }
+        content: { sequence: 1, text: initialInput }
       })
     ]));
     await reopened.close();
   });
 
-  it("limits repeated request_context calls through the iteration budget", async () => {
-    const workspace = fixture();
-    const provider = new ScriptedRuntimeProvider([
-      plan(workspace, [step(1)]),
-      call(step(1), 1),
-      (context: ModelDecisionContext) => {
-        const ref = context.toolObservations[0]?.sourceRefs.find((item) => item.startsWith("invocation:"));
-        return { type: "request_context", refs: ref === undefined ? [] : [ref] };
-      },
-      { type: "request_input", question: "Stop.", reason: "Should not be reached." }
-    ]);
-    const runtime = createRuntime({
-      workspace,
-      provider,
-      tools: [largeTool({ payloadBytes: 100 })]
-    });
-
-    const result = await runtime.start({
-      input: "Loop on request_context.",
-      budgets: { maxIterations: 3, maxModelCalls: 10, maxToolCalls: 10, maxRetries: 1, maxDurationMs: 60_000 }
-    });
-    const view = await runtime.inspect(result.runId);
-
-    expect(result.status).toBe("failed");
-    expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
-    expect(view.events.some((event) => event.type === "run.failed")).toBe(true);
-    await runtime.close();
-  });
 });
 
 function largeTool(options: {

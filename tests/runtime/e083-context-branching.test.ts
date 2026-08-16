@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/runtime/src/index.js";
+import { createRuntime } from "../../packages/harness/src/index.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
-import type { ModelDecisionContext } from "../../packages/runtime/src/providers/model-client.js";
+import type { ModelDecisionContext } from "../../packages/harness/src/providers/model-client.js";
 import {
   finishFromEvidence,
   ScriptedRuntimeProvider
@@ -70,18 +70,18 @@ describe("E083 context branching", () => {
     const handle = await runtime.fork(result.runId);
     const view = await handle!.inspect();
 
-    // The child snapshot is a fork-point copy: same plan structure, progress,
-    // evidence. The Plan's goalDigest is recomputed because the child's Task
-    // Contract workspace was redirected to the isolated snapshot.
+    // The child keeps Plan navigation while parent Evidence remains available
+    // only through Fork Base. The Plan digest is recomputed for its workspace.
     const { goalDigest: _goalDigest, ...planWithoutDigest } = parentView.snapshot.currentPlan!;
     expect(view.child.plan).toEqual({
       ...planWithoutDigest,
       goalDigest: expect.any(String)
     });
-    expect(view.child.progress).toEqual(parentView.snapshot.stepProgress);
-    expect(view.child.evidence.map((item) => item.id)).toEqual(
-      parentView.snapshot.evidence.map((item) => item.id)
-    );
+    expect(view.child.progress).toEqual(parentView.snapshot.stepProgress.map((progress) => ({
+      ...progress,
+      evidenceIds: []
+    })));
+    expect(view.child.evidence).toEqual([]);
     // The Fork Base exposes the parent facts at the fork point as inherited refs.
     const parentEvidence = parentView.snapshot.evidence[0]!;
     expect(view.forkBase.parentRunId).toBe(result.runId);
@@ -133,10 +133,9 @@ describe("E083 context branching", () => {
     const parentAfter = await runtime.inspect(result.runId);
     const branchView = await runtime.getBranch(handle!.id);
 
-    // The child produced its own invocation + evidence under its own run_id;
-    // it starts from the copied fork-point evidence (1) and adds one more.
+    // The child produced its own Invocation and Evidence under its own run_id.
     expect(branchView!.child.invocations).toHaveLength(1);
-    expect(branchView!.child.evidence).toHaveLength(2);
+    expect(branchView!.child.evidence).toHaveLength(1);
     expect(branchView!.child.runId).not.toBe(result.runId);
 
     // The branch's decision context resolved against its isolated snapshot.
@@ -175,6 +174,8 @@ describe("E083 context branching", () => {
 
     // Restart with the same data dir: the branch, child run, and snapshot survive.
     const provider2 = new ScriptedRuntimeProvider([
+      plan(workspace, [step(3)]),
+      call(step(3), 3),
       finishFromEvidence("Branch completed after restart.")
     ]);
     const restarted = createRuntime({ workspace, dataDir, provider: provider2, tools: [largeTool()] });
@@ -226,7 +227,7 @@ describe("E083 context branching", () => {
     await runtime.close();
   });
 
-  it("rejects cross-branch refs: a branch only sees its own authority", async () => {
+  it("does not publish or restore sibling-branch refs", async () => {
     const workspace = fixture();
     let crossRefs: string[] = [];
     const provider = new ScriptedRuntimeProvider([
@@ -236,8 +237,9 @@ describe("E083 context branching", () => {
       // Branch B1 child: produces its own invocation under its own run_id.
       call(step(2), 2),
       stop(),
-      // Branch B2 child: requests refs that belong to B1's child run.
-      () => ({ type: "request_context", refs: crossRefs }),
+      // Branch B2 child: the latest Input names B1 refs, but they are absent
+      // from B2's published manifest and must not be restored.
+      stop(),
       stop()
     ]);
     const runtime = createRuntime({ workspace, provider, tools: [largeTool()] });
@@ -253,55 +255,45 @@ describe("E083 context branching", () => {
 
     const b2 = await runtime.fork(result.runId);
     await b2!.run();
+    await b2!.input(`Do not trust sibling refs ${crossRefs.join(" ")}.`);
     const b2View = await runtime.getBranch(b2!.id);
-    const feedback = provider.contexts.find((context) => (
-      context.rehydratedFacts.some((fact) => fact.error !== null)
-    ));
+    const b2Context = provider.contexts.at(-1)!;
 
     expect(b2View!.child.invocations).toHaveLength(0);
-    expect(feedback).toBeDefined();
-    const facts = feedback!.rehydratedFacts;
-    expect(facts.length).toBeGreaterThan(0);
-    expect(facts.every((fact) => fact.error === "REF_UNAVAILABLE")).toBe(true);
-    expect(facts.every((fact) => fact.content === null)).toBe(true);
+    expect(b2Context.rehydratedFacts.some((fact) => crossRefs.includes(fact.ref))).toBe(false);
+    expect(JSON.stringify(b2Context.historyCandidates)).not.toContain(b1View!.child.runId);
     // B1's own run is unaffected by the cross-branch request.
     expect((await runtime.getBranch(b1!.id))!.child.invocations).toHaveLength(1);
     await runtime.close();
   });
 
-  it("rehydrates parent facts at the fork point via Fork Base inherited refs", async () => {
+  it("rehydrates an explicitly named parent fact through the Fork Base", async () => {
     const workspace = fixture();
+    let inheritedFact: ModelDecisionContext["rehydratedFacts"][number] | undefined;
     const provider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1)]),
       call(step(1), 1),
       stop(),
-      // Branch child: request the parent's (copied-evidence) invocation ref.
+      stop(),
       (context: ModelDecisionContext) => {
-        const invocationId = context.run.evidence[0]?.invocationId;
-        return {
-          type: "request_context",
-          refs: invocationId === undefined ? [] : [`invocation:${invocationId}`]
-        };
-      },
-      stop()
+        inheritedFact = context.rehydratedFacts.find((fact) => fact.kind === "invocation");
+        return stop();
+      }
     ]);
     const runtime = createRuntime({ workspace, provider, tools: [largeTool({ payloadBytes: 200 })] });
     const result = await runtime.start({ input: "Produce a large fact then stop." });
+    const parentView = await runtime.inspect(result.runId);
+    const inheritedRef = `invocation:${parentView.toolInvocations[0]!.id}`;
     const handle = await runtime.fork(result.runId);
     await handle!.run();
+    await handle!.input(`Inspect the inherited fact ${inheritedRef}.`);
     const branchView = await runtime.getBranch(handle!.id);
 
     expect(branchView!.child.invocations).toHaveLength(0);
-    const requested = provider.contexts.find((context) => (
-      context.rehydratedFacts.some((fact) => (
-        fact.origin === "model_request" && fact.error === null
-      ))
-    ));
-    expect(requested).toBeDefined();
-    const modelFact = requested!.rehydratedFacts.find((fact) => fact.origin === "model_request");
-    expect(modelFact).toEqual(expect.objectContaining({
+    expect(inheritedFact).toEqual(expect.objectContaining({
+      ref: inheritedRef,
       kind: "invocation",
-      origin: "model_request",
+      origin: "harness_required",
       error: null,
       content: expect.objectContaining({ status: "succeeded" })
     }));

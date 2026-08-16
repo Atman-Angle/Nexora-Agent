@@ -31,7 +31,7 @@ describe("E054 CLI dotenv autoload", () => {
 
     expect(result.code).toBe(2);
     expect(JSON.parse(result.stdout).stopReason).toBe("INPUT_REQUIRED");
-    expect(provider.calls).toBe(1);
+    expect(provider.calls).toBe(2);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(secret);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(provider.baseUrl);
   });
@@ -51,7 +51,7 @@ describe("E054 CLI dotenv autoload", () => {
     });
 
     expect(result.code).toBe(2);
-    expect(provider.calls).toBe(1);
+    expect(provider.calls).toBe(2);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("explicit-secret");
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("file-secret");
   });
@@ -104,7 +104,7 @@ async function providerStub(): Promise<{ readonly baseUrl: string; readonly call
   const server = createServer(async (request, response) => {
     for await (const _chunk of request) { /* consume request */ }
     calls += 1;
-    const content = { intent: { kind: "request_input", question: "Stop after Provider configuration is proven.", reason: "Provider configuration loaded" } };
+    const content = { action: "request_input", question: "Stop after Provider configuration is proven.", reason: "Provider configuration loaded"  };
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
   });
@@ -125,8 +125,6 @@ function providerEnvFile(baseUrl: string, apiKey: string): string {
     `NEXORA_MODEL_API_KEY=${apiKey}`,
     "NEXORA_MODEL_NAME=qwen3.7-flash",
     "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-    "NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS=1024",
-    "NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS=4096",
     "NEXORA_MODEL_TIMEOUT_MS=10000",
     ""
   ].join("\n");
@@ -139,17 +137,13 @@ function clearedProviderEnvironment(): Record<string, undefined> {
     NEXORA_MODEL_API_KEY: undefined,
     NEXORA_MODEL_NAME: undefined,
     NEXORA_MODEL_TIMEOUT_MS: undefined,
-    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: undefined,
-    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: undefined,
-    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: undefined
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: undefined
   };
 }
 
 function explicitBudgetEnvironment(): Record<string, string> {
   return {
-    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
-    NEXORA_MODEL_VALIDATION_OUTPUT_TOKENS: "1024",
-    NEXORA_MODEL_COMPACTION_OUTPUT_TOKENS: "4096"
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
   };
 }
 

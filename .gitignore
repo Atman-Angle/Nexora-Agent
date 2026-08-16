@@ -22,6 +22,10 @@ docs/history/
 docs/later/
 docs/private-design/
 docs/F007_SAFETY_AUDIT.md
+docs/NEXORA_RUNTIME_WORK_SUMMARY_WECHAT.html
+docs/NEXORA_RUNTIME_WORK_SUMMARY_WECHAT.md
+docs/wechat-render.lua
+docs/wechat-template.html
 apps/research-agent/canaries/
 scripts/
 prototype/

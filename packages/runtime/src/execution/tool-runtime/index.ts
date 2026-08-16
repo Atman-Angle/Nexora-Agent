@@ -8,11 +8,14 @@ import { z } from "zod";
 
 import { ArtifactStore } from "../../store/artifacts.js";
 import type { RuntimeTool } from "../../runtime.js";
+import { attachToolFailureDiagnostics } from "../tool-diagnostics.js";
 import { ToolFailure, workspacePath, writableWorkspacePath } from "./workspace.js";
 
 const PathInput = z.object({ path: z.string().trim().min(1) }).strict();
 const MAX_INLINE_BYTES = 16 * 1024;
 const MAX_CAPTURE_BYTES = 64 * 1024;
+const MAX_PROCESS_DIAGNOSTIC_ARGUMENTS = 64;
+const MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS = 2048;
 const MAX_SEARCH_OUTPUT_BYTES = 512 * 1024;
 const MAX_SEARCH_MATCHES = 100;
 const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"]);
@@ -110,7 +113,20 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         identity: { name: "filesystem.patch" },
         capability: { purpose: "Replace one exact occurrence in a known workspace file guarded by its content digest.", nonGoals: ["Rewrite an entire file.", "Apply ambiguous or multi-location edits."] },
         decision: { useWhen: ["The path, prior digest, unique old text, and replacement text are known."], avoidWhen: ["The current content or digest is unknown.", "The replacement target is not unique."] },
-        execution: { effect: { kind: "write", description: "Atomically changes one exact occurrence in one workspace file." }, idempotent: true, inputSchema: z.object({ path: z.string().trim().min(1), expectedDigest: DigestSchema, find: z.string().min(1), replace: z.string() }).strict(), inputExample: { path: "source.txt", expectedDigest: `sha256:${"0".repeat(64)}`, find: "old", replace: "new" } },
+        execution: { effect: { kind: "write", description: "Atomically changes one exact occurrence in one workspace file." }, idempotent: true, inputSchema: z.object({
+          path: z.string().trim().min(1),
+          expectedDigest: DigestSchema,
+          find: z.string().min(1, "Patch find must be non-empty. Read the current file and provide one unique existing text, or use filesystem.write when replacing the complete file with known content."),
+          replace: z.string()
+        }).strict().superRefine((input, context) => {
+          if (input.find === input.replace) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["replace"],
+              message: "Patch replacement must differ from find text."
+            });
+          }
+        }), inputExample: { path: "source.txt", expectedDigest: `sha256:${"0".repeat(64)}`, find: "old", replace: "new" } },
         evidence: { produces: ["The changed path, resulting digest, and whether an idempotent replay was detected."], factsSchema: PatchFactsSchema }
       },
       async execute(input, context) {
@@ -125,6 +141,9 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         const first = current.indexOf(input.find);
         if (first < 0 || current.indexOf(input.find, first + input.find.length) >= 0) throw new ToolFailure("PATCH_CONFLICT", "Patch find text must occur exactly once.");
         const next = `${current.slice(0, first)}${input.replace}${current.slice(first + input.find.length)}`;
+        if (digest(next) === digest(current)) {
+          throw new ToolFailure("PATCH_NOOP", "Patch would not change the file content. Change the replacement or revise the Plan.");
+        }
         await atomicWrite(path, next, context.signal);
         return { subjectRef: input.path, facts: { path: input.path, digest: digest(next), replayed: false } };
       }
@@ -145,12 +164,18 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
           input.args ?? [],
           cwd,
           input.timeoutMs ?? 60_000,
-          context.signal
+          context.signal,
+          input.cwd ?? "."
         );
-        if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Tool execution timed out.", true);
+        const details = processFailureDetails(input.command, input.args ?? [], input.cwd ?? ".", result);
+        if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Process timed out and was terminated.", true, details);
         if (result.exitCode !== 0) {
-          const detail = (result.stderr || result.stdout).trim().slice(0, 500);
-          throw new ToolFailure("COMMAND_FAILED", `Command exited with code ${result.exitCode}.${detail ? ` ${detail}` : ""}`);
+          throw new ToolFailure(
+            "PROCESS_EXIT_NONZERO",
+            `Process started and exited with code ${result.exitCode}. Inspect error details before changing the command or workspace.`,
+            false,
+            details
+          );
         }
         return { subjectRef: `command:${input.command}`, facts: result };
       }
@@ -338,7 +363,18 @@ function defineTool<Input, Facts>(definition: {
           : error instanceof ToolFailure
             ? error
             : new ToolFailure("TOOL_EXECUTION_ERROR", error instanceof Error ? error.message : String(error), true);
-        return { status: "failure", subjectRef: definition.contract.identity.name, error: { code: failure.code, message: failure.message, retryable: failure.retryable } };
+        const result = {
+          status: "failure" as const,
+          subjectRef: definition.contract.identity.name,
+          error: {
+            code: failure.code,
+            message: failure.message,
+            retryable: failure.retryable
+          }
+        };
+        return failure.details === undefined
+          ? result
+          : attachToolFailureDiagnostics(result, failure.details);
       }
     }
   };
@@ -381,7 +417,8 @@ function runProcess(
   args: string[],
   cwd: string,
   timeoutMs: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  reportedCwd = cwd
 ): Promise<{
   exitCode: number;
   stdout: string;
@@ -438,7 +475,16 @@ function runProcess(
       if (settled) return;
       settled = true;
       cleanup();
-      rejectPromise(error);
+      const identity = boundedProcessIdentity(command, args, reportedCwd);
+      rejectPromise(new ToolFailure(
+        "PROCESS_START_FAILED",
+        `Process could not be started: ${error.message}`,
+        false,
+        {
+          ...identity,
+          causeCode: "code" in error && typeof error.code === "string" ? error.code : null
+        }
+      ));
     });
     child.once("close", (code) => {
       if (settled) return;
@@ -447,6 +493,42 @@ function runProcess(
       resolvePromise({ exitCode: code ?? 1, stdout: stdout.toString("utf8"), stderr: stderr.toString("utf8"), truncated: stdout.length >= MAX_CAPTURE_BYTES || stderr.length >= MAX_CAPTURE_BYTES, timedOut });
     });
   });
+}
+
+function processFailureDetails(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly truncated: boolean; readonly timedOut: boolean }
+): Record<string, unknown> {
+  const identity = boundedProcessIdentity(command, args, cwd);
+  return {
+    ...identity,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    truncated: result.truncated || identity.identityTruncated,
+    timedOut: result.timedOut
+  };
+}
+
+function boundedProcessIdentity(
+  command: string,
+  args: readonly string[],
+  cwd: string
+): { command: string; args: string[]; cwd: string; identityTruncated: boolean } {
+  const boundedArgs = args
+    .slice(0, MAX_PROCESS_DIAGNOSTIC_ARGUMENTS)
+    .map((arg) => arg.slice(0, MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS));
+  return {
+    command: command.slice(0, MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS),
+    args: boundedArgs,
+    cwd: cwd.slice(0, MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS),
+    identityTruncated: command.length > MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS
+      || cwd.length > MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS
+      || args.length > MAX_PROCESS_DIAGNOSTIC_ARGUMENTS
+      || args.some((arg) => arg.length > MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS)
+  };
 }
 
 function throwIfAborted(signal: AbortSignal): void {

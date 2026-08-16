@@ -27,10 +27,14 @@ describe("D4 packed Developer API consumer", () => {
       ["--filter", "@nexora/runtime", "pack", "--pack-destination", root],
       { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
     );
-    const tarball = join(
-      root,
-      readdirSync(root).find((name) => name.endsWith(".tgz"))!
+    execFileSync(
+      "pnpm",
+      ["--filter", "@nexora/harness", "pack", "--pack-destination", root],
+      { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
     );
+    const tarballs = readdirSync(root)
+      .filter((name) => name.endsWith(".tgz"))
+      .map((name) => join(root, name));
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify({
@@ -42,7 +46,7 @@ describe("D4 packed Developer API consumer", () => {
     );
     execFileSync(
       "npm",
-      ["install", "--offline", tarball],
+      ["install", "--offline", ...tarballs],
       { cwd: root, stdio: "pipe", shell: process.platform === "win32" }
     );
     writeFileSync(
@@ -85,15 +89,24 @@ describe("D4 packed Developer API consumer", () => {
       invocationStatus: "succeeded"
     });
 
-    const packageJson = JSON.parse(readFileSync(
+    const runtimePackage = JSON.parse(readFileSync(
       join(root, "node_modules", "@nexora", "runtime", "package.json"),
       "utf8"
     )) as {
       exports: Record<string, unknown>;
       engines: Record<string, string>;
     };
-    expect(Object.keys(packageJson.exports).sort()).toEqual([".", "./testing"]);
-    expect(packageJson.engines.node).toBe(">=20");
+    const harnessPackage = JSON.parse(readFileSync(
+      join(root, "node_modules", "@nexora", "harness", "package.json"),
+      "utf8"
+    )) as {
+      exports: Record<string, unknown>;
+      engines: Record<string, string>;
+    };
+    expect(Object.keys(runtimePackage.exports).sort()).toEqual([".", "./internal"]);
+    expect(Object.keys(harnessPackage.exports).sort()).toEqual([".", "./testing"]);
+    expect(runtimePackage.engines.node).toBe(">=20");
+    expect(harnessPackage.engines.node).toBe(">=20");
   }, 60_000);
 });
 
@@ -103,16 +116,16 @@ import { z } from "zod";
 import {
   defineTool,
   type RuntimeEvent
-} from "@nexora/runtime";
+} from "@nexora/harness";
 import {
   assertEventSequence,
   assertSucceeded,
-  createRuntimeHarness,
+  createAgentHarness,
   createScriptedProvider,
-  runtimeActions
-} from "@nexora/runtime/testing";
+  modelTurns
+} from "@nexora/harness/testing";
 // @ts-expect-error package internals remain blocked
-import type { RunStore } from "@nexora/runtime/dist/run-store.js";
+import type { RunStore } from "@nexora/harness/dist/run-store.js";
 
 const tool = defineTool({
   name: "external.lookup",
@@ -136,30 +149,21 @@ const tool = defineTool({
 });
 
 const provider = createScriptedProvider({
-  decisions: [
-    runtimeActions.plan({
+  modelTurns: [
+    modelTurns.plan({
       goal: "Lookup external value",
-      acceptanceCriteria: ["lookup evidence exists"],
       steps: [{
-        id: "lookup",
-        objective: "Lookup value",
-        checks: [{ id: "lookup-check", toolName: "external.lookup" }]
+        objective: "Lookup value"
       }]
     }),
-    runtimeActions.tool({
-      stepId: "lookup",
-      checkIds: ["lookup-check"],
+    modelTurns.tool({
       toolName: "external.lookup",
       input: { key: "example" }
     }),
-    runtimeActions.finish({
-      summary: "External lookup completed.",
-      evidence: "all"
-    })
-  ],
-  validations: [{ passed: true, issues: [] }]
+    modelTurns.finish({ summary: "External lookup completed." })
+  ]
 });
-const harness = await createRuntimeHarness({ provider, tools: [tool] });
+const harness = await createAgentHarness({ provider, tools: [tool] });
 const run = harness.runtime.run("Lookup example.");
 const events: RuntimeEvent[] = [];
 const subscription = run.subscribe((event) => {

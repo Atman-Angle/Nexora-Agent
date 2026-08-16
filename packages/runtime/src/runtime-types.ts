@@ -1,9 +1,8 @@
 import { z } from "zod";
 
-import { JsonValueSchema, type BranchForkBase, type BranchRecord, type Evidence, type ForkContext, type ModelCallRecord, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolInvocation } from "./contracts.js";
-import type { ModelCallPhase, ModelDecisionContext, RuntimeProvider, SemanticValidationContext } from "./providers/model-client.js";
+import { JsonValueSchema, type AuditHistoryPage, type AuditHistoryQuery, type AuditIntegrityResult, type BranchForkBase, type BranchRecord, type Evidence, type ForkContext, type ModelCallRecord, type ModelCallTrace, type RunDelivery, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolAttempt, type ToolInvocation } from "./contracts.js";
+import type { AgentDriver } from "./agent-runtime-port.js";
 import type { RunStore } from "./store/run-store.js";
-import type { MemoryScope, MemoryStore } from "./memory/index.js";
 
 export const ToolResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("success"), subjectRef: z.string().trim().min(1), facts: JsonValueSchema }).strict(),
@@ -34,11 +33,15 @@ export type RuntimeTool = {
   dispose?(): void | Promise<void>;
 };
 
-export type RuntimeMemoryOptions = {
-  readonly store: MemoryStore;
-  readonly scope: MemoryScope;
+export type CreateRuntimeOptions = {
+  readonly workspace: string;
+  readonly dataDir?: string;
+  readonly tools: readonly RuntimeTool[];
+  readonly driver: AgentDriver;
+  readonly now?: () => string;
+  readonly createId?: () => string;
+  readonly leaseTtlMs?: number;
 };
-export type CreateRuntimeOptions = { readonly workspace: string; readonly dataDir?: string; readonly provider: RuntimeProvider; readonly tools: readonly RuntimeTool[]; readonly memory?: RuntimeMemoryOptions; readonly now?: () => string; readonly createId?: () => string; readonly leaseTtlMs?: number };
 export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets };
 export type ApprovalDecision = { readonly requestId: string; readonly approved: boolean; readonly reason?: string };
 export type RecoveryDecision =
@@ -60,11 +63,12 @@ export type FailureHandoff = {
   readonly resumable: false;
   readonly nextAction: string;
 };
-export type RunResult = { readonly runId: string; readonly status: RunStatus; readonly stopReason: string | null; readonly summary: string | null; readonly resultArtifact: string | null; readonly evidence: readonly Evidence[]; readonly lastError: RunSnapshot["lastError"]; readonly failureHandoff: FailureHandoff | null };
+export type RunResult = { readonly runId: string; readonly status: RunStatus; readonly stopReason: string | null; readonly summary: string | null; readonly resultArtifact: string | null; readonly evidence: readonly Evidence[]; readonly lastError: RunSnapshot["lastError"]; readonly delivery: RunDelivery | null; readonly failureHandoff: FailureHandoff | null };
 export type RunView = {
   readonly snapshot: RunSnapshot;
   readonly events: readonly RunEvent[];
   readonly toolInvocations: readonly ToolInvocation[];
+  readonly toolAttempts: readonly ToolAttempt[];
   readonly modelCalls: readonly ModelCallRecord[];
 };
 export type RunOptions = { readonly budgets?: RuntimeBudgets };
@@ -120,16 +124,18 @@ export type RunFinalResult =
       readonly resultArtifact: string | null;
       readonly evidence: readonly PublicEvidence[];
       readonly error: null;
+      readonly delivery: RunDelivery;
       readonly failureHandoff: null;
     }
   | {
       readonly runId: string;
       readonly status: "cancelled" | "failed";
       readonly stopReason: string | null;
-      readonly summary: null;
+      readonly summary: string;
       readonly resultArtifact: null;
       readonly evidence: readonly PublicEvidence[];
       readonly error: PublicRunError;
+      readonly delivery: RunDelivery;
       readonly failureHandoff: FailureHandoff;
     };
 
@@ -144,7 +150,9 @@ export type RunInspection = {
   readonly evidence: readonly PublicEvidence[];
   readonly invocations: readonly PublicToolInvocation[];
   readonly recovery: PublicRecoveryRequest | null;
+  readonly recoveries: readonly PublicRecoveryRequest[];
   readonly result: RunFinalResult | null;
+  readonly delivery: RunDelivery | null;
   readonly error: PublicRunError | null;
   readonly lastEventSequence: number;
 };
@@ -230,15 +238,25 @@ export type RuntimeSubscription = {
   close(): Promise<void>;
 };
 
+export type RuntimeWatch = {
+  readonly snapshot: RunInspection;
+  readonly subscription: RuntimeSubscription;
+};
+
 export type RunHandle = {
   readonly id: string;
   inspect(): Promise<RunInspection>;
+  history(query?: AuditHistoryQuery): Promise<AuditHistoryPage>;
+  historyRecord(sequence: number): Promise<RunEvent | null>;
+  modelCallTrace(callId: string): Promise<ModelCallTrace>;
+  verifyHistory(): Promise<AuditIntegrityResult>;
   wait(): Promise<RunInspection>;
   result(): Promise<RunFinalResult>;
   subscribe(
     listener: RuntimeEventListener,
     options?: SubscribeOptions
   ): RuntimeSubscription;
+  watch(listener: RuntimeEventListener): Promise<RuntimeWatch>;
   input(text: string, options?: RequestOptions): Promise<void>;
   approve(options?: RequestOptions): Promise<void>;
   deny(options?: DenialOptions): Promise<void>;
@@ -309,14 +327,13 @@ export type BranchHandle = {
 
 export type RuntimeServices = {
   readonly workspace: string;
-  readonly provider: RuntimeProvider;
   readonly tools: ReadonlyMap<string, RuntimeTool>;
   readonly store: RunStore;
-  readonly memory?: RuntimeMemoryOptions;
   readonly now: () => string;
   readonly createId: () => string;
   readonly signal: AbortSignal;
   readonly fencingToken: (runId: string) => number;
+  readonly assertAuditIntegrity: (runId: string) => void;
   readonly notify: (runId: string, observer?: RuntimeObserver) => void;
   /** When the run is a branch child, its read-only parent inheritance boundary. */
   readonly forkContext?: ForkContext | null;
@@ -328,18 +345,6 @@ export type RuntimeServices = {
     content: string,
     mediaType?: string
   ) => { readonly digest: string; readonly byteLength: number };
-  readonly requestModel: (
-    run: RunSnapshot,
-    phase: ModelCallPhase,
-    context: ModelDecisionContext | SemanticValidationContext,
-    eventPayload: Record<string, unknown>,
-    observer?: RuntimeObserver,
-    countIteration?: boolean
-  ) => Promise<
-    | { readonly outcome: "succeeded"; readonly run: RunSnapshot; readonly output: unknown }
-    | { readonly outcome: "failed"; readonly run: RunSnapshot; readonly error: unknown }
-    | { readonly outcome: "budget_exceeded"; readonly run: RunSnapshot }
-  >;
   readonly commit: (
     previous: RunSnapshot,
     next: RunSnapshot,
@@ -351,11 +356,6 @@ export type RuntimeServices = {
     run: RunSnapshot,
     stopReason: string,
     errorCode: string,
-    observer?: RuntimeObserver
-  ) => RunSnapshot;
-  readonly blockForProvider: (
-    run: RunSnapshot,
-    error: unknown,
     observer?: RuntimeObserver
   ) => RunSnapshot;
 };

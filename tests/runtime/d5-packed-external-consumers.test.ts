@@ -34,20 +34,23 @@ afterEach(async () => {
 describe("D5 packed external consumers", () => {
   it("runs one Worker and one restartable HTTP Host from the same tarball", async () => {
     const root = temporaryRoot("nexora-d5-external-");
-    const tarball = packRuntime(root);
-    const tarballDigest = digest(readFileSync(tarball));
+    const tarballs = packPackages(root);
+    const tarballDigest = digest(readFileSync(tarballs.harness));
+    await eventLoopTurn();
     const workerProject = prepareConsumer(
       root,
       "worker-consumer",
-      tarball,
+      tarballs,
       ["worker.ts", "provider.ts", "worker-main.ts"]
     );
+    await eventLoopTurn();
     const hostProject = prepareConsumer(
       root,
       "http-host-consumer",
-      tarball,
+      tarballs,
       ["http-host.ts", "provider.ts", "host-main.ts"]
     );
+    await eventLoopTurn();
 
     const worker = runWorker(workerProject);
     expect(worker).toEqual({
@@ -64,7 +67,7 @@ describe("D5 packed external consumers", () => {
       ],
       firstEvent: "run.created",
       lastEvent: "run.succeeded",
-      validationPassed: true
+      validationEventCount: 0
     });
 
     const hostEvidence = await runHttpHostAcceptance(hostProject);
@@ -95,9 +98,15 @@ describe("D5 packed external consumers", () => {
     ]);
     expect(hostEvidence.evidenceInvocationAligned).toBe(true);
 
-    const packageFiles = tarballContents(tarball);
-    expect(packageFiles).toContain("package/dist/index.js");
-    expect(packageFiles).toContain("package/dist/testing/index.js");
+    const harnessFiles = tarballContents(tarballs.harness);
+    const runtimeFiles = tarballContents(tarballs.runtime);
+    const packageFiles = [...harnessFiles, ...runtimeFiles];
+    expect(harnessFiles).toContain("package/dist/index.js");
+    expect(harnessFiles).toContain("package/dist/agent-loop.js");
+    expect(harnessFiles).toContain("package/dist/planning.js");
+    expect(harnessFiles).toContain("package/dist/testing/index.js");
+    expect(runtimeFiles).toContain("package/dist/index.js");
+    expect(runtimeFiles).toContain("package/dist/internal.js");
     expect(packageFiles.some((file) => file.includes("/src/"))).toBe(false);
     expect(packageFiles.some((file) => file.includes("/tests/"))).toBe(false);
     expect(packageFiles.some((file) => file.includes("/apps/cli"))).toBe(false);
@@ -131,6 +140,7 @@ type Inspection = {
     readonly kind: string;
   };
   readonly evidence: readonly {
+    readonly kind: string;
     readonly invocationId: string | null;
   }[];
   readonly invocations: readonly {
@@ -329,7 +339,7 @@ async function runHttpHostAcceptance(
 function prepareConsumer(
   root: string,
   name: string,
-  tarball: string,
+  tarballs: PackedPackages,
   files: readonly string[]
 ): string {
   const project = join(root, name);
@@ -339,7 +349,11 @@ function prepareConsumer(
     private: true,
     type: "module"
   }), "utf8");
-  runCommand("npm", ["install", "--offline", tarball], project);
+  runCommand(
+    "npm",
+    ["install", "--offline", tarballs.runtime, tarballs.harness],
+    project
+  );
   runCommand(
     "npm",
     ["install", "--offline", "--save-dev", "@types/node@24.13.2"],
@@ -373,7 +387,7 @@ function prepareConsumer(
         );
     copyFileSync(source, join(project, file));
   }
-  copyFileSync(tarball, join(project, basename(tarball)));
+  copyFileSync(tarballs.harness, join(project, basename(tarballs.harness)));
   runCommand(
     process.execPath,
     [
@@ -385,7 +399,7 @@ function prepareConsumer(
   );
   writeFileSync(
     join(project, ".tarball-sha256"),
-    digest(readFileSync(tarball)),
+    digest(readFileSync(tarballs.harness)),
     "utf8"
   );
   return project;
@@ -597,15 +611,32 @@ async function collectEventsUntil(
   throw new Error(`Event stream ended before predicate for Run ${runId}.`);
 }
 
-function packRuntime(root: string): string {
+type PackedPackages = {
+  readonly runtime: string;
+  readonly harness: string;
+};
+
+function packPackages(root: string): PackedPackages {
   runCommand(
     "pnpm",
     ["--filter", "@nexora/runtime", "pack", "--pack-destination", root],
     process.cwd()
   );
-  const name = readdirSync(root).find((file) => file.endsWith(".tgz"));
-  if (name === undefined) throw new Error("Runtime tarball was not created.");
-  return join(root, name);
+  runCommand(
+    "pnpm",
+    ["--filter", "@nexora/harness", "pack", "--pack-destination", root],
+    process.cwd()
+  );
+  const names = readdirSync(root).filter((file) => file.endsWith(".tgz"));
+  const runtime = names.find((file) => file.includes("nexora-runtime"));
+  const harness = names.find((file) => file.includes("nexora-harness"));
+  if (runtime === undefined || harness === undefined) {
+    throw new Error("Runtime and Harness tarballs were not created.");
+  }
+  return {
+    runtime: join(root, runtime),
+    harness: join(root, harness)
+  };
 }
 
 function tarballContents(tarball: string): string[] {
@@ -618,11 +649,16 @@ function tarballContents(tarball: string): string[] {
 }
 
 function expectInstalledBoundary(project: string): void {
-  const packageJson = JSON.parse(readFileSync(
+  const runtimePackage = JSON.parse(readFileSync(
     join(project, "node_modules", "@nexora", "runtime", "package.json"),
     "utf8"
   )) as { readonly exports: Record<string, unknown> };
-  expect(Object.keys(packageJson.exports).sort()).toEqual([".", "./testing"]);
+  const harnessPackage = JSON.parse(readFileSync(
+    join(project, "node_modules", "@nexora", "harness", "package.json"),
+    "utf8"
+  )) as { readonly exports: Record<string, unknown> };
+  expect(Object.keys(runtimePackage.exports).sort()).toEqual([".", "./internal"]);
+  expect(Object.keys(harnessPackage.exports).sort()).toEqual([".", "./testing"]);
 }
 
 function expectExampleBoundary(): void {
@@ -634,7 +670,7 @@ function expectExampleBoundary(): void {
     expect(source).not.toMatch(/apps[\\/]cli|packages[\\/]runtime[\\/]src/);
     expect(source).not.toMatch(/run-store|state-machine|RuntimeAction/);
     expect(source).not.toMatch(/better-sqlite3|\bSELECT\b|\bUPDATE runs\b/);
-    expect(source).not.toContain("@nexora/runtime/dist/");
+    expect(source).not.toContain("@nexora/harness/dist/");
   }
   const host = readFileSync(
     join(process.cwd(), "examples", "runtime", "http-host.ts"),
@@ -712,6 +748,10 @@ function errorCode(body: unknown): string {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function eventLoopTurn(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 function waitForJsonLine(

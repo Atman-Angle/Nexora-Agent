@@ -17,8 +17,8 @@ import {
   type ModelDecisionContext,
   type RuntimeProvider,
   type RuntimeTool
-} from "../../packages/runtime/src/index.js";
-import { legacyTestProvider } from "./runtime-testkit.js";
+} from "../../packages/harness/src/index.js";
+import { runtimeActionTestProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -78,12 +78,9 @@ describe("D1 developer Runtime golden path", () => {
 
   it("does not turn a blocked execution segment into a final result", async () => {
     const workspace = temporaryWorkspace();
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide() {
         throw new Error("provider offline");
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -106,7 +103,7 @@ describe("D1 developer Runtime golden path", () => {
     const workspace = temporaryWorkspace();
     let call = 0;
     let effects = 0;
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide() {
         call += 1;
         if (call === 1) {
@@ -138,9 +135,6 @@ describe("D1 developer Runtime golden path", () => {
           toolName: "test.write",
           input: { content: "protected" }
         };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const writeTool: RuntimeTool = {
@@ -194,12 +188,9 @@ describe("D1 developer Runtime golden path", () => {
 
   it("returns a persisted failed terminal result without throwing away evidence", async () => {
     const workspace = temporaryWorkspace();
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide() {
         return { type: "not-a-runtime-action" };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const runtime = createRuntime({ workspace, provider, tools: [] });
@@ -225,7 +216,7 @@ describe("D1 developer Runtime golden path", () => {
   it("projects only Runtime-selected required citations as successful final evidence", async () => {
     const workspace = temporaryWorkspace();
     let call = 0;
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide(context) {
         call += 1;
         if (call === 1) {
@@ -284,9 +275,6 @@ describe("D1 developer Runtime golden path", () => {
             .filter((item) => item.checkId === "required-check")
             .map((item) => item.id)
         };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const runtime = createRuntime({
@@ -330,9 +318,6 @@ describe("D1 developer Runtime golden path", () => {
         async decide() {
           providerCalls += 1;
           throw new Error("openRun must not execute");
-        },
-        async validate() {
-          return { passed: true, issues: [] };
         }
       },
       tools: [readTool()]
@@ -384,7 +369,7 @@ describe("D1 developer Runtime golden path", () => {
     const dataDir = join(workspace, ".nexora");
     const resumedDecision = deferred<void>();
     let call = 0;
-    const provider: RuntimeProvider = legacyTestProvider({
+    const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide(_context, operation) {
         call += 1;
         if (call === 1) {
@@ -400,9 +385,6 @@ describe("D1 developer Runtime golden path", () => {
           question: "Provide final detail.",
           reason: "More input is required."
         };
-      },
-      async validate() {
-        return { passed: true, issues: [] };
       }
     });
     const runtime = createRuntime({ workspace, dataDir, provider, tools: [] });
@@ -450,7 +432,14 @@ describe("D1 developer Runtime golden path", () => {
       ["--filter", "@nexora/runtime", "pack", "--pack-destination", root],
       { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
     );
-    const tarball = join(root, readdirSync(root).find((name) => name.endsWith(".tgz"))!);
+    execFileSync(
+      "pnpm",
+      ["--filter", "@nexora/harness", "pack", "--pack-destination", root],
+      { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" }
+    );
+    const tarballs = readdirSync(root)
+      .filter((name) => name.endsWith(".tgz"))
+      .map((name) => join(root, name));
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify({
@@ -462,7 +451,7 @@ describe("D1 developer Runtime golden path", () => {
     );
     execFileSync(
       "npm",
-      ["install", "--offline", tarball],
+      ["install", "--offline", ...tarballs],
       { cwd: root, stdio: "pipe", shell: process.platform === "win32" }
     );
     writeFileSync(join(root, "target.txt"), "external D1 consumer\n", "utf8");
@@ -506,13 +495,25 @@ describe("D1 developer Runtime golden path", () => {
       [
         "--input-type=module",
         "--eval",
-        'await import("@nexora/runtime/dist/runtime.js")'
+        'await import("@nexora/harness/dist/runtime.js")'
       ],
       { cwd: root, stdio: "pipe" }
     )).toThrow();
 
-    const packageRoot = join(root, "node_modules", "@nexora", "runtime");
-    const packedFiles = allFiles(packageRoot);
+    const runtimeRoot = join(root, "node_modules", "@nexora", "runtime");
+    const harnessRoot = join(root, "node_modules", "@nexora", "harness");
+    const runtimePackage = JSON.parse(readFileSync(
+      join(runtimeRoot, "package.json"),
+      "utf8"
+    )) as { exports: Record<string, unknown> };
+    const harnessPackage = JSON.parse(readFileSync(
+      join(harnessRoot, "package.json"),
+      "utf8"
+    )) as { exports: Record<string, unknown> };
+    expect(Object.keys(runtimePackage.exports).sort()).toEqual([".", "./internal"]);
+    expect(Object.keys(harnessPackage.exports).sort()).toEqual([".", "./testing"]);
+
+    const packedFiles = [...allFiles(runtimeRoot), ...allFiles(harnessRoot)];
     expect(packedFiles.some((path) => /[\\/]apps[\\/]cli[\\/]/.test(path))).toBe(false);
     for (const path of packedFiles.filter((item) => /\.(?:js|d\.ts)$/.test(item))) {
       expect(readFileSync(path, "utf8")).not.toMatch(/packages\/runtime\/src|apps\/cli/);
@@ -594,7 +595,7 @@ function scriptedReadProvider(
   firstDecision?: Promise<void>
 ): RuntimeProvider {
   let call = 0;
-  return legacyTestProvider({
+  return runtimeActionTestProvider({
     async decide(context: ModelDecisionContext, operation) {
       call += 1;
       if (call === 1) {
@@ -636,9 +637,6 @@ function scriptedReadProvider(
         summary: "Verified",
         evidenceIds: context.run.evidence.map((item) => item.id)
       };
-    },
-    async validate() {
-      return { passed: true, issues: [] };
     }
   });
 }
@@ -650,9 +648,9 @@ import {
   createRuntime,
   type ModelDecisionContext,
   type RuntimeProvider
-} from "@nexora/runtime";
+} from "@nexora/harness";
 // @ts-expect-error package exports must reject internal subpaths
-import type { RuntimeEngine as InternalRuntime } from "@nexora/runtime/dist/runtime.js";
+import type { RuntimeEngine as InternalRuntime } from "@nexora/harness/dist/runtime.js";
 
 let call = 0;
 const workspace = ${JSON.stringify(workspace)};
@@ -660,37 +658,25 @@ const provider: RuntimeProvider = {
   async decide(_context: ModelDecisionContext) {
     call += 1;
     if (call === 1) return {
-      intent: {
-        kind: "plan_tasks",
-        taskContract: {
-          goal: "Search target",
-          constraints: [],
-          acceptanceCriteria: ["search evidence"]
-        },
+      action: "continue",
+      plan: {
+        goal: "Search target",
         tasks: [{
-          objective: "Search target",
-          completionRequirements: [{
-            kind: "capability_result",
-            capability: "filesystem.search"
-          }]
+          objective: "Search target"
         }]
       }
     };
     if (call === 2) return {
-      intent: {
-        kind: "use_capabilities",
-        calls: [{
-          capability: "filesystem.search",
+      action: "continue",
+      toolCalls: [{
+          name: "filesystem.search",
           arguments: { query: "external D1 consumer", path: "." }
         }]
-      }
     };
     return {
-      intent: { kind: "finish", summary: "Verified external package" }
+      action: "finish",
+      text: "Verified external package"
     };
-  },
-  async validate() {
-    return { passed: true, issues: [] };
   }
 };
 
