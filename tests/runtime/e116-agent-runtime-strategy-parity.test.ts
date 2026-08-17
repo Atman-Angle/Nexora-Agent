@@ -18,6 +18,11 @@ describe("E116 Agent / Runtime strategy parity baseline", () => {
     expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("A Plan is optional navigation");
     expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("smallest useful observation");
     expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("Plan tasks are the current ordered remaining work");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("before the first mutation");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("multiple files or components");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("more than three Tool calls");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("two to seven independently verifiable remaining outcomes");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("one obvious local change");
   });
 
   it("freezes semantic-pressure reasoning selection", () => {

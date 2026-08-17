@@ -148,7 +148,17 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       contract: {
         identity: { name: "filesystem.patch" },
         capability: { purpose: "Replace one exact occurrence in a known workspace file guarded by its content digest.", nonGoals: ["Rewrite an entire file.", "Apply ambiguous or multi-location edits."] },
-        decision: { useWhen: ["The path, prior digest, unique old text, and replacement text are known."], avoidWhen: ["The current content or digest is unknown.", "The replacement target is not unique."] },
+        decision: {
+          useWhen: [
+            "The path, current digest, unique old text, and replacement text are known.",
+            "After CONTENT_CONFLICT, the returned recovery is retry_with_current_digest and the same exact edit is still intended."
+          ],
+          avoidWhen: [
+            "The current content or digest is unknown.",
+            "The replacement target is missing or not unique.",
+            "A conflict requires content inspection rather than a digest-only retry."
+          ]
+        },
         execution: { effect: { kind: "write", description: "Atomically changes one exact occurrence in one workspace file." }, idempotent: true, inputSchema: z.object({
           path: z.string().trim().min(1),
           expectedDigest: DigestSchema,
@@ -170,9 +180,25 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         const path = await workspacePath(context.workspace, input.path, "file");
         const current = await readFile(path, "utf8");
         throwIfAborted(context.signal);
-        if (digest(current) !== input.expectedDigest) {
-          if (!current.includes(input.find) && current.includes(input.replace)) return { subjectRef: input.path, facts: { path: input.path, digest: digest(current), replayed: true } };
-          throw new ToolFailure("CONTENT_CONFLICT", "File content no longer matches expectedDigest.");
+        const currentDigest = digest(current);
+        if (currentDigest !== input.expectedDigest) {
+          if (!current.includes(input.find) && current.includes(input.replace)) return { subjectRef: input.path, facts: { path: input.path, digest: currentDigest, replayed: true } };
+          const findOccurrences = countExactOccurrences(current, input.find);
+          const recovery = findOccurrences === 1
+            ? "retry_with_current_digest"
+            : "inspect_current_content";
+          throw new ToolFailure(
+            "CONTENT_CONFLICT",
+            "File content no longer matches expectedDigest. Use details.currentDigest only when details.recovery permits the same exact patch; otherwise inspect current content.",
+            false,
+            {
+              path: input.path,
+              expectedDigest: input.expectedDigest,
+              currentDigest,
+              findOccurrences,
+              recovery
+            }
+          );
         }
         const first = current.indexOf(input.find);
         if (first < 0 || current.indexOf(input.find, first + input.find.length) >= 0) throw new ToolFailure("PATCH_CONFLICT", "Patch find text must occur exactly once.");
@@ -242,6 +268,18 @@ function boundedUtf8Slice(
     end = isHighSurrogate(content.charCodeAt(start)) ? Math.min(content.length, start + 2) : start + 1;
   }
   return { content: content.slice(start, end), end };
+}
+
+function countExactOccurrences(content: string, target: string): number {
+  let count = 0;
+  let offset = 0;
+  while (offset <= content.length - target.length) {
+    const match = content.indexOf(target, offset);
+    if (match < 0) break;
+    count += 1;
+    offset = match + target.length;
+  }
+  return count;
 }
 
 function isHighSurrogate(value: number): boolean {

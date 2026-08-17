@@ -10,8 +10,8 @@ import {
 } from "./providers/model-response.js";
 import type { JsonSchema } from "./tool-schema.js";
 
-export const PROMPT_COMPILER_VERSION = "1.0.0";
-export const SYSTEM_KERNEL_VERSION = "nexora-general-agent-v1";
+export const PROMPT_COMPILER_VERSION = "1.1.0";
+export const SYSTEM_KERNEL_VERSION = "nexora-general-agent-v2";
 export const CACHE_LAYOUT_VERSION = 1 as const;
 
 export type ProviderPromptCachePolicy =
@@ -112,7 +112,7 @@ Follow this protocol, Host Policy, host-authorized Project Policy and current us
 6. After changing state, verify the resulting state proportionately.
 7. Finish only when every requirement is satisfied, explicitly unresolved, or impossible for a stated evidence-backed reason.
 
-A Plan is optional navigation, not permission or a Tool whitelist. Use a short objective-only Plan when ordering or duration makes it useful. Safe read-only exploration may precede a Plan. Plan tasks are the current ordered remaining work; after completing a planned objective, update the Plan without that objective. Revise it only when the remaining work or direction changes.
+A Plan is optional navigation, not permission or a Tool whitelist. Create one before the first mutation when known work spans multiple files or components, has multiple dependent outcomes plus verification, or is likely to need more than three Tool calls. If scope is unknown, obtain only the smallest useful read-only observation first, then plan before mutation. Start with two to seven independently verifiable remaining outcomes, not a transcript of Tool calls; a later snapshot may contain one final outcome. Plan tasks are the current ordered remaining work: omit an outcome as soon as it is complete, and revise promptly when a conflict or new fact changes the remaining work. Skip a Plan for a direct answer, one observation, or one obvious local change.
 
 ## Action discipline
 Use visible authoritative facts first. Use the smallest applicable Tool when more facts or effects are required. Respect each Tool Schema and decision guidance. Request user input only for a user-exclusive fact, irreversible preference or business choice after safe autonomous paths are exhausted. Approval is a separate Runtime boundary and must not be requested as ordinary input.
@@ -295,7 +295,7 @@ function controlToolContracts(): readonly ProviderToolContract[] {
     {
       kind: "control",
       name: UPDATE_PLAN_CONTROL,
-      description: "Set the short objective-only Plan to the current ordered remaining work; omit objectives already finished.",
+      description: "Set independently verifiable outcome TODOs for the current ordered remaining work; omit finished outcomes.",
       inputSchema: {
         type: "object",
         properties: {
@@ -315,8 +315,12 @@ function controlToolContracts(): readonly ProviderToolContract[] {
         additionalProperties: false
       },
       decision: {
-        useWhen: ["Ordering or duration makes a short Plan useful.", "A planned objective finished or new facts changed the remaining work."],
-        avoidWhen: ["A direct answer or one obvious Tool call is sufficient."],
+        useWhen: [
+          "Before the first mutation when known work spans multiple files or components, has dependent implementation and verification outcomes, or likely needs more than three Tool calls.",
+          "After bounded read-only exploration establishes the scope of a complex change.",
+          "A planned outcome finished, a conflict occurred, or new facts changed the remaining work."
+        ],
+        avoidWhen: ["A direct answer, one observation, or one obvious local change is sufficient."],
         nonGoals: ["Grant permission.", "Declare completion."]
       },
       effect: "control",

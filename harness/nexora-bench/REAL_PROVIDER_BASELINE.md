@@ -1,5 +1,35 @@
 # Real Provider Baselines
 
+## Patch-conflict recovery and Plan TODO acceptance (2026-08-17)
+
+The Runtime keeps optimistic `expectedDigest` protection for `filesystem.patch`, but stale failures now expose the
+current digest, exact target occurrence count and either `retry_with_current_digest` or `inspect_current_content`.
+No stale mutation executes automatically. Once a later successful Tool clears the current Runtime error, an old
+objective-only conflict no longer consumes a critical Context slot; explicit required Checks and safety failures
+remain critical. The general Prompt creates a two-to-seven-outcome Plan before the first mutation for known
+multi-file, dependent or greater-than-three-Tool workflows, while keeping Plan optional for simple work.
+
+The retained real `qwen3.7-flash` native-Tool Run `351ccd7b-ae0a-48b9-b06b-35abf4129b1f` incrementally enhanced an
+existing operations dashboard and ended `succeeded/COMPLETED`. All 50 Model Calls succeeded. The Run used 39 Tool
+Invocations, 15 approvals, 13 bounded `filesystem.patch` calls and zero `filesystem.write` calls. Its first Plan was
+persisted before its first mutation and ten Plan versions tracked current remaining work. Two stale patches returned
+structured unique-target recovery facts; one was retried with the returned current digest without an intervening
+read. All four baseline files changed, retained-line ratios were 93.98% for HTML, 100% for CSS, 82.05% for JavaScript
+and 97.87% for the verifier, and every old/new hook plus `node --check app.js` and the independent verifier passed.
+The external result reports zero false success.
+
+An earlier retained Run `084b7987-9df7-4a57-9882-e061c87c1c65` ended truthfully
+`blocked/PROVIDER_UNAVAILABLE` after ten Model Calls and nine successful read-only Tool Invocations; it performed no
+patch or write. Two intermediate Canary attempts exposed a runner-only approval-policy mismatch and were not
+reclassified as Nexora product failures. The runner now discloses its bounded-patch policy and routes disallowed
+proposals through ordinary Approval denial feedback instead of throwing. Temporary workspaces and Run stores remain
+local and outside Git.
+
+Final repository acceptance passes Runtime and Harness builds, root build, typecheck and lint; Runtime/Harness release
+passes 16 files / 85 tests; Context quality passes 12 files / 65 tests; Agent/Runtime parity passes 6 files / 55 tests;
+full Vitest passes 87 files / 406 tests; external packed consumers pass; and NexoraBench typecheck plus 6 files / 14
+tests pass.
+
 ## Objective Plan progress and large-file continuation acceptance (2026-08-17)
 
 The Runtime now treats objective-only Plan tasks as the current ordered remaining-work snapshot rather than

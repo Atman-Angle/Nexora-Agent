@@ -106,6 +106,7 @@ export function projectRelevantToolObservations(
     && isSafetyFailure(invocation)
   ));
   const selected = new Map<string, ObservationCandidate>();
+  const currentUnresolvedFailureId = currentUnresolvedFailure(run, active, invocationOrder)?.id ?? null;
   for (const [index, invocation] of invocations.entries()) {
     selected.set(invocation.id, {
       invocation,
@@ -146,7 +147,8 @@ export function projectRelevantToolObservations(
     });
   }
   for (const invocation of active) {
-    const unresolved = isUnresolvedFailure(invocation, active, invocationOrder);
+    const unresolved = invocation.id === currentUnresolvedFailureId;
+    const safetyFailure = isSafetyFailure(invocation);
     const checkBound = activeStep?.acceptanceChecks.some((check) => (
       check.required
       && check.kind === "tool_result"
@@ -156,12 +158,16 @@ export function projectRelevantToolObservations(
       invocation,
       retentionClass: unresolved
         ? "unresolved_error"
+        : safetyFailure
+          ? "safety_constraint"
         : checkBound
           ? "active_check"
           : "active_step",
-      critical: unresolved || checkBound,
+      critical: unresolved || safetyFailure || checkBound,
       reasons: unresolved
         ? ["active_check", "unresolved_failure"]
+        : safetyFailure
+          ? ["safety_or_approval_related_failure"]
         : checkBound
           ? ["active_check"]
           : ["active_step"],
@@ -430,18 +436,42 @@ function compareObservationValueAscending(
       : 0;
 }
 
-function isUnresolvedFailure(
-  invocation: ToolInvocation,
+function currentUnresolvedFailure(
+  run: RunSnapshot,
   active: readonly ToolInvocation[],
   invocationOrder: ReadonlyMap<string, number>
+): ToolInvocation | null {
+  const currentError = run.lastError;
+  if (currentError === null) return null;
+  return [...active]
+    .filter((invocation) => (
+      invocation.status === "failed"
+      && invocationRepresentsRunError(invocation, currentError)
+    ))
+    .sort((left, right) => (
+      (invocationOrder.get(right.id) ?? -1) - (invocationOrder.get(left.id) ?? -1)
+    ))[0] ?? null;
+}
+
+function invocationRepresentsRunError(
+  invocation: ToolInvocation,
+  runError: NonNullable<RunSnapshot["lastError"]>
 ): boolean {
-  if (invocation.status !== "failed") return false;
-  const order = invocationOrder.get(invocation.id) ?? -1;
-  return !active.some((candidate) => (
-    candidate.status === "succeeded"
-    && (invocationOrder.get(candidate.id) ?? -1) > order
-    && candidate.checkIds.some((checkId) => invocation.checkIds.includes(checkId))
-  ));
+  const error = invocation.errorJson;
+  if (!(error !== null
+    && typeof error === "object"
+    && !Array.isArray(error)
+    && typeof (error as { readonly code?: unknown }).code === "string"
+    && typeof (error as { readonly message?: unknown }).message === "string"
+    && typeof (error as { readonly retryable?: unknown }).retryable === "boolean")) return false;
+  const failure = error as {
+    readonly code: string;
+    readonly message: string;
+    readonly retryable: boolean;
+  };
+  return failure.code === runError.code
+    && failure.message === runError.message
+    && failure.retryable === runError.retryable;
 }
 
 function isSafetyFailure(invocation: ToolInvocation): boolean {

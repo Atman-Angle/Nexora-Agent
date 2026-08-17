@@ -110,6 +110,11 @@ describe("E080 deterministic Context Eviction", () => {
     expect(projected.map((item) => item.invocationId)).toEqual(
       [view.toolInvocations[0]!.id, ...view.toolInvocations.slice(-7).map((item) => item.id)]
     );
+    expect(projected[0]?.retention).toMatchObject({
+      class: "safety_constraint",
+      critical: true,
+      reasons: ["safety_or_approval_related_failure"]
+    });
     expect(projected.slice(0, -1).every((item) => item.truncated)).toBe(true);
     expect(projected.at(-1)).toEqual(expect.objectContaining({
       invocationId: view.toolInvocations.at(-1)!.id,
