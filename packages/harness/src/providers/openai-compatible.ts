@@ -200,10 +200,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
             model,
             temperature,
             max_tokens: decisionOutputTokens,
-            messages: [
-              { role: "system", content: request.system },
-              { role: "user", content: request.input }
-            ],
+            messages: providerMessages(request),
             ...(request.responseFormat.kind === "json_schema"
               ? {
                   response_format: {
@@ -326,6 +323,11 @@ function normalizeAssistantMessage(
     };
   }
   if (nativeCalls.length === 0) {
+    if (content === null) {
+      throw new RetryableProviderError(
+        `Provider returned an empty assistant response (finish_reason=${finishReason ?? "null"}).`
+      );
+    }
     return { text: content, toolCalls: [], finishReason: finishReason ?? null };
   }
   const bindings = providerToolBindings(request.tools ?? []);
@@ -337,6 +339,46 @@ function normalizeAssistantMessage(
     return { callId: call.id, name: binding.tool.name, arguments: args };
   });
   return { text: content, toolCalls, finishReason: finishReason ?? null };
+}
+
+function providerMessages(request: ProviderCompletionRequest): readonly Record<string, unknown>[] {
+  const messages: Record<string, unknown>[] = [
+    { role: "system", content: request.system }
+  ];
+  if (request.transport.kind === "native_tools" && request.continuation !== undefined) {
+    const bindings = providerToolBindings(request.toolCatalog);
+    messages.push({
+      role: "user",
+      content: "Continue from the following completed Provider-native Tool Call batch. Current Runtime context follows after its Tool results."
+    });
+    messages.push({
+      role: "assistant",
+      content: null,
+      tool_calls: request.continuation.calls.map((call) => {
+        const binding = bindings.find((candidate) => candidate.tool.name === call.name);
+        if (binding === undefined) {
+          throw new Error(`Native continuation references an unavailable Tool: ${call.name}`);
+        }
+        return {
+          id: call.callId,
+          type: "function",
+          function: {
+            name: binding.providerName,
+            arguments: JSON.stringify(call.arguments)
+          }
+        };
+      })
+    });
+    for (const call of request.continuation.calls) {
+      messages.push({
+        role: "tool",
+        tool_call_id: call.callId,
+        content: JSON.stringify(call.result)
+      });
+    }
+  }
+  messages.push({ role: "user", content: request.input });
+  return messages;
 }
 
 function normalizeUsage(
@@ -479,7 +521,9 @@ function calibratedTokenMeter(model: string): ProviderRequestTokenMeter | undefi
   const calibration = MODEL_CAPABILITIES[model]?.estimatedInputMultiplier;
   if (calibration === undefined) return undefined;
   return (request) => {
-    const baseline = estimateTextTokens(`${request.system}\n${request.input}`);
+    const baseline = estimateTextTokens(request.continuation === undefined
+      ? `${request.system}\n${request.input}`
+      : `${request.system}\n${JSON.stringify(request.continuation)}\n${request.input}`);
     const stable = estimateTextTokens(request.stablePrefix);
     const multiplier = calibration[request.phase];
     return {

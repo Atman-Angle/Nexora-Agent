@@ -25,6 +25,7 @@ import {
   projectRelevantToolObservations,
   projectRunContext
 } from "./projection.js";
+import { projectNativeToolContinuation } from "./native-continuation.js";
 import { projectHistoryCandidates } from "./history-candidates.js";
 import {
   admitRehydratedFacts,
@@ -148,9 +149,16 @@ export function buildDecisionContext(args: {
   const injectedRehydratedRefs = rehydratedFacts
     .filter((fact) => fact.error === null)
     .map((fact) => fact.ref);
+  const projectedRun = projectRunContext(run);
+  const nativeToolContinuation = projectNativeToolContinuation({
+    run,
+    projectedRun,
+    events,
+    invocations
+  });
   const projection = deepFreeze(structuredClone({
     workspace,
-    run: projectRunContext(run),
+    run: projectedRun,
     providerContractVersion: 5 as const,
     activeInvocations: invocations
       .filter((invocation): invocation is ToolInvocation & { readonly status: "started" | "unknown" } => (
@@ -171,6 +179,7 @@ export function buildDecisionContext(args: {
     memoryCandidates,
     sessionArchive: projectSessionArchive({ run, events }),
     repair: projectRepairContext(run, invocations, store.listToolAttempts(run.runId), artifacts),
+    ...(nativeToolContinuation === undefined ? {} : { nativeToolContinuation }),
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
       capability: tool.contract.capability,
@@ -198,6 +207,9 @@ export function buildDecisionContext(args: {
     memoryCandidates: projection.memoryCandidates,
     sessionArchive: projection.sessionArchive,
     repair: projection.repair,
+    ...(projection.nativeToolContinuation === undefined
+      ? {}
+      : { nativeToolContinuation: projection.nativeToolContinuation }),
     tools: projection.tools
   });
   return { context, injectedRehydratedRefs };

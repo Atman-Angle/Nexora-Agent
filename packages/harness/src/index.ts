@@ -74,6 +74,7 @@ export type {
   MemoryCandidate,
   MemoryCandidateReason,
   ModelDecisionContext,
+  NativeToolContinuation,
   ModelCallPhase,
   ProjectedRunContext,
   ProviderModelProfile,

@@ -14,6 +14,7 @@ export type {
   JsonValue,
   ModelCallPhase,
   ModelDecisionContext,
+  NativeToolContinuation,
   ProjectedRunContext,
   ProviderModelProfile,
   ProviderCacheStatus,

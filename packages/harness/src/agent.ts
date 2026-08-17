@@ -184,7 +184,12 @@ function createLoopPort(input: {
           finishReason: response.finishReason,
           toolCallCount: response.toolCalls.length,
           controlCallCount: response.toolCalls.filter(isControlCall).length,
-          compiledActionTypes
+          compiledActionTypes,
+          toolCalls: response.toolCalls.map((call) => ({
+            callId: call.callId,
+            name: call.name,
+            arguments: call.arguments
+          }))
         }
       }, observer);
     },

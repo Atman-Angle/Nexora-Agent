@@ -17,6 +17,7 @@ import type {
   RuntimeOperationContext,
   RuntimeProvider
 } from "./model-client.js";
+import type { NativeToolContinuation } from "./model-client.js";
 import {
   ModelResponseSchema,
   type ModelResponse
@@ -34,6 +35,8 @@ export type ProviderCompletionRequest = {
   readonly stablePrefix: string;
   readonly responseFormat: ProviderResponseFormat;
   readonly transport: ProviderTransportProfile;
+  readonly toolCatalog: readonly ProviderToolContract[];
+  readonly continuation?: NativeToolContinuation;
   readonly tools?: readonly ProviderToolContract[];
 };
 
@@ -112,6 +115,10 @@ export function defineProviderAdapter(
       stablePrefix: prompt.stablePrefix,
       responseFormat,
       transport: prompt.transport,
+      toolCatalog: prompt.tools,
+      ...(prompt.transport.kind === "native_tools" && context.nativeToolContinuation !== undefined
+        ? { continuation: context.nativeToolContinuation }
+        : {}),
       ...(availableTools.length > 0
         ? { tools: availableTools }
         : {})
@@ -131,7 +138,7 @@ export function defineProviderAdapter(
     ): Promise<ProviderTokenMeasurement> {
       const request = buildRequest(context, prompt);
       if (definition.measureTokens === undefined) {
-        const total = estimateTextTokens(`${request.system}\n${request.input}`);
+        const total = estimateTextTokens(requestTokenText(request));
         const stable = estimateTextTokens(request.stablePrefix);
         return { ...total, stablePrefixTokens: stable.inputTokens };
       }
@@ -163,6 +170,12 @@ export function defineProviderAdapter(
           }
         })
   });
+}
+
+function requestTokenText(request: ProviderCompletionRequest): string {
+  return request.continuation === undefined
+    ? `${request.system}\n${request.input}`
+    : `${request.system}\n${JSON.stringify(request.continuation)}\n${request.input}`;
 }
 
 function structuredResponseSchema(tools: readonly ProviderToolContract[]): JsonSchema {

@@ -158,8 +158,11 @@ export async function runAgentLoop(
       break;
     }
 
+    let normalizedResponse: ModelResponse | undefined;
+    let responseRecorded = false;
     try {
       const response = parseModelResponse(rawResponse);
+      normalizedResponse = response;
       const planCalls = response.toolCalls.filter((call) => call.name === UPDATE_PLAN_CONTROL);
       const inputCalls = response.toolCalls.filter((call) => call.name === REQUEST_INPUT_CONTROL);
       const runtimeCalls = response.toolCalls.filter((call) => !isControlCall(call));
@@ -182,6 +185,7 @@ export async function runAgentLoop(
               : [])
       ];
       runtime.recordModelResponse(run, response, actionTypes, observer);
+      responseRecorded = true;
       if (planCalls.length === 1) {
         const planAction = compileModelPlan(run, planUpdate!, () => runtime.createId());
         run = await runtime.dispatch(run, planAction, signal, observer);
@@ -229,6 +233,9 @@ export async function runAgentLoop(
         break;
       }
       if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
+      if (normalizedResponse !== undefined && !responseRecorded) {
+        runtime.recordModelResponse(run, normalizedResponse, [], observer);
+      }
       // A compound Runtime command may have durably committed progress before
       // rejecting its final transition. Repair must continue from Authority,
       // never from the pre-command revision held by the Agent Loop.

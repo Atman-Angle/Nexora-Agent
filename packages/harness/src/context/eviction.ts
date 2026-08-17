@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 
-import type { ModelDecisionContext } from "../providers/model-client.js";
+import type { JsonValue, ModelDecisionContext } from "../providers/model-client.js";
 import { deepFreeze, digestJson, stringCompare } from "@nexora/runtime/internal";
 import {
   fragmentObservation,
@@ -81,6 +81,33 @@ export function evictDecisionContextOnce(
   if (rehydratedFacts.length > 0) {
     return rebuildDecisionContext(context, { rehydratedFacts: rehydratedFacts.slice(0, -1) });
   }
+  if (context.nativeToolContinuation !== undefined) {
+    const callIndex = context.nativeToolContinuation.calls.findIndex((call) => (
+      continuationObservationMode(call.result) !== null
+      && continuationObservationMode(call.result) !== "reference"
+    ));
+    if (callIndex >= 0) {
+      return rebuildDecisionContext(context, {
+        nativeToolContinuation: {
+          calls: context.nativeToolContinuation.calls.map((call, index) => index === callIndex
+            ? { ...call, result: referenceContinuationResult(call.result) }
+            : call)
+        }
+      });
+    }
+    const inputIndex = context.nativeToolContinuation.calls.findIndex((call) => (
+      continuationInputLength(call.result) > 256
+    ));
+    if (inputIndex >= 0) {
+      return rebuildDecisionContext(context, {
+        nativeToolContinuation: {
+          calls: context.nativeToolContinuation.calls.map((call, index) => index === inputIndex
+            ? { ...call, result: boundedContinuationInput(call.result) }
+            : call)
+        }
+      });
+    }
+  }
   if (context.run.inputHistory.length > 1) {
     return rebuildDecisionContext(context, {
       run: { ...context.run, inputHistory: context.run.inputHistory.slice(1) }
@@ -144,6 +171,46 @@ export function evictDecisionContextOnce(
     }
   }
   return null;
+}
+
+function continuationObservationMode(value: unknown): "full" | "fragment" | "reference" | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const observation = (value as { readonly observation?: unknown }).observation;
+  if (observation === null || typeof observation !== "object" || Array.isArray(observation)) return null;
+  const mode = (observation as { readonly payloadMode?: unknown }).payloadMode;
+  return mode === "full" || mode === "fragment" || mode === "reference" ? mode : null;
+}
+
+function referenceContinuationResult(value: JsonValue): JsonValue {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const result = value as { readonly [key: string]: JsonValue };
+  const observation = result.observation;
+  if (observation === null || typeof observation !== "object" || Array.isArray(observation)) return value;
+  return {
+    ...result,
+    observation: {
+      ...observation,
+      payloadMode: "reference",
+      facts: null,
+      error: null,
+      payloadFragment: null,
+      truncated: true
+    }
+  };
+}
+
+function continuationInputLength(value: JsonValue): number {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return 0;
+  const input = (value as { readonly [key: string]: JsonValue }).input;
+  return typeof input === "string" ? input.length : 0;
+}
+
+function boundedContinuationInput(value: JsonValue): JsonValue {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const result = value as { readonly [key: string]: JsonValue };
+  return typeof result.input === "string"
+    ? { ...result, input: boundedText(result.input, 256) }
+    : value;
 }
 
 function rebuildDecisionContext(

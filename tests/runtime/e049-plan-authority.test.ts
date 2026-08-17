@@ -50,7 +50,7 @@ describe("E049 single Structured Plan authority", () => {
       "tool.succeeded",
       "run.succeeded"
     ]));
-    expect(JSON.stringify(view)).not.toMatch(/profileState|builderState|strategy|ledger|checkpoint|update_plan/);
+    expect(JSON.stringify(view)).not.toMatch(/profileState|builderState|strategy|ledger|checkpoint/);
     runtime.close();
   });
 

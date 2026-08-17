@@ -1,5 +1,44 @@
 # Real Provider Baselines
 
+## Durable native continuation correction (2026-08-17)
+
+The earlier frontend samples below were executed with an incomplete OpenAI-compatible multi-turn protocol: after an
+`assistant.tool_calls` response, Nexora executed the call but omitted the original assistant call and matching
+`role: "tool"` result from the next request. They remain valid before-samples for false-success safety, but they are
+not evidence that DeepSeek could not consume Tool results.
+
+The corrected Harness now records normalized call ID/name/arguments as `model.turn` audit facts, derives the latest
+fully resolved batch from durable Plan, Tool Invocation, HITL, Approval or rejection facts, and sends the standard
+assistant/tool message sequence. The projection is limited to one eight-call batch, contracts large results to a
+reference under input pressure, survives Runtime reopen, and is ignored by `structured_output`. Provider call IDs
+remain audit/correlation data and do not enter Runtime Actions, Invocations, Plan authority or Completion.
+
+The HTTP protocol suite covers Runtime Tool success/failure, Plan acceptance, rejected controls, HITL across reopen,
+Approval denial, ordered batches, bounded large results, unchanged structured output and empty native responses.
+Empty assistant responses now retain `finish_reason` in their error and receive three bounded physical Provider
+attempts within one logical Model Call; they are never converted to text, Tool Calls or success.
+
+Three post-fix real `deepseek-v4-flash-0731` frontend samples were retained as evidence:
+
+| Run | Reasoning | Model / Tool calls | Result |
+| --- | --- | ---: | --- |
+| `a7d0dbbb-a742-49a4-8702-3ae0e7184f4c` | dynamic | 1 / 0 | First response was empty after a long generation. It predated the empty-response retry addition and ended truthfully blocked with no files. |
+| `0e21aa22-b899-4ab8-8694-98afc8bf22b7` | dynamic | 4 / 1 | Plan and `filesystem.list` continued through valid native messages with zero response rejection. A later response hit exactly 16,384 output tokens and the following response was empty. |
+| `9f04c1b7-7343-48a5-ae7e-86fd13219ce6` | off, process-local | 32 / 30 | All 32 responses and 30 Tool calls remained protocol-valid with zero response rejection. It wrote 10,149-byte HTML and 19,759-byte CSS, then exposed the existing objective-only Plan progress defect and exhausted the Tool budget before JavaScript/verifier creation. |
+
+The last sample established a separate Runtime/Harness defect rather than a continuation failure: objective-only Plan
+steps have no required checks, while `completeSatisfiedSteps()` currently treats `every([])` as satisfied. One Tool
+result therefore marks every Plan step completed; an equivalent Plan revision then preserves those completed steps
+and appends duplicates. The model subsequently alternated equivalent `filesystem.list` and `filesystem.read` calls.
+This is recorded for a dedicated L3 Plan-progress Contract change because fixing it changes Run-owned Plan semantics;
+no Prompt constraint, repeated-read ban, model switch or Provider-specific branch was added here. All real samples
+ended with zero false success and no unauthorized effect.
+
+Final repository evidence: root build, typecheck and lint pass; Runtime and Harness packages build; the
+Runtime/Harness release set passes 16 files / 83 tests; Context quality passes 12 files / 65 tests; full Vitest passes
+85 files / 397 tests; NexoraBench typecheck and 6 files / 14 tests pass; package consumers, restart reconstruction,
+Approval, recovery, durable Journal and security/privacy regressions pass.
+
 ## Provider-native Tool Protocol acceptance (2026-08-17)
 
 The production Provider contract now uses normalized native Tool Calls or strict structured output. The model-authored `ModelTurn.action`, `json_actions`, JSON-object emulation and Action repair loop are deleted. The real frontend canary asked `deepseek-v4-flash-0731` through the OpenAI-compatible adapter to create a responsive operations dashboard with navigation, KPIs, a filterable table, an accessible incident modal, persisted theme state, mobile behavior, keyboard handling, empty state and an independent Node verifier.

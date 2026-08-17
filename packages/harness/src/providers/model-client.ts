@@ -38,6 +38,15 @@ export type ToolObservation = {
   readonly repeatCount?: number;
 };
 
+export type NativeToolContinuation = {
+  readonly calls: readonly {
+    readonly callId: string;
+    readonly name: string;
+    readonly arguments: JsonValue;
+    readonly result: JsonValue;
+  }[];
+};
+
 export type ProjectedRunContext = {
   readonly inputCount: number;
   readonly coveredInputCount: number;
@@ -68,6 +77,8 @@ export type ModelDecisionContext = {
     readonly deliveryOnly: true;
     readonly reason: string;
   };
+  /** Latest fully resolved Provider-native call batch, rebuilt from durable Runtime facts. */
+  readonly nativeToolContinuation?: NativeToolContinuation;
   readonly activeInvocations: readonly {
     readonly invocationId: string;
     readonly toolName: string;

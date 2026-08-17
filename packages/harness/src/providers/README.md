@@ -33,6 +33,8 @@ interface RuntimeProvider {
 
 `ModelResponse` 只描述 Provider 返回的事实：可选文本、带 `callId` 的 Tool Calls 和 finish reason。它不包含模型填写的 Runtime Action。Harness 按响应形状确定性路由：`nexora_update_plan` 编译 Plan、`nexora_request_input` 编译 HITL、注册的 Runtime Tool 进入唯一 Tool Action 路径、无调用的非空文本提出完成。
 
+原生 Function Calling 的下一轮不是新的无状态请求。Harness 将最近一批规范化调用记录为 `model.turn` 审计事实，并从后续 Plan、Tool Invocation、HITL resume 或 rejection Authority 派生一个有界 continuation。OpenAI-compatible Adapter 发送原始 `assistant.tool_calls` 和逐个匹配 `tool_call_id` 的 `role: tool` 结果；进程内 Provider session 不保存状态，`structured_output` 也不使用这条 wire 路径。
+
 Provider 必须在一个 Run 内固定声明一种能力：
 
 - `native_tools`：注册真实函数 Schema，不发送 `response_format`，只读取 Provider 原生 `tool_calls`；普通 content 永远不解析为 Tool。

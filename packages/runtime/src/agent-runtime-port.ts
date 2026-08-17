@@ -60,6 +60,11 @@ export type AgentAuditEvent =
       readonly toolCallCount: number;
       readonly controlCallCount: number;
       readonly compiledActionTypes: readonly string[];
+      readonly toolCalls: readonly {
+        readonly callId: string;
+        readonly name: string;
+        readonly arguments: unknown;
+      }[];
     };
   };
 

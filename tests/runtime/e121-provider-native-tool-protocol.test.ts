@@ -30,7 +30,16 @@ function tempRoot(prefix: string): string {
 }
 
 type ProviderRequest = {
-  readonly messages: readonly { readonly role: string; readonly content: string }[];
+  readonly messages: readonly {
+    readonly role: string;
+    readonly content: string | null;
+    readonly tool_call_id?: string;
+    readonly tool_calls?: readonly {
+      readonly id: string;
+      readonly type: "function";
+      readonly function: { readonly name: string; readonly arguments: string };
+    }[];
+  }[];
 };
 
 type DecisionPayload = {
@@ -65,7 +74,7 @@ describe("E050 Provider response contract convergence", () => {
     let decisions = 0;
     const server = await providerServer(async (request) => {
       requests.push(request);
-      JSON.parse(request.messages.at(-1)!.content);
+      JSON.parse(request.messages.at(-1)!.content!);
       decisions += 1;
       if (decisions === 1) return invalidResponse;
       if (decisions === 2) {
@@ -93,7 +102,7 @@ describe("E050 Provider response contract convergence", () => {
     expect(result.status).toBe("waiting");
     expect(decisions).toBe(3);
     const decisionRequests = requests.map(
-      (request) => JSON.parse(request.messages.at(-1)!.content) as DecisionPayload
+      (request) => JSON.parse(request.messages.at(-1)!.content!) as DecisionPayload
     );
     expect(decisionRequests[0]?.originalTaskContract.userInputs).toEqual([
       { sequence: 1, text: "Inspect the target." }
@@ -164,8 +173,10 @@ describe("E050 Provider response contract convergence", () => {
 
   it("executes a native Tool call and treats coexisting content as audit-only text", async () => {
     const workspace = tempRoot("nexora-e050-native-tool-");
+    const requests: ProviderRequest[] = [];
     let decisions = 0;
-    const server = await providerMessageServer(async () => {
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
       decisions += 1;
       if (decisions === 1) {
         return {
@@ -216,6 +227,449 @@ describe("E050 Provider response contract convergence", () => {
       inputJson: { path: "target.txt" }
     });
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+    expect(requests[1]?.messages.map((message) => message.role)).toEqual([
+      "system", "user", "assistant", "tool", "user"
+    ]);
+    expect(requests[1]?.messages[2]).toEqual({
+      role: "assistant",
+      content: null,
+      tool_calls: [{
+        id: "native-read",
+        type: "function",
+        function: {
+          name: "example_read",
+          arguments: JSON.stringify({ path: "target.txt" })
+        }
+      }]
+    });
+    expect(requests[1]?.messages[3]).toMatchObject({
+      role: "tool",
+      tool_call_id: "native-read"
+    });
+    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toMatchObject({
+      ok: true,
+      status: "succeeded",
+      observation: { payloadMode: "full", facts: { content: "example" } }
+    });
+  });
+
+  it("continues native Plan controls with an accepted Tool result", async () => {
+    const workspace = tempRoot("nexora-e050-native-plan-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-plan",
+            type: "function" as const,
+            function: {
+              name: UPDATE_PLAN_CONTROL,
+              arguments: JSON.stringify({ goal: "Inspect", tasks: [{ objective: "Inspect target" }] })
+            }
+          }]
+        };
+      }
+      return {
+        content: null,
+        tool_calls: [{
+          id: "native-input-after-plan",
+          type: "function" as const,
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: JSON.stringify({ question: "Continue?", reason: "Plan continuation captured." })
+          }
+        }]
+      };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: []
+    });
+
+    const result = await runtime.start({ input: "Inspect the target." });
+    runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(requests[1]?.messages[2]?.tool_calls?.[0]).toMatchObject({
+      id: "native-plan",
+      function: { name: UPDATE_PLAN_CONTROL }
+    });
+    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toMatchObject({
+      ok: true,
+      status: "accepted",
+      planVersion: 1
+    });
+  });
+
+  it("continues rejected native control calls as protocol Tool errors", async () => {
+    const workspace = tempRoot("nexora-e050-native-rejected-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-invalid-plan",
+            type: "function" as const,
+            function: {
+              name: UPDATE_PLAN_CONTROL,
+              arguments: JSON.stringify({ goal: "Inspect", tasks: [] })
+            }
+          }]
+        };
+      }
+      if (decisions === 2) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-valid-plan",
+            type: "function" as const,
+            function: {
+              name: UPDATE_PLAN_CONTROL,
+              arguments: JSON.stringify({ goal: "Inspect", tasks: [{ objective: "Inspect target" }] })
+            }
+          }]
+        };
+      }
+      return {
+        content: null,
+        tool_calls: [{
+          id: "native-stop-after-repair",
+          type: "function" as const,
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: JSON.stringify({ question: "Continue?", reason: "Rejected continuation captured." })
+          }
+        }]
+      };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: []
+    });
+
+    const result = await runtime.start({ input: "Inspect the target." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(requests[1]?.messages[2]?.tool_calls?.[0]?.id).toBe("native-invalid-plan");
+    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toMatchObject({
+      ok: false,
+      status: "rejected",
+      error: { code: "INVALID_MODEL_RESPONSE" }
+    });
+    expect(view.events.filter((event) => event.type === "model.turn")[0]?.payload).toMatchObject({
+      toolCalls: [{ callId: "native-invalid-plan", name: UPDATE_PLAN_CONTROL }]
+    });
+  });
+
+  it("preserves call/result association for native Tool batches", async () => {
+    const workspace = tempRoot("nexora-e050-native-batch-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [
+            {
+              id: "native-first",
+              type: "function" as const,
+              function: { name: "example_read", arguments: JSON.stringify({ path: "first.txt" }) }
+            },
+            {
+              id: "native-second",
+              type: "function" as const,
+              function: { name: "example_read", arguments: JSON.stringify({ path: "second.txt" }) }
+            }
+          ]
+        };
+      }
+      return {
+        content: null,
+        tool_calls: [{
+          id: "native-stop-after-batch",
+          type: "function" as const,
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: JSON.stringify({ question: "Continue?", reason: "Batch continuation captured." })
+          }
+        }]
+      };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: [exampleTool({ path: "first.txt" })]
+    });
+
+    const result = await runtime.start({ input: "Inspect both targets." });
+    runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(requests[1]?.messages.map((message) => message.role)).toEqual([
+      "system", "user", "assistant", "tool", "tool", "user"
+    ]);
+    expect(requests[1]?.messages.slice(3, 5).map((message) => message.tool_call_id)).toEqual([
+      "native-first", "native-second"
+    ]);
+    expect(requests[1]?.messages[2]?.tool_calls?.map((call) => JSON.parse(call.function.arguments))).toEqual([
+      { path: "first.txt" }, { path: "second.txt" }
+    ]);
+  });
+
+  it("continues a native human-input control after resume", async () => {
+    const workspace = tempRoot("nexora-e050-native-input-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-human-input",
+            type: "function" as const,
+            function: {
+              name: REQUEST_INPUT_CONTROL,
+              arguments: JSON.stringify({ question: "Which title?", reason: "A user choice is required." })
+            }
+          }]
+        };
+      }
+      return { content: "Use the supplied title." };
+    });
+    const options = {
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: []
+    };
+    const firstRuntime = createRuntime(options);
+    const waiting = await firstRuntime.start({ input: "Choose a title." });
+    firstRuntime.close();
+    const reopened = createRuntime(options);
+    const completed = await reopened.resume({ runId: waiting.runId, input: "Nexora Control Room" });
+    reopened.close();
+
+    expect(completed.status).toBe("succeeded");
+    expect(requests[1]?.messages[2]?.tool_calls?.[0]?.id).toBe("native-human-input");
+    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toEqual({
+      ok: true,
+      status: "accepted",
+      inputSequence: 2,
+      input: "Nexora Control Room"
+    });
+  });
+
+  it("continues native Tool failures as bounded error results", async () => {
+    const workspace = tempRoot("nexora-e050-native-failure-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-failure",
+            type: "function" as const,
+            function: { name: "example_fail", arguments: JSON.stringify({ path: "missing.txt" }) }
+          }]
+        };
+      }
+      return {
+        content: null,
+        tool_calls: [{
+          id: "native-stop",
+          type: "function" as const,
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: JSON.stringify({ question: "Continue?", reason: "Failure continuation captured." })
+          }
+        }]
+      };
+    });
+    const failing = exampleTool({ path: "missing.txt" }, "example.fail");
+    failing.execute = async () => ({
+      status: "failure",
+      subjectRef: "missing.txt",
+      error: { code: "NOT_FOUND", message: "Target does not exist.", retryable: false }
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: [failing]
+    });
+
+    await runtime.start({ input: "Inspect the missing target." });
+    runtime.close();
+
+    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toMatchObject({
+      ok: false,
+      status: "failed",
+      observation: {
+        payloadMode: "full",
+        error: { code: "NOT_FOUND", message: "Target does not exist.", retryable: false }
+      }
+    });
+  });
+
+  it("contracts native continuation payloads under the Provider input budget", async () => {
+    const workspace = tempRoot("nexora-e050-native-budget-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-large-read",
+            type: "function" as const,
+            function: { name: "example_read", arguments: JSON.stringify({ path: "large.txt" }) }
+          }]
+        };
+      }
+      return {
+        content: null,
+        tool_calls: [{
+          id: "native-stop-after-budget",
+          type: "function" as const,
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: JSON.stringify({ question: "Continue?", reason: "Budget contraction captured." })
+          }
+        }]
+      };
+    });
+    const largeTool = exampleTool({ path: "large.txt" });
+    largeTool.execute = async () => ({
+      status: "success",
+      subjectRef: "large.txt",
+      facts: { content: "x".repeat(8_000) }
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model",
+        contextWindowTokens: 20_000,
+        reservedOutputTokens: { decision: 2_000 },
+        tokenMeter: (request) => ({
+          inputTokens: request.continuation?.calls.some((call) => (
+            JSON.stringify(call.result).includes('"payloadMode":"full"')
+          )) ? 19_000 : 2_000,
+          stablePrefixTokens: 1_000,
+          method: "exact",
+          meter: "test:continuation-budget"
+        })
+      }),
+      tools: [largeTool]
+    });
+
+    await runtime.start({ input: "Inspect the large target." });
+    runtime.close();
+
+    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toMatchObject({
+      observation: {
+        payloadMode: "reference",
+        facts: null,
+        truncated: true
+      }
+    });
+  });
+
+  it("continues denied native effects without inventing an Invocation", async () => {
+    const workspace = tempRoot("nexora-e050-native-denial-");
+    const requests: ProviderRequest[] = [];
+    let decisions = 0;
+    const server = await providerMessageServer(async (request) => {
+      requests.push(request);
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-write",
+            type: "function" as const,
+            function: { name: "example_write", arguments: JSON.stringify({ path: "target.txt" }) }
+          }]
+        };
+      }
+      return { content: "The denied write was not executed." };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: [protectedExampleTool()]
+    });
+
+    const approval = await runtime.start({ input: "Write the target." });
+    const approvalView = await runtime.inspect(approval.runId);
+    const requestId = approvalView.snapshot.pendingRequest?.id;
+    if (requestId === undefined) throw new Error("Expected a pending Approval request.");
+    const denied = await runtime.resume({
+      runId: approval.runId,
+      approvalDecision: { requestId, approved: false, reason: "Do not change this file." }
+    });
+    const completed = await runtime.resume({ runId: denied.runId, input: "Continue without writing." });
+    const view = await runtime.inspect(completed.runId);
+    runtime.close();
+
+    expect(completed.status).toBe("succeeded");
+    expect(view.toolInvocations).toEqual([]);
+    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toMatchObject({
+      ok: false,
+      status: "denied",
+      error: { code: "APPROVAL_DENIED", message: "Do not change this file." }
+    });
   });
 
   it("never interprets ordinary native content as a Tool call", async () => {
@@ -278,6 +732,37 @@ describe("E050 Provider response contract convergence", () => {
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
   });
 
+  it("retries empty native assistant responses with finish-reason diagnostics", async () => {
+    const workspace = tempRoot("nexora-e050-empty-native-");
+    let attempts = 0;
+    const server = await providerMessageServer(async () => {
+      attempts += 1;
+      return { content: null };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: []
+    });
+
+    const result = await runtime.start({ input: "Return a direct answer." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result).toMatchObject({ status: "blocked", stopReason: "PROVIDER_UNAVAILABLE" });
+    expect(attempts).toBe(3);
+    expect(view.snapshot.lastError?.message).toContain(
+      "Provider returned an empty assistant response (finish_reason=null)."
+    );
+    expect(view.events.filter((event) => event.type === "provider.attempt.failed")).toHaveLength(3);
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+  });
+
   it("rejects Runtime Tools that collide with reserved Harness controls", () => {
     const workspace = tempRoot("nexora-e050-reserved-tool-");
     expect(() => createRuntime({
@@ -319,7 +804,7 @@ describe("E050 Provider response contract convergence", () => {
     runtime.close();
 
     const payloads = requests.map(
-      (request) => JSON.parse(request.messages.at(-1)!.content) as DecisionPayload
+      (request) => JSON.parse(request.messages.at(-1)!.content!) as DecisionPayload
     );
     const observation = payloads[2]!.observationsAndRepair.toolObservations[0];
     expect(payloads[2]).not.toHaveProperty("projection");
@@ -444,6 +929,29 @@ function exampleTool(inputExample: unknown, name = "example.read"): RuntimeTool 
     }
   };
   return tool as RuntimeTool;
+}
+
+function protectedExampleTool(): RuntimeTool {
+  return {
+    contract: {
+      identity: { name: "example.write" },
+      capability: { purpose: "Write a known example.", nonGoals: ["Read an unknown target."] },
+      decision: { useWhen: ["The example must change."], avoidWhen: ["The write was denied."] },
+      execution: {
+        effect: { kind: "write", description: "Writes the target." },
+        idempotent: true,
+        inputSchema: z.object({ path: z.string().min(1) }).strict(),
+        inputExample: { path: "target.txt" }
+      },
+      evidence: {
+        produces: ["A written target."],
+        factsSchema: z.object({ written: z.boolean() }).strict()
+      }
+    },
+    async execute() {
+      return { status: "success", subjectRef: "target.txt", facts: { written: true } };
+    }
+  };
 }
 
 async function providerServer(
