@@ -144,7 +144,7 @@ describe("E088 decision continuity projection", () => {
       expect(evictions).toBeLessThan(20);
     }
 
-    expect(evictions).toBeGreaterThan(2);
+    expect(evictions).toBe(2);
     expect(sawReferencedObservation).toBe(true);
     expect(sawDroppedObservations).toBe(true);
   });

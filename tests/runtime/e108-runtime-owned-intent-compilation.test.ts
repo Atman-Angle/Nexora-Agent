@@ -724,7 +724,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("OLD");
   });
 
-  it("fails legacy RuntimeAction output closed and derives a readable non-success handoff", async () => {
+  it("pauses legacy RuntimeAction output at the budget while preserving the repair cause", async () => {
     const root = fixtureRoot();
     const provider: RuntimeProvider = {
       async decide() {
@@ -741,22 +741,17 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const handle = runtime.run("Do the work.", {
       budgets: { maxIterations: 2, maxModelCalls: 2, maxToolCalls: 1, maxRetries: 0, maxDurationMs: 30_000 }
     });
-    await handle.wait();
-    const final = await handle.result();
-    if (final === null) throw new Error("Expected a terminal result.");
-    const view = await runtime.inspect(final.runId);
-    await runtime.close();
+    const inspection = await handle.wait();
+    const view = await runtime.inspect(handle.id);
 
-    expect(final.status).toBe("failed");
-    expect(final.summary).toBe("No task result was confirmed before INVALID_MODEL_RESPONSE.");
-    expect(final.delivery).toMatchObject({ outcome: "failed", generatedBy: "deterministic" });
-    expect(final.failureHandoff).toEqual(expect.objectContaining({
-      originalGoal: "Do the work.",
-      resumable: false,
-      exactFailure: expect.objectContaining({ code: "INVALID_MODEL_RESPONSE" })
-    }));
+    expect(inspection.status).toBe("blocked");
+    expect(inspection.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
+    expect(inspection.error?.code).toBe("INVALID_MODEL_RESPONSE");
+    expect(inspection.delivery).toMatchObject({ outcome: "blocked", generatedBy: "deterministic" });
     expect(view.snapshot.result).toBeNull();
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
+    await expect(handle.result()).rejects.toThrow("Run is not terminal");
+    await runtime.close();
   });
 
   it("uses the latest persisted task input when failure occurs before a Task Contract exists", async () => {
@@ -780,8 +775,10 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const result = await runtime.resume({ runId: waiting.runId, input: "Read the current proof file." });
     await runtime.close();
 
-    expect(result.status).toBe("failed");
-    expect(result.failureHandoff?.originalGoal).toBe("Read the current proof file.");
+    expect(result.status).toBe("blocked");
+    expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
+    expect(result.lastError?.code).toBe("INVALID_MODEL_RESPONSE");
+    expect(result.delivery?.unfinishedWork).toEqual(["Read the current proof file."]);
   });
 });
 

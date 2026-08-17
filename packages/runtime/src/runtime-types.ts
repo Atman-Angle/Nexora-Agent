@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { JsonValueSchema, type AuditHistoryPage, type AuditHistoryQuery, type AuditIntegrityResult, type BranchForkBase, type BranchRecord, type Evidence, type ForkContext, type ModelCallRecord, type ModelCallTrace, type RunDelivery, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgets, type ToolAttempt, type ToolInvocation } from "./contracts.js";
+import { JsonValueSchema, type AuditHistoryPage, type AuditHistoryQuery, type AuditIntegrityResult, type BranchForkBase, type BranchRecord, type CompletionRequirements, type Evidence, type ForkContext, type ModelCallRecord, type ModelCallTrace, type RunDelivery, type RunEvent, type RunSnapshot, type RunStatus, type RuntimeBudgetExtension, type RuntimeBudgets, type ToolAttempt, type ToolInvocation } from "./contracts.js";
 import type { AgentDriver } from "./agent-runtime-port.js";
 import type { RunStore } from "./store/run-store.js";
 
@@ -45,13 +45,13 @@ export type CreateRuntimeOptions = {
   readonly createId?: () => string;
   readonly leaseTtlMs?: number;
 };
-export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets };
+export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets; readonly completion?: CompletionRequirements };
 export type ApprovalDecision = { readonly requestId: string; readonly approved: boolean; readonly reason?: string };
 export type RecoveryDecision =
   | { readonly invocationId: string; readonly outcome: "confirmed_succeeded"; readonly subjectRef: string }
   | { readonly invocationId: string; readonly outcome: "confirmed_failed"; readonly reason?: string }
   | { readonly invocationId: string; readonly outcome: "abandon_run"; readonly reason?: string };
-export type ResumeInput = { readonly runId: string; readonly input?: string; readonly approvalDecision?: ApprovalDecision; readonly recoveryDecision?: RecoveryDecision };
+export type ResumeInput = { readonly runId: string; readonly input?: string; readonly approvalDecision?: ApprovalDecision; readonly recoveryDecision?: RecoveryDecision; readonly budgetExtension?: RuntimeBudgetExtension };
 export type RuntimeObserver = (event: RunEvent) => void;
 export type FailureHandoff = {
   readonly originalGoal: string;
@@ -74,7 +74,7 @@ export type RunView = {
   readonly toolAttempts: readonly ToolAttempt[];
   readonly modelCalls: readonly ModelCallRecord[];
 };
-export type RunOptions = { readonly budgets?: RuntimeBudgets };
+export type RunOptions = { readonly budgets?: RuntimeBudgets; readonly completion?: CompletionRequirements };
 
 type DeepReadonly<T> =
   T extends (...args: never[]) => unknown
@@ -147,6 +147,9 @@ export type RunInspection = {
   readonly revision: number;
   readonly status: PublicRunStatus;
   readonly stopReason: string | null;
+  readonly completion: DeepReadonly<CompletionRequirements>;
+  readonly budgets: DeepReadonly<RuntimeBudgets>;
+  readonly budgetsUsed: DeepReadonly<RunSnapshot["budgetsUsed"]>;
   readonly pendingRequest: PublicPendingRequest | null;
   readonly plan: PublicPlan | null;
   readonly progress: readonly PublicStepProgress[];
@@ -164,6 +167,7 @@ export type RequestOptions = { readonly requestId?: string };
 export type DenialOptions = RequestOptions & { readonly reason?: string };
 export type RunHandleResumeOptions = {
   readonly recovery?: RecoveryDecision;
+  readonly budgetExtension?: RuntimeBudgetExtension;
 };
 
 type RuntimeEventBase = {

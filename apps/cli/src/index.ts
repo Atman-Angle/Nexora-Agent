@@ -6,12 +6,16 @@ import { fileURLToPath } from "node:url";
 
 import {
   ModelConfigError,
+  DEFAULT_RUNTIME_BUDGETS,
   createBuiltInTools,
   createAgent,
   createAgentProfileSnapshot,
   openAICompatibleProviderFromEnv,
   type ApprovalDecision,
+  type CompletionRequirements,
   type RecoveryDecision,
+  type RuntimeBudgetExtension,
+  type RuntimeBudgets,
   type RunHandle,
   type RunInspection,
   type RuntimeEvent,
@@ -74,6 +78,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         const current = await run.inspect();
         if (current.status === "blocked" || current.status === "running") {
           await run.resume({
+            ...(parsed.budgetExtension === undefined
+              ? {}
+              : { budgetExtension: parsed.budgetExtension }),
             ...(parsed.recoveryDecision === undefined
               ? {}
               : { recovery: parsed.recoveryDecision })
@@ -85,7 +92,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       inspection = await run.wait();
     } else {
       const goal = parsed.goal ?? await prompt("What should Nexora do? ");
-      run = runtime.run(goal);
+      run = runtime.run(goal, {
+        ...(parsed.budgets === undefined ? {} : { budgets: parsed.budgets }),
+        ...(parsed.completion === undefined ? {} : { completion: parsed.completion })
+      });
       run.subscribe(renderEvent);
       inspection = await run.wait();
       if (parsed.interactive) {
@@ -110,8 +120,8 @@ function loadCliEnvironment(directory = process.cwd()): void {
 }
 
 type ParsedArguments =
-  | { command: "start"; goal?: string; cwd?: string; interactive: boolean }
-  | { command: "resume"; runId: string; cwd?: string; input?: string; approvalDecision?: ApprovalDecision; recoveryDecision?: RecoveryDecision }
+  | { command: "start"; goal?: string; cwd?: string; interactive: boolean; budgets?: RuntimeBudgets; completion?: CompletionRequirements }
+  | { command: "resume"; runId: string; cwd?: string; input?: string; approvalDecision?: ApprovalDecision; recoveryDecision?: RecoveryDecision; budgetExtension?: RuntimeBudgetExtension }
   | { command: "inspect"; runId: string; cwd?: string };
 
 function parseArguments(argv: string[]): ParsedArguments {
@@ -133,6 +143,7 @@ function parseArguments(argv: string[]): ParsedArguments {
     const confirmed = takePairOption(values, "--confirm-succeeded");
     const failed = takeOption(values, "--confirm-failed");
     const abandon = takeOption(values, "--abandon");
+    const budgetExtension = budgetExtensionOptions(values);
     if (values.length > 0) throw new Error(`Unknown resume arguments: ${values.join(" ")}`);
     if (reason !== undefined && deny === undefined) throw new Error("--reason requires --deny.");
     const approvalDecision = approve
@@ -145,10 +156,19 @@ function parseArguments(argv: string[]): ParsedArguments {
       : failed ? { invocationId: failed, outcome: "confirmed_failed" }
       : abandon ? { invocationId: abandon, outcome: "abandon_run" }
       : undefined;
-    return { command: "resume", runId, ...(cwd === undefined ? {} : { cwd }), ...(input === undefined ? {} : { input }), ...(approvalDecision === undefined ? {} : { approvalDecision }), ...(recoveryDecision === undefined ? {} : { recoveryDecision }) };
+    return { command: "resume", runId, ...(cwd === undefined ? {} : { cwd }), ...(input === undefined ? {} : { input }), ...(approvalDecision === undefined ? {} : { approvalDecision }), ...(recoveryDecision === undefined ? {} : { recoveryDecision }), ...(budgetExtension === undefined ? {} : { budgetExtension }) };
   }
+  const directAnswer = removeFlag(values, "--direct-answer");
+  const requiredToolNames = takeOptions(values, "--require-tool");
+  const budgets = runtimeBudgetOptions(values);
+  if (directAnswer && requiredToolNames.length > 0) throw new Error("--direct-answer cannot be combined with --require-tool.");
+  const completion: CompletionRequirements | undefined = directAnswer
+    ? { evidence: "optional", requiredToolNames: [] }
+    : requiredToolNames.length > 0
+      ? { evidence: "required", requiredToolNames }
+      : undefined;
   const goal = values.join(" ").trim();
-  return { command: "start", ...(goal ? { goal } : {}), ...(cwd === undefined ? {} : { cwd }), interactive: Boolean(stdin.isTTY) };
+  return { command: "start", ...(goal ? { goal } : {}), ...(cwd === undefined ? {} : { cwd }), interactive: Boolean(stdin.isTTY), ...(budgets === undefined ? {} : { budgets }), ...(completion === undefined ? {} : { completion }) };
 }
 
 async function continueInteractive(
@@ -214,7 +234,51 @@ function takePairOption(values: string[], name: string): [string, string] | unde
   return [first, second];
 }
 
-function removeFlag(values: string[], name: string): void { const index = values.indexOf(name); if (index >= 0) values.splice(index, 1); }
+function removeFlag(values: string[], name: string): boolean { const index = values.indexOf(name); if (index < 0) return false; values.splice(index, 1); return true; }
+
+function takeOptions(values: string[], name: string): string[] {
+  const output: string[] = [];
+  while (values.includes(name)) output.push(takeOption(values, name)!);
+  return output;
+}
+
+function takePositiveIntegerOption(values: string[], name: string): number | undefined {
+  const raw = takeOption(values, name);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} requires a positive safe integer.`);
+  return value;
+}
+
+function runtimeBudgetOptions(values: string[]): RuntimeBudgets | undefined {
+  const maxIterations = takePositiveIntegerOption(values, "--max-iterations");
+  const maxModelCalls = takePositiveIntegerOption(values, "--max-model-calls");
+  const maxToolCalls = takePositiveIntegerOption(values, "--max-tool-calls");
+  const maxRetries = takePositiveIntegerOption(values, "--max-retries");
+  const maxDurationMs = takePositiveIntegerOption(values, "--max-duration-ms");
+  if ([maxIterations, maxModelCalls, maxToolCalls, maxRetries, maxDurationMs].every((value) => value === undefined)) return undefined;
+  return {
+    maxIterations: maxIterations ?? DEFAULT_RUNTIME_BUDGETS.maxIterations,
+    maxModelCalls: maxModelCalls ?? DEFAULT_RUNTIME_BUDGETS.maxModelCalls,
+    maxToolCalls: maxToolCalls ?? DEFAULT_RUNTIME_BUDGETS.maxToolCalls,
+    maxRetries: maxRetries ?? DEFAULT_RUNTIME_BUDGETS.maxRetries,
+    maxDurationMs: maxDurationMs ?? DEFAULT_RUNTIME_BUDGETS.maxDurationMs
+  };
+}
+
+function budgetExtensionOptions(values: string[]): RuntimeBudgetExtension | undefined {
+  const iterations = takePositiveIntegerOption(values, "--add-iterations");
+  const modelCalls = takePositiveIntegerOption(values, "--add-model-calls");
+  const toolCalls = takePositiveIntegerOption(values, "--add-tool-calls");
+  const retries = takePositiveIntegerOption(values, "--add-retries");
+  if ([iterations, modelCalls, toolCalls, retries].every((value) => value === undefined)) return undefined;
+  return {
+    ...(iterations === undefined ? {} : { iterations }),
+    ...(modelCalls === undefined ? {} : { modelCalls }),
+    ...(toolCalls === undefined ? {} : { toolCalls }),
+    ...(retries === undefined ? {} : { retries })
+  };
+}
 function renderEvent(event: RuntimeEvent): void { stderr.write(`${JSON.stringify({ event: event.type, runId: event.runId, sequence: event.sequence })}\n`); }
 
 function toCliResult(inspection: RunInspection): {

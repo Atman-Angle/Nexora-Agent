@@ -5,13 +5,16 @@ import { z } from "zod";
 
 import {
   RunSnapshotSchema,
+  CompletionRequirementsSchema,
   RuntimeActionSchema,
+  RuntimeBudgetExtensionSchema,
   RuntimeBudgetsSchema,
   StructuredPlanSchema,
   TaskContractSchema,
   JsonValueSchema,
   createInitialRunSnapshot,
   type BranchRecord,
+  type CompletionRequirements,
   type Evidence,
   type PlanTaskContract,
   type RunSnapshot,
@@ -263,10 +266,22 @@ export class RuntimeEngine {
   ): { readonly handle: RunHandle; readonly execution: Promise<RunResult> } {
     this.#assertOpen();
     let budgets;
+    let completionRequirements: CompletionRequirements;
     try {
       budgets = input.budgets === undefined
         ? undefined
         : RuntimeBudgetsSchema.parse(input.budgets);
+      completionRequirements = CompletionRequirementsSchema.parse(
+        input.completion ?? {
+          evidence: this.#tools.size === 0 ? "optional" : "required",
+          requiredToolNames: []
+        }
+      );
+      for (const toolName of completionRequirements.requiredToolNames) {
+        if (!this.#tools.has(toolName)) {
+          throw new Error(`Completion requires an unregistered Tool: ${toolName}`);
+        }
+      }
     } catch (error) {
       throw new RuntimeError({
         code: "INVALID_INPUT",
@@ -282,6 +297,7 @@ export class RuntimeEngine {
         input: input.input,
         workspace: this.#workspace,
         now,
+        completionRequirements,
         ...(budgets === undefined ? {} : { budgets })
       });
     } catch (error) {
@@ -368,6 +384,29 @@ export class RuntimeEngine {
         });
         this.#notify(run.runId, observer);
       }
+      if (input.budgetExtension !== undefined) {
+        if (run.status !== "blocked" || !isBudgetStopReason(run.stopReason)) {
+          throw new Error("A Budget Extension requires a budget-blocked Run.");
+        }
+        const extension = RuntimeBudgetExtensionSchema.parse(input.budgetExtension);
+        const previousBudgets = run.budgets;
+        const next = RunSnapshotSchema.parse({
+          ...run,
+          budgets: {
+            maxIterations: addQuota(previousBudgets.maxIterations, extension.iterations),
+            maxModelCalls: addQuota(previousBudgets.maxModelCalls, extension.modelCalls),
+            maxToolCalls: addQuota(previousBudgets.maxToolCalls, extension.toolCalls),
+            maxRetries: addQuota(previousBudgets.maxRetries, extension.retries),
+            maxDurationMs: previousBudgets.maxDurationMs
+          },
+          updatedAt: this.#now()
+        });
+        run = this.#commit(run, next, "run.budget_extended", {
+          extension,
+          previousBudgets,
+          budgets: next.budgets
+        }, observer);
+      }
       run = await recoverToolInvocation(
         this.#services(controller.signal, run.runId),
         run,
@@ -398,9 +437,18 @@ export class RuntimeEngine {
         );
         return toRunResult(run);
       }
-      if (
+      if (run.status === "blocked" && isBudgetStopReason(run.stopReason)) {
+        if (this.#budgetFailure(run, Date.parse(this.#now())) !== null) {
+          return toRunResult(run);
+        }
+        const now = this.#now();
+        const resumed = transitionRunStatus(run, "running", { now });
+        run = this.#commit(run, resumed, "run.resumed", {
+          reason: "budget_extended"
+        }, observer);
+      } else if (
         run.status === "blocked"
-        && run.lastError?.code === "PROVIDER_UNAVAILABLE"
+        && (run.lastError?.code === "PROVIDER_UNAVAILABLE" || run.lastError?.code === "CONTEXT_CAPACITY_EXCEEDED")
         && input.recoveryDecision === undefined
       ) {
         const now = this.#now();
@@ -778,9 +826,24 @@ export class RuntimeEngine {
         "Running Run has no interrupted Tool Invocation to recover."
       );
     }
+    if (options.budgetExtension !== undefined && !isBudgetStopReason(run.stopReason)) {
+      throw this.#controlConflict(
+        runId,
+        "Budget Extension requires a budget-blocked Run."
+      );
+    }
+    if (isBudgetStopReason(run.stopReason) && options.budgetExtension === undefined && run.stopReason !== "DURATION_BUDGET_EXCEEDED") {
+      throw this.#controlConflict(
+        runId,
+        "This Run requires a Budget Extension before it can resume."
+      );
+    }
     await this.#performControl(runId, async () => {
       await this.resume({
         runId,
+        ...(options.budgetExtension === undefined
+          ? {}
+          : { budgetExtension: options.budgetExtension }),
         ...(options.recovery === undefined
           ? {}
           : { recoveryDecision: options.recovery })
@@ -1213,12 +1276,12 @@ export class RuntimeEngine {
       cancel: (run, message, observer) => this.#cancelPersistedRun(run, message, observer),
       enforceBudget: (run, activeStartedAt, observer) => {
         const failure = this.#budgetFailure(run, activeStartedAt);
-        return failure === null ? null : this.#fail(run, failure, failure, observer);
+        return failure === null ? null : this.#blockForBudget(run, failure, observer);
       },
       finalizeBudget: (run, activeStartedAt, summary, observer) => {
         const failure = this.#budgetFailure(run, activeStartedAt);
         if (failure === null) throw new Error("Budget finalization requires an exhausted Runtime budget.");
-        return this.#fail(run, failure, failure, observer, summary);
+        return this.#blockForBudget(run, failure, observer, summary);
       },
       blockForProvider: (run, error, observer) => (
         this.#blockForProvider(run, error, observer)
@@ -1748,7 +1811,10 @@ export class RuntimeEngine {
       orderedSteps: action.orderedSteps
     });
     const completed = new Map(run.stepProgress.filter((item) => item.status === "completed").map((item) => [item.stepId, item]));
-    const evidence = current === null ? [] : run.evidence;
+    // Evidence remains immutable Run authority across Plan creation and
+    // revision. Applicability to a new Plan is decided by the Completion Gate;
+    // deleting earlier Tool evidence here loses verified exploration history.
+    const evidence = run.evidence;
     let activeAssigned = false;
     const stepProgress = plan.orderedSteps.map((step) => {
       const preserved = completed.get(step.id);
@@ -1833,21 +1899,51 @@ export class RuntimeEngine {
   }
 
   #blockForProvider(run: RunSnapshot, error: unknown, observer?: RuntimeObserver): RunSnapshot {
+    const errorCode = providerBoundaryErrorCode(error);
     const blockedInput = RunSnapshotSchema.parse({
       ...run,
-      lastError: { code: "PROVIDER_UNAVAILABLE", message: errorMessage(error), retryable: true, detailsArtifact: null }
+      lastError: { code: errorCode, message: errorMessage(error), retryable: true, detailsArtifact: null }
     });
     const blocked = transitionRunStatus(blockedInput, "blocked", {
       now: this.#now(),
-      stopReason: "PROVIDER_UNAVAILABLE",
+      stopReason: errorCode,
       delivery: deriveRunDelivery({
         run: blockedInput,
         outcome: "blocked",
         now: this.#now(),
-        stopReason: "PROVIDER_UNAVAILABLE"
+        stopReason: errorCode
       })
     });
-    return this.#commit(run, blocked, "run.blocked", { stopReason: "PROVIDER_UNAVAILABLE" }, observer);
+    return this.#commit(run, blocked, "run.blocked", { stopReason: errorCode }, observer);
+  }
+
+  #blockForBudget(
+    run: RunSnapshot,
+    stopReason: string,
+    observer?: RuntimeObserver,
+    deliverySummary?: string
+  ): RunSnapshot {
+    const blockedInput = RunSnapshotSchema.parse({
+      ...run,
+      lastError: run.lastError ?? {
+        code: stopReason,
+        message: "The active execution segment reached its configured resource boundary.",
+        retryable: true,
+        detailsArtifact: null
+      }
+    });
+    const blocked = transitionRunStatus(blockedInput, "blocked", {
+      now: this.#now(),
+      stopReason,
+      delivery: deriveRunDelivery({
+        run: blockedInput,
+        outcome: "blocked",
+        now: this.#now(),
+        stopReason,
+        ...(deliverySummary === undefined ? {} : { summary: deliverySummary, generatedBy: "model" as const })
+      })
+    });
+    return this.#commit(run, blocked, "run.blocked", { stopReason, resumable: true }, observer);
   }
 
   #budgetFailure(run: RunSnapshot, activeStartedAt: number): string | null {
@@ -2317,4 +2413,28 @@ export class RuntimeEngine {
     }
   }
 
+}
+
+function isBudgetStopReason(value: string | null): boolean {
+  return value === "ITERATION_BUDGET_EXCEEDED"
+    || value === "MODEL_CALL_BUDGET_EXCEEDED"
+    || value === "TOOL_CALL_BUDGET_EXCEEDED"
+    || value === "DURATION_BUDGET_EXCEEDED";
+}
+
+function addQuota(current: number, additional: number | undefined): number {
+  if (additional === undefined) return current;
+  const next = current + additional;
+  if (!Number.isSafeInteger(next)) throw new Error("Budget Extension exceeds the safe integer range.");
+  return next;
+}
+
+function providerBoundaryErrorCode(error: unknown): "PROVIDER_UNAVAILABLE" | "CONTEXT_CAPACITY_EXCEEDED" {
+  if (
+    error !== null
+    && typeof error === "object"
+    && "code" in error
+    && error.code === "CONTEXT_CAPACITY_EXCEEDED"
+  ) return "CONTEXT_CAPACITY_EXCEEDED";
+  return "PROVIDER_UNAVAILABLE";
 }

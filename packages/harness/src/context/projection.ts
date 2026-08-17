@@ -399,6 +399,9 @@ function observationSourceRefs(
   for (const artifactRef of directArtifactRefs(invocation.resultJson)) {
     artifactRefs.add(artifactRef);
   }
+  for (const artifactRef of directArtifactRefs(invocation.errorJson)) {
+    artifactRefs.add(artifactRef);
+  }
   for (const artifactRef of artifactRefs) {
     refs.push(`artifact:${artifactRef}`);
   }
@@ -406,11 +409,31 @@ function observationSourceRefs(
 }
 
 function directArtifactRefs(value: unknown): string[] {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
-  const artifactRef = (value as { readonly artifactRef?: unknown }).artifactRef;
-  return typeof artifactRef === "string" && /^sha256:[0-9a-f]{64}$/.test(artifactRef)
-    ? [artifactRef]
-    : [];
+  const refs = new Set<string>();
+  collectArtifactRefs(value, refs);
+  return [...refs];
+}
+
+function collectArtifactRefs(value: unknown, refs: Set<string>): void {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectArtifactRefs(item, refs);
+    return;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  for (const [key, item] of Object.entries(record)) {
+    if (
+      (key === "artifactRef" || key.endsWith("ArtifactRef"))
+      && typeof item === "string"
+      && /^sha256:[0-9a-f]{64}$/.test(item)
+    ) refs.add(item);
+    if (key === "artifactRefs" && Array.isArray(item)) {
+      for (const ref of item) {
+        if (typeof ref === "string" && /^sha256:[0-9a-f]{64}$/.test(ref)) refs.add(ref);
+      }
+    }
+    collectArtifactRefs(item, refs);
+  }
 }
 
 function compareObservationValueDescending(

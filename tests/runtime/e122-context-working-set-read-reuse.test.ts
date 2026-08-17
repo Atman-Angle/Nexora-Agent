@@ -264,7 +264,10 @@ describe("E122 context working set and read reuse", () => {
       tools: [recordReadTool()]
     });
 
-    const result = await runtime.start({ input: "Plan the alpha inspection." });
+    const result = await runtime.start({
+      input: "Plan the alpha inspection.",
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("succeeded");

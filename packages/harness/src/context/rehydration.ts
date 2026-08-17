@@ -456,7 +456,8 @@ export function autoRehydrateForActiveStep(args: {
 }): { readonly required: readonly string[]; readonly helpful: readonly string[] } {
   const { run, observations, invocations } = args;
   const currentArtifacts = new Set(observations.flatMap((observation) => (
-    directArtifactRefs(observation.facts).map((ref) => `artifact:${ref}`)
+    [...directArtifactRefs(observation.facts), ...directArtifactRefs(observation.error)]
+      .map((ref) => `artifact:${ref}`)
   )));
   if (run.currentPlan === null) return { required: [...currentArtifacts], helpful: [] };
   const activeStepId = run.stepProgress.find((progress) => progress.status === "active")?.stepId;
@@ -511,11 +512,31 @@ export function autoRehydrateForActiveStep(args: {
 }
 
 function directArtifactRefs(value: unknown): string[] {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
-  const artifactRef = (value as Readonly<Record<string, unknown>>).artifactRef;
-  return typeof artifactRef === "string" && /^sha256:[0-9a-f]{64}$/.test(artifactRef)
-    ? [artifactRef]
-    : [];
+  const refs = new Set<string>();
+  collectArtifactRefs(value, refs);
+  return [...refs];
+}
+
+function collectArtifactRefs(value: unknown, refs: Set<string>): void {
+  if (value === null || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) collectArtifactRefs(item, refs);
+    return;
+  }
+  const record = value as Readonly<Record<string, unknown>>;
+  for (const [key, item] of Object.entries(record)) {
+    if (
+      (key === "artifactRef" || key.endsWith("ArtifactRef"))
+      && typeof item === "string"
+      && /^sha256:[0-9a-f]{64}$/.test(item)
+    ) refs.add(item);
+    if (key === "artifactRefs" && Array.isArray(item)) {
+      for (const ref of item) {
+        if (typeof ref === "string" && /^sha256:[0-9a-f]{64}$/.test(ref)) refs.add(ref);
+      }
+    }
+    collectArtifactRefs(item, refs);
+  }
 }
 
 function kindOf(kind: "input" | "invocation" | "evidence" | "event" | "artifact"): RehydratedFact["kind"] {

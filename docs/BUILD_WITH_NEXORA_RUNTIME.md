@@ -175,6 +175,10 @@ Runtime 只负责应用 Host 提供的 exact scope；用户认证、租户授权
 
 ```ts
 const run = runtime.run("自然语言目标", {
+  completion: {
+    evidence: "required",
+    requiredToolNames: ["filesystem.read"]
+  },
   budgets: {
     maxIterations: 50,
     maxModelCalls: 50,
@@ -190,6 +194,8 @@ const result = await run.result();
 
 `run()` 返回前已经持久化 Run，因此 `run.id` 可立即保存。它随后进入现有唯一 Runtime Loop；Handle 不保存独立状态。
 
+Host 拥有机械完成要求。未注册 Tool 时默认允许无 Evidence 的直接回答；注册任一 Tool 后默认要求至少一项合法 Evidence。Host 只有在任务确实允许纯文本直答时才显式传入 `completion: { evidence: "optional", requiredToolNames: [] }`。`requiredToolNames` 必须全部是已注册 Tool，Provider 和 Plan 都不能修改该要求。
+
 ### `RunHandle.inspect`
 
 ```ts
@@ -198,7 +204,10 @@ console.log(
   inspection.status,
   inspection.plan,
   inspection.invocations,
-  inspection.evidence
+  inspection.evidence,
+  inspection.completion,
+  inspection.budgets,
+  inspection.budgetsUsed
 );
 ```
 
@@ -333,6 +342,15 @@ if (inspection.status === "blocked" && inspection.recovery !== null) {
       subjectRef: "external:item-123"
     }
   });
+} else if (inspection.stopReason?.endsWith("_BUDGET_EXCEEDED")) {
+  await run.resume({
+    budgetExtension: {
+      iterations: 10,
+      modelCalls: 10,
+      toolCalls: 5,
+      retries: 2
+    }
+  });
 } else {
   // Provider 暂时不可用或进程在安全边界中断时，回到同一执行循环。
   await run.resume();
@@ -342,6 +360,8 @@ const result = await run.result();
 ```
 
 unknown non-idempotent Effect 必须绑定当前 `inspection.recovery.invocationId` 提供恢复决定；缺失或不匹配不会绕过现有 Invocation、Evidence 与 Completion 路径。
+
+Iteration、Model-call、Tool-call 或 active-duration 预算耗尽会持久化为 `blocked/*_BUDGET_EXCEEDED`，不是终态失败。`budgetExtension` 只给现有绝对额度做正向累加，不重置 `budgetsUsed`，也不授权或重放已完成 Effect；duration 在每个 active execution segment 重新计时。
 
 ### 取消与 typed error
 
@@ -560,10 +580,12 @@ Testing Kit 使用生产 `createAgent()`、真实临时 workspace 和 SQLite；c
 
 ## 成功与证据 Contract
 
-Provider Contract v4 只提交显式 `finish.text`、`continue` 中的可选 goal/ordered objective-only Tasks 与 Tool name/arguments，或 `request_input` 的用户问题。Harness 从原始输入和 objective 派生 Runtime Task Contract，但不自动生成 Acceptance Check。Provider 的最终 `text` 只成为 summary；Runtime 从真实 Evidence、Invocation 和 Artifact 自动派生 provenance，并直接执行 deterministic Completion Gate。新生产路径没有同步 Validator。
+Provider Contract v5 只提交最终 text、可选 objective-only Plan、Tool name/arguments，或 human-input control。Harness 从原始输入和 objective 派生 Runtime Task Contract，但不自动生成 Acceptance Check。Provider 的最终 `text` 只成为 summary；Runtime 从真实 Evidence、Invocation 和 Artifact 自动派生 provenance，并直接执行 deterministic Completion Gate。新生产路径没有同步 Validator。
 
 以下情况都不会成功：
 
+- Tool-enabled Run 在默认策略下没有合法 persisted Evidence；
+- Host 指定的 required Tool 没有 digest-valid Tool Evidence；
 - 任一 required Check 缺少合法 persisted Evidence；
 - started/unknown Tool Invocation；
 - 非零 `shell.execute`；
@@ -583,12 +605,14 @@ Provider Contract v4 只提交显式 `finish.text`、`continue` 中的可选 goa
 - 大内容：内容寻址 Artifact。
 - 模型调用与 Token 审计：独立 `model_calls` Ledger；它不参与任务完成判断。
 
-`runtime.inspect(runId).modelCalls` 按调用顺序返回 decision 的 Provider、模型、projection digest、计量方法、软/硬预算决策、调用状态，以及 Provider 可用时返回的实际 input/output/total usage。旧数据库中既有的 validation/compaction/refused Ledger 行仍可读取，但生产代码不再创建 validation 或 compaction 调用，也不因 Context hard-limit 判定写 refused 或直接失败 Run。Harness 收缩到最小合法投影后仍调用 Provider；若 Provider 拒绝容量，则按真实 Provider 失败处理。
+`runtime.inspect(runId).modelCalls` 按调用顺序返回 decision 的 Provider、模型、projection digest、计量方法、软/硬预算决策、调用状态，以及 Provider 可用时返回的实际 input/output/total usage。旧数据库中既有的 validation/compaction/refused Ledger 行仍可读取，但生产代码不再创建 validation 或 compaction 调用。Original Inputs、Task Contract、persisted Evidence 和当轮 required rehydrated facts 不会为满足 soft limit 被删除或截短；最小权威投影超过 hard limit 时，不发送 Provider 请求，Run 持久化为 `blocked/CONTEXT_CAPACITY_EXCEEDED`。
 
 Decision Context 中的 Tool Observation 使用确定性 Eviction：候选先按 Tool/input/outcome 折叠，active Check、未解决错误、安全失败和当前文件链高于普通 predecessor；同 class 采用稳定的 Step/Invocation/ID tie-breaker。候选没有固定条数或单条正文上限，实际收缩只由 Provider Token Meter 的 soft limit 触发，并按测得的超额比例批量收缩后重测。`payloadMode: "fragment"` 只含固定算法片段，`reference` 完全省略 payload；两者都不能推断成完整事实。大型 success/failure payload 会按 object key 规范化后的 canonical JSON digest 存入 Artifact，Invocation 保存 provenance；只有合法成功 Evidence 才引用同一 Artifact。收缩过程不调用 LLM、不写 Checkpoint，只改变可重建投影；恢复事实、History Candidates、Session Archive 和 `repair` 在每次重建中按预算重新纳入 digest。可选 Tool decision hints 可在极窄窗口收缩，但不可变的 pre-contraction configuration digest 仍用于 Strategy continuity，真实 wire prefix digest 单独用于缓存审计。幂等 read 只有显式声明 `execution.readCache.mode="until_mutation"` 才能复用；mutation、Run reopen/resume 会使之前的复用资格失效。
+
+`filesystem.list` 和 `filesystem.search` 通过稳定的 `offset/limit/nextOffset` 页面提供全部结果；2,000 和 100 分别只是单页上限。`filesystem.read` 对大文件提供 range continuation 或完整 Artifact。Shell/Git stdout 和 stderr 各保留最多 64 KiB inline，完整超限流以精确字节数和独立内容寻址 Artifact ref 发布；成功和失败输出都可从后续 Context 恢复。
 
 Rehydration 由 Harness 在构建 Context 时完成，恢复结果随后与其他字段一起进入确定性收缩。Harness 从 Runtime port 读取 published Run refs，从独立 Memory Store 读取 exact-scope eligible Memory，并执行既有 digest/预算校验；最新 Input 点名的 ref、active `context_ref`、最高相关 Memory 与关键 Tool facts 可自动触发恢复。匹配 required Check 时请求 Runtime 生成 Run-owned Context Evidence。错误语义和预算值保持不变，生产 Adapter 只携带当前决策必要的事实和 ModelResponse Contract。
 
 E090 在上述 `availableContextRefs` 并集中加入 `historyCandidates.ref` 与 `relatedRefs`。候选本身不进入 Rehydration 内容预算；只有最新 Input 明确点名或 active `context_ref` Check 要求的精确 ref 才自动读取，其他候选仍只是 Harness 内部导航。生产 OpenAI-compatible Adapter 不投影 `historyCandidates`、`memoryCandidates` 或 Session Archive；它们仍参与 Provider-neutral Context 的确定性构建、收缩和 digest。
 
-Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v7 在原有 Authority 表旁保留 `model_calls`，以 `model_call_audits` 保存 Context Manifest/capture provenance，以 `provider_attempts` 保存物理请求；`run_events` 原位增加版本化 digest chain 和 completeness。`branches` / `branch_fork_base` 继续持久化 Context Branching lineage；v4 `context_checkpoints` 仅为旧数据库兼容保留。旧 Event 原位迁移为 `legacy_partial`，不补造旧 Provider Attempt、Plan revision 或 payload。
+Runtime 默认创建 `<workspace>/.nexora/runtime-v1.1.db` 和 `<workspace>/.nexora/artifacts`。SQLite schema v8 在原有 Authority 表旁保留 `model_calls`，以 `model_call_audits` 保存 Context Manifest/capture provenance，以 `provider_attempts` 保存物理请求；`run_events` 原位增加版本化 digest chain 和 completeness。`branches` / `branch_fork_base` 继续持久化 Context Branching lineage；v4 `context_checkpoints` 仅为旧数据库兼容保留。旧 Event 原位迁移为 `legacy_partial`，不补造旧 Provider Attempt、Plan revision 或 payload。

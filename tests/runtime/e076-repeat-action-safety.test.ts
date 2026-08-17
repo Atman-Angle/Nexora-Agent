@@ -85,11 +85,11 @@ describe("E076 repeated Tool Action safety", () => {
       });
       const view = await runtime.inspect(waiting.runId);
 
-      expect(result.status).toBe("failed");
+      expect(result.status).toBe("blocked");
       expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
-      expect(result.summary).toBe("Completed 0 planned item(s) and preserved 1 confirmed fact(s) before INVALID_MODEL_RESPONSE.");
+      expect(result.summary).toBe("Completed 0 planned item(s) and preserved 1 confirmed fact(s) before ITERATION_BUDGET_EXCEEDED.");
       expect(result.delivery).toEqual(expect.objectContaining({
-        outcome: "failed",
+        outcome: "blocked",
         generatedBy: "deterministic",
         unfinishedWork: ["Write the protected value once"]
       }));
@@ -101,7 +101,7 @@ describe("E076 repeated Tool Action safety", () => {
       expect(view.events.filter((event) => event.type === "approval.requested")).toHaveLength(1);
       expect(view.events.filter((event) => event.type === "approval.granted")).toHaveLength(1);
       expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(7);
-      expect(view.events.filter((event) => event.type === "run.failed")).toHaveLength(1);
+      expect(view.events.filter((event) => event.type === "run.blocked")).toHaveLength(1);
       expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
       expect(view.snapshot.result).toBeNull();
     } finally {

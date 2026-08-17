@@ -80,10 +80,13 @@ export type {
   RunStatus,
   RuntimeAction,
   RuntimeBudgets,
+  RuntimeBudgetExtension,
+  CompletionRequirements,
   StructuredPlan,
   TaskContract,
   ToolAttempt
 } from "./contracts.js";
+export { DEFAULT_RUNTIME_BUDGETS } from "./contracts.js";
 
 export { createBuiltInTools } from "./execution/tool-runtime/index.js";
 export {

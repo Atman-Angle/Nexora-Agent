@@ -28,14 +28,19 @@ export function deriveRunDelivery(input: {
       .filter((check) => !satisfiedChecks.has(`${step.id}\0${check.id}`))
       .map((check) => `${step.objective}: ${describeCheck(check)}`);
     return missingChecks.length > 0 ? missingChecks : [step.objective];
-  }) ?? [];
+  }) ?? (input.outcome === "succeeded" ? [] : [run.inputHistory.at(-1)!.text]);
   const stopReason = input.stopReason ?? run.stopReason;
+  const budgetBoundary = isBudgetStopReason(stopReason);
   const code = input.outcome === "succeeded"
     ? "COMPLETED"
-    : run.lastError?.code ?? stopReason ?? "RUN_INCOMPLETE";
+    : budgetBoundary
+      ? stopReason!
+      : run.lastError?.code ?? stopReason ?? "RUN_INCOMPLETE";
   const message = input.outcome === "succeeded"
     ? "The deterministic completion gate accepted the persisted Evidence."
-    : run.lastError?.message ?? stopReason ?? "The Run ended before deterministic completion.";
+    : budgetBoundary
+      ? "The active execution segment reached its configured resource boundary."
+      : run.lastError?.message ?? stopReason ?? "The Run ended before deterministic completion.";
   const producedArtifacts = [...new Set([
     ...(run.result?.resultArtifact === null || run.result?.resultArtifact === undefined
       ? []
@@ -80,10 +85,20 @@ function nextAction(outcome: RunDelivery["outcome"], code: string): string {
   if (outcome === "blocked" && code === "PROVIDER_UNAVAILABLE") {
     return "Resume this Run after Provider connectivity is restored.";
   }
+  if (outcome === "blocked" && isBudgetStopReason(code)) {
+    return "Extend the exhausted Runtime budget, then resume this Run.";
+  }
   if (outcome === "blocked") return "Resolve the persisted external condition, then resume this Run.";
   return "Continue from the persisted facts and unfinished work in a new Run.";
 }
 
 function bound(value: string, max: number): string {
   return value.length <= max ? value : value.slice(0, max);
+}
+
+function isBudgetStopReason(value: string | null): boolean {
+  return value === "ITERATION_BUDGET_EXCEEDED"
+    || value === "MODEL_CALL_BUDGET_EXCEEDED"
+    || value === "TOOL_CALL_BUDGET_EXCEEDED"
+    || value === "DURATION_BUDGET_EXCEEDED";
 }

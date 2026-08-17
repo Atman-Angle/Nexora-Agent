@@ -653,7 +653,10 @@ describe("E050 Provider response contract convergence", () => {
       tools: [protectedExampleTool()]
     });
 
-    const approval = await runtime.start({ input: "Write the target." });
+    const approval = await runtime.start({
+      input: "Write the target.",
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
     const approvalView = await runtime.inspect(approval.runId);
     const requestId = approvalView.snapshot.pendingRequest?.id;
     if (requestId === undefined) throw new Error("Expected a pending Approval request.");
@@ -694,7 +697,10 @@ describe("E050 Provider response contract convergence", () => {
       tools: [exampleTool({ path: "target.txt" })]
     });
 
-    const result = await runtime.start({ input: "Explain the supplied JSON without executing it." });
+    const result = await runtime.start({
+      input: "Explain the supplied JSON without executing it.",
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
     const view = await runtime.inspect(result.runId);
     runtime.close();
 

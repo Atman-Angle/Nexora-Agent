@@ -75,7 +75,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     await reopened.close();
   });
 
-  it("dispatches a deterministically reduced hard-limit projection instead of terminating the Run", async () => {
+  it("blocks before dispatch when the non-evictable authority exceeds the hard limit", async () => {
     const workspace = fixture();
     let decideCalls = 0;
     const provider = budgetedProvider({
@@ -86,20 +86,14 @@ describe("E079 Context Budget and Token Accounting", () => {
 
     const result = await runtime.start({ input: "A context that is too large." });
 
-    expect(result.status).toBe("waiting");
-    expect(result.stopReason).toBe("INPUT_REQUIRED");
-    expect(result.lastError).toBeNull();
-    expect(decideCalls).toBe(1);
+    expect(result.status).toBe("blocked");
+    expect(result.stopReason).toBe("CONTEXT_CAPACITY_EXCEEDED");
+    expect(result.lastError?.code).toBe("CONTEXT_CAPACITY_EXCEEDED");
+    expect(decideCalls).toBe(0);
     const view = await runtime.inspect(result.runId);
-    expect(view.snapshot.budgetsUsed).toMatchObject({ iterations: 1, modelCalls: 1 });
-    expect(view.modelCalls).toEqual([expect.objectContaining({
-      budgetDecision: "hard_limit_exceeded",
-      status: "succeeded",
-      errorCode: null,
-      actualInputTokens: 64,
-      actualOutputTokens: 6,
-      actualTotalTokens: 70
-    })]);
+    expect(view.snapshot.budgetsUsed).toMatchObject({ iterations: 0, modelCalls: 0 });
+    expect(view.snapshot.inputHistory[0]?.text).toBe("A context that is too large.");
+    expect(view.modelCalls).toEqual([]);
     expect(view.events.some((event) => event.type === "run.failed")).toBe(false);
     await runtime.close();
   });

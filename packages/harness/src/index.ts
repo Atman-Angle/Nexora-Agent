@@ -8,6 +8,7 @@ export type { CreateRuntimeOptions } from "./types.js";
 
 export {
   RuntimeEngine,
+  DEFAULT_RUNTIME_BUDGETS,
   RunControlError,
   RuntimeError,
   createBuiltInTools,
@@ -63,6 +64,8 @@ export {
   type ToolAttempt,
   type RuntimeAction,
   type RuntimeBudgets,
+  type RuntimeBudgetExtension,
+  type CompletionRequirements,
   type StructuredPlan,
   type TaskContract
 } from "@nexora/runtime";

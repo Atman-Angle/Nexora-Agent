@@ -74,7 +74,7 @@ describe("E049 deterministic completion integrity", () => {
     await runtime.close();
   });
 
-  it("fails honestly when invalid actions exhaust the ordinary loop budget", async () => {
+  it("pauses honestly when invalid actions exhaust the ordinary loop budget", async () => {
     const workspace = tempRoot();
     const invalid = { type: "update_plan", steps: [] };
     const provider = new ScriptedRuntimeProvider([invalid, invalid, invalid, invalid, invalid]);
@@ -96,7 +96,7 @@ describe("E049 deterministic completion integrity", () => {
       }
     });
 
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("blocked");
     expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
     expect(result.lastError?.code).toBe("INVALID_MODEL_RESPONSE");
     await runtime.close();

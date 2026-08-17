@@ -24,6 +24,15 @@ pnpm nexora "读取 note.txt，把 before 改成 after，运行测试并确认�
 
 未提供目标时，CLI 会提示 `What should Nexora do?`。在PowerShell等TTY终端中，带目标的CLI也会留在当前进程：遇到Approval时显示精确Action并询问，遇到Input Request时直接收集回答，直到终态。成功时`summary`直接包含经过验证的最终回答。管道、CI等非TTY环境保持一次调用返回`waiting`。
 
+CLI 注册了工作区 Tool，因此默认完成要求至少一项合法 Evidence。纯问答任务必须由调用方显式声明：
+
+```powershell
+pnpm nexora "解释这段错误信息" --cwd D:\project --direct-answer
+pnpm nexora "读取配置并确认内容" --cwd D:\project --require-tool filesystem.read
+```
+
+`--require-tool` 可重复；它只接受已注册 Tool。CLI 不通过关键词或额外模型调用猜测任务类型。
+
 ### 查看 Run
 
 ```powershell
@@ -68,13 +77,22 @@ pnpm nexora resume <run-id> --cwd D:\project --abandon <invocation-id>
 
 只有 non-idempotent Tool 的结果未知时才使用这些参数，且 Invocation ID 必须匹配持久化的 unknown Invocation。
 
+### 预算暂停与续跑
+
+```powershell
+pnpm nexora "完成工作区任务" --cwd D:\project --max-iterations 20 --max-model-calls 20 --max-tool-calls 10 --max-retries 4 --max-duration-ms 300000
+pnpm nexora resume <run-id> --cwd D:\project --add-iterations 10 --add-model-calls 10 --add-tool-calls 5 --add-retries 2
+```
+
+预算耗尽返回 `blocked/*_BUDGET_EXCEEDED`。追加额度只提高原 Run 的绝对上限，累计用量不归零，已完成 Tool Invocation 不会重放。
+
 ## 3. CLI 退出码
 
 | 退出码 | 含义 |
 | ---: | --- |
-| 0 | `succeeded`，两个完成门都已通过 |
+| 0 | `succeeded`，唯一 deterministic Completion Gate 已通过 |
 | 2 | `waiting`，需要输入或批准 |
-| 3 | `blocked`，例如 Provider 不可用或 Tool 结果未知 |
+| 3 | `blocked`，例如预算耗尽、Provider 不可用、Context 容量不足或 Tool 结果未知 |
 | 4 | `failed` |
 | 64 | CLI 参数或 Provider 配置错误 |
 
@@ -98,7 +116,11 @@ const runtime = createAgent({
 
 try {
   let result = await runtime.start({
-    input: "读取 note.txt，把 before 改成 after，运行测试并确认通过"
+    input: "读取 note.txt，把 before 改成 after，运行测试并确认通过",
+    completion: {
+      evidence: "required",
+      requiredToolNames: ["filesystem.patch"]
+    }
   });
 
   while (result.status === "waiting") {
@@ -131,8 +153,8 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 | Tool | 风险 | 行为 |
 | --- | --- | --- |
 | `filesystem.read` | read | 读取工作区文件；大内容进入 Artifact |
-| `filesystem.list` | read | 有界列出文件 |
-| `filesystem.search` | read | 有界文本搜索 |
+| `filesystem.list` | read | 以 offset/limit/nextOffset 稳定分页列出全部文件 |
+| `filesystem.search` | read | 以 offset/limit/nextOffset 稳定分页搜索全部匹配 |
 | `filesystem.write` | write | 原子创建/覆盖，必须批准 |
 | `filesystem.patch` | write | 带 expected digest 的单点替换，必须批准 |
 | `shell.execute` | execute | 直接执行可执行文件，必须批准；非零退出为 failure |
@@ -162,7 +184,7 @@ ModelResponse.toolCalls = [] + 非空 ModelResponse.text
 
 完成阶段不再调用同步语义 Validator。Plan、TaskContract、Evidence/Invocation ID、digest、Fencing 和 Result provenance 都由 Runtime 确定性检查，不交给模型生成或判断。objective-only Plan Step 是导航，不自动产生 required Check；只有 Host/Tool Contract 明确声明的机械 Check 才能阻塞完成。
 
-跨 Run 或 digest 不一致的 Evidence、started/unknown Invocation、未决 Approval、未满足的 required mechanical Check、非零命令和 Provider 失败均不能成为成功。历史 failed Invocation 本身不阻塞模型采用其他真实路径完成；无 Tool 的直接回答可以空 provenance，但不能伪造 Evidence。
+跨 Run 或 digest 不一致的 Evidence、started/unknown Invocation、未决 Approval、未满足的 required mechanical Check、非零命令和 Provider 失败均不能成为成功。历史 failed Invocation 本身不阻塞模型采用其他真实路径完成；未注册 Tool 的 Runtime 默认允许空 provenance，已注册 Tool 时只有 Host 显式选择 `evidence: "optional"` 才允许直接回答，任何路径都不能伪造 Evidence。
 
 ## 7. 当前限制
 
@@ -171,6 +193,6 @@ ModelResponse.toolCalls = [] + 非空 ModelResponse.text
 - CLI 不提供单独的 `ask/read/patch/verify/agent/approve` 命令；这些属于已删除的旧实现。
 - 新 1.1 Runtime 不迁移或恢复旧数据库。
 - 历史运行证据不随公开源码发布，也不作为当前 API Contract；发布前应在隔离工作区重新运行本文件中的验证步骤。
-- `filesystem.search` 使用随 Runtime 安装的 Ripgrep 二进制做大小写不敏感的字面量搜索；不接受自定义正则/参数，不搜索忽略目录、二进制或超过 256 KiB 的文件，最多返回 100 条稳定结果。
+- `filesystem.search` 使用随 Runtime 安装的 Ripgrep 二进制做大小写不敏感的字面量搜索；不接受自定义正则/参数，不搜索忽略目录、二进制或超过 256 KiB 的文件；每页最多返回 100 条，可通过 `nextOffset` 读取后续页面。
 
 调试和恢复时先运行 `inspect`，不要直接修改 SQLite。

@@ -74,10 +74,113 @@ describe("E049 natural-language CLI", () => {
     expect(result.code).toBe(64);
     expect(result.stderr).toContain("MODEL_CONFIG_ERROR");
   });
+
+  it("blocks Tool-enabled text-only completion unless the Host opts into a direct answer", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e049-cli-completion-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume the request */ }
+      calls += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        text: "No Tool was used.",
+        toolCalls: [],
+        finishReason: "stop"
+      }) } }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    const environment = providerEnvironment(address.port);
+
+    const blocked = await spawnCli([
+      "Describe the workspace without inspection",
+      "--cwd", workspace,
+      "--max-iterations", "2",
+      "--max-model-calls", "2"
+    ], environment);
+    expect(blocked.code).toBe(3);
+    expect(JSON.parse(blocked.stdout)).toMatchObject({
+      status: "blocked",
+      stopReason: "ITERATION_BUDGET_EXCEEDED",
+      lastError: { code: "INVALID_MODEL_RESPONSE" }
+    });
+
+    const direct = await spawnCli([
+      "Describe the workspace without inspection",
+      "--cwd", workspace,
+      "--direct-answer"
+    ], environment);
+    server.close();
+
+    expect(direct.code).toBe(0);
+    expect(JSON.parse(direct.stdout)).toMatchObject({
+      status: "succeeded",
+      summary: "No Tool was used.",
+      evidence: []
+    });
+    expect(calls).toBe(3);
+  });
+
+  it("extends a paused Tool budget and resumes the same Run without replaying the read", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e049-cli-budget-"));
+    roots.push(workspace);
+    writeFileSync(join(workspace, "target.txt"), "one read only\n", "utf8");
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume the request */ }
+      calls += 1;
+      const content = calls === 1
+        ? structuredTool("filesystem.read", { path: "target.txt" })
+        : { text: "The persisted read completed the task.", toolCalls: [], finishReason: "stop" };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    const environment = providerEnvironment(address.port);
+
+    const paused = await spawnCli([
+      "Read target.txt once",
+      "--cwd", workspace,
+      "--max-tool-calls", "1"
+    ], environment);
+    expect(paused.code).toBe(3);
+    const pausedResult = JSON.parse(paused.stdout) as { runId: string; status: string; stopReason: string };
+    expect(pausedResult).toMatchObject({ status: "blocked", stopReason: "TOOL_CALL_BUDGET_EXCEEDED" });
+
+    const resumed = await spawnCli([
+      "resume", pausedResult.runId,
+      "--cwd", workspace,
+      "--add-tool-calls", "1"
+    ], environment);
+    server.close();
+
+    expect(resumed.code).toBe(0);
+    expect(JSON.parse(resumed.stdout)).toMatchObject({
+      runId: pausedResult.runId,
+      status: "succeeded",
+      summary: "The persisted read completed the task."
+    });
+    expect(calls).toBe(2);
+  });
 });
 
 function structuredTool(name: string, argumentsValue: unknown): unknown {
   return { text: null, toolCalls: [{ name, arguments: argumentsValue }], finishReason: "tool_calls" };
+}
+
+function providerEnvironment(port: number): Record<string, string> {
+  return {
+    NEXORA_MODEL_PROVIDER: "openai-compatible",
+    NEXORA_MODEL_BASE_URL: `http://127.0.0.1:${port}/v1`,
+    NEXORA_MODEL_API_KEY: "test-key",
+    NEXORA_MODEL_NAME: "qwen3.7-flash",
+    NEXORA_MODEL_TOOL_TRANSPORT: "structured_output",
+    NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
+  };
 }
 
 function spawnCli(args: string[], environment: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> {

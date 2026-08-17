@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 export type ArtifactReference = {
@@ -34,6 +35,37 @@ export class ArtifactStore {
       }
     }
     return { digest, mediaType, byteLength: bytes.byteLength, path };
+  }
+
+  temporaryPath(label = "payload"): string {
+    return join(this.#root, `.${label}.${randomUUID()}.tmp`);
+  }
+
+  async putFile(temporaryPath: string, mediaType = "application/octet-stream"): Promise<ArtifactReference> {
+    const hash = createHash("sha256");
+    let byteLength = 0;
+    for await (const chunk of createReadStream(temporaryPath)) {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      hash.update(bytes);
+      byteLength += bytes.byteLength;
+    }
+    const hex = hash.digest("hex");
+    const digest = `sha256:${hex}`;
+    const path = join(this.#root, hex);
+    if (existsSync(path)) await rm(temporaryPath, { force: true });
+    else {
+      try {
+        await rename(temporaryPath, path);
+      } catch (error) {
+        if (existsSync(path)) {
+          await rm(temporaryPath, { force: true });
+          return { digest, mediaType, byteLength, path };
+        }
+        await rm(temporaryPath, { force: true });
+        throw error;
+      }
+    }
+    return { digest, mediaType, byteLength, path };
   }
 
   getText(digest: string): string {

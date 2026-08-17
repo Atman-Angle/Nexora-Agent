@@ -163,9 +163,9 @@ describe("Context Harness system validation", () => {
     await agent.close();
 
     expect(decisions).toBe(4);
-    expect(result).toMatchObject({ status: "failed", stopReason: "ITERATION_BUDGET_EXCEEDED" });
-    expect(result.delivery).toMatchObject({ outcome: "failed" });
-    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(3);
+    expect(result).toMatchObject({ status: "blocked", stopReason: "ITERATION_BUDGET_EXCEEDED" });
+    expect(result.delivery).toMatchObject({ outcome: "blocked" });
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(4);
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
   });
 });

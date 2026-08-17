@@ -81,9 +81,10 @@ export function evictDecisionContextOnce(
       });
     }
   }
-  if (rehydratedFacts.length > 0) {
-    return rebuildDecisionContext(context, { rehydratedFacts: rehydratedFacts.slice(0, -1) });
-  }
+  // Non-helpful rehydrated Facts are required authority for this turn. A soft
+  // limit is a contraction target, not permission to discard them. If the
+  // remaining projection is below the hard limit, the gateway sends it; if it
+  // is above the hard limit, it blocks without changing task meaning.
   if (context.nativeToolContinuation !== undefined) {
     const callIndex = context.nativeToolContinuation.calls.findIndex((call) => (
       continuationObservationMode(call.result) !== null
@@ -111,25 +112,8 @@ export function evictDecisionContextOnce(
       });
     }
   }
-  if (context.run.inputHistory.length > 1) {
-    return rebuildDecisionContext(context, {
-      run: { ...context.run, inputHistory: context.run.inputHistory.slice(1) }
-    });
-  }
-  const latestInput = context.run.inputHistory[0];
-  if (latestInput !== undefined && latestInput.text.length > 256) {
-    return rebuildDecisionContext(context, {
-      run: {
-        ...context.run,
-        inputHistory: [{ ...latestInput, text: boundedText(latestInput.text, Math.max(256, Math.floor(latestInput.text.length / 2))) }]
-      }
-    });
-  }
-  if (context.run.evidence.length > 0) {
-    return rebuildDecisionContext(context, {
-      run: { ...context.run, evidence: context.run.evidence.slice(1) }
-    });
-  }
+  // Inputs and Evidence are the minimum authority projection. If that minimum
+  // does not fit, the gateway blocks instead of silently changing the task.
   const verboseToolIndex = context.tools.findIndex((tool) => (
     tool.capability.nonGoals.length > 0
     || tool.decision.useWhen.length > 0

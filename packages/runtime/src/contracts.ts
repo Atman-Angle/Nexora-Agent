@@ -230,6 +230,30 @@ export const RuntimeBudgetsSchema = z.object({
 }).strict();
 export type RuntimeBudgets = z.infer<typeof RuntimeBudgetsSchema>;
 
+export const RuntimeBudgetExtensionSchema = z.object({
+  iterations: z.number().int().positive().optional(),
+  modelCalls: z.number().int().positive().optional(),
+  toolCalls: z.number().int().positive().optional(),
+  retries: z.number().int().positive().optional()
+}).strict().refine(
+  (extension) => Object.values(extension).some((value) => value !== undefined),
+  { message: "A Budget Extension must add at least one quota." }
+);
+export type RuntimeBudgetExtension = z.infer<typeof RuntimeBudgetExtensionSchema>;
+
+export const CompletionRequirementsSchema = z.object({
+  evidence: z.enum(["optional", "required"]),
+  requiredToolNames: z.array(NonEmptyString).default([])
+}).strict().superRefine((requirements, context) => {
+  if (new Set(requirements.requiredToolNames).size !== requirements.requiredToolNames.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Completion requirements contain duplicate Tool names." });
+  }
+  if (requirements.evidence === "optional" && requirements.requiredToolNames.length > 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Required Tools imply required Evidence." });
+  }
+});
+export type CompletionRequirements = z.infer<typeof CompletionRequirementsSchema>;
+
 export const BudgetUsageSchema = z.object({
   iterations: z.number().int().nonnegative(),
   modelCalls: z.number().int().nonnegative(),
@@ -279,6 +303,7 @@ export const RunSnapshotSchema = z.object({
   currentPlan: StructuredPlanSchema.nullable(),
   stepProgress: z.array(StepProgressSchema),
   pendingRequest: PendingRequestSchema.nullable(),
+  completionRequirements: CompletionRequirementsSchema.default({ evidence: "optional", requiredToolNames: [] }),
   budgets: RuntimeBudgetsSchema,
   budgetsUsed: BudgetUsageSchema,
   result: RunResultRecordSchema.nullable(),
@@ -326,6 +351,7 @@ export const AuditRecordTypeSchema = z.enum([
   "recovery.required",
   "recovery.resolved",
   "run.blocked",
+  "run.budget_extended",
   "run.cancelled",
   "run.created",
   "run.failed",
@@ -648,6 +674,7 @@ export function createInitialRunSnapshot(input: {
   workspace: string;
   now: string;
   budgets?: RuntimeBudgets;
+  completionRequirements?: CompletionRequirements;
 }): RunSnapshot {
   const text = NonEmptyString.parse(input.input);
   const now = IsoDateTime.parse(input.now);
@@ -662,6 +689,7 @@ export function createInitialRunSnapshot(input: {
     currentPlan: null,
     stepProgress: [],
     pendingRequest: null,
+    completionRequirements: input.completionRequirements ?? { evidence: "optional", requiredToolNames: [] },
     budgets: input.budgets ?? DEFAULT_RUNTIME_BUDGETS,
     budgetsUsed: { iterations: 0, modelCalls: 0, toolCalls: 0, retries: 0, startedAt: now },
     result: null,

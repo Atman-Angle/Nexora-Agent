@@ -109,6 +109,15 @@ export async function requestModel(
   if (signal.aborted) {
     return { outcome: "failed", run: runForLedger, error: signal.reason };
   }
+  if (assessment.decision === "hard_limit_exceeded") {
+    const error = Object.assign(
+      new Error(
+        `The authoritative task context requires ${assessment.measurement.inputTokens} input tokens, exceeding the Provider hard limit of ${assessment.hardInputLimitTokens}.`
+      ),
+      { code: "CONTEXT_CAPACITY_EXCEEDED" as const }
+    );
+    return { outcome: "failed", run: runForLedger, error };
+  }
   effectivePrompt = compilePrompt({
     context: effectiveContext,
     host: services.promptHost,

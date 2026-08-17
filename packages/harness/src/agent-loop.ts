@@ -146,13 +146,21 @@ export async function runAgentLoop(
       let summary: string | undefined;
       try {
         const response = parseModelResponse(rawResponse);
+        runtime.recordModelResponse(
+          run,
+          response,
+          response.toolCalls.length === 0 ? ["propose_finish"] : [],
+          observer
+        );
         summary = response.toolCalls.length === 0 ? response.text ?? undefined : undefined;
-      } catch {
-        // Deterministic Delivery remains available when the final model output is malformed.
-      }
-      if (summary !== undefined) {
-        run = await runtime.dispatch(run, compileModelFinish(run, summary), signal, observer);
-        if (run.status !== "running") break;
+        if (summary !== undefined) {
+          run = await runtime.dispatch(run, compileModelFinish(run, summary), signal, observer);
+          if (run.status !== "running") break;
+        }
+      } catch (error) {
+        if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
+        run = runtime.snapshot(run.runId);
+        run = runtime.rejectResponse(run, error, rawResponse, observer);
       }
       run = runtime.finalizeBudget(run, activeStartedAt, summary, observer);
       break;

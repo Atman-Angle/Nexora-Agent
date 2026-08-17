@@ -60,6 +60,17 @@ export function validateCompletion(
     return true;
   });
 
+  if (run.completionRequirements.evidence === "required" && eligibleEvidence.length === 0) {
+    issues.push("COMPLETION_EVIDENCE_REQUIRED");
+  }
+  for (const toolName of run.completionRequirements.requiredToolNames) {
+    const satisfied = eligibleEvidence.some((evidence) => {
+      if (evidence.source !== "tool" || evidence.invocationId === null) return false;
+      return invocationById.get(evidence.invocationId)?.toolName === toolName;
+    });
+    if (!satisfied) issues.push(`COMPLETION_TOOL_REQUIRED:${toolName}`);
+  }
+
   if (plan !== null) {
     for (const step of plan.orderedSteps) {
       const requiredChecks = step.acceptanceChecks.filter(

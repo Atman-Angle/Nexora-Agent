@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 describe("E081 deterministic Context convergence", () => {
-  it("calls the Provider with the smallest projection instead of failing the Run at the hard limit", async () => {
+  it("blocks before calling the Provider when irreducible authority exceeds the hard limit", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e081-"));
     roots.push(workspace);
     let calls = 0;
@@ -48,13 +48,13 @@ describe("E081 deterministic Context convergence", () => {
     const view = await runtime.inspect(result.runId);
     await runtime.close();
 
-    expect(result.status).toBe("waiting");
-    expect(calls).toBe(1);
-    expect(received?.providerContractVersion).toBe(5);
-    expect(view.modelCalls).toHaveLength(1);
-    expect(view.modelCalls[0]?.budgetDecision).toBe("hard_limit_exceeded");
+    expect(result.status).toBe("blocked");
+    expect(result.stopReason).toBe("CONTEXT_CAPACITY_EXCEEDED");
+    expect(calls).toBe(0);
+    expect(received).toBeUndefined();
+    expect(view.modelCalls).toHaveLength(0);
     expect(view.events.some((event) => event.type === "run.failed")).toBe(false);
-    expect(view.snapshot.lastError?.code).not.toBe("CONTEXT_BUDGET_EXCEEDED");
+    expect(view.snapshot.lastError?.code).toBe("CONTEXT_CAPACITY_EXCEEDED");
   });
 
   it("never exposes a model compaction operation", () => {

@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
+import { finished } from "node:stream/promises";
 
 import { rgPath } from "@vscode/ripgrep";
 import { z } from "zod";
@@ -21,8 +23,8 @@ const MAX_READ_RANGE_BYTES = 2_800;
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_PROCESS_DIAGNOSTIC_ARGUMENTS = 64;
 const MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS = 2048;
-const MAX_SEARCH_OUTPUT_BYTES = 512 * 1024;
 const MAX_SEARCH_MATCHES = 100;
+const MAX_LIST_ENTRIES = 2_000;
 const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"]);
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const ReadFactsSchema = z.union([
@@ -40,15 +42,31 @@ const ReadFactsSchema = z.union([
     truncated: z.boolean()
   }).strict()
 ]);
-const ListFactsSchema = z.object({ entries: z.array(z.string()), truncated: z.boolean() }).strict();
+const ListFactsSchema = z.object({
+  entries: z.array(z.string()),
+  offset: z.number().int().nonnegative(),
+  nextOffset: z.number().int().nonnegative().nullable(),
+  truncated: z.boolean()
+}).strict();
 const SearchFactsSchema = z.object({
   matches: z.array(z.object({ path: z.string(), line: z.number().int().positive(), text: z.string() }).strict()),
+  offset: z.number().int().nonnegative(),
+  nextOffset: z.number().int().nonnegative().nullable(),
   truncated: z.boolean()
 }).strict();
 const WriteFactsSchema = z.object({ path: z.string(), digest: DigestSchema, byteLength: z.number().int().nonnegative() }).strict();
 const PatchFactsSchema = z.object({ path: z.string(), digest: DigestSchema, replayed: z.boolean() }).strict();
 const ProcessFactsSchema = z.object({
-  exitCode: z.number().int(), stdout: z.string(), stderr: z.string(), truncated: z.boolean(), timedOut: z.boolean()
+  exitCode: z.number().int(),
+  stdout: z.string(),
+  stderr: z.string(),
+  stdoutBytes: z.number().int().nonnegative(),
+  stderrBytes: z.number().int().nonnegative(),
+  stdoutArtifactRef: DigestSchema.nullable(),
+  stderrArtifactRef: DigestSchema.nullable(),
+  artifactRefs: z.array(DigestSchema),
+  truncated: z.boolean(),
+  timedOut: z.boolean()
 }).strict();
 
 export function createBuiltInTools(options: { readonly artifactDir?: string } = {}): readonly RuntimeTool[] {
@@ -97,15 +115,16 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         identity: { name: "filesystem.list" },
         capability: { purpose: "Discover workspace file names and paths under one known directory.", nonGoals: ["Read file contents.", "Search for text inside files."] },
         decision: { useWhen: ["A required path is unknown but its containing directory is known."], avoidWhen: ["The exact target path is already known.", "The uncertainty concerns file content rather than path."] },
-        execution: { effect: { kind: "read", description: "Enumerates workspace paths without modifying external state." }, idempotent: true, inputSchema: z.object({ path: z.string().default(".") }).strict(), inputExample: { path: "." } },
-        evidence: { produces: ["A bounded recursive list of file paths and whether it was truncated."], factsSchema: ListFactsSchema }
+        execution: { effect: { kind: "read", description: "Enumerates workspace paths without modifying external state." }, idempotent: true, inputSchema: z.object({ path: z.string().default("."), offset: z.number().int().nonnegative().default(0), limit: z.number().int().positive().max(MAX_LIST_ENTRIES).default(MAX_LIST_ENTRIES) }).strict(), inputExample: { path: ".", offset: 0, limit: 2000 } },
+        evidence: { produces: ["One deterministic recursive path page and the exact next offset when more entries exist."], factsSchema: ListFactsSchema }
       },
       async execute(input, context) {
         const requestedPath = input.path ?? ".";
         const directory = await workspacePath(context.workspace, requestedPath, "directory");
-        const entries = (await listFiles(directory, context.signal))
-          .map((path) => relativeFromRequested(requestedPath, directory, path));
-        return { subjectRef: requestedPath, facts: { entries: entries.slice(0, 2000), truncated: entries.length > 2000 } };
+        const offset = input.offset ?? 0;
+        const page = await listFilesPage(directory, offset, input.limit ?? MAX_LIST_ENTRIES, context.signal);
+        const entries = page.entries.map((path) => relativeFromRequested(requestedPath, directory, path));
+        return { subjectRef: `${requestedPath}#entries=${offset}-${offset + entries.length}`, facts: { entries, offset, nextOffset: page.nextOffset, truncated: page.nextOffset !== null } };
       }
     }),
     defineTool({
@@ -113,8 +132,8 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         identity: { name: "filesystem.search" },
         capability: { purpose: "Find a case-insensitive literal value inside UTF-8 file contents.", nonGoals: ["Discover a file by name.", "Interpret the query as a regular expression."] },
         decision: { useWhen: ["The required literal content is known but its file location is unresolved."], avoidWhen: ["The target path is already known.", "The uncertainty concerns a file name or path rather than content."] },
-        execution: { effect: { kind: "read", description: "Reads bounded workspace text content without modifying external state." }, idempotent: true, inputSchema: z.object({ query: z.string().trim().min(1), path: z.string().default(".") }).strict(), inputExample: { query: "TODO", path: "." } },
-        evidence: { produces: ["Matching file paths, line numbers, bounded line text, and truncation status."], factsSchema: SearchFactsSchema }
+        execution: { effect: { kind: "read", description: "Reads bounded workspace text content without modifying external state." }, idempotent: true, inputSchema: z.object({ query: z.string().trim().min(1), path: z.string().default("."), offset: z.number().int().nonnegative().default(0), limit: z.number().int().positive().max(MAX_SEARCH_MATCHES).default(MAX_SEARCH_MATCHES) }).strict(), inputExample: { query: "TODO", path: ".", offset: 0, limit: 100 } },
+        evidence: { produces: ["One deterministic matching-line page with paths, line numbers, bounded text and the exact next offset."], factsSchema: SearchFactsSchema }
       },
       async execute(input, context) {
         const requestedPath = input.path ?? ".";
@@ -125,6 +144,8 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
             directory,
             requestedPath,
             input.query,
+            input.offset ?? 0,
+            input.limit ?? MAX_SEARCH_MATCHES,
             context.signal
           )
         };
@@ -227,7 +248,8 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
           cwd,
           input.timeoutMs ?? 60_000,
           context.signal,
-          input.cwd ?? "."
+          input.cwd ?? ".",
+          options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")
         );
         const details = processFailureDetails(input.command, input.args ?? [], input.cwd ?? ".", result);
         if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Process timed out and was terminated.", true, details);
@@ -242,7 +264,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         return { subjectRef: `command:${input.command}`, facts: result };
       }
     }),
-    ...gitTools()
+    ...gitTools(options)
   ];
 }
 
@@ -294,49 +316,29 @@ async function searchWithRipgrep(
   directory: string,
   requestedPath: string,
   query: string,
+  offset: number,
+  limit: number,
   signal: AbortSignal
 ): Promise<{
   matches: Array<{ path: string; line: number; text: string }>;
+  offset: number;
+  nextOffset: number | null;
   truncated: boolean;
 }> {
   const ignoredGlobs = [...IGNORED].sort().flatMap((name) => ["--glob", `!${name}/**`]);
-  const result = await runRipgrep([
-    "--json", "--hidden", "--no-ignore", "--fixed-strings", "--ignore-case", "--max-filesize", "256K",
-    ...ignoredGlobs, "-e", query, "--", "."
-  ], directory, signal);
-  const matches: Array<{ path: string; line: number; text: string }> = [];
-  for (const line of result.stdout.split(/\r?\n/)) {
-    if (line.length === 0) continue;
-    let event: { type?: string; data?: { path?: { text?: string }; lines?: { text?: string }; line_number?: number } };
-    try { event = JSON.parse(line) as typeof event; } catch { continue; }
-    if (event.type !== "match") continue;
-    const path = event.data?.path?.text;
-    const text = event.data?.lines?.text?.replace(/\r?\n$/, "");
-    const lineNumber = event.data?.line_number;
-    if (path === undefined || text === undefined || lineNumber === undefined) continue;
-    matches.push({
-      path: relativeFromRequested(requestedPath, directory, join(directory, path)),
-      line: lineNumber,
-      text: text.slice(0, 500)
-    });
-  }
-  matches.sort((left, right) => left.path.localeCompare(right.path, "en") || left.line - right.line || left.text.localeCompare(right.text, "en"));
-  return { matches: matches.slice(0, MAX_SEARCH_MATCHES), truncated: result.outputLimited || matches.length > MAX_SEARCH_MATCHES };
-}
-
-function runRipgrep(
-  args: string[],
-  cwd: string,
-  signal: AbortSignal
-): Promise<{ stdout: string; outputLimited: boolean }> {
   return new Promise((resolvePromise, rejectPromise) => {
     throwIfAborted(signal);
-    const child = spawn(rgPath, args, { cwd, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    const chunks: Buffer[] = [];
-    let outputBytes = 0;
-    let outputLimited = false;
+    const child = spawn(rgPath, [
+      "--json", "--sort", "path", "--hidden", "--no-ignore", "--fixed-strings", "--ignore-case", "--max-filesize", "256K",
+      ...ignoredGlobs, "-e", query, "--", "."
+    ], { cwd: directory, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const matches: Array<{ path: string; line: number; text: string }> = [];
+    let seen = 0;
+    let buffered = "";
+    let hasMore = false;
     let stderr = "";
     let timedOut = false;
+    let stoppedAfterPage = false;
     let settled = false;
     const abort = (): void => {
       child.kill();
@@ -347,32 +349,59 @@ function runRipgrep(
       settled = true;
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
-      if (error === undefined) resolvePromise({ stdout: Buffer.concat(chunks).toString("utf8"), outputLimited });
+      if (error === undefined) {
+        const nextOffset = hasMore ? offset + matches.length : null;
+        resolvePromise({ matches, offset, nextOffset, truncated: nextOffset !== null });
+      }
       else rejectPromise(error);
+    };
+    const acceptLine = (line: string): void => {
+      if (line.length === 0 || stoppedAfterPage) return;
+      let event: { type?: string; data?: { path?: { text?: string }; lines?: { text?: string }; line_number?: number } };
+      try { event = JSON.parse(line) as typeof event; } catch { return; }
+      if (event.type !== "match") return;
+      const current = seen;
+      seen += 1;
+      if (current < offset) return;
+      if (matches.length >= limit) {
+        hasMore = true;
+        stoppedAfterPage = true;
+        child.kill();
+        return;
+      }
+      const path = event.data?.path?.text;
+      const text = event.data?.lines?.text?.replace(/\r?\n$/, "");
+      const lineNumber = event.data?.line_number;
+      if (path === undefined || text === undefined || lineNumber === undefined) return;
+      matches.push({
+        path: relativeFromRequested(requestedPath, directory, join(directory, path)),
+        line: lineNumber,
+        text: text.slice(0, 500)
+      });
     };
     signal.addEventListener("abort", abort, { once: true });
     child.stdout.on("data", (chunk: Buffer) => {
-      if (outputLimited) return;
-      outputBytes += chunk.byteLength;
-      if (outputBytes > MAX_SEARCH_OUTPUT_BYTES) {
-        outputLimited = true;
-        child.kill();
-      } else {
-        chunks.push(chunk);
+      buffered += chunk.toString("utf8");
+      let newline = buffered.indexOf("\n");
+      while (newline >= 0) {
+        acceptLine(buffered.slice(0, newline).replace(/\r$/, ""));
+        buffered = buffered.slice(newline + 1);
+        newline = buffered.indexOf("\n");
       }
     });
     child.stderr.on("data", (chunk: Buffer) => { stderr = `${stderr}${chunk.toString("utf8")}`.slice(0, 500); });
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, 30_000);
     child.once("error", () => finish(new ToolFailure("SEARCH_ENGINE_ERROR", "Bundled Ripgrep could not be started.", true)));
     child.once("close", (code) => {
+      if (!stoppedAfterPage) acceptLine(buffered.replace(/\r$/, ""));
       if (timedOut) finish(new ToolFailure("TOOL_TIMEOUT", "Filesystem search timed out.", true));
-      else if (!outputLimited && code !== 0 && code !== 1) finish(new ToolFailure("SEARCH_ENGINE_ERROR", `Bundled Ripgrep failed.${stderr.trim() ? ` ${stderr.trim()}` : ""}`, true));
+      else if (!stoppedAfterPage && code !== 0 && code !== 1) finish(new ToolFailure("SEARCH_ENGINE_ERROR", `Bundled Ripgrep failed.${stderr.trim() ? ` ${stderr.trim()}` : ""}`, true));
       else finish();
     });
   });
 }
 
-function gitTools(): RuntimeTool[] {
+function gitTools(options: { readonly artifactDir?: string }): RuntimeTool[] {
   return [
     gitTool({
       name: "git.status",
@@ -382,7 +411,7 @@ function gitTools(): RuntimeTool[] {
       avoidWhen: ["Existing facts already establish the required workspace status."],
       produces: ["The bounded short-form repository status and process facts."],
       schema: z.object({}).strict(), inputExample: {}, args: () => ["status", "--short"]
-    }),
+    }, options.artifactDir),
     gitTool({
       name: "git.diff",
       purpose: "Observe unstaged repository differences for the workspace or one known path.",
@@ -391,7 +420,7 @@ function gitTools(): RuntimeTool[] {
       avoidWhen: ["The required fact is repository status or committed content rather than an unstaged diff."],
       produces: ["The bounded unstaged diff and process facts."],
       schema: z.object({ path: z.string().trim().min(1).optional() }).strict(), inputExample: {}, args: (input) => ["diff", "--", ...(input.path ? [input.path] : [])]
-    }),
+    }, options.artifactDir),
     gitTool({
       name: "git.show",
       purpose: "Observe content from one known repository revision, optionally limited to one path.",
@@ -400,7 +429,7 @@ function gitTools(): RuntimeTool[] {
       avoidWhen: ["The revision is unresolved or the required fact concerns the working tree."],
       produces: ["The bounded committed revision content and process facts."],
       schema: z.object({ revision: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/), path: z.string().trim().min(1).optional() }).strict(), inputExample: { revision: "HEAD" }, args: (input) => ["show", "--format=medium", input.revision, ...(input.path ? ["--", input.path] : [])]
-    })
+    }, options.artifactDir)
   ];
 }
 
@@ -414,7 +443,7 @@ function gitTool<T>(definition: {
   schema: z.ZodType<T>;
   inputExample: unknown;
   args(input: T): string[];
-}): RuntimeTool {
+}, artifactDir?: string): RuntimeTool {
   return defineTool({
     contract: {
       identity: { name: definition.name },
@@ -429,7 +458,9 @@ function gitTool<T>(definition: {
         definition.args(input),
         context.workspace,
         30_000,
-        context.signal
+        context.signal,
+        context.workspace,
+        artifactDir ?? join(context.workspace, ".nexora", "artifacts")
       );
       if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Git command timed out.", true);
       if (result.exitCode !== 0) throw new ToolFailure("GIT_COMMAND_FAILED", result.stderr || "Git command failed.");
@@ -487,21 +518,39 @@ function defineTool<Input, Facts>(definition: {
   };
 }
 
-async function listFiles(root: string, signal: AbortSignal): Promise<string[]> {
-  const output: string[] = [];
-  const pending = [root];
-  while (pending.length > 0 && output.length < 2001) {
-    throwIfAborted(signal);
-    const directory = pending.pop()!;
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      throwIfAborted(signal);
-      if (entry.isSymbolicLink() || IGNORED.has(entry.name)) continue;
-      const path = join(directory, entry.name);
-      if (entry.isDirectory()) pending.push(path);
-      else if (entry.isFile()) output.push(path);
+async function listFilesPage(
+  root: string,
+  offset: number,
+  limit: number,
+  signal: AbortSignal
+): Promise<{ readonly entries: readonly string[]; readonly nextOffset: number | null }> {
+  const entries: string[] = [];
+  let seen = 0;
+  for await (const path of walkFiles(root, signal)) {
+    if (seen < offset) {
+      seen += 1;
+      continue;
     }
+    if (entries.length >= limit) {
+      return { entries, nextOffset: offset + entries.length };
+    }
+    entries.push(path);
+    seen += 1;
   }
-  return output.sort();
+  return { entries, nextOffset: null };
+}
+
+async function* walkFiles(root: string, signal: AbortSignal): AsyncGenerator<string> {
+  throwIfAborted(signal);
+  const entries = (await readdir(root, { withFileTypes: true }))
+    .filter((entry) => !entry.isSymbolicLink() && !IGNORED.has(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name, "en"));
+  for (const entry of entries) {
+    throwIfAborted(signal);
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) yield* walkFiles(path, signal);
+    else if (entry.isFile()) yield path;
+  }
 }
 
 async function atomicWrite(
@@ -525,11 +574,17 @@ function runProcess(
   cwd: string,
   timeoutMs: number,
   signal: AbortSignal,
-  reportedCwd = cwd
+  reportedCwd = cwd,
+  artifactDir = join(cwd, ".nexora", "artifacts")
 ): Promise<{
   exitCode: number;
   stdout: string;
   stderr: string;
+  stdoutBytes: number;
+  stderrBytes: number;
+  stdoutArtifactRef: string | null;
+  stderrArtifactRef: string | null;
+  artifactRefs: string[];
   truncated: boolean;
   timedOut: boolean;
 }> {
@@ -541,15 +596,40 @@ function runProcess(
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"]
     });
-    let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let timedOut = false; let settled = false;
+    const artifactStore = new ArtifactStore(artifactDir);
+    const stdoutTemporary = artifactStore.temporaryPath("stdout");
+    const stderrTemporary = artifactStore.temporaryPath("stderr");
+    const stdoutSpool = createWriteStream(stdoutTemporary, { flags: "wx" });
+    const stderrSpool = createWriteStream(stderrTemporary, { flags: "wx" });
+    let stdout = Buffer.alloc(0); let stderr = Buffer.alloc(0); let stdoutBytes = 0; let stderrBytes = 0; let timedOut = false; let settled = false;
     const append = (current: Buffer, chunk: Buffer) => Buffer.concat([current, chunk]).subarray(0, MAX_CAPTURE_BYTES);
-    child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdoutBytes += chunk.byteLength;
+      stdout = append(stdout, chunk);
+      if (!stdoutSpool.write(chunk)) {
+        child.stdout.pause();
+        stdoutSpool.once("drain", () => child.stdout.resume());
+      }
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderrBytes += chunk.byteLength;
+      stderr = append(stderr, chunk);
+      if (!stderrSpool.write(chunk)) {
+        child.stderr.pause();
+        stderrSpool.once("drain", () => child.stderr.resume());
+      }
+    });
+    const discardSpools = (): void => {
+      stdoutSpool.destroy();
+      stderrSpool.destroy();
+      void Promise.allSettled([rm(stdoutTemporary, { force: true }), rm(stderrTemporary, { force: true })]);
+    };
     const abort = (): void => {
       if (settled) return;
       settled = true;
       terminate();
       cleanup();
+      discardSpools();
       rejectPromise(new ToolFailure("CANCELLED", "Process execution was cancelled."));
     };
     const terminate = (): void => {
@@ -573,6 +653,20 @@ function runProcess(
       clearTimeout(timer);
       signal.removeEventListener("abort", abort);
     };
+    const spoolError = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      terminate();
+      cleanup();
+      discardSpools();
+      rejectPromise(new ToolFailure(
+        "ARTIFACT_WRITE_FAILED",
+        `Process output could not be archived: ${error.message}`,
+        true
+      ));
+    };
+    stdoutSpool.once("error", spoolError);
+    stderrSpool.once("error", spoolError);
     signal.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => {
       timedOut = true;
@@ -582,6 +676,7 @@ function runProcess(
       if (settled) return;
       settled = true;
       cleanup();
+      discardSpools();
       const identity = boundedProcessIdentity(command, args, reportedCwd);
       rejectPromise(new ToolFailure(
         "PROCESS_START_FAILED",
@@ -593,12 +688,41 @@ function runProcess(
         }
       ));
     });
-    child.once("close", (code) => {
+    child.once("close", (code) => { void (async () => {
       if (settled) return;
       settled = true;
       cleanup();
-      resolvePromise({ exitCode: code ?? 1, stdout: stdout.toString("utf8"), stderr: stderr.toString("utf8"), truncated: stdout.length >= MAX_CAPTURE_BYTES || stderr.length >= MAX_CAPTURE_BYTES, timedOut });
-    });
+      stdoutSpool.end();
+      stderrSpool.end();
+      try {
+        await Promise.all([finished(stdoutSpool), finished(stderrSpool)]);
+        const stdoutArtifact = stdoutBytes > MAX_CAPTURE_BYTES
+          ? await artifactStore.putFile(stdoutTemporary, "text/plain")
+          : null;
+        const stderrArtifact = stderrBytes > MAX_CAPTURE_BYTES
+          ? await artifactStore.putFile(stderrTemporary, "text/plain")
+          : null;
+        if (stdoutArtifact === null) await rm(stdoutTemporary, { force: true });
+        if (stderrArtifact === null) await rm(stderrTemporary, { force: true });
+        const artifactRefs = [stdoutArtifact?.digest, stderrArtifact?.digest]
+          .filter((value): value is string => value !== undefined);
+        resolvePromise({
+          exitCode: code ?? 1,
+          stdout: stdout.toString("utf8"),
+          stderr: stderr.toString("utf8"),
+          stdoutBytes,
+          stderrBytes,
+          stdoutArtifactRef: stdoutArtifact?.digest ?? null,
+          stderrArtifactRef: stderrArtifact?.digest ?? null,
+          artifactRefs,
+          truncated: artifactRefs.length > 0,
+          timedOut
+        });
+      } catch (error) {
+        discardSpools();
+        rejectPromise(new ToolFailure("ARTIFACT_WRITE_FAILED", error instanceof Error ? error.message : String(error), true));
+      }
+    })(); });
   });
 }
 
@@ -606,7 +730,7 @@ function processFailureDetails(
   command: string,
   args: readonly string[],
   cwd: string,
-  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly truncated: boolean; readonly timedOut: boolean }
+  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly stdoutBytes: number; readonly stderrBytes: number; readonly stdoutArtifactRef: string | null; readonly stderrArtifactRef: string | null; readonly artifactRefs: readonly string[]; readonly truncated: boolean; readonly timedOut: boolean }
 ): Record<string, unknown> {
   const identity = boundedProcessIdentity(command, args, cwd);
   return {
@@ -614,6 +738,11 @@ function processFailureDetails(
     exitCode: result.exitCode,
     stdout: result.stdout,
     stderr: result.stderr,
+    stdoutBytes: result.stdoutBytes,
+    stderrBytes: result.stderrBytes,
+    stdoutArtifactRef: result.stdoutArtifactRef,
+    stderrArtifactRef: result.stderrArtifactRef,
+    artifactRefs: result.artifactRefs,
     truncated: result.truncated || identity.identityTruncated,
     timedOut: result.timedOut
   };

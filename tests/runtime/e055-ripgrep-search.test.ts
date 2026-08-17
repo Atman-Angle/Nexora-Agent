@@ -58,6 +58,8 @@ describe("E055 bundled Ripgrep search", () => {
           { path: "src/a.txt", line: 1, text: "Needle [literal].*" },
           { path: "src/nested/b.txt", line: 1, text: "needle [literal].*" }
         ],
+        offset: 0,
+        nextOffset: null,
         truncated: false
       }
     });

@@ -186,7 +186,7 @@ describe("D1 developer Runtime golden path", () => {
     await runtime.close();
   });
 
-  it("returns a persisted failed terminal result without throwing away evidence", async () => {
+  it("returns a persisted resumable budget pause without throwing away the repair error", async () => {
     const workspace = temporaryWorkspace();
     const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide() {
@@ -204,12 +204,13 @@ describe("D1 developer Runtime golden path", () => {
         maxDurationMs: 30_000
       }
     });
-    const result = await run.result();
+    const inspection = await run.wait();
 
-    expect(result.status).toBe("failed");
-    if (result.status !== "failed") throw new Error("Expected a failed terminal result.");
-    expect(result.error.code).toBe("INVALID_MODEL_RESPONSE");
-    expect((await run.inspect()).result).toEqual(result);
+    expect(inspection.status).toBe("blocked");
+    expect(inspection.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
+    expect(inspection.error?.code).toBe("INVALID_MODEL_RESPONSE");
+    expect(inspection.result).toBeNull();
+    await expect(run.result()).rejects.toThrow("Run is not terminal");
     await runtime.close();
   });
 
