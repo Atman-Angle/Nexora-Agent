@@ -1583,7 +1583,16 @@ export class RuntimeEngine {
             && item.inputDigest === parsedInputDigest
             && item.status !== "failed"
           ));
-      if (duplicate !== undefined) {
+      const duplicateIndex = duplicate === undefined
+        ? -1
+        : persistedInvocations.findIndex((item) => item.id === duplicate.id);
+      const invalidatedByWrite = duplicateIndex >= 0
+        && tool.contract.execution.effect.kind === "execute"
+        && persistedInvocations.slice(duplicateIndex + 1).some((item) => (
+          item.status === "succeeded"
+          && this.#tools.get(item.toolName)?.contract.execution.effect.kind === "write"
+        ));
+      if (duplicate !== undefined && !invalidatedByWrite) {
         throw new ActionRejectedError(
           `execute_step duplicates an existing persisted Invocation with status ${duplicate.status}; do not repeat it.`
         );
@@ -1695,6 +1704,41 @@ export class RuntimeEngine {
       assertCompletedStepsUnchanged(run, action.orderedSteps);
     }
     if (contract === null) throw new ActionRejectedError("Task Contract is missing.");
+
+    const planSemantics = (steps: typeof action.orderedSteps): unknown => steps.map((step) => ({
+      objective: step.objective,
+      acceptanceChecks: step.acceptanceChecks
+    }));
+    if (
+      current !== null
+      && action.taskContract === undefined
+      && run.lastError === null
+      && !this.#store.listToolInvocations(run.runId).some((invocation) => (
+        invocation.planVersion === current.version
+      ))
+      && digestCanonicalJson(planSemantics(action.orderedSteps))
+        === digestCanonicalJson(planSemantics(current.orderedSteps))
+    ) {
+      this.#store.recordRunEvent({
+        runId: run.runId,
+        event: {
+          type: "plan.set",
+          occurredAt: this.#now(),
+          payload: {
+            version: current.version,
+            basedOnVersion: action.basedOnVersion,
+            inputVersion: contract.inputVersion,
+            goalDigest: current.goalDigest,
+            taskContract: contract,
+            plan: current,
+            noOp: true
+          }
+        },
+        fencingToken: this.#leases.requireFencingToken(run.runId)
+      });
+      this.#notify(run.runId, observer);
+      return run;
+    }
 
     const version = current === null ? 1 : current.version + 1;
     const plan = StructuredPlanSchema.parse({

@@ -455,15 +455,18 @@ export function autoRehydrateForActiveStep(args: {
   readonly invocations: readonly ToolInvocation[];
 }): { readonly required: readonly string[]; readonly helpful: readonly string[] } {
   const { run, observations, invocations } = args;
-  if (run.currentPlan === null) return { required: [], helpful: [] };
+  const currentArtifacts = new Set(observations.flatMap((observation) => (
+    directArtifactRefs(observation.facts).map((ref) => `artifact:${ref}`)
+  )));
+  if (run.currentPlan === null) return { required: [...currentArtifacts], helpful: [] };
   const activeStepId = run.stepProgress.find((progress) => progress.status === "active")?.stepId;
-  if (activeStepId === undefined) return { required: [], helpful: [] };
+  if (activeStepId === undefined) return { required: [...currentArtifacts], helpful: [] };
   const activeStep = run.currentPlan.orderedSteps.find((step) => step.id === activeStepId);
-  if (activeStep === undefined) return { required: [], helpful: [] };
+  if (activeStep === undefined) return { required: [...currentArtifacts], helpful: [] };
   const observationByInvocation = new Map(
     observations.map((observation) => [observation.invocationId, observation])
   );
-  const required = new Set<string>();
+  const required = new Set<string>(currentArtifacts);
   for (const invocation of invocations) {
     if (invocation.stepId !== activeStepId) continue;
     const observation = observationByInvocation.get(invocation.id);
@@ -505,6 +508,14 @@ export function autoRehydrateForActiveStep(args: {
     if (!required.has(ref)) helpful.add(ref);
   }
   return { required: [...required], helpful: [...helpful] };
+}
+
+function directArtifactRefs(value: unknown): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  const artifactRef = (value as Readonly<Record<string, unknown>>).artifactRef;
+  return typeof artifactRef === "string" && /^sha256:[0-9a-f]{64}$/.test(artifactRef)
+    ? [artifactRef]
+    : [];
 }
 
 function kindOf(kind: "input" | "invocation" | "evidence" | "event" | "artifact"): RehydratedFact["kind"] {

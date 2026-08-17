@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe("E080 deterministic Context Eviction", () => {
-  it("archives large predecessor facts and projects a bounded reference with exact Authority links", async () => {
+  it("keeps large predecessor facts complete when the Provider budget permits", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
     const steps = [step(1), step(2)];
@@ -54,9 +54,9 @@ describe("E080 deterministic Context Eviction", () => {
     expect(evidence.artifactRef).toBe(evidence.digest);
     expect(observation).toEqual(expect.objectContaining({
       invocationId: invocation.id,
-      payloadMode: "reference",
-      truncated: true,
-      facts: null,
+      payloadMode: "full",
+      truncated: false,
+      facts: invocation.resultJson,
       error: null,
       payloadFragment: null,
       originalBytes: expect.any(Number),
@@ -68,14 +68,14 @@ describe("E080 deterministic Context Eviction", () => {
       ]
     }));
     expect(observation!.originalBytes).toBeGreaterThan(4 * 1024);
-    expect(Buffer.byteLength(JSON.stringify(observation), "utf8")).toBeLessThan(4 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(observation), "utf8")).toBeGreaterThan(4 * 1024);
     expect(JSON.parse(
       new ArtifactStore(join(dataDir, "artifacts")).getText(evidence.artifactRef!)
     )).toEqual(invocation.resultJson);
     await runtime.close();
   });
 
-  it("keeps the latest bounded observations through failure and remains rebuildable without Summary state", async () => {
+  it("keeps all distinct observations through failure and remains rebuildable without Summary state", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
     const steps = Array.from({ length: 10 }, (_, index) => step(index + 1));
@@ -106,22 +106,20 @@ describe("E080 deterministic Context Eviction", () => {
     expect(result.status).toBe("waiting");
     expect(view.toolInvocations).toHaveLength(11);
     expect(projected).toEqual(rebuilt);
-    expect(projected).toHaveLength(8);
-    expect(projected.map((item) => item.invocationId)).toEqual(
-      [view.toolInvocations[0]!.id, ...view.toolInvocations.slice(-7).map((item) => item.id)]
-    );
+    expect(projected).toHaveLength(11);
+    expect(projected.map((item) => item.invocationId)).toEqual(view.toolInvocations.map((item) => item.id));
     expect(projected[0]?.retention).toMatchObject({
       class: "safety_constraint",
       critical: true,
       reasons: ["safety_or_approval_related_failure"]
     });
-    expect(projected.slice(0, -1).every((item) => item.truncated)).toBe(true);
+    expect(projected.slice(0, -1).every((item) => !item.truncated)).toBe(true);
     expect(projected.at(-1)).toEqual(expect.objectContaining({
       invocationId: view.toolInvocations.at(-1)!.id,
       status: "failed",
-      payloadMode: "fragment",
-      error: null,
-      payloadFragment: expect.objectContaining({ kind: "deterministic_excerpt" }),
+      payloadMode: "full",
+      error: expect.any(Object),
+      payloadFragment: null,
       retention: expect.objectContaining({
         class: "unresolved_error",
         critical: true
@@ -133,7 +131,7 @@ describe("E080 deterministic Context Eviction", () => {
     expect(JSON.parse(
       new ArtifactStore(join(dataDir, "artifacts")).getText(activeFailure.payloadArtifactRef!)
     )).toEqual(activeFailure.errorJson);
-    expect(Buffer.byteLength(JSON.stringify(projected), "utf8")).toBeLessThanOrEqual(32 * 1024);
+    expect(Buffer.byteLength(JSON.stringify(projected), "utf8")).toBeGreaterThan(32 * 1024);
 
     await runtime.close();
     const database = new Database(join(dataDir, "runtime-v1.1.db"), { readonly: true });
@@ -233,7 +231,7 @@ describe("E080 deterministic Context Eviction", () => {
     );
   });
 
-  it("enforces the hard eight-observation limit while retaining failed outcomes", async () => {
+  it("retains more than eight failed outcomes when the Provider budget permits", async () => {
     const workspace = fixture();
     const current = step(1);
     const provider = new ScriptedRuntimeProvider([
@@ -251,17 +249,17 @@ describe("E080 deterministic Context Eviction", () => {
     const observations = provider.contexts.at(-1)!.toolObservations;
 
     expect(result.status).toBe("waiting");
-    expect(observations).toHaveLength(8);
+    expect(observations).toHaveLength(9);
     expect(observations.every((item) => item.status === "failed")).toBe(true);
     expect(observations.at(-1)?.retention).toEqual(expect.objectContaining({
       critical: true,
       class: "unresolved_error"
     }));
-    expect(Buffer.byteLength(JSON.stringify(observations), "utf8")).toBeLessThanOrEqual(32 * 1024);
+    expect(observations.length).toBeGreaterThan(8);
     await runtime.close();
   });
 
-  it("keeps a large navigation success as a reference with its Evidence and Artifact", async () => {
+  it("keeps a large navigation success complete with its Evidence and Artifact", async () => {
     const workspace = fixture();
     const dataDir = join(workspace, ".nexora");
     const current = {
@@ -304,8 +302,8 @@ describe("E080 deterministic Context Eviction", () => {
     expect(observation).toEqual(expect.objectContaining({
       invocationId: invocation.id,
       status: "succeeded",
-      payloadMode: "reference",
-      facts: null,
+      payloadMode: "full",
+      facts: invocation.resultJson,
       payloadFragment: null,
       retention: expect.objectContaining({ class: "active_step", critical: false }),
       sourceRefs: expect.arrayContaining([

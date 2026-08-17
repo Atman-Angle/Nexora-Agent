@@ -139,7 +139,13 @@ export function buildDecisionContext(args: {
       }));
     }
   }
-  const { accepted } = admitRehydratedFacts(candidates);
+  // Provider-aware eviction owns the production wire budget. Admit exact
+  // current facts here so large-window models can use them in full.
+  const { accepted } = admitRehydratedFacts(candidates, {
+    maxRefs: Number.MAX_SAFE_INTEGER,
+    maxTokens: Number.MAX_SAFE_INTEGER,
+    maxSingleFactTokens: Number.MAX_SAFE_INTEGER
+  });
   const seenFacts = new Set<string>();
   const rehydratedFacts = accepted.filter((fact) => {
     if (seenFacts.has(fact.ref)) return false;

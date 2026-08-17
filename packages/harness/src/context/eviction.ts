@@ -65,7 +65,10 @@ export function evictDecisionContextOnce(
           : observation
       )) });
     }
-    if (!candidate.retention.critical && candidate.payloadMode === "fragment") {
+    if (
+      (!candidate.retention.critical || candidate.retention.class === "current_resource")
+      && candidate.payloadMode === "fragment"
+    ) {
       return rebuildDecisionContext(context, { toolObservations: observations.map((observation) => (
         observation.invocationId === candidate.invocationId
           ? referenceObservation(observation)
@@ -127,20 +130,6 @@ export function evictDecisionContextOnce(
       run: { ...context.run, evidence: context.run.evidence.slice(1) }
     });
   }
-  const exampleIndex = context.tools.findIndex((tool) => tool.execution.inputExample !== undefined);
-  if (exampleIndex >= 0) {
-    return rebuildDecisionContext(context, {
-      tools: context.tools.map((tool, index) => index === exampleIndex
-        ? {
-            ...tool,
-            execution: {
-              effect: tool.execution.effect,
-              inputSchema: tool.execution.inputSchema
-            }
-          }
-        : tool)
-    });
-  }
   const verboseToolIndex = context.tools.findIndex((tool) => (
     tool.capability.nonGoals.length > 0
     || tool.decision.useWhen.length > 0
@@ -171,6 +160,81 @@ export function evictDecisionContextOnce(
     }
   }
   return null;
+}
+
+/**
+ * Contracts a token-heavy observation set in one deterministic projection
+ * rebuild. The Provider meter remains authoritative; byte ratios only choose
+ * how much low-value material to remove before the next real measurement.
+ */
+export function evictDecisionContextTowardBudget(
+  context: ModelDecisionContext,
+  measuredInputTokens: number,
+  targetInputTokens: number
+): ModelDecisionContext | null {
+  if (measuredInputTokens <= targetInputTokens) return null;
+  const helpfulFacts = context.rehydratedFacts.filter((fact) => fact.origin !== "harness_helpful");
+  if (
+    context.historyCandidates.length > 0
+    || context.memoryCandidates.length > 0
+    || context.sessionArchive !== undefined
+    || helpfulFacts.length !== context.rehydratedFacts.length
+  ) {
+    return rebuildDecisionContext(context, {
+      historyCandidates: [],
+      memoryCandidates: [],
+      rehydratedFacts: helpfulFacts
+    }, true);
+  }
+
+  let estimatedBytes = jsonBytes(context);
+  const targetBytes = Math.max(1, Math.floor(
+    estimatedBytes * targetInputTokens / measuredInputTokens
+  ));
+  let observations = [...context.toolObservations];
+  const byValue = [...observations].sort((left, right) => (
+    retentionClassRank(left.retention.class) - retentionClassRank(right.retention.class)
+    || left.retention.stepOrder - right.retention.stepOrder
+    || left.retention.invocationSequence - right.retention.invocationSequence
+    || stringCompare(left.invocationId, right.invocationId)
+  ));
+  let changed = false;
+  for (const candidate of byValue) {
+    if (estimatedBytes <= targetBytes) break;
+    let current = observations.find((observation) => observation.invocationId === candidate.invocationId);
+    if (current === undefined) continue;
+    if (current.payloadMode === "full") {
+      const replacement = current.retention.critical
+        ? fragmentObservation(current)
+        : referenceObservation(current);
+      observations = observations.map((observation) => (
+        observation.invocationId === current!.invocationId ? replacement : observation
+      ));
+      estimatedBytes -= Math.max(0, jsonBytes(current) - jsonBytes(replacement));
+      current = replacement;
+      changed = true;
+    }
+    if (
+      estimatedBytes <= targetBytes
+      || (current.retention.critical && current.retention.class !== "current_resource")
+    ) continue;
+    if (current.payloadMode === "fragment") {
+      const replacement = referenceObservation(current);
+      observations = observations.map((observation) => (
+        observation.invocationId === current!.invocationId ? replacement : observation
+      ));
+      estimatedBytes -= Math.max(0, jsonBytes(current) - jsonBytes(replacement));
+      current = replacement;
+      changed = true;
+    }
+    if (estimatedBytes <= targetBytes || current.payloadMode !== "reference") continue;
+    observations = observations.filter((observation) => observation.invocationId !== current!.invocationId);
+    estimatedBytes -= jsonBytes(current);
+    changed = true;
+  }
+  return changed
+    ? rebuildDecisionContext(context, { toolObservations: observations })
+    : evictDecisionContextOnce(context);
 }
 
 function continuationObservationMode(value: unknown): "full" | "fragment" | "reference" | null {

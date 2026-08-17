@@ -11,7 +11,10 @@ import {
   parseProviderTokenUsage,
   type ContextBudgetAssessment
 } from "./context/budget.js";
-import { evictDecisionContextOnce } from "./context/eviction.js";
+import {
+  evictDecisionContextOnce,
+  evictDecisionContextTowardBudget
+} from "./context/eviction.js";
 import type {
   ModelDecisionContext,
   ProviderTokenUsage,
@@ -60,6 +63,7 @@ export async function requestModel(
       promptCache: { mode: "disabled" }
     }
   });
+  const strategyConfigurationDigest = effectivePrompt.strategy.configurationDigest;
   try {
     assertStrategyContinuity(services, runInput.runId, effectivePrompt);
   } catch (error) {
@@ -77,15 +81,18 @@ export async function requestModel(
     while (
       assessment.decision !== "within_budget"
     ) {
-      const evicted = evictDecisionContextOnce(
-        effectiveContext as ModelDecisionContext
-      );
+      const evicted = evictDecisionContextTowardBudget(
+        effectiveContext as ModelDecisionContext,
+        assessment.measurement.inputTokens,
+        assessment.softInputLimitTokens
+      ) ?? evictDecisionContextOnce(effectiveContext as ModelDecisionContext);
       if (evicted === null) break;
       effectiveContext = evicted;
       effectivePrompt = compilePrompt({
         context: effectiveContext,
         host: services.promptHost,
-        transport: effectivePrompt.transport
+        transport: effectivePrompt.transport,
+        strategyConfigurationDigest
       });
       tokenEvictionCount += 1;
       signal.throwIfAborted();
@@ -106,7 +113,8 @@ export async function requestModel(
     context: effectiveContext,
     host: services.promptHost,
     transport: effectivePrompt.transport,
-    measurement: assessment.measurement
+    measurement: assessment.measurement,
+    strategyConfigurationDigest
   });
   const now = services.runtime.now();
   const intent: ModelCallIntent = {
@@ -257,10 +265,15 @@ function assertStrategyContinuity(
 ): void {
   const previous = services.runtime.readState(runId).latestModelCallAudit?.manifest.strategy;
   if (previous === undefined || previous === null || typeof previous !== "object" || Array.isArray(previous)) return;
-  const cache = (previous as { readonly cache?: unknown }).cache;
-  if (cache === null || typeof cache !== "object" || Array.isArray(cache)) return;
-  const previousDigest = (cache as { readonly stablePrefixDigest?: unknown }).stablePrefixDigest;
-  if (typeof previousDigest !== "string" || previousDigest === current.strategy.cache.stablePrefixDigest) return;
+  const previousConfigurationDigest = (previous as { readonly configurationDigest?: unknown }).configurationDigest;
+  if (typeof previousConfigurationDigest === "string") {
+    if (previousConfigurationDigest === current.strategy.configurationDigest) return;
+  } else {
+    const cache = (previous as { readonly cache?: unknown }).cache;
+    if (cache === null || typeof cache !== "object" || Array.isArray(cache)) return;
+    const previousDigest = (cache as { readonly stablePrefixDigest?: unknown }).stablePrefixDigest;
+    if (typeof previousDigest !== "string" || previousDigest === current.strategy.cache.stablePrefixDigest) return;
+  }
   if (services.promptHost.strategyRevision !== null) return;
   const error = new Error(
     "STRATEGY_SNAPSHOT_UNAVAILABLE: The current Host/Profile/Project/Tool/Transport snapshot does not match the previous Model Call. Provide an explicit strategyRevision to continue without rewriting prior facts."

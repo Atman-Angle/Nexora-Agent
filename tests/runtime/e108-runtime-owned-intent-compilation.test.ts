@@ -451,6 +451,38 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     ))).toBe(true);
   });
 
+  it("allows a previously successful verifier after a later write changes workspace state", async () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "target.txt"), "GOOD\n", "utf8");
+    writeFileSync(join(root, "verify.mjs"), "import{readFileSync}from'node:fs';process.exit(readFileSync('target.txt','utf8').length?0:1);", "utf8");
+    const provider = queuedProvider([
+      planDecision(["shell.execute"]),
+      responseCall("shell.execute", { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }),
+      responsePlan({ tasks: [{ objective: "Update target.txt." }] }),
+      responseCall("filesystem.write", { path: "target.txt", content: "BETTER\n" }),
+      responsePlan({ tasks: [{ objective: "Verify the updated workspace." }] }),
+      responseCall("shell.execute", { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }),
+      responseText("Updated and verified target.txt.")
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
+    let result = await runtime.start({ input: "Update target.txt and verify the result." });
+    for (let index = 0; index < 3 && result.status === "waiting"; index += 1) {
+      const pending = (await runtime.inspect(result.runId)).snapshot.pendingRequest;
+      if (pending?.kind !== "approval") break;
+      result = await runtime.resume({
+        runId: result.runId,
+        approvalDecision: { requestId: pending.id, approved: true }
+      });
+    }
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(view.toolInvocations.filter((item) => item.toolName === "shell.execute").map((item) => item.status))
+      .toEqual(["succeeded", "succeeded"]);
+    expect(view.events.some((event) => event.type === "response.rejected")).toBe(false);
+  });
+
   it("allows a safe capability outside the active Plan checkpoint without satisfying it", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "target.txt"), "DISCOVERED", "utf8");

@@ -73,6 +73,9 @@ export function deepFreeze<T>(value: T): T {
 
 export function validateToolContract(contract: RuntimeTool["contract"]): void {
   const name = contract.identity.name; requireToolText(name, "identity.name", name); requireToolText(contract.capability.purpose, "capability.purpose", name); requireToolTexts(contract.capability.nonGoals, "capability.nonGoals", name); requireToolTexts(contract.decision.useWhen, "decision.useWhen", name); requireToolTexts(contract.decision.avoidWhen, "decision.avoidWhen", name); requireToolText(contract.execution.effect.description, "execution.effect.description", name); requireToolTexts(contract.evidence.produces, "evidence.produces", name);
+  if (contract.execution.readCache !== undefined && (
+    contract.execution.effect.kind !== "read" || !contract.execution.idempotent
+  )) throw new Error(`Runtime Tool ${name} readCache requires an idempotent read Effect.`);
 }
 function requireToolTexts(values: readonly string[], field: string, name: string): void { if (values.length === 0 || values.length > 4) throw new Error(`Runtime Tool ${name} ${field} must contain 1-4 items.`); for (const value of values) requireToolText(value, field, name); }
 function requireToolText(value: string, field: string, name: string): void { if (!value.trim() || value.length > 240) throw new Error(`Runtime Tool ${name} ${field} must be non-empty and at most 240 characters.`); }

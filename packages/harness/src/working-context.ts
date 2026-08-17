@@ -92,7 +92,12 @@ function projectCurrentFiles(
         ? input.path
         : null;
     if (path === null) continue;
-    if (observation.toolName === "filesystem.read" && typeof facts?.content === "string") {
+    if (
+      observation.toolName === "filesystem.read"
+      && typeof facts?.content === "string"
+      && facts.truncated !== true
+      && facts.offset === undefined
+    ) {
       files.set(path, { content: facts.content, source: "read" });
       continue;
     }

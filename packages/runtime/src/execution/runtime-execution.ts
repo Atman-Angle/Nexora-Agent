@@ -202,13 +202,14 @@ async function executeDurableToolAttempt(
 
   let result: RuntimeToolResult;
   let failureDetails: ReturnType<typeof toolFailureDiagnostics>;
+  const reused = reusableReadResult(services, invocation, tool, attemptNumber);
   try {
-    const executed = await services.withHeartbeat(invocation.runId, () => tool.execute(parsedInput, {
-      workspace: services.workspace,
-      runId: invocation.runId,
-      invocationId: invocation.id,
-      signal: services.signal
-    }));
+    const executed = reused?.result ?? await services.withHeartbeat(invocation.runId, () => tool.execute(parsedInput, {
+        workspace: services.workspace,
+        runId: invocation.runId,
+        invocationId: invocation.id,
+        signal: services.signal
+      }));
     failureDetails = toolFailureDiagnostics(executed);
     const returned = ToolResultSchema.parse(executed);
     result = returned.status === "success"
@@ -267,6 +268,8 @@ async function executeDurableToolAttempt(
          attemptId,
          attemptNumber,
          toolName: tool.contract.identity.name,
+        physicalExecution: reused === null,
+        ...(reused === null ? {} : { reusedFromInvocationId: reused.invocationId }),
         payloadDigest,
         payloadArtifactRef: payloadArtifact?.digest ?? null,
         ...(failurePayload === null ? {} : { error: failurePayload }),
@@ -276,6 +279,65 @@ async function executeDurableToolAttempt(
   });
   services.notify(invocation.runId, observer);
   return completed;
+}
+
+function reusableReadResult(
+  services: RuntimeServices,
+  invocation: ToolInvocation,
+  tool: RuntimeTool,
+  attemptNumber: number
+): { readonly invocationId: string; readonly result: RuntimeToolResult } | null {
+  if (
+    attemptNumber !== 1
+    || !invocation.idempotent
+    || !tool.contract.execution.idempotent
+    || tool.contract.execution.effect.kind !== "read"
+    || tool.contract.execution.readCache?.mode !== "until_mutation"
+  ) return null;
+
+  const invocations = services.store.listToolInvocations(invocation.runId);
+  const currentIndex = invocations.findIndex((candidate) => candidate.id === invocation.id);
+  if (currentIndex <= 0) return null;
+  const events = services.store.listEvents(invocation.runId);
+  const freshnessBoundary = [...events].reverse().find((event) => (
+    event.type === "run.reopened" || event.type === "run.resumed"
+  ))?.sequence ?? 0;
+  let invalidatedAfter = -1;
+  for (let index = 0; index < currentIndex; index += 1) {
+    const candidateTool = services.tools.get(invocations[index]!.toolName);
+    if (candidateTool?.contract.execution.effect.kind !== "read") invalidatedAfter = index;
+  }
+  const attempts = services.store.listToolAttempts(invocation.runId);
+  for (let index = currentIndex - 1; index > invalidatedAfter; index -= 1) {
+    const candidate = invocations[index]!;
+    if (
+      candidate.toolName !== invocation.toolName
+      || candidate.inputDigest !== invocation.inputDigest
+      || candidate.status !== "succeeded"
+      || candidate.resultJson === null
+    ) continue;
+    const attempt = [...attempts].reverse().find((item) => (
+      item.invocationId === candidate.id
+      && item.status === "succeeded"
+      && item.subjectRef !== null
+    ));
+    if (attempt?.subjectRef === null || attempt?.subjectRef === undefined) continue;
+    const succeededEvent = events.find((event) => (
+      event.sequence > freshnessBoundary
+      && event.type === "tool.attempt.succeeded"
+      && event.payload.invocationId === candidate.id
+    ));
+    if (succeededEvent === undefined) continue;
+    return {
+      invocationId: candidate.id,
+      result: {
+        status: "success",
+        subjectRef: attempt.subjectRef,
+        facts: candidate.resultJson
+      }
+    };
+  }
+  return null;
 }
 
 function finalizeReadToolBatch(
@@ -496,7 +558,16 @@ export async function callTool(
         && item.inputDigest === inputDigest
         && item.status !== "failed"
       ));
-  if (duplicate !== undefined) {
+  const duplicateIndex = duplicate === undefined
+    ? -1
+    : persistedInvocations.findIndex((item) => item.id === duplicate.id);
+  const invalidatedByWrite = duplicateIndex >= 0
+    && tool.contract.execution.effect.kind === "execute"
+    && persistedInvocations.slice(duplicateIndex + 1).some((item) => (
+      item.status === "succeeded"
+      && services.tools.get(item.toolName)?.contract.execution.effect.kind === "write"
+    ));
+  if (duplicate !== undefined && !invalidatedByWrite) {
     throw new ActionRejectedError(
       `Tool action duplicates an existing persisted Invocation with status ${duplicate.status}; do not repeat it.`
     );

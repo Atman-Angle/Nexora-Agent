@@ -151,7 +151,7 @@ describe("E052 Provider observation closure", () => {
     }
   });
 
-  it("bounds relevant predecessor observations to about 32 KiB without Invocation internals", async () => {
+  it("projects all relevant predecessors while the Provider budget permits", async () => {
     const workspace = fixture("unchanged\n");
     const secretInputs = Array.from({ length: 10 }, (_, index) => `private-input-${index}`);
     const steps = secretInputs.map((_, index) => ({
@@ -200,15 +200,15 @@ describe("E052 Provider observation closure", () => {
 
       expect(result.status).toBe("waiting");
       expect(view.toolInvocations).toHaveLength(10);
-      expect(projected).toHaveLength(8);
+      expect(projected).toHaveLength(9);
       expect(projected.every((item) => view.toolInvocations.some((invocation) => invocation.id === item.invocationId))).toBe(true);
       // The final decision (all Steps completed) still sees the completed
-      // observations as visible facts — bounded by bytes, truncated, and free
-      // of Invocation internals — instead of starving the completion context.
+      // observations as visible facts — complete while the Provider budget
+      // permits and free of Invocation internals.
       const finalProjected = observations(provider.contexts.at(-1)!);
-      expect(finalProjected).toHaveLength(8);
-      expect(finalProjected.every((item) => item.truncated)).toBe(true);
-      expect(Buffer.byteLength(JSON.stringify(finalProjected), "utf8")).toBeLessThanOrEqual(32 * 1024);
+      expect(finalProjected).toHaveLength(10);
+      expect(finalProjected.every((item) => !item.truncated)).toBe(true);
+      expect(Buffer.byteLength(JSON.stringify(finalProjected), "utf8")).toBeGreaterThan(32 * 1024);
       // The unified working context deliberately retains each selected Tool's
       // real arguments; the retained observations expose exactly their inputs
       // while still excluding Runtime-only invocation internals.
@@ -218,8 +218,8 @@ describe("E052 Provider observation closure", () => {
           secret: secretInputs[(item.input as { sequence: number }).sequence - 1]
         }))
       );
-      expect(projected.every((item) => item.truncated)).toBe(true);
-      expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(32 * 1024);
+      expect(projected.every((item) => !item.truncated)).toBe(true);
+      expect(Buffer.byteLength(serialized, "utf8")).toBeGreaterThan(32 * 1024);
       expect(serialized).not.toContain("inputJson");
       expect(serialized).not.toContain("inputDigest");
       expect(serialized).not.toContain("idempotencyKey");

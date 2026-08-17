@@ -95,7 +95,7 @@ describe("E082 rehydration", () => {
     await runtime.close();
   });
 
-  it("projects a bounded predecessor directly from Invocation authority", async () => {
+  it("projects a complete predecessor directly from Invocation authority when budget permits", async () => {
     const workspace = fixture();
     const provider = new ScriptedRuntimeProvider([
       plan(workspace, [step(1), step(2)]),
@@ -116,9 +116,10 @@ describe("E082 rehydration", () => {
     expect(finalContext.toolObservations).toContainEqual(expect.objectContaining({
       invocationId: view.toolInvocations[0]!.id,
       status: "succeeded",
-      truncated: true,
-      payloadMode: "reference",
-      payloadFragment: null
+      truncated: false,
+      payloadMode: "full",
+      payloadFragment: null,
+      facts: view.toolInvocations[0]!.resultJson
     }));
     expect(view.events.some((event) => event.type === "context.rehydrate_requested")).toBe(false);
     expect(view.events.some((event) => event.type === "context.rehydrated")).toBe(false);

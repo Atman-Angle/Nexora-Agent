@@ -20,7 +20,10 @@ export type RuntimeTool = {
     readonly decision: { readonly useWhen: readonly string[]; readonly avoidWhen: readonly string[] };
     readonly execution: {
       readonly effect: { readonly kind: "read" | "write" | "execute"; readonly description: string };
-      readonly idempotent: boolean; readonly inputSchema: z.ZodType<unknown>; readonly inputExample: unknown;
+      readonly idempotent: boolean;
+      readonly readCache?: { readonly mode: "until_mutation" };
+      readonly inputSchema: z.ZodType<unknown>;
+      readonly inputExample: unknown;
     };
     readonly evidence: { readonly produces: readonly string[]; readonly factsSchema: z.ZodType<unknown> };
   };

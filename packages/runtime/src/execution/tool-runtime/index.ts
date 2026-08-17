@@ -58,7 +58,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         identity: { name: "filesystem.read" },
         capability: { purpose: "Retrieve UTF-8 content or one bounded character range from a known workspace file.", nonGoals: ["Discover an unknown path.", "Modify file content."] },
         decision: { useWhen: ["The exact target path is known and its content is required.", "A large file preview requires continuation from nextOffset."], avoidWhen: ["The target path is unresolved.", "Existing facts already contain the required content."] },
-        execution: { effect: { kind: "read", description: "Reads one workspace file without modifying external state." }, idempotent: true, inputSchema: ReadInput, inputExample: { path: "README.md", offset: 0, limit: 3000 } },
+        execution: { effect: { kind: "read", description: "Reads one workspace file without modifying external state." }, idempotent: true, readCache: { mode: "until_mutation" }, inputSchema: ReadInput, inputExample: { path: "README.md", offset: 0, limit: 3000 } },
         evidence: { produces: ["The target path, bounded content or preview, full-file digest and size, plus nextOffset for ranged continuation."], factsSchema: ReadFactsSchema }
       },
       async execute(input, context) {
@@ -446,6 +446,7 @@ function defineTool<Input, Facts>(definition: {
     execution: {
       effect: { kind: "read" | "write" | "execute"; description: string };
       idempotent: boolean;
+      readCache?: { readonly mode: "until_mutation" };
       inputSchema: z.ZodType<Input>;
       inputExample: unknown;
     };

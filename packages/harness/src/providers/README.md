@@ -42,7 +42,7 @@ Provider 必须在一个 Run 内固定声明一种能力：
 
 不支持任一能力的 Provider 必须显式失败，不能降级到 JSON-object、Prompt 约定或已删除的 Action wire。
 
-OpenAI-compatible 生产 Adapter 把底层 Decision Context 统一投影为 `AgentWorkingContext`：`task`、`plan`、`workingSet`、`recentOutcome`、`relevantMemory` 与 `capabilities`。`workingSet` 保留最近真实 Tool 参数、结果/错误、repeatCount、恢复事实、当前文件、workspaceChanged、已完成工作、未解决问题与可读 Artifact refs；这只是从 Authority 重建的 Harness 投影，不新增 Store 或状态所有权。
+OpenAI-compatible 生产 Adapter 把底层 Decision Context 统一投影为 `AgentWorkingContext`：`task`、`plan`、`workingSet`、`recentOutcome`、`relevantMemory` 与 `capabilities`。`workingSet` 从完整 Invocation Authority 折叠并保留相关 Tool 参数、结果/错误、repeatCount、恢复事实、当前文件、workspaceChanged、已完成工作、未解决问题与可读 Artifact refs；当前文件 read/write/patch 链不会因 Plan revision 或最近 Observation 数量而消失。这只是可重建的 Harness 投影，不新增 Store 或状态所有权。
 
 ### History Candidates Contract
 

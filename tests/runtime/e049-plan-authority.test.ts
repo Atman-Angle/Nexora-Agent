@@ -54,7 +54,7 @@ describe("E049 single Structured Plan authority", () => {
     runtime.close();
   });
 
-  it("accepts explicit consecutive revisions of unfinished work", async () => {
+  it("accepts equivalent consecutive snapshots as audited Plan no-ops", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -68,15 +68,16 @@ describe("E049 single Structured Plan authority", () => {
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("waiting");
-    expect(view.snapshot.currentPlan?.version).toBe(3);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.id).toMatch(/^step-/);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Read the target");
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(3);
+    expect(view.events.filter((event) => event.type === "plan.set").slice(1).every((event) => event.payload.noOp === true)).toBe(true);
     runtime.close();
   });
 
-  it("assigns a new Runtime Plan version to an explicit repeated semantic proposal", async () => {
+  it("does not assign a new Runtime Plan version to a repeated semantic proposal", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -89,8 +90,9 @@ describe("E049 single Structured Plan authority", () => {
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("waiting");
-    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
+    expect(view.events.filter((event) => event.type === "plan.set").at(-1)?.payload.noOp).toBe(true);
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     runtime.close();
   });

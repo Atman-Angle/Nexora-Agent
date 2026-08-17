@@ -68,7 +68,7 @@ Session Archive
 Fresh External Facts
 ```
 
-上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。当前 Context Projection 不再把完整 `RunSnapshot` 交给 Provider，但会持续投影全部原始用户输入；Task Contract 只是工作表示，不能覆盖或隐藏输入。Tool Observation 由 active Check、未解决错误、安全失败和已完成 predecessor Evidence 投影。确定性 Eviction 先按 retention class，再按 `stepOrder → invocationSequence → invocationId` 排序；大型 critical payload 保留固定片段与精确引用，普通大 payload 转为引用。8 条是普通候选默认值，32 KiB 是序列化保险丝，最终收缩由 Provider-aware Token Meter 的 soft/hard limit 驱动。每份最终投影带稳定 digest，但 digest 不拥有 Run 状态。
+上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。当前 Context Projection 不再把完整 `RunSnapshot` 交给 Provider，但会持续投影全部原始用户输入；Task Contract 只是工作表示，不能覆盖或隐藏输入。Tool Observation 由完整 persisted Invocation Authority 确定性派生，先折叠相同 Tool/input/outcome，再标记 active Check、未解决错误、安全失败、当前文件链和 predecessor Evidence。候选没有固定条数或单条 4 KiB 可见性上限；正常投影完整保留，只有 Provider-aware Token Meter 超过 soft/hard limit 时才按 retention class 与 `stepOrder → invocationSequence → invocationId` 收缩。大型 critical payload 可在真实容量压力下变为固定片段与精确引用，普通历史可变为引用或移除；当前文件 read/write/patch 链在普通历史之后收缩。每份最终投影带稳定 digest，但 digest 不拥有 Run 状态。
 
 Session Archive 是同一 Run 的有界历史索引，不是第二个 Memory Store。它只发布已持久化 Input/Event 的 sequence 范围，以及最多 16 条由 Input、Plan 修订、失败、拒绝和 Branch Event 确定性派生的 Milestone；首个目标 Input、最新 Input 和每种已出现的 Event 类别各保留一个代表，其余位置再按既有安全优先级与时间填充，避免重复失败淹没其他导航入口。标签最长 180 字符，只用于导航。最新 Input 明确包含范围内的 `input:<sequence>` / `event:<sequence>` 时，Harness 在 Provider 决策前通过 Runtime port 从 Run/Input/Event Authority 精确恢复原始内容。删除 Archive 投影不影响任何事实，下一轮可从 Store 重建。
 
@@ -198,7 +198,7 @@ Provider 只选择 Runtime Tool、提供业务参数、调用 `nexora_update_pla
 
 Harness 在调用 Provider 前自动恢复最新 Input 明确点名的已发布 ref、最高相关 Memory，以及 active Task 未满足的 `context_ref` Check；成功恢复通过 Runtime port 生成真实 Run-owned Context Evidence，失败仍遵守统一 scope/digest/预算错误。Provider 不需要也不能提交恢复协议命令。
 
-Plan 是可选方向与 provenance，不是 Tool 白名单。Harness 把每个 objective 编译为没有虚假机械 Check 的导航 Step；已注册的安全 Tool 可在没有 Plan 时执行，成功调用始终生成绑定 Invocation 的 Evidence，无 Plan 时使用 `run-unplanned` provenance 而不伪造 Plan Check。Runtime 不从 Tool 调用反推、插入、替换或扩展 Plan。跨轮已确定失败的调用不因 Tool 名或参数相同而被封禁；同批完全重复的幂等读只执行一次，已成功读不会阻塞同批新读；同 Run 中相同非读 Tool/canonical input 的未失败 Invocation 跨 Plan/Step 拒绝重复，非幂等 unknown Effect 永不自动重放。
+Plan 是可选方向与 provenance，不是 Tool 白名单。Harness 把每个 objective 编译为没有虚假机械 Check 的导航 Step；已注册的安全 Tool 可在没有 Plan 时执行，成功调用始终生成绑定 Invocation 的 Evidence，无 Plan 时使用 `run-unplanned` provenance 而不伪造 Plan Check。Runtime 不从 Tool 调用反推、插入、替换或扩展 Plan；语义等价且当前 Plan version 尚无 Tool 工作的 Plan snapshot 记录 accepted no-op Event，但不创建新 version；已有 Invocation 后的 replan 仍创建 version 以重新对齐进度。跨轮已确定失败的调用不因 Tool 名或参数相同而被封禁；同批完全重复的幂等读只执行一次。只有显式声明 `readCache.mode=until_mutation` 的幂等 read 才可在 mutation/Run resume 之前复用既有成功 payload；新 Invocation/Attempt 仍保留并记录 `physicalExecution=false` 与来源。未声明缓存的 read 每次真实执行；同 Run 中相同非读 Tool/canonical input 的未失败 Invocation 跨 Plan/Step 拒绝重复，但后续成功 write 会使旧 execute 验证失效并允许重新执行；非幂等 unknown Effect 永不自动重放。OpenAI-compatible native transport 允许 Provider 在单轮返回最多八个 Tool Call，Runtime 仍逐项执行 Approval、Invocation 与 Evidence 规则。
 
 `repair` 是最近错误及与其精确关联的失败/unknown Invocation 的有界投影，不是策略 Authority。它不携带行为禁令、进度事件白名单或独立 retry counter；Agent Loop 由既有 iteration/model-call/duration 预算约束，`maxRetries` 与 `budgetsUsed.retries` 只计 Tool/Provider 等机械重试。归一化响应或 Tool batch 在任何 Effect 前整体校验；非法 batch 不产生部分 Plan、Invocation 或 Effect，后续修正只继续使用已持久化的真实 Plan、Invocation 和 Evidence。
 

@@ -27,7 +27,7 @@ export type ToolObservation = {
   readonly originalBytes: number;
   readonly sourceRefs: readonly string[];
   readonly retention: {
-    readonly class: "active_check" | "unresolved_error" | "safety_constraint" | "active_step" | "predecessor_evidence";
+    readonly class: "active_check" | "unresolved_error" | "safety_constraint" | "current_resource" | "active_step" | "predecessor_evidence";
     readonly critical: boolean;
     readonly reasons: readonly string[];
     readonly stepOrder: number;

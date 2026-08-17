@@ -9,12 +9,6 @@ import type {
   ToolObservation
 } from "../providers/model-client.js";
 import { digestCanonicalJson } from "@nexora/runtime/internal";
-import { MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES } from "@nexora/runtime/internal";
-
-export { MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES } from "@nexora/runtime/internal";
-
-export const MAX_TOOL_OBSERVATIONS = 8;
-export const MAX_TOOL_OBSERVATION_BYTES = 32 * 1024;
 
 export function projectRunContext(run: RunSnapshot): ProjectedRunContext {
   const coveredInputCount = run.taskContract?.inputVersion ?? 0;
@@ -223,9 +217,10 @@ export function retentionClassRank(value: ToolObservation["retention"]["class"])
   return {
     predecessor_evidence: 1,
     active_step: 2,
-    safety_constraint: 3,
-    unresolved_error: 4,
-    active_check: 5
+    current_resource: 3,
+    safety_constraint: 4,
+    unresolved_error: 5,
+    active_check: 6
   }[value];
 }
 
@@ -253,63 +248,17 @@ type ProjectedObservationCandidate = ObservationCandidate & {
 function projectObservationCandidates(
   candidates: readonly ObservationCandidate[]
 ): ToolObservation[] {
-  const completed = collapseEquivalentObservations(candidates
+  const completed = retainCurrentFileChains(collapseEquivalentObservations(candidates
     .filter((candidate): candidate is ObservationCandidate & { readonly invocation: CompletedInvocation } => (
       (candidate.invocation.status === "succeeded" || candidate.invocation.status === "failed")
       && candidate.invocation.completedAt !== null
     ))
-  ).sort(compareObservationValueDescending);
-  const critical = completed
-    .filter((candidate) => candidate.critical)
-    .slice(0, MAX_TOOL_OBSERVATIONS);
-  const criticalIds = new Set(critical.map((candidate) => candidate.invocation.id));
-  const selected = [
-    ...critical,
-    ...completed
-      .filter((candidate) => !criticalIds.has(candidate.invocation.id))
-      .slice(0, Math.max(0, MAX_TOOL_OBSERVATIONS - critical.length))
-  ];
-  let projected = selected
+  )).sort(compareObservationValueDescending);
+  const projected = completed
     .map((candidate): ProjectedObservationCandidate => ({
       ...candidate,
       observation: fullObservation(candidate)
     }));
-
-  for (const candidate of [...projected].sort(compareObservationValueAscending)) {
-    if (candidate.observation.originalBytes > MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES) {
-      projected = projected.map((item) => item.invocation.id === candidate.invocation.id
-        ? {
-            ...item,
-            observation: item.critical
-              ? fragmentObservation(item.observation)
-              : referenceObservation(item.observation)
-          }
-        : item);
-    }
-  }
-
-  while (jsonBytes(projected.map((item) => item.observation)) > MAX_TOOL_OBSERVATION_BYTES) {
-    const full = [...projected]
-      .filter((candidate) => candidate.observation.payloadMode === "full")
-      .sort(compareObservationValueAscending)[0];
-    if (full !== undefined) {
-      projected = projected.map((item) => item.invocation.id === full.invocation.id
-        ? {
-            ...item,
-            observation: item.critical
-              ? fragmentObservation(item.observation)
-              : referenceObservation(item.observation)
-          }
-        : item);
-      continue;
-    }
-    const lowest = [...projected]
-      .filter((candidate) => !candidate.critical)
-      .sort(compareObservationValueAscending)[0]
-      ?? [...projected].sort(compareObservationValueAscending)[0];
-    if (lowest === undefined) break;
-    projected = projected.filter((item) => item.invocation.id !== lowest.invocation.id);
-  }
 
   return projected
     .sort((left, right) => left.invocationOrder - right.invocationOrder)
@@ -393,6 +342,48 @@ function collapseEquivalentObservations(
   return [...collapsed.values()];
 }
 
+function retainCurrentFileChains(
+  candidates: Array<ObservationCandidate & { readonly invocation: CompletedInvocation }>
+): Array<ObservationCandidate & { readonly invocation: CompletedInvocation }> {
+  const chains = new Map<string, string[]>();
+  for (const candidate of [...candidates].sort((left, right) => left.invocationOrder - right.invocationOrder)) {
+    if (candidate.invocation.status !== "succeeded") continue;
+    const input = jsonRecord(candidate.invocation.inputJson);
+    const facts = jsonRecord(candidate.invocation.resultJson);
+    const path = typeof facts?.path === "string"
+      ? facts.path
+      : typeof input?.path === "string"
+        ? input.path
+        : null;
+    if (path === null) continue;
+    const completeRead = typeof facts?.content === "string"
+      && facts.truncated !== true
+      && facts.offset === undefined;
+    const completeWrite = typeof input?.content === "string";
+    const patch = typeof input?.find === "string" && typeof input.replace === "string";
+    if (completeRead || completeWrite) {
+      chains.set(path, [candidate.invocation.id]);
+    } else if (patch && chains.has(path)) {
+      chains.get(path)!.push(candidate.invocation.id);
+    }
+  }
+  const retained = new Set([...chains.values()].flat());
+  return candidates.map((candidate) => retained.has(candidate.invocation.id)
+    ? {
+        ...candidate,
+        retentionClass: "current_resource",
+        critical: true,
+        reasons: [...new Set([...candidate.reasons, "current_file_working_set"])]
+      }
+    : candidate);
+}
+
+function jsonRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : null;
+}
+
 function observationSourceRefs(
   invocation: CompletedInvocation,
   evidence: readonly Evidence[]
@@ -405,10 +396,21 @@ function observationSourceRefs(
   if (invocation.payloadArtifactRef !== null) {
     artifactRefs.add(invocation.payloadArtifactRef);
   }
+  for (const artifactRef of directArtifactRefs(invocation.resultJson)) {
+    artifactRefs.add(artifactRef);
+  }
   for (const artifactRef of artifactRefs) {
     refs.push(`artifact:${artifactRef}`);
   }
   return refs;
+}
+
+function directArtifactRefs(value: unknown): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  const artifactRef = (value as { readonly artifactRef?: unknown }).artifactRef;
+  return typeof artifactRef === "string" && /^sha256:[0-9a-f]{64}$/.test(artifactRef)
+    ? [artifactRef]
+    : [];
 }
 
 function compareObservationValueDescending(

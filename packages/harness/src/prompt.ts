@@ -59,6 +59,7 @@ export type PromptCacheLayout = {
 };
 
 export type PromptStrategyManifest = {
+  readonly configurationDigest: string;
   readonly kernel: { readonly version: string; readonly digest: string };
   readonly compilerVersion: string;
   readonly hostPolicyDigest: string | null;
@@ -130,6 +131,7 @@ export function compilePrompt(input: {
   readonly host: PromptHostConfiguration;
   readonly transport: ProviderTransportProfile;
   readonly measurement?: ProviderTokenMeasurement;
+  readonly strategyConfigurationDigest?: string;
 }): CompiledPrompt {
   const transport = normalizeTransport(input.transport, input.host);
   const runtimeTools = [...input.context.tools]
@@ -199,6 +201,15 @@ export function compilePrompt(input: {
     final: digestCanonicalJson({ system, input: providerInput, transport, tools })
   };
   const strategy: PromptStrategyManifest = {
+    configurationDigest: input.strategyConfigurationDigest ?? digestCanonicalJson({
+      kernel: segments[0].digest,
+      transport: segments[1].digest,
+      hostPolicy: segments[2].digest,
+      profile: segments[3].digest,
+      projectPolicy: segments[4].digest,
+      tools: segments[5].digest,
+      compilerVersion: PROMPT_COMPILER_VERSION
+    }),
     kernel: { version: SYSTEM_KERNEL_VERSION, digest: segments[0].digest },
     compilerVersion: PROMPT_COMPILER_VERSION,
     hostPolicyDigest: input.host.hostPolicyDigest,

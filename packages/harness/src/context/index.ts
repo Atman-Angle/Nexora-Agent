@@ -48,9 +48,6 @@ export { type ForkContext } from "@nexora/runtime/internal";
 export { evictDecisionContextOnce, jsonBytes } from "./eviction.js";
 
 export {
-  MAX_INLINE_TOOL_OBSERVATION_PAYLOAD_BYTES,
-  MAX_TOOL_OBSERVATION_BYTES,
-  MAX_TOOL_OBSERVATIONS,
   fragmentObservation,
   projectRelevantToolObservations,
   projectRunContext,

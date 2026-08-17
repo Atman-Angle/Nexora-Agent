@@ -19,6 +19,7 @@ export type ToolBuilderDefinition<
   readonly avoidWhen: readonly string[];
   readonly effect: "read" | "write" | "execute";
   readonly idempotent: boolean;
+  readonly readCache?: { readonly mode: "until_mutation" };
   readonly inputSchema: InputSchema;
   readonly inputExample: z.input<InputSchema>;
   readonly outputSchema: OutputSchema;
@@ -56,6 +57,7 @@ export function defineTool<
           description: definition.description
         },
         idempotent: definition.idempotent,
+        ...(definition.readCache === undefined ? {} : { readCache: definition.readCache }),
         inputSchema: definition.inputSchema,
         inputExample: definition.inputExample
       },

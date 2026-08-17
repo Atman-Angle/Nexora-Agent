@@ -224,7 +224,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
                     }
                   })),
                   tool_choice: "auto",
-                  parallel_tool_calls: false
+                  parallel_tool_calls: true
                 }
               : {}),
             ...resolveThinkingToggle(thinkingToggleParam, reasoning, request)
@@ -330,7 +330,10 @@ function normalizeAssistantMessage(
     }
     return { text: content, toolCalls: [], finishReason: finishReason ?? null };
   }
-  const bindings = providerToolBindings(request.tools ?? []);
+  // Resolve against the complete catalog so a stale call to a currently
+  // unavailable known Tool reaches the Harness response-repair path instead
+  // of being misclassified as Provider protocol corruption.
+  const bindings = providerToolBindings(request.toolCatalog);
   const toolCalls = nativeCalls.map((call): ProviderToolCall => {
     const binding = bindings.find((item) => item.providerName === call.function.name);
     if (binding === undefined) throw new Error(`Provider returned an unknown native Tool: ${call.function.name}`);

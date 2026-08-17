@@ -30,6 +30,7 @@ function tempRoot(prefix: string): string {
 }
 
 type ProviderRequest = {
+  readonly parallel_tool_calls?: boolean;
   readonly messages: readonly {
     readonly role: string;
     readonly content: string | null;
@@ -227,6 +228,7 @@ describe("E050 Provider response contract convergence", () => {
       inputJson: { path: "target.txt" }
     });
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+    expect(requests[0]?.parallel_tool_calls).toBe(true);
     expect(requests[1]?.messages.map((message) => message.role)).toEqual([
       "system", "user", "assistant", "tool", "user"
     ]);

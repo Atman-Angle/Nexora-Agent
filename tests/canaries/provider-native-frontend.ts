@@ -3,8 +3,10 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
-  rmSync
+  rmSync,
+  writeFileSync
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +25,11 @@ if (transport !== "native_tools" && transport !== "structured_output") {
 }
 
 const workspace = mkdtempSync(join(tmpdir(), `nexora-provider-frontend-${transport}-`));
+seedExistingDashboard(workspace);
+const originalDigests = new Map([...ALLOWED_FILES].map((name) => [
+  name,
+  digestFile(join(workspace, name))
+]));
 const environment = {
   ...process.env,
   NEXORA_MODEL_TOOL_TRANSPORT: transport
@@ -40,8 +47,8 @@ const runtime = createAgent({
     taskMode: "change",
     promptCache: "allow",
     instructions: [
-      "Complete the requested frontend inside the workspace using real Tools; do not return implementation code as the final answer.",
-      "Create index.html, styles.css, app.js and verify.mjs, then run node verify.mjs before finishing.",
+      "Modify the existing frontend inside the workspace using real Tools; do not return implementation code as the final answer.",
+      "Preserve the existing legacy hooks and incrementally patch index.html, styles.css, app.js and verify.mjs; do not replace the application with a new implementation.",
       "Do not claim completion until Tool observations prove the files exist and the verifier exits successfully."
     ]
   }
@@ -51,9 +58,9 @@ let approvalCount = 0;
 try {
   let result = await runtime.start({
     input: [
-      "Build a polished, responsive operations analytics dashboard as a real frontend.",
-      "It must include a collapsible navigation rail, four KPI summaries, a filterable activity table, an accessible modal for creating an incident, a light/dark theme toggle persisted in localStorage, responsive mobile navigation, keyboard Escape handling, empty state, and visible status indicators.",
-      "Use semantic HTML, substantial CSS, and vanilla JavaScript. Create index.html, styles.css, app.js and verify.mjs. The verifier must check the required files and key UI hooks, run node --check on app.js, and exit nonzero on failure. Run node verify.mjs with shell.execute before finishing."
+      "Substantially evolve the existing operations dashboard without rewriting it.",
+      "Keep the legacy brand, activity table, renderLegacyRows function and legacy-shell CSS hook, while adding a live system-status rail, saved filter views, multi-select bulk actions, an incident timeline drawer, density controls, a keyboard command palette, richer status filters, responsive mobile behavior and accessible focus handling.",
+      "Patch all four existing files in place. Extend verify.mjs to check both the preserved legacy hooks and the new features, run node --check on app.js, then run node verify.mjs with shell.execute before finishing."
     ].join(" "),
     budgets: {
       maxIterations: 40,
@@ -79,7 +86,9 @@ try {
   const files = [...ALLOWED_FILES].map((name) => ({
     name,
     exists: existsSync(join(workspace, name)),
-    bytes: existsSync(join(workspace, name)) ? readFileSync(join(workspace, name)).byteLength : 0
+    bytes: existsSync(join(workspace, name)) ? readFileSync(join(workspace, name)).byteLength : 0,
+    modified: existsSync(join(workspace, name))
+      && digestFile(join(workspace, name)) !== originalDigests.get(name)
   }));
   const syntax = spawnSync(process.execPath, ["--check", "app.js"], {
     cwd: workspace,
@@ -92,6 +101,29 @@ try {
     timeout: 30_000
   });
   const eventTypes = view.events.map((event) => event.type);
+  const successfulAttempts = view.events.filter((event) => event.type === "tool.attempt.succeeded");
+  const successfulInvocations = view.toolInvocations.filter((invocation) => invocation.status === "succeeded");
+  const reusedAttempts = successfulAttempts.filter((event) => event.payload.physicalExecution === false);
+  const invocationById = new Map(view.toolInvocations.map((invocation) => [invocation.id, invocation]));
+  const readInvocations = view.toolInvocations.filter((invocation) => invocation.toolName === "filesystem.read");
+  const physicalReadEvents = successfulAttempts.filter((event) => {
+    const invocation = invocationById.get(String(event.payload.invocationId));
+    return invocation?.toolName === "filesystem.read" && event.payload.physicalExecution !== false;
+  });
+  const perPath = (invocations: readonly typeof view.toolInvocations[number][]) => Object.fromEntries(
+    [...ALLOWED_FILES].map((name) => [name, invocations.filter((invocation) => (
+      invocation.toolName === "filesystem.read"
+      && inputPath(invocation.inputJson) === name
+    )).length])
+  );
+  const physicalReadsByPath = Object.fromEntries([...ALLOWED_FILES].map((name) => [
+    name,
+    physicalReadEvents.filter((event) => {
+      const invocation = invocationById.get(String(event.payload.invocationId));
+      return invocation !== undefined && inputPath(invocation.inputJson) === name;
+    }).length
+  ]));
+  const planEvents = view.events.filter((event) => event.type === "plan.set");
   const report = {
     transport,
     provider: provider.modelProfile?.provider ?? "unknown",
@@ -111,7 +143,25 @@ try {
     })),
     toolInvocations: view.toolInvocations.length,
     toolNames: view.toolInvocations.map((invocation) => invocation.toolName),
-    evidenceRecords: result.evidence.length,
+    successfulToolInvocations: successfulInvocations.length,
+    physicalToolExecutions: successfulInvocations.length - reusedAttempts.length,
+    reusedToolExecutions: reusedAttempts.length,
+    readInvocations: readInvocations.length,
+    physicalReads: physicalReadEvents.length,
+    readInvocationsByPath: perPath(readInvocations),
+    physicalReadsByPath,
+    reuseSources: successfulAttempts.flatMap((event) => (
+      event.payload.physicalExecution === false
+        ? [{
+            invocationId: event.payload.invocationId,
+            reusedFromInvocationId: event.payload.reusedFromInvocationId
+          }]
+        : []
+    )),
+    planSetEvents: planEvents.length,
+    planNoOps: planEvents.filter((event) => event.payload.noOp === true).length,
+    planVersion: view.snapshot.currentPlan?.version ?? null,
+    evidenceRecords: view.snapshot.evidence.length,
     responseRejections: eventTypes.filter((type) => type === "response.rejected").length,
     approvals: approvalCount,
     files,
@@ -120,7 +170,8 @@ try {
     verificationStdout: verification.stdout.trim().slice(0, 1_000),
     falseSuccess: result.status === "succeeded" && (
       view.toolInvocations.length === 0
-      || files.some((file) => !file.exists || file.bytes < 100)
+      || files.some((file) => !file.exists || file.bytes < 100 || !file.modified)
+      || !legacyHooksPreserved(workspace)
       || syntax.status !== 0
       || verification.status !== 0
     )
@@ -130,7 +181,8 @@ try {
   if (
     result.status !== "succeeded"
     || report.falseSuccess
-    || files.some((file) => !file.exists || file.bytes < 100)
+    || files.some((file) => !file.exists || file.bytes < 100 || !file.modified)
+    || !legacyHooksPreserved(workspace)
     || syntax.status !== 0
     || verification.status !== 0
   ) {
@@ -143,6 +195,34 @@ try {
   } else {
     process.stderr.write(`Frontend canary workspace retained at ${workspace}\n`);
   }
+}
+
+function seedExistingDashboard(root: string): void {
+  writeFileSync(join(root, "index.html"), `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexora Operations</title><link rel="stylesheet" href="styles.css"></head>
+<body><div class="legacy-shell"><header><strong id="legacy-brand">Nexora Ops</strong><button id="theme-toggle">Theme</button></header><main><h1>Operations overview</h1><section class="kpis"><article>Availability <b>99.98%</b></article><article>Open incidents <b>4</b></article><article>Latency <b>142 ms</b></article><article>Deployments <b>18</b></article></section><label>Filter <input id="activity-filter"></label><table id="legacy-activity-table"><thead><tr><th>Service</th><th>Status</th><th>Owner</th></tr></thead><tbody id="activity-body"></tbody></table><p id="empty-state" hidden>No matching activity</p></main></div><script src="app.js"></script></body></html>`, "utf8");
+  writeFileSync(join(root, "styles.css"), `:root{font-family:Inter,system-ui,sans-serif;color:#17202a;background:#f4f6f7}.legacy-shell{min-height:100vh}header{display:flex;justify-content:space-between;padding:1rem 2rem;background:#fff;border-bottom:1px solid #d5d8dc}main{max-width:1100px;margin:auto;padding:2rem}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}.kpis article{padding:1rem;background:#fff;border:1px solid #d5d8dc;border-radius:6px}.kpis b{display:block;font-size:1.4rem}table{width:100%;margin-top:1rem;border-collapse:collapse;background:#fff}th,td{text-align:left;padding:.75rem;border-bottom:1px solid #e5e7e9}@media(max-width:700px){.kpis{grid-template-columns:1fr 1fr}main{padding:1rem}}`, "utf8");
+  writeFileSync(join(root, "app.js"), `const legacyRows=[{service:"API",status:"Healthy",owner:"Platform"},{service:"Billing",status:"Investigating",owner:"Payments"},{service:"Search",status:"Healthy",owner:"Discovery"}];
+function renderLegacyRows(query=""){const body=document.querySelector("#activity-body");const rows=legacyRows.filter(row=>Object.values(row).some(value=>value.toLowerCase().includes(query.toLowerCase())));body.innerHTML=rows.map(row=>\`<tr><td>\${row.service}</td><td>\${row.status}</td><td>\${row.owner}</td></tr>\`).join("");document.querySelector("#empty-state").hidden=rows.length>0;}
+document.querySelector("#activity-filter").addEventListener("input",event=>renderLegacyRows(event.target.value));document.querySelector("#theme-toggle").addEventListener("click",()=>document.documentElement.toggleAttribute("data-dark"));renderLegacyRows();`, "utf8");
+  writeFileSync(join(root, "verify.mjs"), `import { readFileSync } from "node:fs";import { spawnSync } from "node:child_process";const html=readFileSync("index.html","utf8"),css=readFileSync("styles.css","utf8"),js=readFileSync("app.js","utf8");const required=[[html,"legacy-brand"],[html,"legacy-activity-table"],[css,"legacy-shell"],[js,"renderLegacyRows"]];if(required.some(([text,hook])=>!text.includes(hook)))throw new Error("legacy hook missing");const syntax=spawnSync(process.execPath,["--check","app.js"]);if(syntax.status!==0)process.exit(syntax.status??1);console.log("baseline verifier passed");`, "utf8");
+}
+
+function digestFile(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function inputPath(value: unknown): string | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && typeof (value as { readonly path?: unknown }).path === "string"
+    ? (value as { readonly path: string }).path
+    : null;
+}
+
+function legacyHooksPreserved(root: string): boolean {
+  const sources = [...ALLOWED_FILES].map((name) => readFileSync(join(root, name), "utf8")).join("\n");
+  return ["legacy-brand", "legacy-activity-table", "renderLegacyRows", "legacy-shell"]
+    .every((hook) => sources.includes(hook));
 }
 
 function assertAllowedApproval(toolName: string, input: unknown): void {
