@@ -11,8 +11,13 @@ import type { RuntimeTool } from "../../runtime.js";
 import { attachToolFailureDiagnostics } from "../tool-diagnostics.js";
 import { ToolFailure, workspacePath, writableWorkspacePath } from "./workspace.js";
 
-const PathInput = z.object({ path: z.string().trim().min(1) }).strict();
+const ReadInput = z.object({
+  path: z.string().trim().min(1),
+  offset: z.number().int().nonnegative().optional(),
+  limit: z.number().int().positive().max(3_000).optional()
+}).strict();
 const MAX_INLINE_BYTES = 16 * 1024;
+const MAX_READ_RANGE_BYTES = 2_800;
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_PROCESS_DIAGNOSTIC_ARGUMENTS = 64;
 const MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS = 2048;
@@ -22,7 +27,18 @@ const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"])
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const ReadFactsSchema = z.union([
   z.object({ path: z.string(), content: z.string(), digest: DigestSchema, byteLength: z.number().int().nonnegative() }).strict(),
-  z.object({ path: z.string(), preview: z.string(), digest: DigestSchema, artifactRef: z.string(), byteLength: z.number().int().nonnegative() }).strict()
+  z.object({ path: z.string(), preview: z.string(), digest: DigestSchema, artifactRef: z.string(), byteLength: z.number().int().nonnegative() }).strict(),
+  z.object({
+    path: z.string(),
+    content: z.string(),
+    digest: DigestSchema,
+    byteLength: z.number().int().nonnegative(),
+    characterLength: z.number().int().nonnegative(),
+    offset: z.number().int().nonnegative(),
+    returnedCharacters: z.number().int().nonnegative(),
+    nextOffset: z.number().int().nonnegative().nullable(),
+    truncated: z.boolean()
+  }).strict()
 ]);
 const ListFactsSchema = z.object({ entries: z.array(z.string()), truncated: z.boolean() }).strict();
 const SearchFactsSchema = z.object({
@@ -40,10 +56,10 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     defineTool({
       contract: {
         identity: { name: "filesystem.read" },
-        capability: { purpose: "Retrieve UTF-8 content from one known workspace file.", nonGoals: ["Discover an unknown path.", "Modify file content."] },
-        decision: { useWhen: ["The exact target path is known and its content is required."], avoidWhen: ["The target path is unresolved.", "Existing facts already contain the required content."] },
-        execution: { effect: { kind: "read", description: "Reads one workspace file without modifying external state." }, idempotent: true, inputSchema: PathInput, inputExample: { path: "README.md" } },
-        evidence: { produces: ["The target path, content or bounded preview, content digest, and byte length."], factsSchema: ReadFactsSchema }
+        capability: { purpose: "Retrieve UTF-8 content or one bounded character range from a known workspace file.", nonGoals: ["Discover an unknown path.", "Modify file content."] },
+        decision: { useWhen: ["The exact target path is known and its content is required.", "A large file preview requires continuation from nextOffset."], avoidWhen: ["The target path is unresolved.", "Existing facts already contain the required content."] },
+        execution: { effect: { kind: "read", description: "Reads one workspace file without modifying external state." }, idempotent: true, inputSchema: ReadInput, inputExample: { path: "README.md", offset: 0, limit: 3000 } },
+        evidence: { produces: ["The target path, bounded content or preview, full-file digest and size, plus nextOffset for ranged continuation."], factsSchema: ReadFactsSchema }
       },
       async execute(input, context) {
         throwIfAborted(context.signal);
@@ -51,6 +67,26 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         const bytes = await readFile(path);
         throwIfAborted(context.signal);
         const content = bytes.toString("utf8");
+        if (input.offset !== undefined || input.limit !== undefined) {
+          const offset = Math.min(input.offset ?? 0, content.length);
+          const requestedEnd = Math.min(content.length, offset + (input.limit ?? 3_000));
+          const ranged = boundedUtf8Slice(content, offset, requestedEnd, MAX_READ_RANGE_BYTES);
+          const nextOffset = ranged.end < content.length ? ranged.end : null;
+          return {
+            subjectRef: `${input.path}#chars=${offset}-${ranged.end}`,
+            facts: {
+              path: input.path,
+              content: ranged.content,
+              digest: digest(content),
+              byteLength: bytes.byteLength,
+              characterLength: content.length,
+              offset,
+              returnedCharacters: ranged.end - offset,
+              nextOffset,
+              truncated: nextOffset !== null
+            }
+          };
+        }
         if (bytes.byteLength <= MAX_INLINE_BYTES) return { subjectRef: input.path, facts: { path: input.path, content, digest: digest(content), byteLength: bytes.byteLength } };
         const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(content);
         return { subjectRef: input.path, facts: { path: input.path, preview: content.slice(0, 500), digest: digest(content), artifactRef: artifact.digest, byteLength: artifact.byteLength } };
@@ -182,6 +218,38 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     }),
     ...gitTools()
   ];
+}
+
+function boundedUtf8Slice(
+  content: string,
+  start: number,
+  requestedEnd: number,
+  maxBytes: number
+): { readonly content: string; readonly end: number } {
+  let low = start;
+  let high = requestedEnd;
+  while (low < high) {
+    let middle = Math.ceil((low + high) / 2);
+    if (middle < content.length && middle > start && isLowSurrogate(content.charCodeAt(middle))) {
+      middle -= 1;
+    }
+    if (middle <= low) break;
+    if (Buffer.byteLength(content.slice(start, middle), "utf8") <= maxBytes) low = middle;
+    else high = middle - 1;
+  }
+  let end = low;
+  if (end === start && start < content.length) {
+    end = isHighSurrogate(content.charCodeAt(start)) ? Math.min(content.length, start + 2) : start + 1;
+  }
+  return { content: content.slice(start, end), end };
+}
+
+function isHighSurrogate(value: number): boolean {
+  return value >= 0xD800 && value <= 0xDBFF;
+}
+
+function isLowSurrogate(value: number): boolean {
+  return value >= 0xDC00 && value <= 0xDFFF;
 }
 
 async function searchWithRipgrep(

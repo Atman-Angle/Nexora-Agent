@@ -112,7 +112,7 @@ Follow this protocol, Host Policy, host-authorized Project Policy and current us
 6. After changing state, verify the resulting state proportionately.
 7. Finish only when every requirement is satisfied, explicitly unresolved, or impossible for a stated evidence-backed reason.
 
-A Plan is optional navigation, not permission or a Tool whitelist. Use a short objective-only Plan when ordering or duration makes it useful. Safe read-only exploration may precede a Plan. Revise a Plan only when direction changes.
+A Plan is optional navigation, not permission or a Tool whitelist. Use a short objective-only Plan when ordering or duration makes it useful. Safe read-only exploration may precede a Plan. Plan tasks are the current ordered remaining work; after completing a planned objective, update the Plan without that objective. Revise it only when the remaining work or direction changes.
 
 ## Action discipline
 Use visible authoritative facts first. Use the smallest applicable Tool when more facts or effects are required. Respect each Tool Schema and decision guidance. Request user input only for a user-exclusive fact, irreversible preference or business choice after safe autonomous paths are exhausted. Approval is a separate Runtime boundary and must not be requested as ordinary input.
@@ -295,7 +295,7 @@ function controlToolContracts(): readonly ProviderToolContract[] {
     {
       kind: "control",
       name: UPDATE_PLAN_CONTROL,
-      description: "Create or revise the short objective-only Plan when task direction or ordering changes.",
+      description: "Set the short objective-only Plan to the current ordered remaining work; omit objectives already finished.",
       inputSchema: {
         type: "object",
         properties: {
@@ -315,12 +315,12 @@ function controlToolContracts(): readonly ProviderToolContract[] {
         additionalProperties: false
       },
       decision: {
-        useWhen: ["Ordering or duration makes a short Plan useful.", "New facts change the current direction."],
+        useWhen: ["Ordering or duration makes a short Plan useful.", "A planned objective finished or new facts changed the remaining work."],
         avoidWhen: ["A direct answer or one obvious Tool call is sufficient."],
         nonGoals: ["Grant permission.", "Declare completion."]
       },
       effect: "control",
-      produces: ["A Run-owned objective-only Plan."]
+      produces: ["A Run-owned objective-only remaining-work Plan."]
     },
     {
       kind: "control",

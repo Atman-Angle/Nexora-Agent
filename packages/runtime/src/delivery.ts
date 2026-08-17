@@ -22,11 +22,13 @@ export function deriveRunDelivery(input: {
   const completedWork = run.currentPlan?.orderedSteps
     .filter((step) => completedStepIds.has(step.id))
     .map((step) => step.objective) ?? [];
-  const unfinishedWork = run.currentPlan?.orderedSteps.flatMap((step) => (
-    step.acceptanceChecks
+  const unfinishedWork = run.currentPlan?.orderedSteps.flatMap((step) => {
+    if (completedStepIds.has(step.id)) return [];
+    const missingChecks = step.acceptanceChecks
       .filter((check) => !satisfiedChecks.has(`${step.id}\0${check.id}`))
-      .map((check) => `${step.objective}: ${describeCheck(check)}`)
-  )) ?? [];
+      .map((check) => `${step.objective}: ${describeCheck(check)}`);
+    return missingChecks.length > 0 ? missingChecks : [step.objective];
+  }) ?? [];
   const stopReason = input.stopReason ?? run.stopReason;
   const code = input.outcome === "succeeded"
     ? "COMPLETED"

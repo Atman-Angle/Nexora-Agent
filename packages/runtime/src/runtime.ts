@@ -1426,7 +1426,10 @@ export class RuntimeEngine {
       ...run,
       stepProgress: run.stepProgress.map((progress) => ({
         ...progress,
-        status: "completed" as const
+        status: "completed" as const,
+        evidenceIds: run.evidence
+          .filter((evidence) => evidence.stepId === progress.stepId)
+          .map((evidence) => evidence.id)
       })),
       lastError: null,
       updatedAt: this.#now()
@@ -1689,9 +1692,6 @@ export class RuntimeEngine {
       if (hasNewInput && action.taskContract === undefined) throw new ActionRejectedError("New user input requires an updated Task Contract.");
       if (!hasNewInput && action.taskContract !== undefined) throw new ActionRejectedError("Task Contract cannot change without new user input.");
       if (action.taskContract !== undefined) contract = this.#deriveTaskContract(run, action.taskContract);
-      if (action.taskContract === undefined && JSON.stringify(action.orderedSteps) === JSON.stringify(current.orderedSteps)) {
-        throw new ActionRejectedError("Plan is unchanged; execute the active Step instead.");
-      }
       assertCompletedStepsUnchanged(run, action.orderedSteps);
     }
     if (contract === null) throw new ActionRejectedError("Task Contract is missing.");
@@ -1704,8 +1704,7 @@ export class RuntimeEngine {
       orderedSteps: action.orderedSteps
     });
     const completed = new Map(run.stepProgress.filter((item) => item.status === "completed").map((item) => [item.stepId, item]));
-    const completedStepIds = new Set(completed.keys());
-    const evidence = current === null ? [] : run.evidence.filter((item) => completedStepIds.has(item.stepId));
+    const evidence = current === null ? [] : run.evidence;
     let activeAssigned = false;
     const stepProgress = plan.orderedSteps.map((step) => {
       const preserved = completed.get(step.id);

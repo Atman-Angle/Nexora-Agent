@@ -763,6 +763,50 @@ describe("E050 Provider response contract convergence", () => {
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
   });
 
+  it("retries malformed native function arguments before exposing a Model response", async () => {
+    const workspace = tempRoot("nexora-e050-malformed-native-arguments-");
+    let attempts = 0;
+    const server = await providerMessageServer(async () => {
+      attempts += 1;
+      return {
+        content: null,
+        tool_calls: [{
+          id: `call-${attempts}`,
+          type: "function",
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: attempts === 1
+              ? '{"question":"Continue?"'
+              : JSON.stringify({ question: "Continue?", reason: "Retry succeeded." })
+          }
+        }]
+      };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model",
+        transport: "native_tools"
+      }),
+      tools: []
+    });
+
+    const result = await runtime.start({ input: "Ask whether to continue." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result).toMatchObject({ status: "waiting", stopReason: "INPUT_REQUIRED" });
+    expect(attempts).toBe(2);
+    expect(view.modelCalls).toHaveLength(1);
+    expect(view.modelCalls[0]?.status).toBe("succeeded");
+    expect(view.events.filter((event) => event.type === "provider.attempt.failed")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "provider.attempt.succeeded")).toHaveLength(1);
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+  });
+
   it("rejects Runtime Tools that collide with reserved Harness controls", () => {
     const workspace = tempRoot("nexora-e050-reserved-tool-");
     expect(() => createRuntime({

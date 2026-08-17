@@ -19,7 +19,9 @@ export function completeSatisfiedSteps(plan: NonNullable<RunSnapshot["currentPla
   let activeAssigned = false;
   return plan.orderedSteps.map((step) => {
     const existing = progress.find((item) => item.stepId === step.id);
-    const satisfied = step.acceptanceChecks.filter((check) => check.required).every((check) => evidence.some((item) => item.stepId === step.id && item.checkId === check.id && item.planVersion <= plan.version));
+    const requiredChecks = step.acceptanceChecks.filter((check) => check.required);
+    const satisfied = requiredChecks.length > 0
+      && requiredChecks.every((check) => evidence.some((item) => item.stepId === step.id && item.checkId === check.id && item.planVersion <= plan.version));
     if (satisfied) return { stepId: step.id, status: "completed", evidenceIds: evidence.filter((item) => item.stepId === step.id).map((item) => item.id) };
     if (!activeAssigned) { activeAssigned = true; return { stepId: step.id, status: "active", evidenceIds: existing?.evidenceIds ?? [] }; }
     return { stepId: step.id, status: "pending", evidenceIds: existing?.evidenceIds ?? [] };

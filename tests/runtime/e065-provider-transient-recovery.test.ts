@@ -199,10 +199,11 @@ describe("E065 Provider transient failure recovery", () => {
       expect(blocked).toEqual(expect.objectContaining({
         status: "blocked",
         stopReason: "PROVIDER_UNAVAILABLE",
-        summary: "Completed 1 planned item(s) and preserved 1 confirmed fact(s) before PROVIDER_UNAVAILABLE.",
+        summary: "Completed 0 planned item(s) and preserved 1 confirmed fact(s) before PROVIDER_UNAVAILABLE.",
         delivery: expect.objectContaining({
           outcome: "blocked",
-          generatedBy: "deterministic"
+          generatedBy: "deterministic",
+          unfinishedWork: ["Read the item once."]
         })
       }));
       expect(effect.calls).toBe(1);

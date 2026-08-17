@@ -1,5 +1,39 @@
 # Real Provider Baselines
 
+## Objective Plan progress and large-file continuation acceptance (2026-08-17)
+
+The Runtime now treats objective-only Plan tasks as the current ordered remaining-work snapshot rather than
+completion Evidence. Empty required-check sets cannot complete vacuously, unrelated Tool success cannot complete
+objective-only Steps, equivalent objectives retain stable Step IDs without duplication, and omitted unfinished
+objectives leave the current Plan without manufacturing progress. Evidence-backed completed Steps remain preserved,
+equivalent Plan updates remain auditable versions, and the final Completion Gate atomically closes any remaining
+navigation only after the authoritative completion requirements pass. Failed or blocked Delivery lists unfinished
+objective-only work truthfully.
+
+Provider-native malformed `function.arguments` JSON is classified as a retryable physical Provider failure. The
+existing gateway performs its bounded audited retry within the same logical Model Call; valid JSON containing invalid
+Tool fields still follows the ordinary model-visible Schema repair path. This keeps transport corruption separate from
+model-authored Tool input without adding a Provider-specific branch or a second Runtime Action protocol.
+
+`filesystem.read` now accepts optional zero-based `offset` and bounded `limit` character ranges while retaining the
+existing whole-file contract. Ranged results include total and returned character counts, `nextOffset` and
+`truncated`; each projected range stays within the full-observation byte budget. This gives native Tool models a
+normal resumable path through large source files instead of requiring shell-based file extraction.
+
+The retained real `deepseek-v4-flash-0731` frontend Run `7ddcd643-00c3-477c-9f0c-ecbd28e5776e` used the repository's
+unchanged `dynamic` reasoning configuration and native Tool transport. It ended `succeeded/COMPLETED` after 18
+successful Model Calls, 13 Tool Invocations and eight Approvals, with zero response rejection and zero false success.
+It produced `index.html` (9,327 bytes), `styles.css` (16,222 bytes), `app.js` (9,400 bytes) and `verify.mjs` (4,613
+bytes). Independent checks passed `node --check app.js` and all 45 verifier assertions. Four ordered ranged reads
+covered `index.html` at offsets 0, 2,782, 5,572 and 8,360 before completion, demonstrating real large-file
+continuation through the public Tool contract.
+
+The temporary canary workspace and Run store remain local and outside Git. Final repository acceptance passes the
+Runtime and Harness builds, root build, typecheck and lint; Runtime/Harness release passes 16 files / 85 tests;
+Context quality passes 12 files / 65 tests; Agent/Runtime parity passes 6 files / 55 tests; full Vitest passes 86 files
+/ 403 tests; and NexoraBench typecheck plus 6 files / 14 tests pass. These suites include package consumers, Provider
+HTTP retry, UTF-8 ranged reconstruction, context retention, restart, Approval, recovery and privacy regressions.
+
 ## Durable native continuation correction (2026-08-17)
 
 The earlier frontend samples below were executed with an incomplete OpenAI-compatible multi-turn protocol: after an

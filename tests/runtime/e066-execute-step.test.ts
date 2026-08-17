@@ -114,7 +114,7 @@ describe("E066 execute_step granularity", () => {
     expect(provider.contexts).toHaveLength(3); // set_plan, execute_step, request_input
     expect(view.toolInvocations).toHaveLength(3);
     expect(view.toolInvocations.every((item) => item.status === "succeeded")).toBe(true);
-    expect(view.snapshot.stepProgress[0]?.status).toBe("completed");
+    expect(view.snapshot.stepProgress[0]?.status).toBe("active");
     expect(view.snapshot.budgetsUsed.iterations).toBe(3);
     expect(view.snapshot.budgetsUsed.toolCalls).toBe(3);
     expect(executeStepEvent(view)?.payload).toEqual(expect.objectContaining({
@@ -219,7 +219,7 @@ describe("E066 execute_step granularity", () => {
     runtime.close();
 
     expect(view.toolInvocations).toHaveLength(1);
-    expect(view.snapshot.stepProgress[0]?.status).toBe("completed");
+    expect(view.snapshot.stepProgress[0]?.status).toBe("active");
     expect(provider.contexts).toHaveLength(3);
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     expect(executeStepEvent(view)?.payload).toEqual(expect.objectContaining({
@@ -285,10 +285,10 @@ describe("E066 execute_step granularity", () => {
 
     expect(result.status).toBe("waiting");
     expect(view.toolInvocations).toHaveLength(1);
-    expect(view.snapshot.stepProgress[0]?.status).toBe("completed");
+    expect(view.snapshot.stepProgress[0]?.status).toBe("active");
   });
 
-  it("exposes batch observations after navigation progress completes the Step", async () => {
+  it("exposes batch observations while objective-only navigation remains active", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       { type: "set_plan", basedOnVersion: null, taskContract: taskContract(), orderedSteps: [readStepChecks(3)] },
@@ -307,7 +307,7 @@ describe("E066 execute_step granularity", () => {
     // Decision #3 is issued after the batch while the objective still awaits
     // Every persisted observation remains visible for the next decision.
     const postBatch = provider.contexts[2]!;
-    expect(postBatch.run.stepProgress.map((item) => item.status)).toEqual(["completed"]);
+    expect(postBatch.run.stepProgress.map((item) => item.status)).toEqual(["active"]);
     expect(postBatch.toolObservations).toHaveLength(3);
     expect(postBatch.toolObservations.map((item) => item.stepId)).toEqual([
       postBatch.run.currentPlan!.orderedSteps[0]!.id,

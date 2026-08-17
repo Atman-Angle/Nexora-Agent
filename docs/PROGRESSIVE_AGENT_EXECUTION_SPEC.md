@@ -52,7 +52,7 @@ Plan 是提示词引导下由模型选择的渐进式工作地图，不是所有
 2. 信息不足的任务可以先执行安全的探索性 Tool，再根据结果创建 Plan。
 3. 复杂且目标明确的任务可以在同一 ModelTurn 创建轻量 Plan 并执行首个 Tool。
 4. 每次 Tool Outcome 都持久化，并作为下一轮 Observation 返回模型。
-5. 模型可根据新事实继续当前方向或提交完整的新 Plan revision。
+5. 模型可根据新事实继续当前方向，或把当前有序的剩余工作作为完整 Plan revision 提交。
 6. 模型只提供业务语义：最终文本、Plan objective、Tool name/arguments 或用户问题。
 7. Harness/Runtime 自动生成内部 ID、版本、Check 绑定、Invocation、幂等键、Approval 请求、Evidence 引用和 Journal provenance。
 8. 正常完成不再调用语义 Validator。
@@ -133,6 +133,8 @@ Context
 - 模型 Plan objective 默认不创建虚假的机械 Check。
 - Tool Invocation 和真实 Tool Result 才是执行事实 Authority。
 - 模型 Plan 的 `stepProgress` 只表示导航状态，不能被 Completion Gate 当作业务完成证明。
+- `tasks` 表示当前有序剩余工作；模型完成一个 objective 后提交省略该 objective 的新快照，不填写 Runtime status。
+- Harness 对仍存在的等价 objective 复用 Step identity；无 required Check 的 Step 不因任意 Tool 成功而自动 completed。
 - 只有 Host/Tool Contract 已经提供真实机械 Acceptance Check 时，该 Check 才能阻塞完成并由对应 Evidence 满足。
 - 没有机械 Check 的模型 Plan Step 不得因为缺少 Validator Evidence 阻塞 Result。
 

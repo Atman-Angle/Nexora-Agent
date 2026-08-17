@@ -64,7 +64,6 @@ describe("E085 progressive planning", () => {
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
     expect(view.snapshot.currentPlan?.version).toBe(2);
     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
-      "Discover available source files",
       "Read every discovered source"
     ]);
     expect(view.snapshot.stepProgress.every((item) => item.status === "completed")).toBe(true);

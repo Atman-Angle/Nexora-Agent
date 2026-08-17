@@ -475,7 +475,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
       "Complete the requested work."
     ]);
-    expect(view.snapshot.stepProgress.map((item) => item.status)).toEqual(["completed"]);
+    expect(view.snapshot.stepProgress.map((item) => item.status)).toEqual(["active"]);
     expect(view.toolInvocations).toHaveLength(1);
     expect(view.toolInvocations[0]?.toolName).toBe("filesystem.read");
     expect(view.snapshot.evidence).toEqual([
@@ -585,7 +585,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.snapshot.currentPlan?.orderedSteps).toHaveLength(1);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Complete the requested work.");
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toHaveLength(0);
-    expect(view.snapshot.stepProgress).toEqual([expect.objectContaining({ status: "completed" })]);
+    expect(view.snapshot.stepProgress).toEqual([expect.objectContaining({ status: "active" })]);
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
   });
 

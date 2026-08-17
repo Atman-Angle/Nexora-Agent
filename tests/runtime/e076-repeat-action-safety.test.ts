@@ -87,10 +87,11 @@ describe("E076 repeated Tool Action safety", () => {
 
       expect(result.status).toBe("failed");
       expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
-      expect(result.summary).toBe("Completed 1 planned item(s) and preserved 1 confirmed fact(s) before INVALID_MODEL_RESPONSE.");
+      expect(result.summary).toBe("Completed 0 planned item(s) and preserved 1 confirmed fact(s) before INVALID_MODEL_RESPONSE.");
       expect(result.delivery).toEqual(expect.objectContaining({
         outcome: "failed",
-        generatedBy: "deterministic"
+        generatedBy: "deterministic",
+        unfinishedWork: ["Write the protected value once"]
       }));
       expect(result.lastError?.code).toBe("INVALID_MODEL_RESPONSE");
       expect(effects.count).toBe(1);

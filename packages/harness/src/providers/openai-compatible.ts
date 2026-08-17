@@ -335,7 +335,11 @@ function normalizeAssistantMessage(
     const binding = bindings.find((item) => item.providerName === call.function.name);
     if (binding === undefined) throw new Error(`Provider returned an unknown native Tool: ${call.function.name}`);
     const args = parseJsonObject(call.function.arguments);
-    if (args === null) throw new Error(`Provider returned invalid JSON arguments for ${binding.tool.name}.`);
+    if (args === null) {
+      throw new RetryableProviderError(
+        `Provider returned invalid JSON arguments for ${binding.tool.name}.`
+      );
+    }
     return { callId: call.id, name: binding.tool.name, arguments: args };
   });
   return { text: content, toolCalls, finishReason: finishReason ?? null };

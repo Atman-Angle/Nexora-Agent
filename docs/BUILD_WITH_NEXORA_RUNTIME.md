@@ -455,7 +455,7 @@ Decision Provider 接收 Harness 构建的 `AgentWorkingContext`，不是完整 
 - `toolObservations` 只包含 active Step/Check 和已完成前置 Evidence 所需的有界事实；
 - `projection.digest` 是当前完整决策投影的稳定摘要，可用于缓存键、日志关联和确定性测试，不能作为 Evidence。
 
-Provider 通过 `nexora_update_plan` control 提交可选 `goal` 与有序 `{ objective }` Task；Harness 编译 Plan/Step identity，Runtime 负责持久化、version/CAS 与完成前缀一致性。objective 默认没有 Acceptance Check。Plan control 可与 Runtime Tool Calls 同轮出现，也可在没有 Plan 时调用已注册 Tool；任何内部 `set_plan/call_tool/execute_step/propose_finish` 名称都会在 Harness 边界拒绝。
+Provider 通过 `nexora_update_plan` control 提交可选 `goal` 与有序 `{ objective }` Task；`tasks` 是当前仍有用的剩余工作快照，不是历史清单或完成证明。Harness 按等价 objective 复用 Plan/Step identity，Runtime 负责持久化、version/CAS 与机械完成前缀一致性。objective 默认没有 Acceptance Check，因此 Tool 成功不会自动把它或后续 objective 标记 completed；完成一个导航阶段后，Provider 用省略该阶段的新快照推进 active Step。Plan control 可与 Runtime Tool Calls 同轮出现，也可在没有 Plan 时调用已注册 Tool；任何内部 `set_plan/call_tool/execute_step/propose_finish` 名称都会在 Harness 边界拒绝。
 
 生产 `ModelResponse` 不接受模型 Action。Harness 只按原生/strict-structured Tool Calls、`nexora_update_plan`、`nexora_request_input` 和无调用的非空文本确定性路由。native mode 的普通 JSON content 永远不会被解析或执行；空响应、未知 Tool、非法 batch 和旧 Action envelope 都会整体拒绝。
 

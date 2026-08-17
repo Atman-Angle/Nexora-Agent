@@ -114,12 +114,12 @@ describe("E080 deterministic Context Eviction", () => {
     expect(projected.at(-1)).toEqual(expect.objectContaining({
       invocationId: view.toolInvocations.at(-1)!.id,
       status: "failed",
-      payloadMode: "reference",
+      payloadMode: "fragment",
       error: null,
-      payloadFragment: null,
+      payloadFragment: expect.objectContaining({ kind: "deterministic_excerpt" }),
       retention: expect.objectContaining({
-        class: "predecessor_evidence",
-        critical: false
+        class: "unresolved_error",
+        critical: true
       })
     }));
     const activeFailure = view.toolInvocations.at(-1)!;
@@ -200,7 +200,7 @@ describe("E080 deterministic Context Eviction", () => {
     expect(finalContext.toolObservations[0]).toEqual(expect.objectContaining({
       payloadMode: "reference",
       facts: null,
-      retention: expect.objectContaining({ class: "predecessor_evidence", critical: false })
+      retention: expect.objectContaining({ class: "active_step", critical: false })
     }));
     expect(finalContext.run.taskContract?.constraints).toEqual([]);
     expect(view.modelCalls.at(-1)).toEqual(expect.objectContaining({
@@ -249,8 +249,8 @@ describe("E080 deterministic Context Eviction", () => {
     expect(observations).toHaveLength(8);
     expect(observations.every((item) => item.status === "failed")).toBe(true);
     expect(observations.at(-1)?.retention).toEqual(expect.objectContaining({
-      critical: false,
-      class: "predecessor_evidence"
+      critical: true,
+      class: "unresolved_error"
     }));
     expect(Buffer.byteLength(JSON.stringify(observations), "utf8")).toBeLessThanOrEqual(32 * 1024);
     await runtime.close();
@@ -302,7 +302,7 @@ describe("E080 deterministic Context Eviction", () => {
       payloadMode: "reference",
       facts: null,
       payloadFragment: null,
-      retention: expect.objectContaining({ class: "predecessor_evidence", critical: false }),
+      retention: expect.objectContaining({ class: "active_step", critical: false }),
       sourceRefs: expect.arrayContaining([
         `invocation:${invocation.id}`,
         `evidence:${view.snapshot.evidence[0]!.id}`,
@@ -338,7 +338,7 @@ describe("E080 deterministic Context Eviction", () => {
     )).toEqual(invocation.errorJson);
     expect(view.snapshot.stepProgress[0]).toEqual(expect.objectContaining({
       stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
-      status: "completed",
+      status: "active",
       evidenceIds: []
     }));
     await runtime.close();
@@ -378,7 +378,7 @@ describe("E080 deterministic Context Eviction", () => {
     const runtime = createRuntime({
       workspace,
       provider,
-      tools: [largeTool({ failSequence: 2, payloadBytes: 1_024 })]
+      tools: [largeTool({ payloadBytes: 1_024 })]
     });
 
     const result = await runtime.start({ input: "Force a hard-limit block after eviction." });

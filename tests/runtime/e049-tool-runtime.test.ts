@@ -50,6 +50,43 @@ describe("E049 built-in Tool Runtime", () => {
       .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ matches: [expect.objectContaining({ path: "src/value.ts", line: 1 })] }) }));
   });
 
+  it("reconstructs a large UTF-8 file through bounded read ranges", async () => {
+    const root = workspace();
+    const content = `${"dashboard-row\n".repeat(1_500)}主题完成\n`;
+    writeFileSync(join(root, "dashboard.html"), content, "utf8");
+    const read = tool(createBuiltInTools(), "filesystem.read");
+
+    const preview = await execute(read, root, { path: "dashboard.html" });
+    expect(preview).toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ preview: expect.any(String), artifactRef: expect.stringMatching(/^sha256:/) })
+    }));
+
+    let offset = 0;
+    let rebuilt = "";
+    for (let page = 0; page < 20; page += 1) {
+      const result = await execute(read, root, { path: "dashboard.html", offset, limit: 3_000 });
+      expect(result.status).toBe("success");
+      const facts = result.status === "success" ? result.facts as {
+        readonly content: string;
+        readonly nextOffset: number | null;
+        readonly offset: number;
+        readonly truncated: boolean;
+      } : null;
+      expect(facts).not.toBeNull();
+      expect(facts!.offset).toBe(offset);
+      expect(Buffer.byteLength(facts!.content, "utf8")).toBeLessThanOrEqual(2_800);
+      rebuilt += facts!.content;
+      if (facts!.nextOffset === null) {
+        expect(facts!.truncated).toBe(false);
+        break;
+      }
+      expect(facts!.truncated).toBe(true);
+      offset = facts!.nextOffset;
+    }
+    expect(rebuilt).toBe(content);
+  });
+
   it("rejects read and write paths that escape through a directory symlink", async () => {
     const root = workspace();
     const outside = workspace();

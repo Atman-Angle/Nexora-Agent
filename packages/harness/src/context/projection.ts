@@ -147,13 +147,24 @@ export function projectRelevantToolObservations(
   }
   for (const invocation of active) {
     const unresolved = isUnresolvedFailure(invocation, active, invocationOrder);
+    const checkBound = activeStep?.acceptanceChecks.some((check) => (
+      check.required
+      && check.kind === "tool_result"
+      && check.toolName === invocation.toolName
+    )) === true;
     selected.set(invocation.id, {
       invocation,
-      retentionClass: unresolved ? "unresolved_error" : "active_check",
-      critical: true,
+      retentionClass: unresolved
+        ? "unresolved_error"
+        : checkBound
+          ? "active_check"
+          : "active_step",
+      critical: unresolved || checkBound,
       reasons: unresolved
         ? ["active_check", "unresolved_failure"]
-        : ["active_check"],
+        : checkBound
+          ? ["active_check"]
+          : ["active_step"],
       stepOrder: stepOrder.get(invocation.stepId) ?? -1,
       invocationOrder: invocationOrder.get(invocation.id) ?? -1,
       evidence: evidenceByInvocation.get(invocation.id) ?? []
@@ -242,7 +253,9 @@ function projectObservationCandidates(
       && candidate.invocation.completedAt !== null
     ))
   ).sort(compareObservationValueDescending);
-  const critical = completed.filter((candidate) => candidate.critical);
+  const critical = completed
+    .filter((candidate) => candidate.critical)
+    .slice(0, MAX_TOOL_OBSERVATIONS);
   const criticalIds = new Set(critical.map((candidate) => candidate.invocation.id));
   const selected = [
     ...critical,

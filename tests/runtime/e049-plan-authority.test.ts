@@ -142,18 +142,13 @@ describe("E049 single Structured Plan authority", () => {
       invocationId: view.toolInvocations[0]!.id,
       kind: "tool_result"
     }));
-    expect(view.snapshot.stepProgress).toEqual([
-      {
-        stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
-        status: "completed",
-        evidenceIds: [view.snapshot.evidence[0]!.id]
-      },
-      {
-        stepId: view.snapshot.currentPlan!.orderedSteps[1]!.id,
-        status: "active",
-        evidenceIds: []
-      }
-    ]);
+    expect(view.snapshot.currentPlan?.orderedSteps).toHaveLength(1);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Read the revised target");
+    expect(view.snapshot.stepProgress).toEqual([{
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+      status: "active",
+      evidenceIds: []
+    }]);
     runtime.close();
   });
 

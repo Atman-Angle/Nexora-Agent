@@ -87,6 +87,8 @@ nexora_request_input
 }
 ```
 
+`tasks` 是当前有序的剩余工作快照。Provider 不提交 Step ID、status、Check 或 Evidence；Harness 协调等价 objective 的 identity，Runtime 持久化唯一当前 Plan。无 required mechanical Check 的 objective 不会被 Tool 成功自动完成，Provider 通过省略已结束 objective 的新快照推进导航。
+
 `nexora_request_input` arguments are:
 
 ```ts

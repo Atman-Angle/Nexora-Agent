@@ -108,13 +108,32 @@ function compilePlanTasks(input: {
       .filter((progress) => progress.status === "completed")
       .map((progress) => run.currentPlan!.orderedSteps.find((step) => step.id === progress.stepId)!)
       .filter((step) => step !== undefined);
-  const compiledSteps = input.tasks.map((task) => compileTask(task, input.createId));
+  const completedIds = new Set(completedSteps.map((step) => step.id));
+  const existingByObjective = new Map<string, StructuredPlan["orderedSteps"][number][]>();
+  for (const step of run.currentPlan?.orderedSteps ?? []) {
+    const matches = existingByObjective.get(step.objective) ?? [];
+    matches.push(step);
+    existingByObjective.set(step.objective, matches);
+  }
+  const usedStepIds = new Set<string>();
+  const seenObjectives = new Set<string>();
+  const compiledSteps = input.tasks.flatMap((task) => {
+    if (seenObjectives.has(task.objective)) return [];
+    seenObjectives.add(task.objective);
+    const existing = existingByObjective.get(task.objective)?.find((step) => !usedStepIds.has(step.id));
+    if (existing !== undefined) {
+      usedStepIds.add(existing.id);
+      return completedIds.has(existing.id) ? [] : [existing];
+    }
+    return [compileTask(task, input.createId)];
+  });
+  const remainingObjectives = [...seenObjectives];
 
   const taskContract = requiresTaskContract
     ? {
         goal: input.goal ?? run.inputHistory.at(-1)!.text,
         constraints: [],
-        acceptanceCriteria: input.tasks.map((task) => task.objective)
+        acceptanceCriteria: remainingObjectives
       }
     : undefined;
   return {

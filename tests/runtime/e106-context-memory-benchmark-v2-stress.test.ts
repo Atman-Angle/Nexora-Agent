@@ -45,7 +45,15 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       });
       if (decisions === 3) return response({
         text: null,
-        toolCalls: [{ name: "filesystem.read", arguments: { path: SHARD_PATHS[0] } }],
+        toolCalls: [{
+          name: "nexora_update_plan",
+          arguments: {
+            tasks: [{ objective: "Review and report the ordered preferred-stream codes." }]
+          }
+        }, {
+          name: "filesystem.read",
+          arguments: { path: SHARD_PATHS[0] }
+        }],
         finishReason: "tool_calls"
       });
       return response({

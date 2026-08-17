@@ -167,7 +167,7 @@ describe("E078 bounded decision context projection", () => {
     }
   });
 
-  it("keeps completed step observations visible for the completion decision", async () => {
+  it("keeps objective-only step observations visible for the completion decision", async () => {
     const workspace = fixture();
     const provider = new CapturingProvider((context, call) => {
       if (call === 0) return toolPlan(workspace, null, ["one", "two", "three"]);
@@ -188,10 +188,10 @@ describe("E078 bounded decision context projection", () => {
     try {
       const result = await runtime.start({ input: "Complete all three steps." });
       expect(result.status).toBe("succeeded");
-      // The completion decision still sees every persisted observation after
-      // navigation progress has completed.
+      // The completion decision sees every persisted observation while
+      // objective-only navigation remains non-authoritative.
       const completion = provider.contexts[4]!;
-      expect(completion.run.stepProgress.map((item) => item.status)).toEqual(["completed", "completed", "completed"]);
+      expect(completion.run.stepProgress.map((item) => item.status)).toEqual(["active", "pending", "pending"]);
       expect(completion.toolObservations.map((item) => item.toolName)).toEqual(["test.one", "test.two", "test.three"]);
     } finally {
       await runtime.close();

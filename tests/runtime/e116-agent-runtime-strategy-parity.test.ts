@@ -17,7 +17,7 @@ describe("E116 Agent / Runtime strategy parity baseline", () => {
   it("publishes the progressive planning policy", () => {
     expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("A Plan is optional navigation");
     expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("smallest useful observation");
-    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("Revise a Plan only when direction changes");
+    expect(GENERAL_AGENT_SYSTEM_KERNEL).toContain("Plan tasks are the current ordered remaining work");
   });
 
   it("freezes semantic-pressure reasoning selection", () => {
