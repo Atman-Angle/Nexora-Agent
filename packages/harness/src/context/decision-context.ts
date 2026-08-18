@@ -243,7 +243,7 @@ function projectRepairContext(
   return {
     kind: repairKind(error.code, failedInvocation),
     code: error.code,
-    issues: repairIssues(error.code, error.message),
+    issues: repairIssues(error.code, error.message, failedInvocation),
     failedObjective: failedStep?.objective ?? null,
     latestIntent: failedInvocation === null
       ? rejectedToolCall(run, artifacts)
@@ -310,7 +310,20 @@ function repairKind(code: string, failedInvocation: ToolInvocation | null): Repa
   return "runtime_error";
 }
 
-function repairIssues(code: string, message: string): RepairContext["issues"] {
+function repairIssues(
+  code: string,
+  message: string,
+  failedInvocation: ToolInvocation | null
+): RepairContext["issues"] {
+  const addRecoveryGuidance = (issues: RepairContext["issues"]): RepairContext["issues"] => {
+    if (failedInvocation === null || issues.some((issue) => issue.kind === "recovery_guidance")) {
+      return issues;
+    }
+    const guidance = failedInvocation.status === "unknown"
+      ? "The Tool effect is unknown; do not replay it. Request confirmation or use a safe read-only path."
+      : "Treat this as a recoverable Tool failure. Use the returned facts and capability catalog to change the input or choose another Tool; do not repeat unchanged input without changed conditions.";
+    return [...issues, { kind: "recovery_guidance", message: guidance }];
+  };
   try {
     const parsed = JSON.parse(message) as { readonly issues?: unknown };
     if (Array.isArray(parsed.issues)) {
@@ -329,15 +342,15 @@ function repairIssues(code: string, message: string): RepairContext["issues"] {
             : null
         ))
         .filter((item): item is RepairContext["issues"][number] => item !== null);
-      if (issues.length > 0) return issues;
+      if (issues.length > 0) return addRecoveryGuidance(issues);
     }
   } catch {
     // Keep the persisted message as bounded fallback feedback.
   }
-  return [{
+  return addRecoveryGuidance([{
     kind: "unresolved_failure",
     message
-  }];
+  }]);
 }
 
 function parsedRepairIssueKind(

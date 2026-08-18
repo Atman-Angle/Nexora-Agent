@@ -16,7 +16,8 @@ import {
   materializeTestResponse,
   responseCall,
   responseInput,
-  responsePlan
+  responsePlan,
+  responseText
 } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -91,6 +92,42 @@ describe("E109 truthful Tool progress", () => {
     }));
   });
 
+  it("returns a failure Observation and lets the Agent choose another Tool", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "target.txt"), "RECOVERED\n", "utf8");
+    const contexts: ModelDecisionContext[] = [];
+    const provider = scriptedProvider([
+      responseCall("filesystem.read", { path: "missing/target.txt" }),
+      responseCall("filesystem.search", { query: "RECOVERED", path: "." }),
+      responseCall("filesystem.read", { path: "target.txt" }),
+      responseText("Recovered by searching for and reading target.txt.")
+    ], contexts);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read target.txt; locate it autonomously if the initial path is unavailable." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result).toMatchObject({ status: "succeeded", stopReason: "COMPLETED" });
+    expect(view.events.filter((item) => item.type === "response.rejected")).toHaveLength(0);
+    expect(view.toolInvocations.map(({ toolName, status }) => ({ toolName, status }))).toEqual([
+      { toolName: "filesystem.read", status: "failed" },
+      { toolName: "filesystem.search", status: "succeeded" },
+      { toolName: "filesystem.read", status: "succeeded" }
+    ]);
+    expect(contexts[1]?.repair?.kind).toBe("tool_failure");
+    expect(contexts[1]?.repair?.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "recovery_guidance" })
+    ]));
+    expect(contexts[2]?.tools.map(({ identity }) => identity.name)).toContain("filesystem.search");
+    expect(result.evidence.length).toBeGreaterThan(0);
+  });
+
   it("rejects an identical patch before Approval, Invocation, Evidence or workspace change", async () => {
     const root = workspace();
     writeFileSync(join(root, "target.txt"), "VALUE\n", "utf8");
@@ -149,6 +186,7 @@ describe("E109 truthful Tool progress", () => {
               cwd: ".",
               timeoutMs: 10_000
             }),
+      responseInput("The verifier failed. Should I revise the implementation?", "The process started and returned a non-zero exit."),
       responseInput("The verifier failed. Should I revise the implementation?", "The process started and returned a non-zero exit.")
     ], contexts);
     const runtime = createRuntime({
