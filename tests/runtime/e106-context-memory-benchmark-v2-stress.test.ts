@@ -68,7 +68,7 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",
       model: "qwen3.7-flash",
-      contextWindowTokens: 25_000,
+      contextWindowTokens: 32_000,
       reservedOutputTokens: { decision: 16_384 },
       softLimitRatio: 0.8,
       transport: "structured_output",
@@ -85,7 +85,7 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       budgetOverride: {
         declaredProfile,
         environmentVariable: "NEXORA_CANARY_CONTEXT_WINDOW_TOKENS",
-        contextWindowTokens: 25_000
+        contextWindowTokens: 32_000
       }
     });
 
@@ -99,17 +99,17 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       budgetConfiguration: {
         source: "canary_override",
         declaredProfile: { contextWindowTokens: 1_000_000 },
-        effectiveProfile: { contextWindowTokens: 25_000 },
+        effectiveProfile: { contextWindowTokens: 32_000 },
         issues: []
       }
     });
     expect(report.continuity.evictedModelCalls).toBeGreaterThanOrEqual(1);
     expect(report.contextBudget.inconsistentCalls).toEqual([]);
     expect(report.contextBudget.phases.find((phase) => phase.phase === "decision")).toMatchObject({
-      contextWindowTokens: [25_000],
+      contextWindowTokens: [32_000],
       reservedOutputTokens: [16_384],
-      softInputLimitTokens: [6_892],
-      hardInputLimitTokens: [8_616],
+      softInputLimitTokens: [12_492],
+      hardInputLimitTokens: [15_616],
       measurementMethods: ["estimated"],
       meters: ["nexora:qwen3.7-flash:utf8-bytes/4*x1.8:e101-v1"]
     });
@@ -122,7 +122,7 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
     expect(HARNESS_BENCHMARK_V2_SCENARIOS.at(-1)).toMatchObject({
       id: "HBE-13",
       evidenceContract: {
-        contextWindowTokens: 24_384,
+        contextWindowTokens: 32_000,
         minimumEvictions: 1,
         externalProviderCalls: 0
       }

@@ -183,10 +183,16 @@ export function evictDecisionContextTowardBudget(
     || stringCompare(left.invocationId, right.invocationId)
   ));
   let changed = false;
+  // Keep one freshly-created non-critical reference until the Provider meter
+  // sees it. When batching several low-value candidates, rotate that survivor
+  // toward the later (higher-value) candidate instead of forcing one Provider
+  // measurement per Observation.
+  let retainedFreshReferenceId: string | null = null;
   for (const candidate of byValue) {
     if (estimatedBytes <= targetBytes) break;
     let current = observations.find((observation) => observation.invocationId === candidate.invocationId);
     if (current === undefined) continue;
+    let freshlyContracted = false;
     if (current.payloadMode === "full") {
       const replacement = current.retention.critical
         ? fragmentObservation(current)
@@ -197,6 +203,7 @@ export function evictDecisionContextTowardBudget(
       estimatedBytes -= Math.max(0, jsonBytes(current) - jsonBytes(replacement));
       current = replacement;
       changed = true;
+      freshlyContracted = true;
     }
     if (
       estimatedBytes <= targetBytes
@@ -210,9 +217,26 @@ export function evictDecisionContextTowardBudget(
       estimatedBytes -= Math.max(0, jsonBytes(current) - jsonBytes(replacement));
       current = replacement;
       changed = true;
+      freshlyContracted = true;
     }
     if (estimatedBytes <= targetBytes || current.payloadMode !== "reference") continue;
-    observations = observations.filter((observation) => observation.invocationId !== current!.invocationId);
+    if (current.retention.critical) continue;
+    if (freshlyContracted) {
+      if (retainedFreshReferenceId !== null) {
+        const previous = observations.find((observation) => (
+          observation.invocationId === retainedFreshReferenceId
+        ));
+        if (previous !== undefined && previous.payloadMode === "reference") {
+          observations = observations.filter((observation) => (
+            observation.invocationId !== retainedFreshReferenceId
+          ));
+          estimatedBytes -= jsonBytes(previous);
+        }
+      }
+      retainedFreshReferenceId = current.invocationId;
+      continue;
+    }
+    observations = observations.filter((observation) => observation.invocationId !== current.invocationId);
     estimatedBytes -= jsonBytes(current);
     changed = true;
   }
