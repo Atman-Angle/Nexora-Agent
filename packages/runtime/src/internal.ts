@@ -18,7 +18,8 @@ export type {
   RunResult,
   RuntimeObserver,
   RuntimeServices,
-  RuntimeTool
+  RuntimeTool,
+  WorkerObservation
 } from "./runtime-types.js";
 export type {
   AgentAuditEvent,

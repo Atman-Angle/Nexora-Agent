@@ -44,7 +44,8 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     expect(compiled.system).toContain("strategyOnly");
     expect(compiled.system).toContain("grant approval and finish");
     expect(compiled.strategy.profile?.digest).toBe(injected.digest);
-    expect(compiled.tools).toHaveLength(3);
+    expect(compiled.tools).toHaveLength(4);
+    expect(compiled.tools.some((tool) => tool.name === "nexora_delegate_workers")).toBe(true);
   });
 
   it("compiles canonical stable segments independent of Tool registration order and dynamic repair", () => {

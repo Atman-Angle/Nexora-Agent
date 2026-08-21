@@ -19,6 +19,7 @@ import {
   type PlanTaskContract,
   type RunSnapshot,
   type RuntimeAction,
+  type RuntimeBudgets,
   type TaskContract
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
@@ -73,6 +74,7 @@ import type {
   BranchHandle,
   BranchView,
   CreateRuntimeOptions,
+  RuntimeDelegationPolicy,
   DenialOptions,
   ForkOptions,
   MergeDecisions,
@@ -93,6 +95,7 @@ import type {
   RuntimeWatch,
   RuntimeTool,
   StartInput,
+  WorkerObservation,
   SubscribeOptions
 } from "./runtime-types.js";
 import {
@@ -138,6 +141,7 @@ export type {
   RunResult,
   RunView,
   RuntimeObserver,
+  RuntimeDelegationPolicy,
   RuntimeEvent,
   RuntimeEventListener,
   RuntimeSubscription,
@@ -145,6 +149,7 @@ export type {
   SubscribeOptions,
   RuntimeTool,
   RuntimeToolResult,
+  WorkerObservation,
   StartInput
 } from "./runtime-types.js";
 export type { FailureHandoff } from "./runtime-types.js";
@@ -162,6 +167,9 @@ export class RuntimeEngine {
   readonly #dataDir: string;
   readonly #driver: AgentDriver;
   readonly #tools: Map<string, RuntimeTool>;
+  readonly #workerToolPolicies: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly #delegationPolicy: RuntimeDelegationPolicy;
+  readonly #allowedWorkerProfiles: ReadonlySet<string> | null;
   readonly #store: RunStore;
   readonly #now: () => string;
   readonly #createId: () => string;
@@ -223,6 +231,20 @@ export class RuntimeEngine {
       this.#now = now;
       this.#createId = createId;
       this.#tools = tools;
+      const delegationPolicy = options.delegationPolicy ?? { mode: "allowed" as const, maxConcurrentWorkers: 8 };
+      if (!Number.isInteger(delegationPolicy.maxConcurrentWorkers)
+        || delegationPolicy.maxConcurrentWorkers < 2
+        || delegationPolicy.maxConcurrentWorkers > 8) {
+        throw new Error("delegationPolicy.maxConcurrentWorkers must be an integer from 2 through 8.");
+      }
+      this.#delegationPolicy = structuredClone(delegationPolicy);
+      this.#allowedWorkerProfiles = delegationPolicy.allowedProfiles === undefined
+        ? null
+        : new Set(delegationPolicy.allowedProfiles);
+      this.#workerToolPolicies = new Map(Object.entries(delegationPolicy.workerToolPolicies ?? {}).map(([profile, names]) => [
+        profile,
+        new Set(names)
+      ]));
       this.#artifactDir = join(dataDir, "artifacts");
       this.#store = openRunStore({
         databasePath: join(dataDir, "runtime-v1.1.db")
@@ -543,7 +565,37 @@ export class RuntimeEngine {
         }
       }
       if (run.status !== "running") return toRunResult(run);
-      return await this.#driveRun(run, controller.signal, observer);
+      this.#reconcileDelegatedBranches(run.runId);
+      run = await this.#recoverAcceptedDelegations(run, controller.signal, observer);
+      if (run.status !== "running") return toRunResult(run);
+      try {
+        return await this.#driveRun(run, controller.signal, observer);
+      } catch (error) {
+        const current = this.#requireRun(run.runId);
+        if (
+          current.status === "succeeded"
+          || current.status === "failed"
+          || current.status === "cancelled"
+        ) return toRunResult(current);
+        const failed = this.#fail(
+          current,
+          "INTERNAL_ERROR",
+          "INTERNAL",
+          observer,
+          "The Run stopped because of an internal execution error. The persisted failure details are available for recovery."
+        );
+        this.#store.recordRunEvent({
+          runId: failed.runId,
+          event: {
+            type: "runtime.event",
+            occurredAt: this.#now(),
+            payload: { name: "execution.error_contained", message: errorMessage(error) }
+          },
+          fencingToken: this.#leases.requireFencingToken(failed.runId)
+        });
+        this.#notify(failed.runId, observer);
+        return toRunResult(failed);
+      }
     } finally {
       this.#leases.release(run.runId);
     }
@@ -632,7 +684,34 @@ export class RuntimeEngine {
     this.#leases.acquire(created.runId);
     this.#assertAuditIntegrity(created.runId);
     try {
-      return await this.#driveRun(created, controller.signal, observer);
+      try {
+        return await this.#driveRun(created, controller.signal, observer);
+      } catch (error) {
+        const current = this.#requireRun(created.runId);
+        if (
+          current.status === "succeeded"
+          || current.status === "failed"
+          || current.status === "cancelled"
+        ) return toRunResult(current);
+        const failed = this.#fail(
+          current,
+          "INTERNAL_ERROR",
+          "INTERNAL",
+          observer,
+          "The Run stopped because of an internal execution error. The persisted failure details are available for recovery."
+        );
+        this.#store.recordRunEvent({
+          runId: failed.runId,
+          event: {
+            type: "runtime.event",
+            occurredAt: this.#now(),
+            payload: { name: "execution.error_contained", message: errorMessage(error) }
+          },
+          fencingToken: this.#leases.requireFencingToken(failed.runId)
+        });
+        this.#notify(failed.runId, observer);
+        return toRunResult(failed);
+      }
     } finally {
       this.#leases.release(created.runId);
     }
@@ -820,7 +899,11 @@ export class RuntimeEngine {
         "Run has no unknown Tool Invocation to recover."
       );
     }
-    if (run.status === "running" && unresolved.length === 0) {
+    if (
+      run.status === "running"
+      && unresolved.length === 0
+      && !this.#reopenedRunIds.has(runId)
+    ) {
       throw this.#controlConflict(
         runId,
         "Running Run has no interrupted Tool Invocation to recover."
@@ -1307,7 +1390,7 @@ export class RuntimeEngine {
       run,
       workspace: this.#workspaceFor(runId),
       tools: Object.freeze(
-        [...this.#tools.values()].map((tool) => Object.freeze({ contract: tool.contract }))
+        [...this.#toolsForRun(runId).values()].map((tool) => Object.freeze({ contract: tool.contract }))
       ),
       invocations: Object.freeze(this.#store.listToolInvocations(runId)),
       attempts: Object.freeze(this.#store.listToolAttempts(runId)),
@@ -1317,6 +1400,7 @@ export class RuntimeEngine {
       parentInvocations: Object.freeze(
         parentRun === null ? [] : this.#store.listToolInvocations(parentRun.runId)
       ),
+      workerObservations: Object.freeze(this.#workerObservationsForDecision(runId)),
       latestModelCallAudit: latestModelCall === undefined
         ? null
         : this.#store.getModelCallAudit(latestModelCall.id)
@@ -1476,6 +1560,14 @@ export class RuntimeEngine {
     input: { readonly summary: string },
     observer?: RuntimeObserver
   ): RunSnapshot {
+    const activeWorkers = this.#store.listBranches(run.runId).filter((branch) => {
+      if (branch.status !== "active" && branch.status !== "creating") return false;
+      const child = this.#store.getRun(branch.childRunId);
+      return child !== null && child.status !== "succeeded" && child.status !== "failed" && child.status !== "cancelled";
+    });
+    if (activeWorkers.length > 0) {
+      throw new ActionRejectedError(`Completion is not valid: ${activeWorkers.length} delegated Worker Run(s) are still active.`);
+    }
     const validation = validateCompletion(
       run,
       this.#store.listToolInvocations(run.runId),
@@ -1497,16 +1589,20 @@ export class RuntimeEngine {
       lastError: null,
       updatedAt: this.#now()
     });
+    const resultArtifact = Buffer.byteLength(input.summary, "utf8") > 4_096
+      ? new ArtifactStore(this.#artifactDir).putText(input.summary, "text/plain").digest
+      : null;
+    const boundedSummary = resultArtifact === null ? input.summary : `${input.summary.slice(0, 4_096)}\n[Full result: artifact ${resultArtifact}]`;
     const succeeded = transitionRunStatus(completedNavigation, "succeeded", {
       now: this.#now(),
       stopReason: "COMPLETED",
-      result: { summary: input.summary, resultArtifact: null, evidenceIds: [...evidenceIds] },
+      result: { summary: boundedSummary, resultArtifact, evidenceIds: [...evidenceIds] },
       delivery: deriveRunDelivery({
         run: completedNavigation,
         outcome: "succeeded",
         now: this.#now(),
         stopReason: "COMPLETED",
-        summary: input.summary,
+        summary: boundedSummary,
         generatedBy: "model"
       })
     });
@@ -1571,6 +1667,9 @@ export class RuntimeEngine {
     signal: AbortSignal,
     observer?: RuntimeObserver
   ): Promise<RunSnapshot> {
+    if (action.type === "delegate_workers") {
+      return this.#delegateWorkers(run, action, signal, observer);
+    }
     if (action.type === "execute_step") return this.#handleExecuteStep(run, action, signal, observer);
     if (action.type === "request_input") {
       const now = this.#now();
@@ -1590,6 +1689,278 @@ export class RuntimeEngine {
       return callTool(this.#services(signal, run.runId), run, action, observer);
     }
     throw new ActionRejectedError("Unsupported Runtime command.");
+  }
+
+  async #delegateWorkers(
+    run: RunSnapshot,
+    action: Extract<RuntimeAction, { type: "delegate_workers" }>,
+    signal: AbortSignal,
+    observer?: RuntimeObserver
+  ): Promise<RunSnapshot> {
+    signal.throwIfAborted();
+    if (this.#store.getBranchByChild(run.runId) !== null) {
+      throw new ActionRejectedError(
+        "WORKER_DELEGATION_FORBIDDEN: A Child Worker Run cannot delegate additional Workers."
+      );
+    }
+    if (this.#delegationPolicy.mode === "forbidden") {
+      throw new ActionRejectedError("WORKER_DELEGATION_FORBIDDEN: Host policy forbids Worker delegation.");
+    }
+    const fingerprints = action.assignments.map((assignment) => ({
+      objectiveDigest: digestJson(assignment.objective),
+      profileRef: assignment.profileRef ?? null
+    }));
+    if (new Set(fingerprints.map((item) => item.objectiveDigest)).size !== fingerprints.length) {
+      throw new ActionRejectedError("DELEGATION_REQUIRES_INDEPENDENT_GOALS: Worker objectives must be distinct.");
+    }
+    for (const assignment of action.assignments) {
+      if (assignment.profileRef === undefined) continue;
+      if (this.#allowedWorkerProfiles === null
+        || !this.#allowedWorkerProfiles.has(assignment.profileRef)
+        || !this.#workerToolPolicies.has(assignment.profileRef)) {
+        throw new ActionRejectedError(`WORKER_PROFILE_FORBIDDEN: ${assignment.profileRef}`);
+      }
+    }
+    const priorDelegation = [...this.#store.listEvents(run.runId)].reverse().find((event) => {
+      if (event.type !== "runtime.event" || event.payload.name !== "workers.delegation.accepted") return false;
+      if (action.commandRef === undefined || event.payload.commandRef !== action.commandRef) return false;
+      const assignments = event.payload.assignments;
+      if (!Array.isArray(assignments) || assignments.length !== fingerprints.length) return false;
+      return assignments.every((item, index) => {
+        if (typeof item !== "object" || item === null) return false;
+        const candidate = item as Record<string, unknown>;
+        return candidate.objectiveDigest === fingerprints[index]!.objectiveDigest
+          && (candidate.profileRef ?? null) === fingerprints[index]!.profileRef;
+      });
+    });
+    const priorPayload = priorDelegation?.payload;
+    if (priorPayload?.policyEnvelope !== undefined
+      && !isDelegationEnvelopeNoWider(this.#delegationPolicy, priorPayload.policyEnvelope)) {
+      throw new ActionRejectedError("DELEGATION_POLICY_WIDENED: Reopened execution cannot widen its persisted Worker envelope.");
+    }
+    const delegationId = priorPayload !== undefined && typeof priorPayload.delegationId === "string"
+      ? priorPayload.delegationId
+      : this.#createId();
+    const priorAssignments = priorPayload !== undefined && Array.isArray(priorPayload.assignments)
+      ? priorPayload.assignments
+      : [];
+    const existingAssignmentIds = new Set(this.#store.listBranches(run.runId).flatMap((branch) => (
+      branch.lineage.flatMap((lineage) => lineage.assignmentId === undefined ? [] : [lineage.assignmentId])
+    )));
+    const newWorkerCount = action.assignments.reduce((count, _assignment, index) => {
+      const persisted = priorAssignments[index];
+      const assignmentId = typeof persisted === "object" && persisted !== null
+        ? (persisted as Record<string, unknown>).assignmentId
+        : undefined;
+      return count + (typeof assignmentId === "string" && existingAssignmentIds.has(assignmentId) ? 0 : 1);
+    }, 0);
+    const activeWorkerCount = this.#store.listBranches(run.runId)
+      .filter((branch) => branch.status === "active" || branch.status === "creating").length;
+    if (activeWorkerCount + newWorkerCount > this.#delegationPolicy.maxConcurrentWorkers) {
+      throw new ActionRejectedError(
+        `WORKER_CONCURRENCY_EXCEEDED: ${activeWorkerCount} active plus ${newWorkerCount} new Workers exceeds ${this.#delegationPolicy.maxConcurrentWorkers}.`
+      );
+    }
+    let current = run;
+    if (priorDelegation === undefined) {
+      const acceptedAssignments = action.assignments.map((assignment, index) => ({
+        assignmentId: this.#createId(),
+        ordinal: index,
+        objectiveDigest: fingerprints[index]!.objectiveDigest,
+        profileRef: assignment.profileRef ?? null,
+        objective: assignment.objective
+      }));
+      current = this.#store.commitRun({
+        previous: current,
+        next: RunSnapshotSchema.parse({ ...current, updatedAt: this.#now() }),
+        fencingToken: this.#leases.requireFencingToken(current.runId),
+        event: {
+          type: "runtime.event",
+          occurredAt: this.#now(),
+          payload: {
+            name: "workers.delegation.accepted",
+            delegationId,
+            policyDigest: digestJson(this.#delegationPolicy),
+            policyEnvelope: this.#delegationPolicy,
+            ...(action.commandRef === undefined ? {} : { commandRef: action.commandRef }),
+            assignments: acceptedAssignments
+          }
+        }
+      });
+      this.#notify(current.runId, observer);
+      priorAssignments.splice(0, priorAssignments.length, ...acceptedAssignments);
+    }
+    const created: Array<Record<string, unknown>> = [];
+    const handles: BranchHandle[] = [];
+    for (let index = 0; index < action.assignments.length; index += 1) {
+      signal.throwIfAborted();
+      const assignment = action.assignments[index]!;
+      const objectiveDigest = digestJson(assignment.objective);
+      const priorAssignment = priorAssignments[index];
+      const assignmentId = typeof priorAssignment === "object" && priorAssignment !== null
+        && typeof (priorAssignment as Record<string, unknown>).assignmentId === "string"
+        ? (priorAssignment as Record<string, unknown>).assignmentId as string
+        : this.#createId();
+      const existing = typeof priorAssignment === "object" && priorAssignment !== null
+        ? this.#store.listBranches(run.runId).find((branch) => branch.lineage.some((lineage) => (
+            lineage.assignmentId === (priorAssignment as Record<string, unknown>).assignmentId
+          )))
+        : undefined;
+      if (existing !== undefined) {
+        if (existing.status === "active") handles.push(this.#createBranchHandle(existing));
+        created.push({ assignmentId, branchId: existing.branchId, childRunId: existing.childRunId, objectiveDigest, profileRef: assignment.profileRef ?? null, reused: true });
+        continue;
+      }
+      const branch = await this.#leases.withHeartbeat(run.runId, async () => this.#forkParentRun(current, {
+        initialInput: assignment.objective
+      }, observer, {
+        delegationId,
+        assignmentId,
+        ...(assignment.profileRef === undefined ? {} : { profileRef: assignment.profileRef }),
+        objectiveDigest
+      }));
+      if (branch === null) {
+        const failed = this.#fail(
+          current,
+          "DELEGATION_SPAWN_FAILED",
+          "DELEGATION_SPAWN_FAILED",
+          observer,
+          "Supervisor delegation could not create an isolated Worker Run."
+        );
+        return failed;
+      }
+      current = this.#requireRun(run.runId);
+      handles.push(branch);
+      const branchView = await branch.inspect();
+      created.push({ assignmentId, branchId: branch.id, childRunId: branchView.branch.childRunId, objectiveDigest, profileRef: assignment.profileRef ?? null });
+    }
+    // Child Runs are real Runtime executions. Run them concurrently while the
+    // Parent remains at this delegation turn; their terminal facts are later
+    // projected back through listWorkerObservations().
+    await this.#leases.withHeartbeat(run.runId, async () => {
+      await Promise.all(handles.map(async (branch) => {
+        const cancelChild = () => {
+          void branch.cancel(cancellationReason(signal)).catch(() => undefined);
+        };
+        signal.addEventListener("abort", cancelChild, { once: true });
+        try {
+          const result = await branch.run();
+          if (result.status === "succeeded") {
+            this.#closeDelegatedBranch(branch.id, "merged", "Worker completed successfully.");
+          } else if (result.status === "failed" || result.status === "cancelled") {
+            this.#closeDelegatedBranch(branch.id, "discarded", `Worker ended with ${result.status}.`);
+          }
+        } catch {
+          // Child Run authority records the failure; Parent must observe it.
+          // Preserve an active Branch/workspace when execution outcome is not
+          // durably terminal; Recovery resumes the same Child identity.
+        } finally {
+          signal.removeEventListener("abort", cancelChild);
+        }
+      }));
+    });
+    const next = this.#store.commitRun({
+      previous: current,
+      next: RunSnapshotSchema.parse({ ...current, updatedAt: this.#now() }),
+      fencingToken: this.#leases.requireFencingToken(current.runId),
+      event: {
+        type: "runtime.event",
+        occurredAt: this.#now(),
+          payload: {
+            name: "workers.delegated",
+            delegationId,
+            ...(action.commandRef === undefined ? {} : { commandRef: action.commandRef }),
+            assignments: created
+          }
+      }
+    });
+    this.#notify(next.runId, observer);
+    return next;
+  }
+
+  /** Resume an accepted-but-not-joined batch without another Provider decision. */
+  async #recoverAcceptedDelegations(
+    run: RunSnapshot,
+    signal: AbortSignal,
+    observer?: RuntimeObserver
+  ): Promise<RunSnapshot> {
+    const events = this.#store.listEvents(run.runId);
+    const joined = new Set(events.flatMap((event) => (
+      event.type === "runtime.event"
+        && event.payload.name === "workers.delegated"
+        && typeof event.payload.delegationId === "string"
+        ? [event.payload.delegationId]
+        : []
+    )));
+    let current = run;
+    for (const event of events) {
+      if (event.type !== "runtime.event" || event.payload.name !== "workers.delegation.accepted") continue;
+      const delegationId = event.payload.delegationId;
+      if (typeof delegationId !== "string" || joined.has(delegationId)) continue;
+      const persisted = event.payload.assignments;
+      if (!Array.isArray(persisted) || persisted.length < 2 || persisted.length > 8) {
+        return this.#fail(current, "DELEGATION_RECOVERY_MATERIAL_INVALID", "INTERNAL", observer,
+          "Accepted Worker delegation is missing its durable assignment material.");
+      }
+      const assignments: Array<{ objective: string; profileRef?: string }> = [];
+      for (const item of persisted) {
+        if (typeof item !== "object" || item === null) {
+          return this.#fail(current, "DELEGATION_RECOVERY_MATERIAL_INVALID", "INTERNAL", observer,
+            "Accepted Worker assignment metadata is invalid.");
+        }
+        const record = item as Record<string, unknown>;
+        if (typeof record.objective !== "string" || digestJson(record.objective) !== record.objectiveDigest) {
+          return this.#fail(current, "DELEGATION_RECOVERY_MATERIAL_INVALID", "INTERNAL", observer,
+            "Accepted Worker objective is missing or does not match its digest.");
+        }
+        assignments.push({
+          objective: record.objective,
+          ...(typeof record.profileRef === "string" ? { profileRef: record.profileRef } : {})
+        });
+      }
+      current = await this.#delegateWorkers(current, {
+        type: "delegate_workers",
+        ...(typeof event.payload.commandRef === "string" ? { commandRef: event.payload.commandRef } : {}),
+        assignments
+      }, signal, observer);
+      joined.add(delegationId);
+    }
+    return current;
+  }
+
+  /** Close a delegated Branch while its Parent execution still owns the lease. */
+  #closeDelegatedBranch(branchId: string, status: "merged" | "discarded", reason: string): void {
+    const branch = this.#store.getBranch(branchId);
+    if (branch === null || (branch.status !== "active" && branch.status !== "creating")) return;
+    const now = this.#now();
+    this.#store.updateBranchStatus({
+      branchId,
+      status,
+      parentRunId: branch.parentRunId,
+      event: {
+        type: status === "merged" ? "branch.merged" : "branch.discarded",
+        occurredAt: now,
+        payload: { branchId, childRunId: branch.childRunId, reason }
+      },
+      fencingToken: this.#leases.requireFencingToken(branch.parentRunId)
+    });
+    this.#branchWorkspaceCleanups.get(branch.childRunId)?.();
+    this.#branchWorkspaces.delete(branch.childRunId);
+    this.#branchWorkspaceCleanups.delete(branch.childRunId);
+    this.#notify(branch.parentRunId, undefined);
+  }
+
+  #reconcileDelegatedBranches(parentRunId: string): void {
+    for (const branch of this.#store.listBranches(parentRunId)) {
+      if (branch.status !== "active" && branch.status !== "creating") continue;
+      if (branch.lineage.at(-1)?.delegationId === undefined) continue;
+      const child = this.#store.getRun(branch.childRunId);
+      if (child?.status === "succeeded") {
+        this.#closeDelegatedBranch(branch.branchId, "merged", "Recovered Worker completed successfully.");
+      } else if (child?.status === "failed" || child?.status === "cancelled") {
+        this.#closeDelegatedBranch(branch.branchId, "discarded", `Recovered Worker ended with ${child.status}.`);
+      }
+    }
   }
 
   /** A pre-validated Tool batch. Plan provenance may create Evidence but never authorizes execution. */
@@ -1955,9 +2326,10 @@ export class RuntimeEngine {
   }
 
   #services(signal: AbortSignal, runId?: string): RuntimeServices {
+    const tools = runId === undefined ? this.#tools : this.#toolsForRun(runId);
     return {
       workspace: this.#workspaceFor(runId),
-      tools: this.#tools,
+      tools,
       store: this.#store,
       now: () => this.#now(),
       createId: () => this.#createId(),
@@ -1983,6 +2355,17 @@ export class RuntimeEngine {
         this.#fail(run, stopReason, errorCode, observer)
       )
     };
+  }
+
+  #toolsForRun(runId: string): ReadonlyMap<string, RuntimeTool> {
+    const branch = this.#store.getBranchByChild(runId);
+    const profileRef = branch?.lineage.at(-1)?.profileRef;
+    if (profileRef === undefined) {
+      return branch?.lineage.at(-1)?.delegationId === undefined ? this.#tools : new Map();
+    }
+    const allowlist = this.#workerToolPolicies.get(profileRef);
+    if (allowlist === undefined) return new Map();
+    return new Map([...this.#tools.entries()].filter(([name]) => allowlist.has(name)));
   }
 
   #commit(
@@ -2052,14 +2435,78 @@ export class RuntimeEngine {
   }
 
   /** Fork API: creates an isolated exploratory branch from the parent's current revision. */
-  async fork(runId: string, _options: ForkOptions = {}): Promise<BranchHandle | null> {
+  async fork(runId: string, options: ForkOptions = {}): Promise<BranchHandle | null> {
     this.#assertOpen();
-    return this.#forkRun(runId, undefined);
+    return this.#forkRun(runId, options, undefined);
   }
 
   listBranches(runId: string): BranchRecord[] {
     this.#assertOpen();
     return this.#store.listBranches(runId);
+  }
+
+  /** Derived Child → Parent projection; Child Run remains the only authority. */
+  listWorkerObservations(parentRunId: string): readonly WorkerObservation[] {
+    this.#assertOpen();
+    const events = this.#store.listEvents(parentRunId);
+    const latestAccepted = [...events].reverse().find((event) => (
+      event.type === "runtime.event"
+      && event.payload.name === "workers.delegation.accepted"
+      && typeof event.payload.delegationId === "string"
+    ));
+    const latestDelegationId = typeof latestAccepted?.payload.delegationId === "string"
+      ? latestAccepted.payload.delegationId
+      : null;
+    const ordinals = new Map<string, number>();
+    if (Array.isArray(latestAccepted?.payload.assignments)) {
+      for (const item of latestAccepted.payload.assignments) {
+        if (typeof item !== "object" || item === null) continue;
+        const record = item as Record<string, unknown>;
+        if (typeof record.assignmentId === "string" && typeof record.ordinal === "number") {
+          ordinals.set(record.assignmentId, record.ordinal);
+        }
+      }
+    }
+    const branches = this.#store.listBranches(parentRunId)
+      .filter((branch) => latestDelegationId === null
+        || branch.lineage.at(-1)?.delegationId === latestDelegationId)
+      .sort((left, right) => {
+        const leftOrdinal = ordinals.get(left.lineage.at(-1)?.assignmentId ?? "") ?? Number.MAX_SAFE_INTEGER;
+        const rightOrdinal = ordinals.get(right.lineage.at(-1)?.assignmentId ?? "") ?? Number.MAX_SAFE_INTEGER;
+        return leftOrdinal - rightOrdinal || left.branchId.localeCompare(right.branchId);
+      });
+    return branches.map((branch) => {
+      const child = this.#requireRun(branch.childRunId);
+      const lineage = branch.lineage.at(-1);
+      return Object.freeze({
+        parentRunId,
+        branchId: branch.branchId,
+        childRunId: child.runId,
+        delegationId: lineage?.delegationId ?? null,
+        assignmentId: lineage?.assignmentId ?? null,
+        profileRef: lineage?.profileRef ?? null,
+        status: child.status,
+        summary: child.result?.summary ?? null,
+        resultArtifact: child.result?.resultArtifact ?? null,
+        delivery: child.delivery,
+        evidenceRefs: Object.freeze(child.evidence.map((evidence) => evidence.subjectRef))
+      });
+    });
+  }
+
+  #workerObservationsForDecision(parentRunId: string): readonly WorkerObservation[] {
+    const events = this.#store.listEvents(parentRunId);
+    const joined = [...events].reverse().find((event) => (
+      event.type === "runtime.event" && event.payload.name === "workers.delegated"
+    ));
+    if (joined === undefined) return this.listWorkerObservations(parentRunId);
+    const later = events.filter((event) => event.sequence > joined.sequence);
+    const lastModelTurn = [...later].reverse().find((event) => event.type === "model.turn");
+    if (lastModelTurn === undefined) return this.listWorkerObservations(parentRunId);
+    const rejectedAfterTurn = later.some((event) => (
+      event.sequence > lastModelTurn.sequence && event.type === "response.rejected"
+    ));
+    return rejectedAfterTurn ? this.listWorkerObservations(parentRunId) : [];
   }
 
   getBranch(branchId: string): BranchView | null {
@@ -2210,20 +2657,28 @@ export class RuntimeEngine {
 
   async #forkRun(
     runId: string,
+    options: ForkOptions = {},
     observer?: RuntimeObserver
   ): Promise<BranchHandle | null> {
     const parent = this.#requireRun(runId);
     let handle: BranchHandle | null = null;
     await this.#withControlLease(runId, async () => {
       this.#assertControlIdle(runId);
-      handle = this.#forkParentRun(parent, observer);
+      handle = this.#forkParentRun(parent, options, observer);
     });
     return handle;
   }
 
   #forkParentRun(
     parent: RunSnapshot,
-    observer?: RuntimeObserver
+    options: ForkOptions = {},
+    observer?: RuntimeObserver,
+    relation?: {
+      readonly delegationId: string;
+      readonly assignmentId: string;
+      readonly profileRef?: string;
+      readonly objectiveDigest: string;
+    }
   ): BranchHandle | null {
     const runId = parent.runId;
     const now = this.#now();
@@ -2261,10 +2716,37 @@ export class RuntimeEngine {
     const redirectedContract = child.taskContract === null
       ? null
       : { ...child.taskContract, workspace: snapshot!.root };
+    const initialInput = options.initialInput?.trim();
+    const delegatedInputHistory = initialInput === undefined || initialInput.length === 0
+      ? child.inputHistory
+      : [
+          ...(relation === undefined ? child.inputHistory : []),
+          {
+            id: randomUUID(),
+            sequence: relation === undefined ? child.inputHistory.length + 1 : 1,
+            text: initialInput,
+            receivedAt: now
+          }
+        ];
     const childWithBranchWorkspace = RunSnapshotSchema.parse({
       ...child,
-      taskContract: redirectedContract,
-      currentPlan: child.currentPlan === null
+      ...(relation === undefined ? {} : { budgets: compileChildBudgets(parent, this.#delegationPolicy.childBudgets) }),
+      ...(initialInput === undefined || initialInput.length === 0
+        ? {}
+        : {
+            inputHistory: delegatedInputHistory,
+            taskContract: null,
+            currentPlan: null,
+            stepProgress: [],
+            pendingRequest: null,
+            lastError: null,
+            result: null,
+            delivery: null
+          }),
+      taskContract: initialInput === undefined || initialInput.length === 0 ? redirectedContract : null,
+      currentPlan: initialInput !== undefined && initialInput.length > 0
+        ? null
+        : child.currentPlan === null
         ? null
         : {
             ...child.currentPlan,
@@ -2290,7 +2772,13 @@ export class RuntimeEngine {
     const lineage: BranchRecord["lineage"] = [{
       parentRunId: runId,
       forkRevision: parent.revision,
-      forkEventSequence
+      forkEventSequence,
+      ...(relation === undefined ? {} : {
+        delegationId: relation.delegationId,
+        assignmentId: relation.assignmentId,
+        ...(relation.profileRef === undefined ? {} : { profileRef: relation.profileRef }),
+        objectiveDigest: relation.objectiveDigest
+      })
     }];
     const branch: BranchRecord = {
       branchId,
@@ -2316,7 +2804,16 @@ export class RuntimeEngine {
       parentEvent: {
         type: "branch.created",
         occurredAt: now,
-        payload: { branchId, childRunId, forkRevision: parent.revision }
+        payload: {
+          branchId,
+          childRunId,
+          forkRevision: parent.revision,
+          ...(relation === undefined ? {} : {
+            delegationId: relation.delegationId,
+            assignmentId: relation.assignmentId,
+            objectiveDigest: relation.objectiveDigest
+          })
+        }
       },
       parentFencingToken: this.#leases.requireFencingToken(runId)
     });
@@ -2331,7 +2828,15 @@ export class RuntimeEngine {
       event: {
         type: "branch.created",
         occurredAt: now,
-        payload: { branchId, childRunId, forkRevision: parent.revision }
+        payload: {
+          branchId,
+          childRunId,
+          forkRevision: parent.revision,
+          ...(relation === undefined ? {} : {
+            delegationId: relation.delegationId,
+            assignmentId: relation.assignmentId
+          })
+        }
       },
       fencingToken: this.#leases.requireFencingToken(runId)
     });
@@ -2413,6 +2918,58 @@ export class RuntimeEngine {
     }
   }
 
+}
+
+function compileChildBudgets(
+  parent: RunSnapshot,
+  overrides: RuntimeDelegationPolicy["childBudgets"]
+): RuntimeBudgets {
+  const remainingIterations = Math.max(1, parent.budgets.maxIterations - parent.budgetsUsed.iterations - 2);
+  const remainingModelCalls = Math.max(1, parent.budgets.maxModelCalls - parent.budgetsUsed.modelCalls - 2);
+  const remainingToolCalls = Math.max(1, parent.budgets.maxToolCalls - parent.budgetsUsed.toolCalls);
+  return RuntimeBudgetsSchema.parse({
+    maxIterations: Math.min(overrides?.maxIterations ?? 12, remainingIterations),
+    maxModelCalls: Math.min(overrides?.maxModelCalls ?? 12, remainingModelCalls),
+    maxToolCalls: Math.min(overrides?.maxToolCalls ?? 24, remainingToolCalls),
+    maxRetries: Math.min(overrides?.maxRetries ?? 0, parent.budgets.maxRetries),
+    maxDurationMs: Math.min(overrides?.maxDurationMs ?? 120_000, parent.budgets.maxDurationMs)
+  });
+}
+
+function isDelegationEnvelopeNoWider(
+  current: RuntimeDelegationPolicy,
+  persistedValue: unknown
+): boolean {
+  if (typeof persistedValue !== "object" || persistedValue === null) return false;
+  const persisted = persistedValue as Record<string, unknown>;
+  if (current.mode !== persisted.mode) return false;
+  if (typeof persisted.maxConcurrentWorkers !== "number"
+    || current.maxConcurrentWorkers > persisted.maxConcurrentWorkers) return false;
+  const persistedProfiles = Array.isArray(persisted.allowedProfiles)
+    ? new Set(persisted.allowedProfiles.filter((item): item is string => typeof item === "string"))
+    : null;
+  if (current.allowedProfiles !== undefined) {
+    if (persistedProfiles === null || current.allowedProfiles.some((profile) => !persistedProfiles.has(profile))) return false;
+  } else if (persistedProfiles !== null) {
+    return false;
+  }
+  const persistedTools = typeof persisted.workerToolPolicies === "object" && persisted.workerToolPolicies !== null
+    ? persisted.workerToolPolicies as Record<string, unknown>
+    : {};
+  for (const [profile, tools] of Object.entries(current.workerToolPolicies ?? {})) {
+    const oldTools = persistedTools[profile];
+    if (!Array.isArray(oldTools)) return false;
+    const allowed = new Set(oldTools.filter((item): item is string => typeof item === "string"));
+    if (tools.some((tool) => !allowed.has(tool))) return false;
+  }
+  const persistedBudgets = typeof persisted.childBudgets === "object" && persisted.childBudgets !== null
+    ? persisted.childBudgets as Record<string, unknown>
+    : {};
+  for (const [key, value] of Object.entries(current.childBudgets ?? {})) {
+    const oldValue = persistedBudgets[key];
+    if (typeof oldValue !== "number" || typeof value !== "number" || value > oldValue) return false;
+  }
+  return true;
 }
 
 function isBudgetStopReason(value: string | null): boolean {

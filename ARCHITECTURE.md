@@ -293,3 +293,11 @@ nexora/
 当前 Feature 有真实需求和调用方 → 创建
 仅存在未来设想或架构图位置 → 不创建
 ```
+
+## 10. Supervisor / Worker 边界
+
+Multi-Agent 复用同一个 Agent Loop、Run State Machine、Branch/ForkBase、Invocation、Evidence 和 Completion Gate。Harness 的 `DelegationPolicy` 只表达 `forbidden | allowed | required`、并发上限、opaque profile allowlist、Tool allowlist 和 Child budget；Runtime 机械执行该 envelope，但不解释 researcher/executor 等角色语义。
+
+Parent 是 Parent Plan、Evidence、Result 与最终 workspace adoption 的唯一 Authority。每个 Worker 是真实持久化 Child Run，只有 assignment objective、隔离 Branch workspace、显式 Tool 集和独立 budget；Worker 不能继续委派、写 Parent 状态或完成 Parent。accepted assignment Event 保存可校验恢复材料，partial spawn 在 reopen 时复用原 delegation/assignment/Child identity。blocked、waiting 与 unknown-effect Child 保留 active Branch/workspace；只有成功、确定失败/取消或 Host 显式 discard 才关闭。
+
+Worker 输出是 Child Authority 的有界投影。Parent Decision 只注入最新未综合 delegation batch，并按 persisted assignment ordinal 排序；大型结果进入 Artifact。Worker 隔离写入不是 Parent 写入，必须由 Parent 通过既有 Tool、Approval、Invocation、Evidence 与 Completion Gate 明确采纳。

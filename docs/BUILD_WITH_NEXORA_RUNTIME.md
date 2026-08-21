@@ -58,6 +58,29 @@ try {
 }
 ```
 
+## 有界 Multi-Agent
+
+Host 通过一个真实执行的 `delegationPolicy` 开启或禁止 Parent → Worker delegation：
+
+```ts
+const runtime = createAgent({
+  workspace,
+  provider,
+  tools,
+  delegationPolicy: {
+    mode: "allowed", // forbidden | allowed | required
+    maxConcurrentWorkers: 2,
+    allowedProfiles: ["researcher"],
+    workerToolPolicies: { researcher: ["filesystem.read"] },
+    childBudgets: { maxModelCalls: 8, maxToolCalls: 8, maxDurationMs: 120_000 }
+  }
+});
+```
+
+声明 profile 时，它必须同时存在于 `allowedProfiles` 和 `workerToolPolicies`，未知 profile fail closed。Worker profile 名称对 Runtime 是 opaque identifier；角色提示属于 Harness。Worker 使用真实持久化 Child Run 和隔离 Branch workspace，不能再委派，也不能直接写 Parent。blocked/waiting/unknown Child 可按原 childRunId 恢复。Executor 的隔离修改必须由 Parent 使用正常 Tool/Approval/Invocation/Evidence 路径明确采纳后，才能影响 Parent workspace 和完成判断。
+
+`mode: "required"` 禁止 Parent 在没有 Worker batch 的情况下静默完成；若不能安全拆出至少两个独立目标，应请求缺失的用户输入。reopen 必须提供不宽于原 accepted delegation envelope 的 Policy。确定性验证使用 `pnpm test:supervisor-coordinator`。
+
 `openAICompatibleProviderFromEnv()` 读取：
 
 - `NEXORA_MODEL_PROVIDER=openai-compatible`；
@@ -170,6 +193,15 @@ Runtime 只负责应用 Host 提供的 exact scope；用户认证、租户授权
 真实 Context+Memory Canary 使用 `pnpm run canary:context-memory`。它读取现有 `NEXORA_MODEL_*` 的真实模型能力；只有显式设置 `NEXORA_CANARY_CONTEXT_WINDOW_TOKENS` 才施加单独记录的 stress override，不再默认把 qwen3.7-flash 压成 12K。在 `agent-evaluation/runs/context-memory-continuity-v1/` 保存的报告无密钥，并且只允许 read Tool 成功。可选设置 `NEXORA_CANARY_INPUT_USD_PER_MILLION_TOKENS` 与 `NEXORA_CANARY_OUTPUT_USD_PER_MILLION_TOKENS` 生成费用估算；未配置时报告必须写 `costStatus=unpriced`，不能用 0 冒充真实费用。Canary 是 one-shot：失败后只 inspect，不在同一版本追加提示或重跑。
 
 ## Runtime API
+
+### Supervisor / Coordinator multi-agent
+
+The Harness exposes delegation as the single `nexora_delegate_workers` control
+action inside the Parent Agent Loop. The Runtime accepts one exclusive batch of
+two to eight assignments, creates durable Branch/Child Runs, waits for the
+existing join condition, and returns derived Child observations to the Parent.
+Child Runs inherit existing ForkBase/workspace/recovery authorities and cannot
+delegate further.
 
 ### `run`
 

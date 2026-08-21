@@ -5,6 +5,7 @@ import type { DecisionContextResult } from "./context/decision-context.js";
 import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
+  DELEGATE_WORKERS_CONTROL,
   isControlCall,
   type ModelResponse
 } from "./providers/model-response.js";
@@ -17,12 +18,14 @@ import {
   compileModelFinish,
   compileModelPlan,
   compileProviderToolCalls,
+  parseDelegationControl,
   parseInputControl,
   parseModelResponse,
   parsePlanControl
 } from "./planning.js";
 
 const PREMATURE_INPUT_REPAIR = "AUTONOMOUS_INPUT_REPAIR_REQUIRED";
+const DELEGATION_ACTION_MUST_BE_EXCLUSIVE = "DELEGATION_ACTION_MUST_BE_EXCLUSIVE";
 
 /** Runtime mechanics consumed by the sole Harness-owned Agent Loop. */
 export interface AgentLoopRuntimePort {
@@ -173,6 +176,7 @@ export async function runAgentLoop(
       normalizedResponse = response;
       const planCalls = response.toolCalls.filter((call) => call.name === UPDATE_PLAN_CONTROL);
       const inputCalls = response.toolCalls.filter((call) => call.name === REQUEST_INPUT_CONTROL);
+      const delegationCalls = response.toolCalls.filter((call) => call.name === DELEGATE_WORKERS_CONTROL);
       const runtimeCalls = response.toolCalls.filter((call) => !isControlCall(call));
       if (planCalls.length > 1) {
         throw new ActionRejectedError(`A Provider response may contain at most one ${UPDATE_PLAN_CONTROL} call.`);
@@ -180,12 +184,27 @@ export async function runAgentLoop(
       if (inputCalls.length > 1 || (inputCalls.length === 1 && response.toolCalls.length !== 1)) {
         throw new ActionRejectedError(`${REQUEST_INPUT_CONTROL} must be the only call in a Provider response.`);
       }
+      if (delegationCalls.length > 1 || (delegationCalls.length === 1 && response.toolCalls.length !== 1)) {
+        throw new ActionRejectedError(
+          `${DELEGATION_ACTION_MUST_BE_EXCLUSIVE}: Delegation was not accepted. No Child Run was created. Choose delegation or ordinary tool execution, not both.`
+        );
+      }
+      if (decisionContext.delegationMode === "required"
+        && decisionContext.delegationAllowed !== false
+        && decisionContext.delegationSatisfied !== true
+        && response.toolCalls.length === 0) {
+        throw new ActionRejectedError(
+          "DELEGATION_REQUIRED: Delegate at least two safe independent Worker objectives, or request the missing user input; Parent-only completion is forbidden by Host policy."
+        );
+      }
       const planUpdate = planCalls.length === 1 ? parsePlanControl(planCalls[0]!) : null;
       const inputRequest = inputCalls.length === 1 ? parseInputControl(inputCalls[0]!) : null;
       const actionTypes = [
         ...(planUpdate === null ? [] : ["set_plan"]),
         ...(inputRequest !== null
           ? ["request_input"]
+          : delegationCalls.length === 1
+            ? ["delegate_workers"]
           : runtimeCalls.length > 0
             ? [runtimeCalls.length === 1 ? "call_tool" : "execute_step"]
             : response.toolCalls.length === 0
@@ -229,6 +248,9 @@ export async function runAgentLoop(
       } else if (response.toolCalls.length === 0) {
         const finishAction = compileModelFinish(run, response.text!);
         run = await runtime.dispatch(run, finishAction, signal, observer);
+      }
+      if (delegationCalls.length === 1) {
+        run = await runtime.dispatch(run, parseDelegationControl(delegationCalls[0]!), signal, observer);
       }
     } catch (error) {
       if (error instanceof RuntimeError && error.code === "CANCELLED") {

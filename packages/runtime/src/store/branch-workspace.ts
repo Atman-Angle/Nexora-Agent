@@ -96,12 +96,15 @@ function copyWorkspaceTree(
     for (const entry of entries) {
       const srcPath = join(src, entry.name);
       const dstPath = join(dst, entry.name);
+      if (entry.name === "node_modules") continue;
       if (entry.isSymbolicLink()) {
         // Reject symlinks: a branch must never write through a link to parent files.
         throw new Error(`Branch workspace snapshot cannot contain symlinks: ${srcPath}`);
       }
       if (entry.isDirectory()) {
-        if (resolve(srcPath) === dataDir) continue; // shared store / artifacts stay global
+        // Runtime data and package-manager dependency links are shared host
+        // infrastructure, never branch-owned mutable workspace state.
+        if (resolve(srcPath) === dataDir) continue;
         walk(srcPath, dstPath);
         continue;
       }

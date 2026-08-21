@@ -22,12 +22,14 @@ import { contextSourceFromState } from "./context/source.js";
 import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
+  DELEGATE_WORKERS_CONTROL,
   isControlCall
 } from "./providers/model-response.js";
 import {
   resolvePromptHostConfiguration,
   type PromptHostConfiguration
 } from "./profile.js";
+import { DEFAULT_DELEGATION_POLICY, DelegationPolicySchema, type DelegationPolicy } from "./multi-agent.js";
 
 export type { CreateAgentOptions, RuntimeMemoryOptions } from "./types.js";
 
@@ -43,7 +45,8 @@ export function createAgent(options: CreateAgentOptions): RuntimeEngine {
       throw new Error('payloadCapturePolicy must be "metadata" or "redacted".');
     }
     resolveProviderModelProfile(provider);
-    const driver = createAgentDriver(provider, memory, capturePolicy, promptHost);
+    const delegationPolicy = DelegationPolicySchema.parse(options.delegationPolicy ?? DEFAULT_DELEGATION_POLICY);
+    const driver = createAgentDriver(provider, memory, capturePolicy, promptHost, delegationPolicy);
     return new RuntimeEngine({
       workspace: options.workspace,
       tools: options.tools,
@@ -51,7 +54,14 @@ export function createAgent(options: CreateAgentOptions): RuntimeEngine {
       ...(options.dataDir === undefined ? {} : { dataDir: options.dataDir }),
       ...(options.now === undefined ? {} : { now: options.now }),
       ...(options.createId === undefined ? {} : { createId: options.createId }),
-      ...(options.leaseTtlMs === undefined ? {} : { leaseTtlMs: options.leaseTtlMs })
+      ...(options.leaseTtlMs === undefined ? {} : { leaseTtlMs: options.leaseTtlMs }),
+      delegationPolicy: {
+        mode: delegationPolicy.mode,
+        maxConcurrentWorkers: delegationPolicy.maxConcurrentWorkers,
+        ...(delegationPolicy.allowedProfiles === undefined ? {} : { allowedProfiles: delegationPolicy.allowedProfiles }),
+        ...(delegationPolicy.workerToolPolicies === undefined ? {} : { workerToolPolicies: delegationPolicy.workerToolPolicies }),
+        ...(delegationPolicy.childBudgets === undefined ? {} : { childBudgets: delegationPolicy.childBudgets })
+      }
     });
   } catch (error) {
     if (error instanceof RuntimeError) throw error;
@@ -83,7 +93,7 @@ function validateProvider(provider: RuntimeProvider): RuntimeProvider {
 }
 
 function validateReservedToolNames(tools: CreateAgentOptions["tools"]): void {
-  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL]);
+  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL, DELEGATE_WORKERS_CONTROL]);
   const conflict = tools.find((tool) => reserved.has(tool.contract.identity.name));
   if (conflict !== undefined) {
     throw new Error(`Runtime Tool name is reserved for a Harness control: ${conflict.contract.identity.name}`);
@@ -111,12 +121,13 @@ function createAgentDriver(
   provider: RuntimeProvider,
   memory: RuntimeMemoryOptions | undefined,
   capturePolicy: "metadata" | "redacted",
-  promptHost: PromptHostConfiguration
+  promptHost: PromptHostConfiguration,
+  delegationPolicy: DelegationPolicy
 ): AgentDriver {
   return {
     async run(runtime, initial, signal, observer): Promise<RunResult> {
       return await runAgentLoop(
-        createLoopPort({ runtime, provider, memory, capturePolicy, promptHost }),
+        createLoopPort({ runtime, provider, memory, capturePolicy, promptHost, delegationPolicy }),
         initial,
         signal,
         observer
@@ -134,8 +145,9 @@ function createLoopPort(input: {
   readonly memory: RuntimeMemoryOptions | undefined;
   readonly capturePolicy: "metadata" | "redacted";
   readonly promptHost: PromptHostConfiguration;
+  readonly delegationPolicy: DelegationPolicy;
 }): AgentLoopRuntimePort {
-  const { runtime, provider, memory, capturePolicy, promptHost } = input;
+  const { runtime, provider, memory, capturePolicy, promptHost, delegationPolicy } = input;
   return {
     now: () => runtime.now(),
     createId: () => runtime.createId(),
@@ -146,6 +158,8 @@ function createLoopPort(input: {
         store: contextSourceFromState(state),
         workspace: state.workspace,
         tools: new Map(state.tools.map((tool) => [tool.contract.identity.name, tool])),
+        workerObservations: state.workerObservations,
+        delegationPolicyMode: delegationPolicy.mode,
         artifacts: {
           getText: (digest) => runtime.readArtifactText(digest),
           has: (digest) => runtime.artifactExists(digest)

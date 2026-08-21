@@ -7,7 +7,8 @@ import {
 
 import {
   REQUEST_INPUT_CONTROL,
-  UPDATE_PLAN_CONTROL
+  UPDATE_PLAN_CONTROL,
+  DELEGATE_WORKERS_CONTROL
 } from "../providers/model-response.js";
 import type {
   JsonValue,
@@ -98,6 +99,19 @@ function callResult(input: {
       const received = input.projectedRun.inputHistory.find((entry) => entry.sequence === sequence);
       if (received === undefined) return undefined;
       return { ok: true, status: "accepted", inputSequence: sequence, input: received.text };
+    }
+    return rejectedResult(input.rejection);
+  }
+  if (input.call.name === DELEGATE_WORKERS_CONTROL) {
+    const event = input.laterEvents.find((candidate) => (
+      candidate.type === "runtime.event" && candidate.payload.name === "workers.delegated"
+    ));
+    if (event !== undefined) {
+      return {
+        ok: true,
+        status: "accepted",
+        delegationId: typeof event.payload.delegationId === "string" ? event.payload.delegationId : null
+      };
     }
     return rejectedResult(input.rejection);
   }

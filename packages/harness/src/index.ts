@@ -135,6 +135,7 @@ export {
   ModelInputRequestSchema,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
+  DELEGATE_WORKERS_CONTROL,
   modelResponses,
   type ModelResponse,
   type ModelPlanUpdate,
@@ -219,3 +220,13 @@ export type {
   AgentProviderOperation,
   AgentReasoningStrategy
 } from "./ports.js";
+
+export {
+  DelegationPolicySchema,
+  DEFAULT_DELEGATION_POLICY,
+  SupervisorWorkerRoleSchema,
+  SUPERVISOR_WORKER_PROMPT_RULES,
+  renderWorkerAssignmentPrompt,
+  type DelegationPolicy,
+  type SupervisorWorkerRole,
+} from "./multi-agent.js";

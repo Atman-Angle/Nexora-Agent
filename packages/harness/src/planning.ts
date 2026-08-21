@@ -11,6 +11,7 @@ import {
   ModelInputRequestSchema,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
+  DELEGATE_WORKERS_CONTROL,
   type ModelPlanTask,
   type ModelPlanUpdate,
   type ModelInputRequest,
@@ -18,8 +19,50 @@ import {
   type ProviderToolCall
 } from "./providers/model-response.js";
 import { ActionRejectedError } from "@nexora/runtime/internal";
+import { z } from "zod";
+import {
+  SupervisorWorkerRoleSchema,
+  renderWorkerAssignmentPrompt,
+  type SupervisorWorkerRole
+} from "./multi-agent.js";
 
 type ToolAction = Extract<RuntimeAction, { type: "call_tool" | "execute_step" }>;
+
+const DelegateWorkersSchema = z.object({
+  finalDeliverable: z.string().trim().min(1).max(4_096).optional(),
+  assignments: z.array(z.object({
+    objective: z.string().trim().min(1),
+    contribution: z.string().trim().min(1).max(4_096).optional(),
+    profileRef: z.string().trim().min(1).optional()
+  }).strict()).min(2).max(8)
+}).strict();
+
+export function parseDelegationControl(call: ProviderToolCall): Extract<RuntimeAction, { type: "delegate_workers" }> {
+  if (call.name !== DELEGATE_WORKERS_CONTROL) {
+    throw new ActionRejectedError(`Expected ${DELEGATE_WORKERS_CONTROL}, received ${call.name}.`);
+  }
+  const parsed = DelegateWorkersSchema.parse(call.arguments);
+  return {
+    type: "delegate_workers",
+    commandRef: call.callId,
+    assignments: parsed.assignments.map((assignment) => ({
+      objective: parsed.finalDeliverable === undefined && assignment.contribution === undefined
+        ? assignment.objective
+        : renderWorkerAssignmentPrompt({
+            role: workerRole(assignment.profileRef),
+            objective: assignment.objective,
+            ...(parsed.finalDeliverable === undefined ? {} : { finalDeliverable: parsed.finalDeliverable }),
+            ...(assignment.contribution === undefined ? {} : { contribution: assignment.contribution })
+          }),
+      ...(assignment.profileRef === undefined ? {} : { profileRef: assignment.profileRef })
+    }))
+  };
+}
+
+function workerRole(profileRef: string | undefined): SupervisorWorkerRole {
+  const parsed = SupervisorWorkerRoleSchema.safeParse(profileRef ?? "researcher");
+  return parsed.success ? parsed.data : "researcher";
+}
 
 export function parseModelResponse(raw: unknown): ModelResponse {
   return ModelResponseSchema.parse(raw);
