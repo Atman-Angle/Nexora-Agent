@@ -63,4 +63,3 @@ Publish Runtime first. Then install both versions from the public registry in a 
 and repeat the package Consumer. Only after that verification create the matching signed Git tag and
 GitHub Release. Record the two registry tarball digests and ensure tag, GitHub Release and npm versions
 match.
-
