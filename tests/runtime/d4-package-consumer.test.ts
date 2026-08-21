@@ -35,6 +35,8 @@ describe("D4 packed Developer API consumer", () => {
     const tarballs = readdirSync(root)
       .filter((name) => name.endsWith(".tgz"))
       .map((name) => join(root, name));
+    expect(tarballs).toHaveLength(2);
+    for (const tarball of tarballs) assertReleaseTarball(tarball);
     writeFileSync(
       join(root, "package.json"),
       JSON.stringify({
@@ -95,6 +97,8 @@ describe("D4 packed Developer API consumer", () => {
     )) as {
       exports: Record<string, unknown>;
       engines: Record<string, string>;
+      publishConfig: Record<string, string>;
+      repository: { type: string; url: string; directory: string };
     };
     const harnessPackage = JSON.parse(readFileSync(
       join(root, "node_modules", "@nexora", "harness", "package.json"),
@@ -102,13 +106,39 @@ describe("D4 packed Developer API consumer", () => {
     )) as {
       exports: Record<string, unknown>;
       engines: Record<string, string>;
+      dependencies: Record<string, string>;
+      publishConfig: Record<string, string>;
+      repository: { type: string; url: string; directory: string };
     };
     expect(Object.keys(runtimePackage.exports).sort()).toEqual([".", "./internal"]);
     expect(Object.keys(harnessPackage.exports).sort()).toEqual([".", "./testing"]);
     expect(runtimePackage.engines.node).toBe(">=20");
     expect(harnessPackage.engines.node).toBe(">=20");
+    expect(runtimePackage.publishConfig.access).toBe("public");
+    expect(harnessPackage.publishConfig.access).toBe("public");
+    expect(runtimePackage.repository.directory).toBe("packages/runtime");
+    expect(harnessPackage.repository.directory).toBe("packages/harness");
+    expect(harnessPackage.dependencies["@nexora/runtime"]).toBe("1.1.0");
   }, 60_000);
 });
+
+function assertReleaseTarball(tarball: string): void {
+  const entries = execFileSync(
+    "tar",
+    ["-tf", tarball],
+    { encoding: "utf8", shell: process.platform === "win32" }
+  ).split(/\r?\n/).filter(Boolean).map((entry) => entry.replaceAll("\\", "/"));
+  expect(entries).toContain("package/package.json");
+  expect(entries).toContain("package/README.md");
+  expect(entries.some((entry) => entry.startsWith("package/dist/"))).toBe(true);
+  expect(entries.filter((entry) => (
+    entry.startsWith("package/src/")
+    || entry.includes("/.env")
+    || entry.endsWith(".db")
+    || entry.startsWith("package/reports/")
+    || entry.startsWith("package/tests/")
+  ))).toEqual([]);
+}
 
 function consumerSource(): string {
   return `

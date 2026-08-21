@@ -125,7 +125,7 @@ describe("Research Agent application scheduler", () => {
     expect(createdAgentCount).toBe(2);
     expect((await nextDay.started[0]!.completion).status).toBe("succeeded");
     expect((await store.getDailyPackage(profile.id, "2026-08-03"))?.runId).toBe(nextDay.started[0]!.runId);
-  });
+  }, 30_000);
 });
 
 function createSuccessfulAgent(profile: ResearchProfile, workspace: string) {

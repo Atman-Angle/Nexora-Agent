@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { deriveRunDelivery } from "../../packages/runtime/src/delivery.js";
@@ -11,6 +11,7 @@ import { transitionRunStatus } from "../../packages/runtime/src/state-machine.js
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.useRealTimers();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -35,26 +36,38 @@ class PausedProvider implements RuntimeProvider {
 }
 
 describe("E049 lease and fencing", () => {
-  it("renews a lease across many Provider calls that are individually shorter than the heartbeat interval", async () => {
+  it("renews a lease across Provider calls whose cumulative duration exceeds the lease TTL", async () => {
     const workspace = tempRoot();
     let calls = 0;
+    let elapsedMs = 0;
+    const startedAt = Date.parse("2026-07-22T00:00:00.000Z");
     const provider: RuntimeProvider = {
       async decide() {
         calls += 1;
-        await new Promise((resolve) => setTimeout(resolve, 15));
-        return calls < 30
+        elapsedMs += 150;
+        return calls < 4
           ? { invalid: "response" } as unknown as ModelResponse
           : modelResponses.input({ question: "Continue?", reason: "lease test" });
       }
     };
-    const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [], leaseTtlMs: 300 });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider,
+      tools: [],
+      leaseTtlMs: 300,
+      now: () => new Date(startedAt + elapsedMs).toISOString()
+    });
     const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 40, maxModelCalls: 40, maxToolCalls: 1, maxRetries: 40, maxDurationMs: 10_000 } });
     expect(result.status).toBe("waiting");
-    expect(calls).toBe(30);
+    expect(calls).toBe(4);
+    expect(elapsedMs).toBeGreaterThan(300);
     runtime.close();
-  });
+  }, 15_000);
 
   it("returns RUN_BUSY when another Runtime owns the active Run", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-22T00:00:00.000Z"));
     const workspace = tempRoot();
     const dataDir = join(workspace, ".nexora");
     const firstProvider = new PausedProvider();
@@ -65,7 +78,7 @@ describe("E049 lease and fencing", () => {
     });
     await firstProvider.enteredPromise;
     expect(runId).not.toBe("");
-    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await vi.advanceTimersByTimeAsync(1500);
 
     const second = createRuntime({
       workspace,

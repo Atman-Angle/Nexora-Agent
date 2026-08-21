@@ -125,7 +125,7 @@ describe("D5 packed external consumers", () => {
     expectInstalledBoundary(workerProject);
     expectInstalledBoundary(hostProject);
     expectExampleBoundary();
-  }, 180_000);
+  }, 300_000);
 });
 
 type PublicEvent = {

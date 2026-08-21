@@ -1,7 +1,26 @@
 {
   "name": "@nexora/runtime",
   "version": "1.1.0",
+  "description": "Durable, auditable execution runtime for embeddable AI agents.",
   "type": "module",
+  "keywords": [
+    "agent",
+    "runtime",
+    "ai",
+    "durable-execution"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Atman-Angle/Nexora-Agent.git",
+    "directory": "packages/runtime"
+  },
+  "homepage": "https://github.com/Atman-Angle/Nexora-Agent#readme",
+  "bugs": {
+    "url": "https://github.com/Atman-Angle/Nexora-Agent/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
