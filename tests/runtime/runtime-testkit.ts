@@ -122,6 +122,9 @@ export function materializeTestResponse(value: unknown, context: ModelDecisionCo
   if (command.type === "request_input") {
     return responseInput(String(command.question), String(command.reason));
   }
+  if (command.type === "delegate_workers") {
+    return responseCall("nexora_delegate_workers", { assignments: command.assignments });
+  }
   if (command.type === "propose_finish") {
     return responseText(String(command.summary));
   }

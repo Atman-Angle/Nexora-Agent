@@ -233,3 +233,7 @@ Harness 只通过 `@nexora/runtime` 和 `@nexora/runtime/internal` ports 使用�
 `runtime-public.ts` 只投影并冻结 `RunInspection`/`RunFinalResult`；`result()` 必须先读取 State Machine 的 `failed/succeeded` 终态，waiting/blocked 不产生 Final。该 façade 不拥有持久化 Authority。
 
 `runtime-events.ts` 只从 `RunStore.listEventsAfter()` 读取 persisted sequence 并投影 `schemaVersion: 1` Event。notification/interval 只触发重新读取；listener memory、cursor 和 subscription terminal 判断不能写 Run，也不能替代 State Machine。Handle 控制先绑定当前 Pending Request 或 unknown Invocation，再通过同一 Lease/Fencing 和 `RuntimeEngine.resume()` 进入原执行、Evidence、Recovery 与 Completion 路径。
+
+Supervisor 数据流为：`Host DelegationPolicy → Parent Prompt control projection → exclusive delegate_workers Action → workers.delegation.accepted Event → Branch/ForkBase + Child Run(s) → Child Invocation/Evidence/Delivery → latest unsynthesized WorkerObservation batch → Parent synthesis/adoption Tool → Parent Evidence → Completion Gate`。accepted Event 在任何 Child side effect 前记录 bounded objective、digest、opaque profile、ordinal、assignment ID 与 policy envelope；reopen 只能使用不宽于原 envelope 的 Policy，并从这些材料补齐未创建 Child，不再请求模型重复决策。
+
+Parent cancellation 的 AbortSignal 传播到 batch 内 active Child execution；Child 的 blocked/waiting/unknown 状态仍由其 Run/Invocation Authority 决定，不能由 Parent projection 改写。Branch workspace 只在 merged、确定 terminal discard 或显式 abandon 后清理。Observation 不保存第二份结果：summary、Artifact、Delivery 和 Evidence refs 始终从 Child snapshot 派生。

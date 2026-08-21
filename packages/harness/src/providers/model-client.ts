@@ -68,6 +68,11 @@ export type ProjectedRunContext = {
 export type ModelDecisionContext = {
   readonly providerContractVersion: 5;
   readonly workspace: string;
+  /** Derived from Host policy and ForkContext; Worker Runs cannot delegate further. */
+  readonly delegationAllowed?: boolean;
+  readonly delegationMode?: "forbidden" | "allowed" | "required";
+  readonly workerRun?: boolean;
+  readonly delegationSatisfied?: boolean;
   readonly run: ProjectedRunContext;
   readonly projection: {
     readonly schemaVersion: 1;
@@ -89,6 +94,18 @@ export type ModelDecisionContext = {
     readonly idempotent: boolean;
   }[];
   readonly toolObservations: readonly ToolObservation[];
+  readonly workerObservations?: readonly {
+    readonly childRunId: string;
+    readonly branchId: string;
+    readonly delegationId: string | null;
+    readonly assignmentId: string | null;
+    readonly profileRef: string | null;
+    readonly status: "running" | "waiting" | "blocked" | "cancelled" | "failed" | "succeeded";
+    readonly summary: string | null;
+    readonly resultArtifact: string | null;
+    readonly deliveryOutcome: "succeeded" | "failed" | "cancelled" | "blocked" | null;
+    readonly evidenceRefs: readonly string[];
+  }[];
   readonly rehydratedFacts: readonly RehydratedFact[];
   /**
    * Bounded, deterministic navigation metadata derived from current-Run

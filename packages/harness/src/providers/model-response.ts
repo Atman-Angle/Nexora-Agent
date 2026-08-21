@@ -5,6 +5,7 @@ import { JsonValueSchema } from "@nexora/runtime/internal";
 
 export const UPDATE_PLAN_CONTROL = "nexora_update_plan";
 export const REQUEST_INPUT_CONTROL = "nexora_request_input";
+export const DELEGATE_WORKERS_CONTROL = "nexora_delegate_workers";
 
 const NonEmptyString = z.string().trim().min(1);
 export const ModelTextSchema = NonEmptyString.transform((value) => value.slice(0, 32_000));
@@ -48,7 +49,7 @@ export const ModelResponseSchema = z.object({
 export type ModelResponse = z.infer<typeof ModelResponseSchema>;
 
 export function isControlCall(call: ProviderToolCall): boolean {
-  return call.name === UPDATE_PLAN_CONTROL || call.name === REQUEST_INPUT_CONTROL;
+  return call.name === UPDATE_PLAN_CONTROL || call.name === REQUEST_INPUT_CONTROL || call.name === DELEGATE_WORKERS_CONTROL;
 }
 
 function callId(value: string | undefined): string {

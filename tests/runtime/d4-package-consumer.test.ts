@@ -114,9 +114,13 @@ function consumerSource(): string {
   return `
 import { z } from "zod";
 import {
+  DelegationPolicySchema,
   defineTool,
+  type DelegationPolicy,
   type RuntimeEvent
 } from "@nexora/harness";
+// @ts-expect-error removed speculative Multi-Agent Contract must not remain public
+import type { SupervisorDecision } from "@nexora/harness";
 import {
   assertEventSequence,
   assertSucceeded,
@@ -126,6 +130,13 @@ import {
 } from "@nexora/harness/testing";
 // @ts-expect-error package internals remain blocked
 import type { RunStore } from "@nexora/harness/dist/run-store.js";
+
+const delegationPolicy: DelegationPolicy = DelegationPolicySchema.parse({
+  mode: "allowed",
+  maxConcurrentWorkers: 2
+});
+void delegationPolicy;
+type RemovedSupervisorDecision = SupervisorDecision;
 
 const tool = defineTool({
   name: "external.lookup",

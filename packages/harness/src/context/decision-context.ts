@@ -16,6 +16,7 @@ import type {
   RehydratedFact
 } from "../providers/model-client.js";
 import type { AgentToolDescriptor } from "@nexora/runtime/internal";
+import type { WorkerObservation } from "@nexora/runtime/internal";
 import type { RuntimeMemoryOptions } from "../types.js";
 import { providerJsonSchema } from "../tool-schema.js";
 import { projectMemoryCandidates } from "../memory/recall.js";
@@ -62,6 +63,8 @@ export function buildDecisionContext(args: {
   readonly forkContext?: ForkContext | null;
   readonly memory?: RuntimeMemoryOptions;
   readonly now?: string;
+  readonly workerObservations?: readonly WorkerObservation[];
+  readonly delegationPolicyMode?: "forbidden" | "allowed" | "required";
 }): DecisionContextResult {
   const { run, store, workspace, tools, artifacts } = args;
   const invocations = store.listToolInvocations(run.runId);
@@ -164,6 +167,15 @@ export function buildDecisionContext(args: {
   });
   const projection = deepFreeze(structuredClone({
     workspace,
+    delegationAllowed: (args.forkContext === undefined || args.forkContext === null)
+      && args.delegationPolicyMode !== "forbidden",
+    delegationMode: args.forkContext === undefined || args.forkContext === null
+      ? args.delegationPolicyMode ?? "allowed"
+      : "forbidden",
+    workerRun: args.forkContext !== undefined && args.forkContext !== null,
+    delegationSatisfied: events.some((event) => (
+      event.type === "runtime.event" && event.payload.name === "workers.delegation.accepted"
+    )),
     run: projectedRun,
     providerContractVersion: 5 as const,
     activeInvocations: invocations
@@ -180,6 +192,18 @@ export function buildDecisionContext(args: {
         idempotent: invocation.idempotent
       })),
     toolObservations: observations,
+    workerObservations: (args.workerObservations ?? []).map((observation) => ({
+      childRunId: observation.childRunId,
+      branchId: observation.branchId,
+      delegationId: observation.delegationId,
+      assignmentId: observation.assignmentId,
+      profileRef: observation.profileRef,
+      status: observation.status,
+      summary: observation.summary,
+      resultArtifact: observation.resultArtifact,
+      deliveryOutcome: observation.delivery?.outcome ?? null,
+      evidenceRefs: observation.evidenceRefs
+    })),
     rehydratedFacts,
     historyCandidates,
     memoryCandidates,
@@ -201,6 +225,10 @@ export function buildDecisionContext(args: {
   const context = deepFreeze({
     providerContractVersion: projection.providerContractVersion,
     workspace: projection.workspace,
+    delegationAllowed: projection.delegationAllowed,
+    delegationMode: projection.delegationMode,
+    workerRun: projection.workerRun,
+    delegationSatisfied: projection.delegationSatisfied,
     run: projection.run,
     projection: {
       schemaVersion: 1 as const,
@@ -208,6 +236,7 @@ export function buildDecisionContext(args: {
     },
     activeInvocations: projection.activeInvocations,
     toolObservations: projection.toolObservations,
+    ...(projection.workerObservations === undefined ? {} : { workerObservations: projection.workerObservations }),
     rehydratedFacts: projection.rehydratedFacts,
     historyCandidates: projection.historyCandidates,
     memoryCandidates: projection.memoryCandidates,

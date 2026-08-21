@@ -48,6 +48,7 @@ export {
   ModelInputRequestSchema,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
+  DELEGATE_WORKERS_CONTROL,
   modelResponses,
   type ModelResponse,
   type ModelPlanUpdate,

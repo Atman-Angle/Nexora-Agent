@@ -14,7 +14,8 @@ import type {
 import type {
   RunResult,
   RuntimeObserver,
-  RuntimeTool
+  RuntimeTool,
+  WorkerObservation
 } from "./runtime-types.js";
 
 export type PlanProposal = Extract<RuntimeAction, { readonly type: "set_plan" }>;
@@ -49,6 +50,7 @@ export type AgentStateView = {
   readonly parentRun: RunSnapshot | null;
   readonly parentInvocations: readonly ToolInvocation[];
   readonly latestModelCallAudit: ModelCallAudit | null;
+  readonly workerObservations: readonly WorkerObservation[];
 };
 
 export type AgentAuditEvent =

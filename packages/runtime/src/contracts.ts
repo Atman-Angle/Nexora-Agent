@@ -170,12 +170,24 @@ const ProposeFinishActionSchema = z.object({
   summary: NonEmptyString
 }).strict();
 
+const DelegateWorkerAssignmentSchema = z.object({
+  objective: NonEmptyString.max(4_096),
+  profileRef: NonEmptyString.max(120).optional()
+}).strict();
+
+const DelegateWorkersActionSchema = z.object({
+  type: z.literal("delegate_workers"),
+  commandRef: NonEmptyString.optional(),
+  assignments: z.array(DelegateWorkerAssignmentSchema).min(2).max(8)
+}).strict();
+
 export const RuntimeActionSchema = z.discriminatedUnion("type", [
   SetPlanActionSchema,
   CallToolActionSchema,
   ExecuteStepActionSchema,
   RequestInputActionSchema,
-  ProposeFinishActionSchema
+  ProposeFinishActionSchema,
+  DelegateWorkersActionSchema
 ]).superRefine((action, context) => {
   if (action.type === "call_tool" && new Set(action.checkIds).size !== action.checkIds.length) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Tool action contains duplicate Check IDs." });
@@ -594,7 +606,11 @@ export type BranchStatus = z.infer<typeof BranchStatusSchema>;
 export const BranchLineageSchema = z.object({
   parentRunId: NonEmptyString,
   forkRevision: z.number().int().nonnegative(),
-  forkEventSequence: z.number().int().positive()
+  forkEventSequence: z.number().int().positive(),
+  delegationId: NonEmptyString.optional(),
+  assignmentId: NonEmptyString.optional(),
+  profileRef: NonEmptyString.optional(),
+  objectiveDigest: NonEmptyString.optional()
 }).strict();
 export type BranchLineage = z.infer<typeof BranchLineageSchema>;
 

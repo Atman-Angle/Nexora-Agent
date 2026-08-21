@@ -8,6 +8,7 @@ import type {
   ProjectInstruction,
   StrategyRevision
 } from "./profile.js";
+import type { DelegationPolicy } from "./multi-agent.js";
 
 export type RuntimeMemoryOptions = {
   readonly store: MemoryStore;
@@ -28,6 +29,7 @@ export type CreateAgentOptions = {
   readonly now?: () => string;
   readonly createId?: () => string;
   readonly leaseTtlMs?: number;
+  readonly delegationPolicy?: DelegationPolicy;
 };
 
 /** @deprecated Use CreateAgentOptions. */

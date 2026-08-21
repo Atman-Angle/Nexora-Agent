@@ -44,6 +44,21 @@ export type CreateRuntimeOptions = {
   readonly now?: () => string;
   readonly createId?: () => string;
   readonly leaseTtlMs?: number;
+  /** Host-compiled Worker envelope. Runtime treats profile names as opaque identifiers. */
+  readonly delegationPolicy?: RuntimeDelegationPolicy;
+};
+export type RuntimeDelegationPolicy = {
+  readonly mode: "forbidden" | "allowed" | "required";
+  readonly maxConcurrentWorkers: number;
+  readonly allowedProfiles?: readonly string[];
+  readonly workerToolPolicies?: Readonly<Record<string, readonly string[]>>;
+  readonly childBudgets?: {
+    readonly maxIterations?: number | undefined;
+    readonly maxModelCalls?: number | undefined;
+    readonly maxToolCalls?: number | undefined;
+    readonly maxRetries?: number | undefined;
+    readonly maxDurationMs?: number | undefined;
+  };
 };
 export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets; readonly completion?: CompletionRequirements };
 export type ApprovalDecision = { readonly requestId: string; readonly approved: boolean; readonly reason?: string };
@@ -67,6 +82,19 @@ export type FailureHandoff = {
   readonly nextAction: string;
 };
 export type RunResult = { readonly runId: string; readonly status: RunStatus; readonly stopReason: string | null; readonly summary: string | null; readonly resultArtifact: string | null; readonly evidence: readonly Evidence[]; readonly lastError: RunSnapshot["lastError"]; readonly delivery: RunDelivery | null; readonly failureHandoff: FailureHandoff | null };
+export type WorkerObservation = {
+  readonly parentRunId: string;
+  readonly branchId: string;
+  readonly childRunId: string;
+  readonly delegationId: string | null;
+  readonly assignmentId: string | null;
+  readonly profileRef: string | null;
+  readonly status: RunStatus;
+  readonly summary: string | null;
+  readonly resultArtifact: string | null;
+  readonly delivery: RunDelivery | null;
+  readonly evidenceRefs: readonly string[];
+};
 export type RunView = {
   readonly snapshot: RunSnapshot;
   readonly events: readonly RunEvent[];
@@ -273,9 +301,8 @@ export type RunHandle = {
 
 /** Options for creating an exploratory branch from a parent Run's current revision. */
 export type ForkOptions = {
-  // Reserved for future options (e.g. a custom snapshot base). Branch workspaces
-  // currently always live under `<dataDir>/branches/<branchId>` so crash recovery
-  // can find and resume them.
+  /** Optional independent objective appended to the Child input history. */
+  readonly initialInput?: string;
 };
 
 /** A branch plus its read-only inheritance boundary and the child Run inspection. */
