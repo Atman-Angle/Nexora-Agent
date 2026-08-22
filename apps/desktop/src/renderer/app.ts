@@ -33,6 +33,8 @@ type PublicOutputSegment = {
 };
 const publicOutputs = new Map<string, PublicOutputSegment>();
 
+window.setInterval(() => updateElapsedLabels(), 1_000);
+
 window.nexora.onSnapshot((next) => {
   snapshot = next;
   busy = false;
@@ -163,9 +165,10 @@ function conversation(session: SessionView): string {
   const items: Item[] = [];
   for (const [runIndex, run] of session.runs.entries()) {
     const firstInput = run.inspection.inputs[0];
+    const processedUntil = processingEnd(run);
     if (firstInput !== undefined) items.push({ at: firstInput.receivedAt, order: runIndex * 1_000_000, html: `
       <article class="message user-message">
-        <div class="message-label">You</div>
+        <div class="message-meta"><div class="message-label">You</div><small class="turn-duration" data-elapsed-start="${escapeAttr(firstInput.receivedAt)}" ${processedUntil === null ? "" : `data-elapsed-end="${escapeAttr(processedUntil)}"`}>${processingDuration(firstInput.receivedAt, processedUntil)}</small></div>
         <p>${escapeHtml(run.userInput)}</p>
       </article>
     ` });
@@ -196,7 +199,7 @@ function conversation(session: SessionView): string {
       if (segment.runId !== run.inspection.runId) continue;
       items.push({ at: segment.occurredAt, order: runIndex * 1_000_000 + 500, html: `
         <article class="message agent-message public-output ${segment.completed ? "completed" : "streaming"}" data-public-output="${escapeAttr(segment.key)}">
-          <div class="message-label">Nexora ${segment.completed ? "" : "· Working"}</div>
+          <div class="message-label">Nexora ${segment.completed ? "" : "· Streaming"}</div>
           <div class="markdown-body">${renderMarkdown(segment.text)}</div>
         </article>
       ` });
@@ -209,6 +212,39 @@ function conversation(session: SessionView): string {
         <strong>${record.type.endsWith("passed") ? "Validation passed" : "Validation failed"}</strong>
       </article>
     ` });
+    }
+    const projectedInputRequestIds = new Set<string>();
+    for (const record of run.history.records) {
+      if (record.type !== "run.waiting") continue;
+      const payload = objectValue(record.payload);
+      const requestId = stringValue(payload.requestId);
+      const prompt = stringValue(payload.prompt);
+      if (payload.kind !== "input" || requestId === null || prompt === null) continue;
+      projectedInputRequestIds.add(requestId);
+      items.push({ at: record.occurredAt, order: runIndex * 1_000_000 + record.sequence, html: `
+        <article class="message agent-message input-request-message">
+          <div class="message-label">Nexora</div>
+          <div class="markdown-body">${renderMarkdown(prompt)}</div>
+        </article>
+      ` });
+    }
+    const pendingInput = run.inspection.pendingRequest?.kind === "input" ? run.inspection.pendingRequest : null;
+    if (pendingInput !== null && !projectedInputRequestIds.has(pendingInput.id)) {
+      items.push({ at: pendingInput.createdAt, order: runIndex * 1_000_000 + 999_998, html: `
+        <article class="message agent-message input-request-message">
+          <div class="message-label">Nexora</div>
+          <div class="markdown-body">${renderMarkdown(pendingInput.prompt)}</div>
+        </article>
+      ` });
+    }
+    if (run.inspection.status === "running") {
+      items.push({ at: new Date().toISOString(), order: runIndex * 1_000_000 + 999_997, html: `
+        <article class="agent-working" aria-live="polite">
+          <span class="working-dots"><i></i><i></i><i></i></span>
+          <span>Nexora 正在处理</span>
+          ${firstInput === undefined ? "" : `<small class="turn-duration" data-elapsed-start="${escapeAttr(firstInput.receivedAt)}">${processingDuration(firstInput.receivedAt, null)}</small>`}
+        </article>
+      ` });
     }
     if (run.inspection.result !== null) {
       const result = run.inspection.result;
@@ -272,7 +308,7 @@ function composer(session: SessionView | null): string {
   if (session === null) return goalComposer();
   const run = session.inspection;
   if (run.status === "waiting_for_input" && run.pendingRequest?.kind === "input") {
-    return `<section class="composer request"><p>${escapeHtml(run.pendingRequest.prompt)}</p><form data-form="input"><textarea name="text" placeholder="Reply…" required></textarea><button class="primary" ${busy ? "disabled" : ""}>Send</button></form></section>`;
+    return inputReplyComposer();
   }
   if (run.status === "waiting_for_approval" && run.pendingRequest?.kind === "approval") {
     return `<section class="composer approval"><div><small>Approval required · ${escapeHtml(run.pendingRequest.toolName)}</small><p>${escapeHtml(run.pendingRequest.prompt)}</p><details><summary>Operation</summary><pre>${escapeHtml(pretty(run.pendingRequest.input))}</pre></details></div><div class="approval-actions"><button data-action="deny" ${busy ? "disabled" : ""}>Reject</button><button class="primary" data-action="approve" ${busy ? "disabled" : ""}>Approve</button></div></section>`;
@@ -288,6 +324,15 @@ function composer(session: SessionView | null): string {
     return `<section class="composer blocked"><div><small>Session paused</small><p>${escapeHtml(run.delivery?.summary ?? run.stopReason ?? "The Runtime requires intervention.")}</p></div><button class="primary" data-action="${budget ? "extend-budget" : "resume"}" ${busy ? "disabled" : ""}>${budget ? "Extend budget & resume" : "Resume"}</button></section>`;
   }
   return followUpComposer(session, false);
+}
+
+function inputReplyComposer(): string {
+  return `<section class="composer follow-up">
+    <form data-form="input">
+      <textarea name="text" placeholder="Reply to Nexora…" required>${escapeHtml(draft)}</textarea>
+      <button class="send-button" aria-label="Send reply" ${busy ? "disabled" : ""}>↑</button>
+    </form>
+  </section>`;
 }
 
 function goalComposer(): string {
@@ -423,7 +468,10 @@ function bindActions(): void {
     event.preventDefault();
     const text = new FormData(event.currentTarget as HTMLFormElement).get("text");
     const request = snapshot?.session?.inspection.pendingRequest;
-    if (typeof text === "string" && request?.kind === "input") void sendControl({ type: "input", text, requestId: request.id });
+    if (typeof text === "string" && request?.kind === "input") {
+      draft = "";
+      void sendControl({ type: "input", text, requestId: request.id });
+    }
   });
   document.querySelector<HTMLFormElement>("[data-form='follow-up']")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -495,7 +543,7 @@ function updatePublicOutput(event: AgentPublicOutputEvent): void {
   element.classList.toggle("streaming", !existing.completed);
   element.classList.toggle("completed", existing.completed);
   const label = element.querySelector<HTMLElement>(".message-label");
-  if (label !== null) label.textContent = existing.completed ? "Nexora" : "Nexora · Working";
+  if (label !== null) label.textContent = existing.completed ? "Nexora" : "Nexora · Streaming";
   const body = element.querySelector<HTMLElement>(".markdown-body");
   if (body !== null) body.innerHTML = renderMarkdown(existing.text);
 }
@@ -562,6 +610,32 @@ function contextUsage(session: SessionView): { used: number; window: number; per
   const usage = session.inspection.contextUsage;
   if (usage === null) return null;
   return { used: usage.inputTokens, window: usage.contextWindowTokens, percent: Math.min(100, Math.round(usage.inputTokens / usage.contextWindowTokens * 100)) };
+}
+function processingEnd(run: SessionView["runs"][number]): string | null {
+  if (run.inspection.result !== null) return run.inspection.result.delivery.createdAt;
+  if (run.inspection.pendingRequest !== null) return run.inspection.pendingRequest.createdAt;
+  if (run.inspection.status === "running") return null;
+  const candidates = [
+    ...run.history.records.map((record) => record.occurredAt),
+    ...run.inspection.invocations.map((invocation) => invocation.completedAt ?? invocation.startedAt)
+  ];
+  return candidates.sort().at(-1) ?? run.inspection.inputs.at(-1)?.receivedAt ?? null;
+}
+function processingDuration(start: string, end: string | null): string {
+  const elapsed = Math.max(0, Date.parse(end ?? new Date().toISOString()) - Date.parse(start));
+  return `${end === null ? "已处理" : "处理耗时"} ${formatElapsed(elapsed)}`;
+}
+function formatElapsed(milliseconds: number): string {
+  const seconds = Math.floor(milliseconds / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${seconds % 60}s`;
+}
+function updateElapsedLabels(): void {
+  document.querySelectorAll<HTMLElement>("[data-elapsed-start]").forEach((element) => {
+    const start = element.dataset.elapsedStart;
+    if (start !== undefined) element.textContent = processingDuration(start, element.dataset.elapsedEnd ?? null);
+  });
 }
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value); }
 function providerName(baseUrl: string): string {

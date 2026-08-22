@@ -72,10 +72,10 @@ export class DesktopRuntimeService {
   readonly #hostConfigPath: string;
   #hostConfig: HostConfig;
   #workspace: string;
-  #runtime: AgentRuntime | null = null;
+  readonly #runtimes = new Map<string, AgentRuntime>();
   #providerError: string | null = null;
-  #activeSessionId: string | null = null;
-  #subscription: RuntimeSubscription | null = null;
+  readonly #activeSessionIds = new Map<string, string>();
+  readonly #subscriptions = new Map<string, RuntimeSubscription>();
 
   constructor(input: { readonly workspace: string; readonly onSnapshot: (snapshot: DesktopSnapshot) => void; readonly onError: (message: string) => void; readonly onPublicOutput?: (event: AgentPublicOutputEvent) => void }) {
     this.#workspace = resolve(input.workspace);
@@ -96,16 +96,14 @@ export class DesktopRuntimeService {
     }
     if (runtime !== null) await this.#synchronizeProject(runtime);
     const workspace = this.#workspaceView();
-    const session = runtime === null || this.#activeSessionId === null ? null : await this.#sessionView(runtime, this.#requireSession(this.#activeSessionId));
+    const activeSessionId = this.#activeSessionIds.get(workspaceKey(this.#workspace));
+    const session = runtime === null || activeSessionId === undefined ? null : await this.#sessionView(runtime, this.#requireSession(activeSessionId));
     return { workspace, session };
   }
 
   async setWorkspace(path: string): Promise<DesktopSnapshot> {
     const next = resolve(path);
-    await this.#assertCanSwitchWorkspace();
-    await this.#closeRuntime();
     this.#workspace = next;
-    this.#activeSessionId = null;
     this.#ensureProject(next);
     this.#writeHostConfig();
     return await this.snapshot();
@@ -116,7 +114,6 @@ export class DesktopRuntimeService {
     this.#ensureProject(next);
     this.#writeHostConfig();
     if (next.toLowerCase() === this.#workspace.toLowerCase()) return await this.snapshot();
-    if (await this.#hasRunningSession()) return await this.snapshot();
     return await this.setWorkspace(next);
   }
 
@@ -135,7 +132,7 @@ export class DesktopRuntimeService {
       updatedAt: now
     };
     this.#currentProject().sessions.unshift(session);
-    this.#activeSessionId = session.id;
+    this.#activeSessionIds.set(workspaceKey(this.#workspace), session.id);
     this.#writeHostConfig();
     await this.#watch(handle);
     return await this.snapshot();
@@ -168,7 +165,7 @@ export class DesktopRuntimeService {
     session.status = "running";
     session.pendingRequestKind = null;
     session.updatedAt = new Date().toISOString();
-    this.#activeSessionId = session.id;
+    this.#activeSessionIds.set(workspaceKey(this.#workspace), session.id);
     this.#writeHostConfig();
     await this.#watch(handle);
     return await this.snapshot();
@@ -182,7 +179,7 @@ export class DesktopRuntimeService {
     const session = this.#requireSession(sessionId);
     const latest = session.turns.at(-1);
     if (latest === undefined) throw new Error("Desktop Session has no Runtime Run.");
-    this.#activeSessionId = session.id;
+    this.#activeSessionIds.set(workspaceKey(this.#workspace), session.id);
     await this.#watch(runtime.openRun(latest.runId));
     return await this.snapshot();
   }
@@ -193,7 +190,7 @@ export class DesktopRuntimeService {
     this.#assertSessionNotRunning(session);
     session.archived = archived;
     session.updatedAt = new Date().toISOString();
-    if (archived && this.#activeSessionId === sessionId) this.#activeSessionId = null;
+    if (archived && this.#activeSessionIds.get(workspaceKey(project.path)) === sessionId) this.#activeSessionIds.delete(workspaceKey(project.path));
     this.#writeHostConfig();
     return await this.snapshot();
   }
@@ -204,13 +201,13 @@ export class DesktopRuntimeService {
     this.#assertSessionNotRunning(session);
     project.hiddenRunIds = [...new Set([...project.hiddenRunIds, ...session.turns.map(({ runId }) => runId)])];
     project.sessions = project.sessions.filter(({ id }) => id !== sessionId);
-    if (this.#activeSessionId === sessionId) this.#activeSessionId = null;
+    if (this.#activeSessionIds.get(workspaceKey(project.path)) === sessionId) this.#activeSessionIds.delete(workspaceKey(project.path));
     this.#writeHostConfig();
     return await this.snapshot();
   }
 
   async saveModelProfile(input: ModelProfileInput): Promise<DesktopSnapshot> {
-    await this.#assertCanSwitchWorkspace();
+    await this.#assertCanChangeModelSettings();
     await this.#closeRuntime();
     const project = this.#currentProject();
     this.#preserveSelectedApiKey(project);
@@ -238,7 +235,7 @@ export class DesktopRuntimeService {
   }
 
   async deleteModelProfile(profileId: string): Promise<DesktopSnapshot> {
-    await this.#assertCanSwitchWorkspace();
+    await this.#assertCanChangeModelSettings();
     await this.#closeRuntime();
     const project = this.#currentProject();
     const id = requireText(profileId, "Model profile ID");
@@ -259,7 +256,7 @@ export class DesktopRuntimeService {
   }
 
   async selectModelProfile(profileId: string): Promise<DesktopSnapshot> {
-    await this.#assertCanSwitchWorkspace();
+    await this.#assertCanChangeModelSettings();
     await this.#closeRuntime();
     const project = this.#currentProject();
     const id = requireText(profileId, "Model profile ID");
@@ -285,23 +282,32 @@ export class DesktopRuntimeService {
   }
 
   async readArtifact(digest: string) { return await this.#requireRuntime().readArtifactText(digest); }
-  async close(): Promise<void> { await this.#closeRuntime(); }
-
-  #requireRuntime(): AgentRuntime {
-    if (this.#runtime !== null) return this.#runtime;
-    this.#runtime = createAgent({
-      workspace: this.#workspace,
-      provider: openAICompatibleProviderFromEnv(this.#providerEnvironment()),
-      publicOutputListener: this.#onPublicOutput,
-      profile: DESKTOP_PROFILE,
-      tools: createBuiltInTools({ artifactDir: join(this.#workspace, ".nexora", "artifacts") })
-    });
-    return this.#runtime;
+  async close(): Promise<void> {
+    await Promise.all([...this.#subscriptions.values()].map(async (subscription) => await subscription.close()));
+    this.#subscriptions.clear();
+    await Promise.all([...this.#runtimes.values()].map(async (runtime) => await runtime.close()));
+    this.#runtimes.clear();
   }
 
-  async #watch(handle: RunHandle): Promise<void> {
-    await this.#subscription?.close();
-    this.#subscription = handle.subscribe(() => this.#emit());
+  #requireRuntime(workspace = this.#workspace): AgentRuntime {
+    const key = workspaceKey(workspace);
+    const existing = this.#runtimes.get(key);
+    if (existing !== undefined) return existing;
+    const runtime = createAgent({
+      workspace,
+      provider: openAICompatibleProviderFromEnv(this.#providerEnvironment(workspace)),
+      publicOutputListener: this.#onPublicOutput,
+      profile: DESKTOP_PROFILE,
+      tools: createBuiltInTools({ artifactDir: join(workspace, ".nexora", "artifacts") })
+    });
+    this.#runtimes.set(key, runtime);
+    return runtime;
+  }
+
+  async #watch(handle: RunHandle, workspace = this.#workspace): Promise<void> {
+    const key = workspaceKey(workspace);
+    await this.#subscriptions.get(key)?.close();
+    this.#subscriptions.set(key, handle.subscribe(() => this.#emitWorkspace(workspace)));
   }
 
   async #emit(): Promise<void> {
@@ -309,8 +315,15 @@ export class DesktopRuntimeService {
     catch (error) { this.#onError(errorMessage(error)); }
   }
 
-  async #synchronizeProject(runtime: AgentRuntime): Promise<void> {
-    const project = this.#currentProject();
+  async #emitWorkspace(workspace: string): Promise<void> {
+    try {
+      const runtime = this.#runtimes.get(workspaceKey(workspace));
+      if (runtime !== undefined) await this.#synchronizeProject(runtime, this.#ensureProject(workspace));
+      this.#onSnapshot(await this.snapshot());
+    } catch (error) { this.#onError(errorMessage(error)); }
+  }
+
+  async #synchronizeProject(runtime: AgentRuntime, project = this.#currentProject()): Promise<void> {
     const summaries = await runtime.listRuns();
     const hidden = new Set(project.hiddenRunIds);
     const mapped = new Set(project.sessions.flatMap(({ turns }) => turns.map(({ runId }) => runId)));
@@ -382,24 +395,26 @@ export class DesktopRuntimeService {
     return { id: session.id, title: session.title, runs, inspection: latest.inspection, history: latest.history };
   }
 
-  async #assertCanSwitchWorkspace(): Promise<void> {
-    if (await this.#hasRunningSession()) throw new Error("A Session is still running. Stop it before changing Project or model settings.");
+  async #assertCanChangeModelSettings(): Promise<void> {
+    if (await this.#hasRunningSession()) throw new Error("A Session is still running in this Project. Stop it before changing model settings.");
   }
 
   async #hasRunningSession(): Promise<boolean> {
-    if (this.#runtime === null) return false;
-    return (await this.#runtime.listRuns()).some((run) => run.status === "running");
+    const runtime = this.#runtimes.get(workspaceKey(this.#workspace));
+    if (runtime === undefined) return false;
+    return (await runtime.listRuns()).some((run) => run.status === "running");
   }
 
   #assertSessionNotRunning(session: StoredSession): void {
     if (session.status === "running") throw new Error("Stop the running Session before archiving or removing it.");
   }
 
-  async #closeRuntime(): Promise<void> {
-    await this.#subscription?.close();
-    this.#subscription = null;
-    await this.#runtime?.close();
-    this.#runtime = null;
+  async #closeRuntime(workspace = this.#workspace): Promise<void> {
+    const key = workspaceKey(workspace);
+    await this.#subscriptions.get(key)?.close();
+    this.#subscriptions.delete(key);
+    await this.#runtimes.get(key)?.close();
+    this.#runtimes.delete(key);
   }
 
   #currentProject(): StoredProject { return this.#ensureProject(this.#workspace); }
@@ -447,9 +462,9 @@ export class DesktopRuntimeService {
     return session;
   }
 
-  #providerEnvironment(): ProviderEnvironment {
-    const environment = { ...readEnv(join(this.#workspace, ".env")), ...process.env };
-    const project = this.#currentProject();
+  #providerEnvironment(workspace = this.#workspace): ProviderEnvironment {
+    const environment = { ...readEnv(join(workspace, ".env")), ...process.env };
+    const project = this.#ensureProject(workspace);
     const selected = project.modelProfiles.find((profile) => profile.id === project.selectedModelProfileId);
     if (selected === undefined) return { NEXORA_MODEL_PROVIDER: "openai-compatible", ...environment, NEXORA_MODEL_STREAM: "true" };
     const apiKey = this.#profileApiKey(selected, environment);
@@ -590,6 +605,8 @@ function providerApiKeyName(baseUrl: string): string {
 function sameProvider(left: string, right: string): boolean {
   return left.trim().replace(/\/+$/, "").toLowerCase() === right.trim().replace(/\/+$/, "").toLowerCase();
 }
+
+function workspaceKey(path: string): string { return resolve(path).toLowerCase(); }
 
 function writeFileAtomic(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });

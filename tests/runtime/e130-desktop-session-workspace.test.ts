@@ -193,6 +193,61 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(calls).toBe(4);
   });
 
+  it("switches Projects while the previous Project Run continues in the background", async () => {
+    const firstWorkspace = mkdtempSync(join(tmpdir(), "nexora-e130-background-first-"));
+    const secondWorkspace = mkdtempSync(join(tmpdir(), "nexora-e130-background-second-"));
+    roots.push(firstWorkspace, secondWorkspace);
+    let calls = 0;
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const callNumber = calls;
+      if (callNumber === 1) await firstGate;
+      const content = {
+        text: null,
+        toolCalls: [{ name: "nexora_respond", arguments: { text: `Project ${callNumber} completed.` } }],
+        finishReason: "tool_calls"
+      };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    const environment = [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=qwen3.7-flash",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n");
+    writeFileSync(join(firstWorkspace, ".env"), environment, "utf8");
+    writeFileSync(join(secondWorkspace, ".env"), environment, "utf8");
+
+    const service = new DesktopRuntimeService({ workspace: firstWorkspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    await service.startSession("Keep working in the first Project.");
+    await waitFor(() => calls === 1);
+    const switched = await service.addProject(secondWorkspace);
+    expect(switched.workspace.path).toBe(secondWorkspace);
+    expect(switched.session).toBeNull();
+
+    await service.startSession("Complete in the second Project.");
+    const secondCompleted = await waitForStatus(service, "succeeded");
+    expect(secondCompleted.workspace.path).toBe(secondWorkspace);
+    expect(secondCompleted.session?.inspection.result?.summary).toBe("Project 2 completed.");
+
+    releaseFirst();
+    await service.setWorkspace(firstWorkspace);
+    const firstCompleted = await waitForStatus(service, "succeeded");
+    expect(firstCompleted.session?.inspection.result?.summary).toBe("Project 1 completed.");
+
+    await service.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  });
+
   it("interrupts a running Run before sending the next turn in the same Session", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-interrupt-"));
     roots.push(workspace);
@@ -223,12 +278,6 @@ describe("E130 Desktop Project and continuous Session", () => {
     const started = await service.startSession("Wait for a Provider response");
     const sessionId = started.session!.id;
     await waitFor(() => calls === 1);
-    const addedProject = mkdtempSync(join(tmpdir(), "nexora-e130-added-while-running-"));
-    roots.push(addedProject);
-    const added = await service.addProject(addedProject);
-    expect(added.workspace.path).toBe(workspace);
-    expect(added.workspace.projects.map(({ path }) => path)).toContain(addedProject);
-    expect(added.session?.inspection.status).toBe("running");
     await service.continueSession(sessionId, "Interrupt and read target.txt");
     const completed = await waitForStatus(service, "succeeded");
     expect(completed.session?.runs).toHaveLength(2);

@@ -147,7 +147,7 @@ Composer 始终可输入，并同时提供停止入口。用户发送时，Deskt
 
 ### Waiting for input
 
-直接显示 Runtime 的问题和回答入口；提交时携带真实 request ID。提交完成后恢复运行状态。
+Runtime 的问题作为一条 Nexora 消息进入 Conversation；底部保持普通 Composer，仅 placeholder 提示用户回复。提交时携带真实 request ID，提交完成后恢复运行状态。问题文本不得占用 Composer 或形成独立大面板。
 
 ### Waiting for approval
 
@@ -209,7 +209,7 @@ Electron 与 Node Runtime Host 只交换 JSON 请求、公开 Snapshot 和错误
 
 Desktop Host 可以持久化最近 Project、Session→Run 引用、归档和移除 tombstone；这些只控制导航与 Conversation 组合，不能修改或替代 Run Status、Plan、Invocation、Evidence、Result 或 Completion Gate。
 
-同一时刻只激活一个 Workspace Runtime。切换 Workspace 必须关闭订阅并释放旧 Runtime；不得让两个 Host 实例并发控制同一 Run。
+每个已打开 Project 拥有一个独立 Workspace Runtime 和订阅。切换 Project 只改变当前 Renderer 投影，原 Project 的 Run 可继续在后台执行；同一 Workspace 仍只能由一个 Runtime 实例控制。修改模型设置只重建当前 Project 的 Runtime，关闭 Desktop 时统一释放全部订阅和 Runtime。
 
 ## 11. Required public read projections
 
@@ -250,7 +250,7 @@ Feature Core 完成需要以下可复现证据：
 8. 只有持久化 `status === "succeeded"` 显示任务完成；
 9. Result、Evidence 和 Artifact 由 Runtime Authority 提供；
 10. Renderer 不能直接访问 Node、Store、Workspace 或 Provider secret；
-11. 切换 Workspace 和关闭窗口会释放订阅、Provider 与 Runtime；
+11. 切换 Workspace 不打断原 Project 的后台 Run；关闭窗口会释放全部订阅、Provider 与 Runtime；
 12. 确定性测试覆盖成功、输入、批准、拒绝、失败、blocked 和 recovery；
 13. 真实桌面窗口完成一次创建任务到正式结果的 UAT。
 14. 运行中 Composer 可输入；发送会先取消旧 Run，再把新 Run 追加到同一 Session，且不能绕过 unknown Effect Recovery；
