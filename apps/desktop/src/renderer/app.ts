@@ -16,6 +16,7 @@ let planOpen = false;
 let settingsOpen = false;
 let busy = false;
 let error: string | null = null;
+let draft = "";
 const expandedTools = new Set<string>();
 
 window.nexora.onSnapshot((next) => {
@@ -34,6 +35,10 @@ void window.nexora.bootstrap()
   .catch((cause: unknown) => { error = messageOf(cause); render(); });
 
 function render(): void {
+  const focused = document.activeElement instanceof HTMLTextAreaElement ? document.activeElement : null;
+  const focusedName = focused?.name;
+  const selection = focused === null ? null : [focused.selectionStart, focused.selectionEnd] as const;
+  const previousScroll = document.querySelector<HTMLElement>(".content-scroll")?.scrollTop ?? null;
   if (snapshot === null) {
     root.innerHTML = `<section class="loading">${error === null ? "正在打开 Nexora…" : errorView(error)}</section>`;
     return;
@@ -54,24 +59,48 @@ function render(): void {
     ${error === null ? "" : `<div class="toast" role="alert"><span>${escapeHtml(error)}</span><button data-action="dismiss-error">×</button></div>`}
   `;
   bindActions();
+  if (focusedName !== undefined) {
+    const next = document.querySelector<HTMLTextAreaElement>(`textarea[name='${focusedName}']`);
+    if (next !== null) {
+      next.focus();
+      if (selection !== null) next.setSelectionRange(selection[0], selection[1]);
+    }
+  }
+  const content = document.querySelector<HTMLElement>(".content-scroll");
+  if (content !== null && previousScroll !== null) content.scrollTop = previousScroll;
 }
 
 function sidebar(state: DesktopSnapshot): string {
-  const sessions = state.workspace.sessions.map((session) => `
-    <button class="session-row ${state.session?.inspection.runId === session.runId ? "selected" : ""}" data-session="${escapeAttr(session.runId)}">
-      <span class="session-copy"><strong>${escapeHtml(session.title)}</strong><small>${statusLabel(session.status)}</small></span>
-      ${session.pendingRequestKind === null ? "" : `<span class="attention" title="需要处理"></span>`}
-    </button>
-  `).join("");
+  const projects = state.workspace.projects.map((project) => {
+    const current = project.path.toLowerCase() === state.workspace.path.toLowerCase();
+    const active = project.sessions.filter((session) => !session.archived);
+    const archived = project.sessions.filter((session) => session.archived);
+    const rows = (sessions: typeof project.sessions, archivedGroup: boolean) => sessions.map((session) => `
+      <div class="session-row ${state.session?.id === session.id ? "selected" : ""}">
+        <button class="session-open" data-session="${escapeAttr(session.id)}" data-project-path="${escapeAttr(project.path)}">
+          <span class="session-copy"><strong>${escapeHtml(session.title)}</strong><small>${statusLabel(session.status)}</small></span>
+          ${session.pendingRequestKind === null ? "" : `<span class="attention" title="需要处理"></span>`}
+        </button>
+        <span class="session-actions">
+          <button title="${archivedGroup ? "Restore" : "Archive"}" data-session-action="archive" data-session="${escapeAttr(session.id)}" data-archived="${archivedGroup ? "false" : "true"}">${archivedGroup ? "↥" : "⌄"}</button>
+          <button title="Remove from Desktop" data-session-action="remove" data-session="${escapeAttr(session.id)}">×</button>
+        </span>
+      </div>
+    `).join("");
+    return `<section class="project-group ${current ? "current" : ""}">
+      <button class="project-heading" data-project-path="${escapeAttr(project.path)}"><span>⌄</span><strong>${escapeHtml(project.name)}</strong></button>
+      ${current ? `<div class="project-sessions">${rows(active, false) || `<p class="sidebar-empty">No sessions yet</p>`}${archived.length === 0 ? "" : `<details class="archived"><summary>Archived · ${archived.length}</summary>${rows(archived, true)}</details>`}</div>` : ""}
+    </section>`;
+  }).join("");
   return `
     <aside class="sidebar">
-      <button class="workspace" data-action="workspace">
+      <div class="workspace">
         <span class="workspace-mark">N</span>
-        <span><strong>${escapeHtml(state.workspace.name)}</strong><small>${escapeHtml(state.workspace.path)}</small></span>
-        <span class="chevron">⌄</span>
-      </button>
+        <span><strong>Nexora</strong><small>Projects</small></span>
+        <button class="add-project" data-action="workspace" title="Add project">＋</button>
+      </div>
       <button class="new-task" data-action="new-task"><span>＋</span> New Task</button>
-      <div class="session-list" aria-label="Sessions">${sessions || `<p class="sidebar-empty">No sessions yet</p>`}</div>
+      <div class="session-list" aria-label="Projects and Sessions">${projects}</div>
       <button class="settings-button" data-action="settings">⚙ <span>Settings</span></button>
     </aside>
   `;
@@ -82,7 +111,7 @@ function header(state: DesktopSnapshot): string {
   return `
     <header class="session-header">
       <div>
-        <strong>${session === null ? "New task" : escapeHtml(session.inspection.inputs[0]?.text.slice(0, 96) ?? "Session")}</strong>
+        <strong>${session === null ? "New task" : escapeHtml(session.title)}</strong>
         ${session === null ? "" : `<small>${statusLabel(session.inspection.status)}</small>`}
       </div>
       ${session === null ? "" : `
@@ -96,11 +125,13 @@ function header(state: DesktopSnapshot): string {
 }
 
 function emptyState(): string {
+  const providerError = snapshot?.workspace.providerError ?? (snapshot?.workspace.providerConfigured === false ? "A Provider is required before starting a Session." : null);
   return `
     <section class="empty-state">
       <div class="empty-mark">N</div>
-      <h1>What should Nexora do?</h1>
-      <p>Start a task in this workspace. Nexora will show its real plan, tool activity and verified result here.</p>
+      <h1>${providerError ? "Configure your model" : "What should Nexora do?"}</h1>
+      <p>${providerError ? escapeHtml(providerError) : "Start a task in this workspace. Nexora will show its real plan, tool activity and verified result here."}</p>
+      ${providerError ? `<button class="primary empty-settings" data-action="settings">Open Settings</button>` : ""}
     </section>
   `;
 }
@@ -108,17 +139,20 @@ function emptyState(): string {
 function conversation(session: SessionView): string {
   type Item = { at: string; order: number; html: string };
   const items: Item[] = [];
-  for (const input of session.inspection.inputs) {
-    items.push({ at: input.receivedAt, order: input.sequence, html: `
+  for (const [runIndex, run] of session.runs.entries()) {
+    const firstInput = run.inspection.inputs[0];
+    if (firstInput !== undefined) items.push({ at: firstInput.receivedAt, order: runIndex * 1_000_000, html: `
       <article class="message user-message">
         <div class="message-label">You</div>
-        <p>${escapeHtml(input.text)}</p>
+        <p>${escapeHtml(run.userInput)}</p>
       </article>
     ` });
-  }
-  for (const invocation of session.inspection.invocations) {
-    const expanded = expandedTools.has(invocation.id);
-    items.push({ at: invocation.startedAt, order: invocation.planVersion * 1000, html: `
+    for (const input of run.inspection.inputs.slice(1)) items.push({ at: input.receivedAt, order: runIndex * 1_000_000 + input.sequence, html: `
+      <article class="message user-message"><div class="message-label">You</div><p>${escapeHtml(input.text)}</p></article>
+    ` });
+    for (const invocation of run.inspection.invocations) {
+      const expanded = expandedTools.has(invocation.id);
+      items.push({ at: invocation.startedAt, order: runIndex * 1_000_000 + invocation.planVersion * 1000, html: `
       <article class="activity-line ${statusClass(invocation.status)}">
         <button class="activity-summary" data-tool="${escapeAttr(invocation.id)}">
           <span class="activity-icon">${toolIcon(invocation.toolName)}</span>
@@ -135,36 +169,38 @@ function conversation(session: SessionView): string {
         </div>` : ""}
       </article>
     ` });
-  }
-  for (const record of session.history.records) {
-    if (record.type !== "validation.passed" && record.type !== "validation.failed") continue;
-    items.push({ at: record.occurredAt, order: record.sequence, html: `
+    }
+    for (const record of run.history.records) {
+      if (record.type !== "validation.passed" && record.type !== "validation.failed") continue;
+      items.push({ at: record.occurredAt, order: runIndex * 1_000_000 + record.sequence, html: `
       <article class="validation ${record.type.endsWith("passed") ? "passed" : "failed"}">
         <span>${record.type.endsWith("passed") ? "✓" : "!"}</span>
         <strong>${record.type.endsWith("passed") ? "Validation passed" : "Validation failed"}</strong>
       </article>
     ` });
-  }
-  if (session.inspection.result !== null) {
-    const result = session.inspection.result;
-    items.push({ at: result.delivery.createdAt, order: Number.MAX_SAFE_INTEGER, html: `
+    }
+    if (run.inspection.result !== null) {
+      const result = run.inspection.result;
+      items.push({ at: result.delivery.createdAt, order: runIndex * 1_000_000 + 999_999, html: `
       <article class="result ${result.status}">
         <div class="result-icon">${result.status === "succeeded" ? "✓" : "!"}</div>
-        <div><small>${result.status === "succeeded" ? "Nexora completed the task" : "Session ended"}</small><p>${escapeHtml(result.summary)}</p>
+        <div><small>${result.status === "succeeded" ? "Nexora completed this turn" : result.status === "cancelled" ? "Turn interrupted" : "Turn ended"}</small><p>${escapeHtml(result.summary)}</p>
         ${result.resultArtifact === null ? "" : `<button class="text-button" data-artifact="${escapeAttr(result.resultArtifact)}">View full result</button>`}</div>
       </article>
     ` });
-  } else if (session.inspection.error !== null) {
-    items.push({ at: new Date().toISOString(), order: Number.MAX_SAFE_INTEGER, html: `
-      <article class="result failed"><div class="result-icon">!</div><div><small>Runtime error</small><p>${escapeHtml(session.inspection.error.message)}</p></div></article>
+    } else if (run.inspection.error !== null) {
+      items.push({ at: new Date().toISOString(), order: runIndex * 1_000_000 + 999_999, html: `
+      <article class="result failed"><div class="result-icon">!</div><div><small>Runtime error</small><p>${escapeHtml(run.inspection.error.message)}</p></div></article>
     ` });
+    }
   }
   items.sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order);
   return `<section class="conversation">${items.map((item) => item.html).join("")}</section>`;
 }
 
 function activity(session: SessionView): string {
-  const records = session.history.records.map((record) => `
+  const runs = session.runs.map((run, index) => {
+    const records = run.history.records.map((record) => `
     <article class="trajectory-row">
       <span class="sequence">${record.sequence}</span>
       <div><strong>${escapeHtml(record.type)}</strong><small>${formatTime(record.occurredAt)}</small>
@@ -173,11 +209,13 @@ function activity(session: SessionView): string {
         </details>
       </div>
     </article>
-  `).join("");
-  const evidence = session.inspection.evidence.map((item) => `
+    `).join("");
+    const evidence = run.inspection.evidence.map((item) => `
     <article class="trajectory-row evidence-row"><span class="sequence">E</span><div><strong>${escapeHtml(item.kind)}</strong><small>${formatTime(item.producedAt)}</small><details><summary>Evidence</summary><pre>${escapeHtml(pretty(item))}</pre></details></div></article>
-  `).join("");
-  return `<section class="trajectory"><div class="trajectory-heading"><h2>Activity</h2><p>Complete persisted Runtime trajectory for this Session.</p></div>${records}${evidence}</section>`;
+    `).join("");
+    return `<section class="run-trajectory"><h3>Turn ${index + 1} · ${escapeHtml(run.inspection.runId)}</h3>${records}${evidence}</section>`;
+  }).join("");
+  return `<section class="trajectory"><div class="trajectory-heading"><h2>Activity</h2><p>Persisted Runtime trajectory across every Run in this Session.</p></div>${runs}</section>`;
 }
 
 function plan(session: SessionView | null): string {
@@ -204,7 +242,7 @@ function composer(session: SessionView | null): string {
     return `<section class="composer approval"><div><small>Approval required · ${escapeHtml(run.pendingRequest.toolName)}</small><p>${escapeHtml(run.pendingRequest.prompt)}</p><details><summary>Operation</summary><pre>${escapeHtml(pretty(run.pendingRequest.input))}</pre></details></div><div class="approval-actions"><button data-action="deny" ${busy ? "disabled" : ""}>Reject</button><button class="primary" data-action="approve" ${busy ? "disabled" : ""}>Approve</button></div></section>`;
   }
   if (run.status === "running") {
-    return `<section class="composer running"><span class="pulse"></span><span>Nexora is working…</span><button data-action="cancel" ${busy ? "disabled" : ""}>Cancel</button></section>`;
+    return followUpComposer(session, true);
   }
   if (run.status === "blocked") {
     if (run.recovery !== null) {
@@ -213,22 +251,69 @@ function composer(session: SessionView | null): string {
     const budget = run.stopReason?.endsWith("BUDGET_EXCEEDED") === true;
     return `<section class="composer blocked"><div><small>Session paused</small><p>${escapeHtml(run.delivery?.summary ?? run.stopReason ?? "The Runtime requires intervention.")}</p></div><button class="primary" data-action="${budget ? "extend-budget" : "resume"}" ${busy ? "disabled" : ""}>${budget ? "Extend budget & resume" : "Resume"}</button></section>`;
   }
-  return `<section class="composer terminal"><span>${run.status === "succeeded" ? "Task complete" : statusLabel(run.status)}</span><button class="primary" data-action="new-task">New follow-up</button></section>`;
+  return followUpComposer(session, false);
 }
 
 function goalComposer(): string {
-  return `<section class="composer goal"><form data-form="goal"><textarea name="goal" placeholder="Describe a task for Nexora…" required></textarea><button class="send-button" aria-label="Start task" ${busy ? "disabled" : ""}>↑</button></form></section>`;
+  return `<section class="composer goal"><form data-form="goal"><textarea name="goal" placeholder="Describe a task for Nexora…" required>${escapeHtml(draft)}</textarea><button class="send-button" aria-label="Start task" ${busy ? "disabled" : ""}>↑</button></form></section>`;
+}
+
+function followUpComposer(session: SessionView, running: boolean): string {
+  return `<section class="composer follow-up ${running ? "is-running" : ""}">
+    <form data-form="follow-up">
+      <textarea name="text" placeholder="${running ? "Type to interrupt and send…" : "Continue this Session…"}" required>${escapeHtml(draft)}</textarea>
+      <div class="composer-actions">
+        ${running ? `<button type="button" class="stop-button" data-action="cancel" title="Stop current Run" ${busy ? "disabled" : ""}>■</button>` : ""}
+        <button class="send-button" aria-label="${running ? "Interrupt and send" : "Send follow-up"}" ${busy ? "disabled" : ""}>↑</button>
+      </div>
+    </form>
+    <small>${running ? "Sending interrupts the current Run safely, then starts the next turn." : `${statusLabel(session.inspection.status)} · Continue in this Session.`}</small>
+  </section>`;
 }
 
 function settings(state: DesktopSnapshot): string {
-  return `<div class="modal-backdrop" data-action="close-settings"><section class="settings-modal" role="dialog" aria-modal="true"><header><h2>Settings</h2><button data-action="close-settings">×</button></header><dl><dt>Workspace</dt><dd>${escapeHtml(state.workspace.path)}</dd><dt>Provider</dt><dd>${state.workspace.providerConfigured ? "Configured" : "Not configured"}</dd><dt>Model</dt><dd>${escapeHtml(state.workspace.model ?? "—")}</dd></dl><p>Provider secrets remain in the Desktop main process and are never exposed here.</p></section></div>`;
+  const provider = state.workspace.providerSettings;
+  return `<div class="modal-backdrop" data-action="close-settings"><section class="settings-modal" role="dialog" aria-modal="true">
+    <header><div><h2>Model settings</h2><small>${escapeHtml(state.workspace.name)}</small></div><button data-action="close-settings">×</button></header>
+    <form data-form="provider-settings" class="settings-form">
+      <label>Base URL<input name="baseUrl" type="url" value="${escapeAttr(provider.baseUrl)}" placeholder="https://provider.example/v1" required /></label>
+      <label>API Key<input name="apiKey" type="password" placeholder="${provider.apiKeyConfigured ? "Configured · leave blank to keep" : "Required"}" /></label>
+      <label>Model<input name="model" value="${escapeAttr(provider.model)}" placeholder="Model identifier" required /></label>
+      <div class="settings-grid"><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${provider.decisionOutputTokens}" required /></label>
+      <label>Tool transport<select name="transport"><option value="native_tools" ${provider.transport === "native_tools" ? "selected" : ""}>Native tools</option><option value="structured_output" ${provider.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label></div>
+      <button class="primary" ${busy ? "disabled" : ""}>Save and reload Runtime</button>
+    </form>
+    <p>Saved to this Project's <code>.env</code>. The API Key is never returned to the Renderer. Explicit system environment variables take precedence.</p>
+  </section></div>`;
 }
 
 function bindActions(): void {
   document.querySelector<HTMLElement>(".settings-modal")?.addEventListener("click", (event) => event.stopPropagation());
   document.querySelectorAll<HTMLElement>("[data-session]").forEach((element) => element.addEventListener("click", () => {
-    const runId = element.dataset.session;
-    if (runId !== undefined) void perform(() => window.nexora.openSession(runId).then(setSnapshot));
+    if (element.dataset.sessionAction !== undefined) return;
+    const sessionId = element.dataset.session;
+    const projectPath = element.dataset.projectPath;
+    if (sessionId !== undefined && projectPath !== undefined) {
+      draft = "";
+      void perform(() => window.nexora.openSession(projectPath, sessionId).then(setSnapshot));
+    }
+  }));
+  document.querySelectorAll<HTMLElement>("[data-project-path]:not([data-session])").forEach((element) => element.addEventListener("click", () => {
+    const path = element.dataset.projectPath;
+    if (path !== undefined && path.toLowerCase() !== snapshot?.workspace.path.toLowerCase()) {
+      draft = "";
+      void perform(() => window.nexora.switchProject(path).then(setSnapshot));
+    }
+  }));
+  document.querySelectorAll<HTMLElement>("[data-session-action]").forEach((element) => element.addEventListener("click", () => {
+    const sessionId = element.dataset.session;
+    if (sessionId === undefined) return;
+    if (element.dataset.sessionAction === "archive") {
+      const archived = element.dataset.archived === "true";
+      void perform(() => window.nexora.archiveSession(sessionId, archived).then(setSnapshot));
+    } else if (window.confirm("Remove this Session from Nexora Desktop? Persisted Runtime Runs and audit evidence will be retained.")) {
+      void perform(() => window.nexora.removeSession(sessionId).then(setSnapshot));
+    }
   }));
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((element) => element.addEventListener("click", () => {
     mode = element.dataset.view === "activity" ? "activity" : "conversation";
@@ -248,8 +333,8 @@ function bindActions(): void {
   }));
   document.querySelectorAll<HTMLElement>("[data-action]").forEach((element) => element.addEventListener("click", (event) => {
     const action = element.dataset.action;
-    if (action === "workspace") void perform(() => window.nexora.chooseWorkspace().then((next) => { if (next !== null) setSnapshot(next); }));
-    else if (action === "new-task") { snapshot = snapshot === null ? null : { ...snapshot, session: null }; mode = "conversation"; render(); }
+    if (action === "workspace") { draft = ""; void perform(() => window.nexora.chooseWorkspace().then((next) => { if (next !== null) setSnapshot(next); })); }
+    else if (action === "new-task") { snapshot = snapshot === null ? null : { ...snapshot, session: null }; draft = ""; mode = "conversation"; render(); }
     else if (action === "settings") { settingsOpen = true; render(); }
     else if (action === "close-settings") { if (event.target === element || element.tagName === "BUTTON") { settingsOpen = false; render(); } }
     else if (action === "dismiss-error") { error = null; render(); }
@@ -260,7 +345,7 @@ function bindActions(): void {
   document.querySelector<HTMLFormElement>("[data-form='goal']")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const goal = new FormData(event.currentTarget as HTMLFormElement).get("goal");
-    if (typeof goal === "string") void perform(() => window.nexora.startSession(goal).then(setSnapshot));
+    if (typeof goal === "string") void perform(async () => { const next = await window.nexora.startSession(goal); draft = ""; setSnapshot(next); });
   });
   document.querySelector<HTMLFormElement>("[data-form='input']")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -268,6 +353,33 @@ function bindActions(): void {
     const request = snapshot?.session?.inspection.pendingRequest;
     if (typeof text === "string" && request?.kind === "input") void sendControl({ type: "input", text, requestId: request.id });
   });
+  document.querySelector<HTMLFormElement>("[data-form='follow-up']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = new FormData(event.currentTarget as HTMLFormElement).get("text");
+    const sessionId = snapshot?.session?.id;
+    if (typeof text === "string" && sessionId !== undefined) void perform(async () => {
+      const next = await window.nexora.continueSession(sessionId, text);
+      draft = "";
+      setSnapshot(next);
+    });
+  });
+  document.querySelector<HTMLFormElement>("[data-form='provider-settings']")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget as HTMLFormElement);
+    const apiKey = data.get("apiKey");
+    void perform(async () => {
+      const next = await window.nexora.saveProviderSettings({
+        baseUrl: String(data.get("baseUrl") ?? ""),
+        ...(typeof apiKey === "string" && apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        model: String(data.get("model") ?? ""),
+        decisionOutputTokens: Number(data.get("decisionOutputTokens")),
+        transport: data.get("transport") === "structured_output" ? "structured_output" : "native_tools"
+      });
+      settingsOpen = false;
+      setSnapshot(next);
+    });
+  });
+  document.querySelectorAll<HTMLTextAreaElement>("textarea[name='goal'], textarea[name='text']").forEach((input) => input.addEventListener("input", () => { draft = input.value; }));
 }
 
 async function controlAction(action: string): Promise<void> {
@@ -304,7 +416,10 @@ async function perform(operation: () => Promise<void>): Promise<void> {
   busy = true;
   error = null;
   render();
-  try { await operation(); } catch (cause) { error = messageOf(cause); busy = false; render(); }
+  try {
+    await operation();
+    if (busy) { busy = false; render(); }
+  } catch (cause) { error = messageOf(cause); busy = false; render(); }
 }
 
 function setSnapshot(next: DesktopSnapshot): void { snapshot = next; busy = false; error = null; render(); }

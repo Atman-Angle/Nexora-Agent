@@ -3,8 +3,13 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("nexora", Object.freeze({
   bootstrap: () => ipcRenderer.invoke("desktop:bootstrap"),
   chooseWorkspace: () => ipcRenderer.invoke("desktop:choose-workspace"),
+  switchProject: (path) => ipcRenderer.invoke("desktop:switch-project", path),
   startSession: (goal) => ipcRenderer.invoke("desktop:start-session", goal),
-  openSession: (runId) => ipcRenderer.invoke("desktop:open-session", runId),
+  continueSession: (sessionId, text) => ipcRenderer.invoke("desktop:continue-session", sessionId, text),
+  openSession: (projectPath, sessionId) => ipcRenderer.invoke("desktop:open-session", projectPath, sessionId),
+  archiveSession: (sessionId, archived) => ipcRenderer.invoke("desktop:archive-session", sessionId, archived),
+  removeSession: (sessionId) => ipcRenderer.invoke("desktop:remove-session", sessionId),
+  saveProviderSettings: (settings) => ipcRenderer.invoke("desktop:save-provider-settings", settings),
   control: (runId, control) => ipcRenderer.invoke("desktop:control", runId, control),
   readArtifact: (digest) => ipcRenderer.invoke("desktop:read-artifact", digest),
   onSnapshot: (listener) => {

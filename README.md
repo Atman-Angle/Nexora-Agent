@@ -196,7 +196,7 @@ Create a root `.env` with `NEXORA_MODEL_BASE_URL`, `NEXORA_MODEL_API_KEY`, `NEXO
 pnpm desktop
 ```
 
-Desktop is a two-column Runtime host: Workspace and persisted Sessions on the left, and one Conversation/Activity execution surface in the center. It uses the same Run, Plan, Invocation, Approval, Evidence, and Result authority as the public Runtime; the Renderer does not maintain a parallel state model.
+Desktop is a two-column Runtime host: Projects (Workspaces) and Sessions on the left, and one Conversation/Activity execution surface in the center. The Composer remains available while a Run is active and after it terminates; safely interrupting and appending a new Run keeps follow-up work in the same user Session. Archive, removal, and model configuration are Host navigation settings, while Run, Plan, Invocation, Approval, Evidence, and Result authority remains in Runtime.
 
 Run the real-Provider Electron acceptance path with `pnpm desktop:uat`. See the [Desktop usage and verification guide](apps/desktop/README.md) for configuration, interaction states, test commands, UAT artifacts, and current release gates.
 

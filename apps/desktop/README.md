@@ -1,6 +1,6 @@
 # Nexora Desktop
 
-Nexora Desktop 是 Nexora Runtime 的官方本地 Agent Workspace。它使用两栏界面：左侧切换 Workspace 和 Session，中间通过同一条 Conversation Flow 展示目标、真实 Tool 活动、验证结果和正式 Result。面向用户称为 Session，底层仍是 Runtime Run；Desktop 不保存第二套状态。
+Nexora Desktop 是 Nexora Runtime 的官方本地 Agent Workspace。它使用两栏界面：左侧按 Project（Workspace）组织 Session，中间通过同一条 Conversation Flow 展示目标、真实 Tool 活动、验证结果和正式 Result。一个用户 Session 可以包含多个有序 Runtime Run；执行状态始终来自最新 Run，Desktop 不复制 Run 状态、Plan 或完成判断。
 
 ## 启动
 
@@ -27,20 +27,23 @@ NEXORA_MODEL_TOOL_TRANSPORT=native_tools
 pnpm desktop
 ```
 
-该命令构建 Runtime、Harness 和 Desktop，然后打开 Electron 窗口。开发版默认以仓库根目录为 Workspace；可以从左上角切换到其他目录。Provider secret 只在 Node Runtime Host 中读取，不进入 Renderer。
+该命令构建 Runtime、Harness 和 Desktop，然后打开 Electron 窗口。开发版默认以仓库根目录为 Project；左上角 `＋` 可以添加其他 Workspace。也可以直接从 Settings 配置当前 Project 的 Provider；保存后的 API Key 不会回显给 Renderer。
 
 ## 日常使用
 
-1. 点击 Workspace 名称选择工作目录。
+1. 点击左上角 `＋` 添加 Project；每个 Project 对应一个 Workspace。
 2. 点击 **New Task**，在底部输入目标并提交。
 3. 在 Conversation 中查看用户输入、轻量 Tool 活动、Validation 和正式 Result。
 4. 点击 Tool 行可展开真实参数、结果、错误、耗时和 Invocation ID。
 5. Runtime 存在 Structured Plan 时，Composer 上方会出现只读 Plan 摘要；点击原地展开。
 6. Runtime 等待输入或审批时，Composer 自动切换为回答或批准/拒绝入口。
 7. 点击 **Activity** 在同一主区域查看持久化 Trajectory；不会打开第三栏。
-8. 终态 Session 不能伪装成连续聊天；点击 **New follow-up** 创建新的 Run。
+8. Agent 运行时 Composer 仍可输入。发送会先安全中断当前 Run，再在同一 Session 创建下一 Run；方形按钮只停止当前 Run。
+9. Run 终态后 Composer 仍可继续输入，Conversation 和 Activity 会保留同一 Session 中的全部 Run。
+10. Session 行悬停后可归档、恢复或从 Desktop 移除。移除不会物理删除 Runtime Run 和审计证据。
+11. Settings 可配置 Base URL、API Key、Model、decision tokens 和 Tool transport；运行中的 Session 必须先停止。
 
-Session 数据保存在所选 Workspace 的 `.nexora` 中。重启 Desktop 后，左栏通过公开 Runtime API 恢复这些 Session。不要直接编辑数据库或 `.nexora` 内容。
+Run 数据保存在所选 Workspace 的 `.nexora` 中。Desktop 的最近 Project、Session→Run 链和归档导航信息保存在启动 Workspace 的 `.nexora/desktop-host.json`；它们不改变 Runtime Authority。不要直接编辑数据库或这些 Host 元数据。
 
 ## 测试与验收
 
@@ -51,13 +54,19 @@ pnpm typecheck
 pnpm lint
 pnpm build
 pnpm --filter @nexora/desktop build
-pnpm vitest run tests/runtime/d1-developer-runtime-golden-path.test.ts tests/runtime/d2-run-handle-interaction.test.ts tests/runtime/d2-runtime-events.test.ts tests/runtime/d4-package-consumer.test.ts tests/runtime/e129-desktop-read-projections.test.ts --no-file-parallelism
+pnpm vitest run tests/runtime/d1-developer-runtime-golden-path.test.ts tests/runtime/d2-run-handle-interaction.test.ts tests/runtime/d2-runtime-events.test.ts tests/runtime/d4-package-consumer.test.ts tests/runtime/e129-desktop-read-projections.test.ts tests/runtime/e130-desktop-session-workspace.test.ts --no-file-parallelism
 ```
 
 使用 `.env` 中真实 Provider 的桌面端到端 UAT：
 
 ```powershell
 pnpm desktop:uat
+```
+
+不使用外部凭据、同时验证“终态后在同一 Session 继续”的确定性 Electron UAT：
+
+```powershell
+pnpm desktop:uat:deterministic
 ```
 
 UAT 会打开真实 Electron Renderer，通过 Composer 提交一个只读目标，并等待 Runtime 正式终态。只有持久化 `status === "succeeded"` 才通过；等待输入、等待审批、blocked、failed、cancelled 或超时都以非零退出码失败。默认产物：

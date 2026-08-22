@@ -2,19 +2,60 @@ import type {
   AuditHistoryPage,
   RecoveryDecision,
   RunInspection,
-  RunSummary,
   TextArtifactView
 } from "@nexora/harness";
+
+export type DesktopSessionSummary = {
+  readonly id: string;
+  readonly title: string;
+  readonly status: RunInspection["status"];
+  readonly pendingRequestKind: "input" | "approval" | null;
+  readonly archived: boolean;
+  readonly updatedAt: string;
+};
+
+export type ProjectView = {
+  readonly path: string;
+  readonly name: string;
+  readonly sessions: readonly DesktopSessionSummary[];
+};
+
+export type ProviderSettingsView = {
+  readonly baseUrl: string;
+  readonly apiKeyConfigured: boolean;
+  readonly model: string;
+  readonly decisionOutputTokens: number;
+  readonly transport: "native_tools" | "structured_output";
+};
+
+export type ProviderSettingsInput = {
+  readonly baseUrl: string;
+  readonly apiKey?: string;
+  readonly model: string;
+  readonly decisionOutputTokens: number;
+  readonly transport: "native_tools" | "structured_output";
+};
 
 export type WorkspaceView = {
   readonly path: string;
   readonly name: string;
   readonly providerConfigured: boolean;
+  readonly providerError: string | null;
   readonly model: string | null;
-  readonly sessions: readonly RunSummary[];
+  readonly projects: readonly ProjectView[];
+  readonly providerSettings: ProviderSettingsView;
+};
+
+export type SessionRunView = {
+  readonly userInput: string;
+  readonly inspection: RunInspection;
+  readonly history: AuditHistoryPage;
 };
 
 export type SessionView = {
+  readonly id: string;
+  readonly title: string;
+  readonly runs: readonly SessionRunView[];
   readonly inspection: RunInspection;
   readonly history: AuditHistoryPage;
 };
@@ -36,8 +77,13 @@ export type SessionControl =
 export type DesktopBridge = {
   bootstrap(): Promise<DesktopSnapshot>;
   chooseWorkspace(): Promise<DesktopSnapshot | null>;
+  switchProject(path: string): Promise<DesktopSnapshot>;
   startSession(goal: string): Promise<DesktopSnapshot>;
-  openSession(runId: string): Promise<DesktopSnapshot>;
+  continueSession(sessionId: string, text: string): Promise<DesktopSnapshot>;
+  openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot>;
+  archiveSession(sessionId: string, archived: boolean): Promise<DesktopSnapshot>;
+  removeSession(sessionId: string): Promise<DesktopSnapshot>;
+  saveProviderSettings(settings: ProviderSettingsInput): Promise<DesktopSnapshot>;
   control(runId: string, control: SessionControl): Promise<void>;
   readArtifact(digest: string): Promise<TextArtifactView>;
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void;

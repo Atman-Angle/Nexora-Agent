@@ -22,7 +22,8 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 
 - Runtime、代码、持久化和公开 Core Contract 继续使用 **Run**；
 - Desktop 面向用户统一使用 **Session**；
-- Session 只是一个 Run 的产品层投影，不引入 Session status、Session plan 或 Session completion 等平行状态；
+- Session 是一个用户连续任务，可包含一个或多个按顺序执行的 Run；Session 不拥有执行状态，界面状态始终由最新 Run 投影；
+- 用户在运行中发送新输入时，Desktop 先通过公开 Contract 安全取消当前 Run，再在同一 Session 创建后续 Run。它不向 busy Run 强塞输入，也不复活终态 Run；
 - 用户入口命名为 **Activity**，其内容是完整 Runtime **Trajectory**。
 
 ## 2. Product shape
@@ -31,10 +32,10 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 
 ```text
 ┌────────────────────┬──────────────────────────────────────────┐
-│ Workspace          │ Session header                           │
+│ Projects           │ Session header                           │
 │ + New task         ├──────────────────────────────────────────┤
-│                    │                                          │
-│ Sessions           │ Conversation 或 Trajectory               │
+│ Project A          │                                          │
+│   Sessions         │ Conversation 或 Trajectory               │
 │ · task A           │                                          │
 │ · task B           │                                          │
 │                    │                                          │
@@ -45,7 +46,7 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 └────────────────────┴──────────────────────────────────────────┘
 ```
 
-- 左侧只负责 Workspace 和 Session / Task 切换。
+- 左侧只负责 Project（Workspace）和 Session / Task 切换。
 - 中间是唯一主执行面，同时承载用户输入和 Agent 执行输出。
 - Session 默认显示 Conversation；用户可切换到 Trajectory 查看完整 Runtime 记录。
 - 首版没有右栏、Workbench、Runtime Dashboard、文件树或多面板 Inspector。
@@ -54,8 +55,9 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 
 | GUI 概念 | 唯一事实来源 | GUI 权限 |
 | --- | --- | --- |
-| Session | Runtime Run | 创建、打开；不直接改状态 |
-| Session status | State Machine + persisted Run | 只读投影 |
+| Project | Workspace + Desktop Host 最近项目元数据 | 添加、切换；不复制 Workspace 文件状态 |
+| Session | Desktop Host 中有序 Run 引用 | 创建、打开、归档；不直接改 Run |
+| Session status | 最新 Run 的 State Machine + persisted Run | 只读投影 |
 | Plan | Run-owned Structured Plan | 只读、折叠/展开 |
 | Progress | persisted step progress | 只读投影 |
 | Tool activity | Tool Invocation + Event | 只读投影 |
@@ -71,11 +73,12 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 
 左栏保持低噪声，只包含：
 
-- 当前 Workspace 名称和受限路径提示；
-- 切换 Workspace；
+- 已添加 Project；每个 Project 对应一个 Workspace；
+- 添加和切换 Project；
 - 新建任务；
-- 当前 Workspace 的 Session 列表；
+- Project 下的 Session 列表；
 - 每个 Session 的标题、轻量状态和必要的待处理提示。
+- Session 归档、恢复和从 Desktop 移除；移除只删除 Host 导航引用，Runtime Run 与审计证据必须保留。
 - Settings 入口。
 
 状态使用用户语言，例如“正在工作”“需要回复”“需要确认”“已暂停”“已完成”“未完成”“已取消”。不显示统计、预算图表、Invocation 数量、项目管理字段或批量操作。
@@ -133,7 +136,7 @@ Composer 是所有人机介入的统一入口，并由当前 `RunInspection` 决
 
 ### Running
 
-显示运行状态和取消入口。Runtime 没有主动追加输入 Contract 时，不提供看似可发送但无法可靠执行的普通聊天输入。
+Composer 始终可输入，并同时提供停止入口。用户发送时，Desktop 必须先调用当前 Run 的安全取消 Contract；取消完成后才可在同一 Session 创建后续 Run。若未知副作用阻止取消，不得创建后续 Run，必须进入 Recovery。
 
 ### Waiting for input
 
@@ -149,7 +152,11 @@ Composer 是所有人机介入的统一入口，并由当前 `RunInspection` 决
 
 ### Terminal
 
-显示正式 Result 或失败 Delivery。终态 Run 不伪装成可继续对话；用户可在同一 Workspace 创建一个新的后续任务。
+显示正式 Result 或失败 Delivery。终态 Run 不被复活；用户可以在同一 Session 输入，Desktop 创建新的后续 Run，并把上一 Run 的有界 Delivery 作为明确的 Host continuation context。
+
+## 7.1 Project model settings
+
+Settings 为当前 Project 配置 OpenAI-compatible Provider 的 Base URL、API Key、Model、decision output tokens 和 Tool transport。配置写入当前 Workspace 的本地 `.env`，显式系统环境变量仍优先。API Key 只在用户输入和有界 IPC 提交时进入 Renderer，保存后的 Snapshot 不得回显 Key。保存配置前必须停止正在运行的 Run，并重建该 Project Runtime。
 
 ## 8. Activity / Trajectory
 
@@ -193,6 +200,8 @@ Artifact 必须通过受限的公开读取边界访问。Renderer 不接收 Arti
 
 Electron 与 Node Runtime Host 只交换 JSON 请求、公开 Snapshot 和错误；该进程边界不保存 Run 状态。系统找不到兼容 Node 可执行文件时必须启动失败，不得回退为 Renderer Store。
 
+Desktop Host 可以持久化最近 Project、Session→Run 引用、归档和移除 tombstone；这些只控制导航与 Conversation 组合，不能修改或替代 Run Status、Plan、Invocation、Evidence、Result 或 Completion Gate。
+
 同一时刻只激活一个 Workspace Runtime。切换 Workspace 必须关闭订阅并释放旧 Runtime；不得让两个 Host 实例并发控制同一 Run。
 
 ## 11. Required public read projections
@@ -213,6 +222,7 @@ Desktop 不能为了界面完整读取内部 Store。实现前需要验证并在
 - 文件树、内置编辑器、交互终端或 Git 管理；
 - Runtime 统计 Dashboard、图表或项目管理；
 - Fork / Merge UI、多 Agent 拓扑或 Worker 调度面板；
+- 向 active Run 并发追加输入、复活终态 Run，或物理删除 Runtime 审计记录；
 - Memory、MCP、Skill、插件市场或 Workflow 编辑器；
 - 模型思维链、伪造流式文本或不存在的主动输入能力；
 - 云同步、账户、自动更新、签名发布或多平台发布承诺。
@@ -236,6 +246,9 @@ Feature Core 完成需要以下可复现证据：
 11. 切换 Workspace 和关闭窗口会释放订阅、Provider 与 Runtime；
 12. 确定性测试覆盖成功、输入、批准、拒绝、失败、blocked 和 recovery；
 13. 真实桌面窗口完成一次创建任务到正式结果的 UAT。
+14. 运行中 Composer 可输入；发送会先取消旧 Run，再把新 Run 追加到同一 Session，且不能绕过 unknown Effect Recovery；
+15. 终态后可在同一 Session 创建后续 Run，Conversation 和 Activity 保留每个 Run 的边界；
+16. Project、Session 归档/恢复/移除和模型设置重启后保持，且 API Key 不出现在 Snapshot。
 
 ## 14. Delivery layers
 

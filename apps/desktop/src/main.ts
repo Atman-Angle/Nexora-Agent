@@ -6,10 +6,18 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { RuntimeWorkerClient } from "./runtime-worker-client.js";
-import type { DesktopSnapshot, SessionControl } from "./shared.js";
+import type { DesktopSnapshot, ProviderSettingsInput, SessionControl } from "./shared.js";
 
 const RunIdSchema = z.string().trim().min(1).max(256);
 const GoalSchema = z.string().trim().min(1).max(200_000);
+const PathSchema = z.string().trim().min(1).max(32_000);
+const ProviderSettingsSchema = z.object({
+  baseUrl: z.string().url().max(4_000),
+  apiKey: z.string().max(20_000).optional(),
+  model: z.string().trim().min(1).max(256),
+  decisionOutputTokens: z.number().int().positive().max(1_000_000),
+  transport: z.enum(["native_tools", "structured_output"])
+}).strict();
 const ControlSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("input"), text: GoalSchema, requestId: RunIdSchema }).strict(),
   z.object({ type: z.literal("approve"), requestId: RunIdSchema }).strict(),
@@ -32,11 +40,12 @@ let service: RuntimeWorkerClient | null = null;
 let exitCode = 0;
 let uatRunning = false;
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const initialWorkspace = resolve(process.env.NEXORA_DESKTOP_WORKSPACE?.trim() || repositoryRoot);
 
 function runtime(): RuntimeWorkerClient {
   if (service !== null) return service;
   service = new RuntimeWorkerClient({
-    workspace: repositoryRoot,
+    workspace: initialWorkspace,
     onSnapshot: (snapshot) => window?.webContents.send("desktop:snapshot", snapshot),
     onError: (message) => window?.webContents.send("desktop:error", message)
   });
@@ -130,6 +139,32 @@ async function runDesktopUat(reportPath: string): Promise<void> {
     throw new Error(`Desktop UAT did not succeed within ${timeoutMs}ms.`);
   }
 
+  const continuation = process.env.NEXORA_DESKTOP_UAT_CONTINUATION?.trim();
+  if (continuation) {
+    await window!.webContents.executeJavaScript(`(() => {
+      const form = document.querySelector('[data-form="follow-up"]');
+      const input = form?.querySelector('textarea[name="text"]');
+      if (!(form instanceof HTMLFormElement) || !(input instanceof HTMLTextAreaElement)) throw new Error('Desktop follow-up Composer is not ready.');
+      input.value = ${JSON.stringify(continuation)};
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      form.requestSubmit();
+      return true;
+    })()`, true);
+    const continuationDeadline = Date.now() + timeoutMs;
+    while (Date.now() < continuationDeadline) {
+      snapshot = await runtime().snapshot();
+      const status = snapshot.session?.inspection.status;
+      if (status === "succeeded" && snapshot.session!.runs.length >= 2) break;
+      if (["waiting_for_input", "waiting_for_approval", "blocked", "failed", "cancelled"].includes(status ?? "")) {
+        throw new Error(`Desktop continuation UAT stopped in ${status}.`);
+      }
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+    }
+    if (snapshot?.session?.inspection.status !== "succeeded" || snapshot.session.runs.length < 2) {
+      throw new Error(`Desktop continuation UAT did not succeed within ${timeoutMs}ms.`);
+    }
+  }
+
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
   const image = await window!.webContents.capturePage({ x: 0, y: 0, width: 1180, height: 800 });
   if (image.isEmpty()) throw new Error("Electron rendered an empty UAT capture.");
@@ -143,6 +178,8 @@ async function runDesktopUat(reportPath: string): Promise<void> {
     goal,
     workspace: snapshot.workspace.path,
     runId: inspection.runId,
+    runIds: snapshot.session.runs.map((run) => run.inspection.runId),
+    sessionId: snapshot.session.id,
     status: inspection.status,
     result: inspection.result,
     planSteps: inspection.plan?.orderedSteps.length ?? 0,
@@ -168,11 +205,26 @@ ipcMain.handle("desktop:choose-workspace", async () => {
   const path = result.filePaths[0];
   return result.canceled || path === undefined ? null : await runtime().setWorkspace(path);
 });
+ipcMain.handle("desktop:switch-project", async (_event, path: unknown) => (
+  await runtime().setWorkspace(PathSchema.parse(path))
+));
 ipcMain.handle("desktop:start-session", async (_event, goal: unknown) => (
   await runtime().startSession(GoalSchema.parse(goal))
 ));
-ipcMain.handle("desktop:open-session", async (_event, runId: unknown) => (
-  await runtime().openSession(RunIdSchema.parse(runId))
+ipcMain.handle("desktop:continue-session", async (_event, sessionId: unknown, text: unknown) => (
+  await runtime().continueSession(RunIdSchema.parse(sessionId), GoalSchema.parse(text))
+));
+ipcMain.handle("desktop:open-session", async (_event, projectPath: unknown, sessionId: unknown) => (
+  await runtime().openSession(PathSchema.parse(projectPath), RunIdSchema.parse(sessionId))
+));
+ipcMain.handle("desktop:archive-session", async (_event, sessionId: unknown, archived: unknown) => (
+  await runtime().archiveSession(RunIdSchema.parse(sessionId), z.boolean().parse(archived))
+));
+ipcMain.handle("desktop:remove-session", async (_event, sessionId: unknown) => (
+  await runtime().removeSession(RunIdSchema.parse(sessionId))
+));
+ipcMain.handle("desktop:save-provider-settings", async (_event, input: unknown) => (
+  await runtime().saveProviderSettings(ProviderSettingsSchema.parse(input) as ProviderSettingsInput)
 ));
 ipcMain.handle("desktop:control", async (_event, runId: unknown, input: unknown) => {
   await runtime().control(RunIdSchema.parse(runId), ControlSchema.parse(input) as SessionControl);

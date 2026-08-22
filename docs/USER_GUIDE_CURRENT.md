@@ -25,7 +25,9 @@ CLI 的 start/resume 自动读取启动命令所在目录（`process.cwd()`）�
 pnpm desktop
 ```
 
-开发版默认打开当前 Nexora 仓库；点击左上 Workspace 可切换目录，点击 **New Task** 创建 Session。左栏 Session 来自 Runtime 的持久 Run；中间 Conversation 显示目标、真实 Tool 活动、Validation 和终态 Result。Tool 可原地展开，Structured Plan 仅在 Runtime 实际存在时显示，Approval / Input Request / Recovery 统一进入底部 Composer。点击 **Activity** 会在同一主区域切换到完整持久 Trajectory。
+开发版默认打开当前 Nexora 仓库；点击左上 `＋` 添加 Project（Workspace），点击 **New Task** 创建 Session。左栏按 Project 组织 Session；中间 Conversation 显示目标、真实 Tool 活动、Validation 和终态 Result。Tool 可原地展开，Structured Plan 仅在 Runtime 实际存在时显示，Approval / Input Request / Recovery 统一进入底部 Composer。点击 **Activity** 会在同一主区域切换到完整持久 Trajectory。
+
+运行时 Composer 仍可输入：发送会先通过公开 Contract 安全取消当前 Run，再在同一用户 Session 创建后续 Run；如果存在结果未知的副作用，必须先 Recovery。终态后也可直接继续输入，Desktop 不复活旧 Run。Session 可归档、恢复或从 Desktop 移除，移除不会删除底层 Run 和 Evidence。Settings 可以配置当前 Project 的 Provider，API Key 保存后不会回显。
 
 Desktop 关闭或重启不会建立另一套 Session 状态；它通过公开 Runtime Contract 从 `<workspace>/.nexora` 恢复。详细启动、操作、测试和真实 Provider UAT 见 [Desktop 使用与验证指南](../apps/desktop/README.md)。
 

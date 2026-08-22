@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "pnpm build && electron dist/main.js",
-    "uat": "pnpm build && node uat.mjs"
+    "uat": "pnpm build && node uat.mjs",
+    "uat:deterministic": "pnpm build && node uat.mjs --deterministic"
   },
   "dependencies": {
     "@nexora/harness": "workspace:*",

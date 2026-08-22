@@ -27,7 +27,11 @@ async function handle(request: WorkerRequest): Promise<void> {
     if (request.method === "snapshot") result = await service.snapshot();
     else if (request.method === "setWorkspace") result = await service.setWorkspace(requireString(request.args[0]));
     else if (request.method === "startSession") result = await service.startSession(requireString(request.args[0]));
-    else if (request.method === "openSession") result = await service.openSession(requireString(request.args[0]));
+    else if (request.method === "continueSession") result = await service.continueSession(requireString(request.args[0]), requireString(request.args[1]));
+    else if (request.method === "openSession") result = await service.openSession(requireString(request.args[0]), requireString(request.args[1]));
+    else if (request.method === "archiveSession") result = await service.archiveSession(requireString(request.args[0]), requireBoolean(request.args[1]));
+    else if (request.method === "removeSession") result = await service.removeSession(requireString(request.args[0]));
+    else if (request.method === "saveProviderSettings") result = await service.saveProviderSettings(request.args[0] as Parameters<typeof service.saveProviderSettings>[0]);
     else if (request.method === "control") {
       service.control(requireString(request.args[0]), request.args[1] as Parameters<typeof service.control>[1]);
       result = null;
@@ -49,6 +53,11 @@ function send(value: unknown): void {
 
 function requireString(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) throw new Error("Desktop worker expected a non-empty string.");
+  return value;
+}
+
+function requireBoolean(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new Error("Desktop worker expected a boolean.");
   return value;
 }
 

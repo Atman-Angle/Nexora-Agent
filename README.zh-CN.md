@@ -196,7 +196,7 @@ pnpm typecheck
 pnpm desktop
 ```
 
-Desktop 是一个两栏 Runtime 宿主：左侧管理 Workspace 和持久 Session，中间是唯一的 Conversation / Activity 执行面。它与公共 Runtime 共享同一份 Run、Plan、Invocation、Approval、Evidence 和 Result Authority；Renderer 不维护平行状态。
+Desktop 是一个两栏 Runtime 宿主：左侧按 Project（Workspace）组织 Session，中间是唯一的 Conversation / Activity 执行面。Composer 在运行中和终态后都可继续输入；Desktop 通过安全中断并追加新 Run，让多个 Run 留在同一用户 Session。归档、移除和模型配置属于 Host 导航设置，Run、Plan、Invocation、Approval、Evidence 和 Result Authority 仍只在 Runtime。
 
 使用 `pnpm desktop:uat` 可运行真实 Provider 的 Electron 验收链路。Provider 配置、交互状态、测试命令、UAT 产物和当前发布门禁见 [Desktop 使用与验证指南](apps/desktop/README.md)。
 

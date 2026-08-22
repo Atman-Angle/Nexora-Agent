@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { DesktopSnapshot, SessionControl } from "./shared.js";
+import type { DesktopSnapshot, ProviderSettingsInput, SessionControl } from "./shared.js";
 
 type PendingRequest = {
   readonly resolve: (value: unknown) => void;
@@ -42,7 +42,11 @@ export class RuntimeWorkerClient {
   snapshot(): Promise<DesktopSnapshot> { return this.#invoke("snapshot") as Promise<DesktopSnapshot>; }
   setWorkspace(path: string): Promise<DesktopSnapshot> { return this.#invoke("setWorkspace", path) as Promise<DesktopSnapshot>; }
   startSession(goal: string): Promise<DesktopSnapshot> { return this.#invoke("startSession", goal) as Promise<DesktopSnapshot>; }
-  openSession(runId: string): Promise<DesktopSnapshot> { return this.#invoke("openSession", runId) as Promise<DesktopSnapshot>; }
+  continueSession(sessionId: string, text: string): Promise<DesktopSnapshot> { return this.#invoke("continueSession", sessionId, text) as Promise<DesktopSnapshot>; }
+  openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("openSession", projectPath, sessionId) as Promise<DesktopSnapshot>; }
+  archiveSession(sessionId: string, archived: boolean): Promise<DesktopSnapshot> { return this.#invoke("archiveSession", sessionId, archived) as Promise<DesktopSnapshot>; }
+  removeSession(sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("removeSession", sessionId) as Promise<DesktopSnapshot>; }
+  saveProviderSettings(settings: ProviderSettingsInput): Promise<DesktopSnapshot> { return this.#invoke("saveProviderSettings", settings) as Promise<DesktopSnapshot>; }
   async control(runId: string, control: SessionControl): Promise<void> { await this.#invoke("control", runId, control); }
   readArtifact(digest: string): Promise<unknown> { return this.#invoke("readArtifact", digest); }
 
