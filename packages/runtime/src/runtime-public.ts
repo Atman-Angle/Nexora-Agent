@@ -7,7 +7,8 @@ import type {
   PublicRecoveryRequest,
   PublicToolInvocation,
   RunFinalResult,
-  RunInspection
+  RunInspection,
+  RunSummary
 } from "./runtime-types.js";
 import { deriveFailureHandoff } from "./failure-handoff.js";
 
@@ -83,6 +84,7 @@ export function projectRunInspection(
     budgets: snapshot.budgets,
     budgetsUsed: snapshot.budgetsUsed,
     pendingRequest,
+    inputs: snapshot.inputHistory,
     plan: snapshot.currentPlan,
     progress: snapshot.stepProgress,
     evidence: snapshot.evidence,
@@ -93,6 +95,29 @@ export function projectRunInspection(
     delivery: snapshot.delivery,
     error: snapshot.lastError,
     lastEventSequence
+  });
+}
+
+export function projectRunSummary(snapshot: RunSnapshot): RunSummary {
+  const status = snapshot.status !== "waiting"
+    ? snapshot.status
+    : snapshot.pendingRequest?.kind === "input"
+      ? "waiting_for_input"
+      : snapshot.pendingRequest?.kind === "approval"
+        ? "waiting_for_approval"
+        : null;
+  if (status === null) {
+    throw new Error(`Waiting Run is missing its persisted Pending Request: ${snapshot.runId}`);
+  }
+  const goal = snapshot.inputHistory[0]!.text;
+  return deepFreeze({
+    runId: snapshot.runId,
+    status,
+    stopReason: snapshot.stopReason,
+    title: boundedTitle(goal),
+    pendingRequestKind: snapshot.pendingRequest?.kind ?? null,
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt
   });
 }
 
@@ -182,4 +207,9 @@ function deepFreeze<T>(value: T): T {
     deepFreeze(nested);
   }
   return value;
+}
+
+function boundedTitle(value: string): string {
+  const title = value.trim().replace(/\s+/g, " ");
+  return title.length <= 80 ? title : `${title.slice(0, 77)}...`;
 }

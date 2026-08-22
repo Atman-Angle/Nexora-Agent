@@ -133,6 +133,7 @@ export type PublicPendingRequest =
 export type PublicPlan = DeepReadonly<NonNullable<RunSnapshot["currentPlan"]>>;
 export type PublicStepProgress = DeepReadonly<RunSnapshot["stepProgress"][number]>;
 export type PublicEvidence = DeepReadonly<Evidence>;
+export type PublicInputEntry = DeepReadonly<RunSnapshot["inputHistory"][number]>;
 export type PublicRunError = DeepReadonly<NonNullable<RunSnapshot["lastError"]>>;
 
 export type PublicToolInvocation = DeepReadonly<Omit<ToolInvocation, "fencingToken">>;
@@ -145,6 +146,23 @@ export type PublicRunStatus =
   | Exclude<RunStatus, "waiting">
   | "waiting_for_input"
   | "waiting_for_approval";
+
+export type RunSummary = {
+  readonly runId: string;
+  readonly status: PublicRunStatus;
+  readonly stopReason: string | null;
+  readonly title: string;
+  readonly pendingRequestKind: PublicPendingRequest["kind"] | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+};
+
+export type TextArtifactView = {
+  readonly digest: string;
+  readonly byteLength: number;
+  readonly text: string;
+  readonly truncated: boolean;
+};
 
 export type RunFinalResult =
   | {
@@ -179,6 +197,7 @@ export type RunInspection = {
   readonly budgets: DeepReadonly<RuntimeBudgets>;
   readonly budgetsUsed: DeepReadonly<RunSnapshot["budgetsUsed"]>;
   readonly pendingRequest: PublicPendingRequest | null;
+  readonly inputs: readonly PublicInputEntry[];
   readonly plan: PublicPlan | null;
   readonly progress: readonly PublicStepProgress[];
   readonly evidence: readonly PublicEvidence[];

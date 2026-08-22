@@ -1,0 +1,17 @@
+{
+  "name": "@nexora/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "pnpm build && electron dist/main.js"
+  },
+  "dependencies": {
+    "@nexora/harness": "workspace:*",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "electron": "^37.2.6"
+  }
+}

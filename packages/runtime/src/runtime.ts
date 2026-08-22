@@ -87,6 +87,7 @@ import type {
   RunInspection,
   RunOptions,
   RunResult,
+  RunSummary,
   RunView,
   RuntimeEventListener,
   RuntimeObserver,
@@ -95,12 +96,14 @@ import type {
   RuntimeWatch,
   RuntimeTool,
   StartInput,
+  TextArtifactView,
   WorkerObservation,
   SubscribeOptions
 } from "./runtime-types.js";
 import {
   projectRunFinalResult,
-  projectRunInspection
+  projectRunInspection,
+  projectRunSummary
 } from "./runtime-public.js";
 import {
   createRuntimeSubscription,
@@ -122,6 +125,7 @@ export type {
   MergeDecisions,
   MergeOutcome,
   PublicEvidence,
+  PublicInputEntry,
   PublicPendingRequest,
   PublicPlan,
   PublicRunError,
@@ -139,6 +143,8 @@ export type {
   RunHandleResumeOptions,
   RunOptions,
   RunResult,
+  RunSummary,
+  TextArtifactView,
   RunView,
   RuntimeObserver,
   RuntimeDelegationPolicy,
@@ -276,6 +282,37 @@ export class RuntimeEngine {
     this.#requireRun(runId);
     if (!this.#localRunIds.has(runId)) this.#reopenedRunIds.add(runId);
     return this.#createHandle(runId);
+  }
+
+  async listRuns(limit = 100): Promise<readonly RunSummary[]> {
+    this.#assertOpen();
+    return deepFreeze(this.#store.listRuns(limit).map(projectRunSummary));
+  }
+
+  async readArtifactText(digest: string, maxBytes = 256_000): Promise<TextArtifactView> {
+    this.#assertOpen();
+    if (!Number.isInteger(maxBytes) || maxBytes <= 0 || maxBytes > 1_000_000) {
+      throw new RuntimeError({
+        code: "INVALID_INPUT",
+        message: "Artifact text limit must be an integer from 1 through 1000000."
+      });
+    }
+    try {
+      const text = new ArtifactStore(this.#artifactDir).getText(digest);
+      const bytes = Buffer.from(text, "utf8");
+      const byteLength = bytes.byteLength;
+      if (byteLength <= maxBytes) {
+        return deepFreeze({ digest, byteLength, text, truncated: false });
+      }
+      const preview = bytes.subarray(0, maxBytes).toString("utf8").replace(/\uFFFD$/, "");
+      return deepFreeze({ digest, byteLength, text: preview, truncated: true });
+    } catch (error) {
+      throw new RuntimeError({
+        code: "INVALID_INPUT",
+        message: errorMessage(error),
+        cause: error
+      });
+    }
   }
 
   async start(input: StartInput, observer?: RuntimeObserver): Promise<RunResult> {

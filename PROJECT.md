@@ -22,7 +22,7 @@ Nexora Agent 是面向开发者的、可嵌入和可深度扩展的通用 Agent 
 → 运行审计
 ```
 
-Nexora 自身不以 Desktop、聊天界面或某个垂类 Agent 作为最终产品。CLI 是 Runtime 的直接使用入口、开发工具和验收入口，不是另一套产品内核。
+Nexora 同时提供一个官方 Desktop Agent Workspace，作为 Runtime 的本地用户交互层和真实宿主应用。Desktop 只通过公开 Contract 投影 Runtime Authority，不成为第二套产品内核、状态机、Tool 路径或完成 Authority。CLI 继续作为 Runtime 的直接使用入口、开发工具和验收入口。
 
 ## 2. 目标用户与价值
 
@@ -126,6 +126,8 @@ Runtime 对以下能力负责：
 - 选择并配置模型、工具和扩展能力；
 - 部署环境、凭据、计费和外部服务；
 - 领域级结果展示与产品验收。
+
+官方 Desktop 遵守相同 Host 边界：它负责 Workspace / Session 导航、Conversation 投影和人机交互，不读取或直接写 Core Store，也不复制 Run、Plan、Invocation、Evidence 或 Completion 状态。
 
 ## 5. 长期不变量
 
@@ -254,6 +256,8 @@ Run 状态       → State Machine + persisted Run
 
 完成标准：真实应用通过同一 Runtime 完成执行、交互、失败或恢复和验证；接入成本主要来自应用领域，而不是重建 Agent 基础设施；应用之间的差异没有进入 Core 特判。
 
+当前授权的官方 Desktop Agent Workspace 是一个真实 Host Application：它用于验证公开 Runtime Contract 能否支持长期可用的 Workspace / Session 交互，但不得以 UI 需求为理由绕过 Authority 或向 Core 加入宿主特判。具体范围见 `docs/NEXORA_DESKTOP_WORKSPACE_SPEC.md`。
+
 ### 1.4 — 基于证据的能力演进
 
 目标：只解决 1.3 暴露的最重要共同瓶颈，不预设 Nexora 必然需要上下文系统、插件框架或多 Agent。
@@ -314,7 +318,7 @@ Run 状态       → State Machine + persisted Run
 
 Nexora 不计划把以下内容作为自身产品：
 
-- Desktop / Electron / Renderer 或其他官方 GUI；
+- Runtime Dashboard、复杂 IDE、多面板监控工具或脱离 Runtime Authority 的 GUI 状态系统；
 - 面向终端用户的聊天产品；
 - 托管式 Agent SaaS 或云端多租户平台；
 - 无代码或低代码 Workflow 编辑器；
@@ -324,4 +328,4 @@ Nexora 不计划把以下内容作为自身产品：
 - “一句话生成任意 Agent”的不可验证承诺；
 - 通过大量内置垂类模块证明所谓通用性。
 
-宿主应用可以自行实现 UI、服务端、MCP、Skill、工作流或多 Agent 协作；只有在这些能力形成 Runtime 的通用扩展需求并有真实调用方后，Nexora 才提供相应的最小公共边界。
+官方 Desktop 和其他宿主应用可以实现各自的 UI 与领域交互；服务端、MCP、Skill、工作流或多 Agent 协作仍必须由真实调用需求触发。只有这些能力形成 Runtime 的通用扩展需求并有真实调用方后，Nexora 才提供相应的最小公共边界。

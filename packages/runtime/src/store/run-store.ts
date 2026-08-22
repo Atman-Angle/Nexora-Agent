@@ -230,6 +230,19 @@ export class RunStore {
     return row === undefined ? null : RunSnapshotSchema.parse(JSON.parse(row.snapshot_json));
   }
 
+  listRuns(limit = 100): RunSnapshot[] {
+    if (!Number.isInteger(limit) || limit <= 0 || limit > 500) {
+      throw new Error("Run list limit must be an integer from 1 through 500.");
+    }
+    const rows = this.#database.prepare(`
+      SELECT snapshot_json, revision
+      FROM runs
+      ORDER BY updated_at DESC, run_id DESC
+      LIMIT ?
+    `).all(limit) as RunRow[];
+    return rows.map((row) => RunSnapshotSchema.parse(JSON.parse(row.snapshot_json)));
+  }
+
   commitRun(input: {
     readonly previous: RunSnapshot;
     readonly next: RunSnapshot;

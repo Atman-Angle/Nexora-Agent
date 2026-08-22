@@ -7,6 +7,7 @@ export default [
   {
     ignores: [
       "dist/**",
+      "apps/**/dist/**",
       "packages/runtime/dist/**",
       "packages/harness/dist/**",
       "node_modules/**",
@@ -48,6 +49,22 @@ export default [
       ],
       "no-unused-vars": "off",
       "no-console": "off"
+    }
+  },
+  {
+    files: ["apps/desktop/src/renderer/**/*.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.browser
+      }
+    }
+  },
+  {
+    files: ["apps/desktop/src/preload.cjs"],
+    languageOptions: {
+      globals: {
+        ...globals.node
+      }
     }
   }
 ];

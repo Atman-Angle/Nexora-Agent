@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Nexora 核心架构
 
-本文件同时描述长期产品边界和当前 1.1 Runtime 实现。第 1–8 节定义必须长期保持的架构方向与 Authority；第 9 节记录当前真实仓库结构。尚未出现真实调用方的 Context Provider、MCP、Skill 等能力不是当前已实现模块；Desktop 已由 `PROJECT.md` 明确排除在产品方向之外。
+本文件同时描述长期产品边界和当前 1.1 Runtime 实现。第 1–8 节定义必须长期保持的架构方向与 Authority；第 9 节记录当前真实仓库结构。尚未出现真实调用方的 Context Provider、MCP、Skill 等能力不是当前已实现模块；官方 Desktop 是 Host Application，只能通过公开 Contract 使用 Harness / Runtime，不能进入 Core 或建立第二套 Authority。
 
 ## 1. 总体结构
 
@@ -160,6 +160,8 @@ Production objective-only Model Plan 不自动生成 Acceptance Check。Plan 只
 - Rust 只用于测量后确认的热点。
 
 Core 不依赖具体 UI、Web 框架、CLI 或宿主应用。宿主不能直接写 Core Store、Run Status、Tool Invocation 或 Evidence，也不能绕过 Runtime 的权限、Approval 和完成门。
+
+官方 Desktop 的依赖方向固定为 `Renderer → Electron Host Bridge → Node Runtime Host → Harness → Runtime`。Runtime Host 使用仓库 Node 环境，避免 Electron 与 SQLite native ABI 形成第二个持久化实现；进程边界只传递经过校验的用户意图和公开投影。Renderer 不得直接访问 Runtime、SQLite、Artifact Store、Provider secret 或 Workspace。Conversation 和 Trajectory 都是持久化 Run / Event / Invocation / Evidence / Result 的投影，不是新的审计日志或执行状态。
 
 ## 4. 每轮 Agent Loop
 
