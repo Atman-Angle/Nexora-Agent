@@ -6,7 +6,7 @@ Nexora Desktop 是 Nexora Runtime 的官方本地 Agent Workspace。它使用两
 
 要求：Windows、Node.js 20+、pnpm 11，以及一个 OpenAI-compatible Provider。
 
-在仓库根目录安装依赖，并创建不会提交到 Git 的 `.env`：
+在仓库根目录安装依赖。首次启动可以直接在 Desktop Settings 中添加全局 Provider 和模型；也可以先创建不会提交到 Git 的 `.env`，Desktop 会在首次迁移时导入它：
 
 ```powershell
 pnpm install
@@ -28,7 +28,7 @@ NEXORA_MODEL_TOOL_TRANSPORT=native_tools
 pnpm desktop
 ```
 
-该命令构建 Runtime、Harness 和 Desktop，然后打开 Electron 窗口。开发版默认以仓库根目录为 Project；左上角 `＋` 可以添加其他 Workspace。也可以直接从 Settings 配置当前 Project 的 Provider；保存后的 API Key 不会回显给 Renderer。
+该命令构建 Runtime、Harness 和 Desktop，然后打开 Electron 窗口。开发版默认以仓库根目录为 Project；左上角 `＋` 可以添加其他 Workspace。Settings 管理整个 Nexora Desktop 共用的 Provider 和模型目录；保存后的 API Key 不会回显给 Renderer。
 
 ## 日常使用
 
@@ -44,9 +44,9 @@ pnpm desktop
 9. Run 终态后 Composer 仍可继续输入，Conversation 和 Activity 会保留同一 Session 中的全部 Run。
 10. Session 行悬停后可归档、恢复或从 Desktop 移除。移除不会物理删除 Runtime Run 和审计证据。
 11. `Enter` 发送，`Shift + Enter` 换行；中文输入法仍在组字时不会误发送。
-12. Settings 可增删改当前 Workspace 的 OpenAI-compatible 模型 Profile，包括 Base URL、API Key、Model ID、Context Window、decision tokens 和 Tool transport。顶部模型选择器决定后续新 Run 使用的 Profile；运行中的 Session 必须先停止才能切换。
+12. Settings 可全局增删改 OpenAI-compatible 模型 Profile，包括 Base URL、API Key、Model ID、Context Window、decision tokens 和 Tool transport。同一 Base URL 的多个模型复用 Provider 密钥；每个 Project 通过顶部选择器决定后续新 Run 使用的 Profile。Settings 编辑、Project 切换和全局模型管理不会停止其他正在运行的 Session；活动 Run 始终保留创建时的 Provider。
 
-Run 数据保存在所选 Workspace 的 `.nexora` 中。Desktop 的最近 Project、Session→Run 链、模型 Profile 元数据和归档导航信息保存在启动 Workspace 的 `.nexora/desktop-host.json`；选中 Profile 会镜像到 Workspace `.env`，因此原有 CLI 继续使用同一配置。API Key 不进入 Renderer Snapshot。Host 元数据不改变 Runtime Authority。
+Run 数据保存在所选 Workspace 的 `.nexora` 中。一个 Nexora Desktop Host 可以同时管理任意已添加的本地 Workspace；每个 Workspace Runtime 是同一 Host 内的隔离实例，不是单独安装 Nexora。Desktop 的最近 Project、Session→Run 链、全局 Model Profile 元数据和归档导航信息保存在启动 Workspace 的 `.nexora/desktop-host.json`；全局 Provider 密钥保存在 `.nexora/desktop-secrets.env`。每个 Project 只保存选中的 Profile ID，兼容配置会镜像到对应 Workspace `.env`，因此原有 CLI 可继续使用相同 Provider。API Key 不进入 Host JSON 或 Renderer Snapshot。Host 元数据不改变 Runtime Authority。
 
 ## 测试与验收
 

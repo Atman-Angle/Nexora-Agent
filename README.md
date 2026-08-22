@@ -191,13 +191,13 @@ pnpm typecheck
 
 ### Open the Desktop Agent Workspace
 
-Create a root `.env` with `NEXORA_MODEL_BASE_URL`, `NEXORA_MODEL_API_KEY`, `NEXORA_MODEL_NAME`, and `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`, then run:
+Install dependencies and run Nexora Desktop. You can configure a global Provider/model in Settings after launch; an existing root `.env` with `NEXORA_MODEL_BASE_URL`, `NEXORA_MODEL_API_KEY`, `NEXORA_MODEL_NAME`, and `NEXORA_MODEL_DECISION_OUTPUT_TOKENS` is imported for compatibility:
 
 ```powershell
 pnpm desktop
 ```
 
-Desktop is a two-column Runtime host: Projects (Workspaces) and Sessions on the left, and one Conversation/Activity execution surface in the center. OpenAI-compatible `native_tools` Providers can stream their public assistant text into the Conversation, while Tool, Evidence, Validation, and completion still come from Runtime authority; public output and Results render safe Markdown. Enter sends, Shift+Enter adds a line, and the Composer remains available while a Run is active and after it terminates. Settings manages multiple local model profiles, and each Workspace selects the profile used by future Runs without changing existing Run state.
+Desktop is a two-column Runtime host: Projects (Workspaces) and Sessions on the left, and one Conversation/Activity execution surface in the center. OpenAI-compatible `native_tools` Providers can stream their public assistant text into the Conversation, while Tool, Evidence, Validation, and completion still come from Runtime authority; public output and Results render safe Markdown. Enter sends, Shift+Enter adds a line, and the Composer remains available while a Run is active and after it terminates. Settings manages one global Provider/model catalog, including multiple models per Provider; each Project selects the profile used by future Runs without interrupting active Runs. One Desktop installation can manage any added local Workspace.
 
 Run the real-Provider Electron acceptance path with `pnpm desktop:uat`. See the [Desktop usage and verification guide](apps/desktop/README.md) for configuration, interaction states, test commands, UAT artifacts, and current release gates.
 

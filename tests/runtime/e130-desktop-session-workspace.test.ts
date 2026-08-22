@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,6 +12,56 @@ afterEach(() => {
 });
 
 describe("E130 Desktop Project and continuous Session", () => {
+  it("migrates Project-scoped model profiles into one global Desktop catalog", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-global-migration-"));
+    roots.push(workspace);
+    mkdirSync(join(workspace, ".nexora"), { recursive: true });
+    writeFileSync(join(workspace, ".env"), [
+      "NEXORA_MODEL_API_KEY=legacy-secret",
+      "NEXORA_MODEL_BASE_URL=https://legacy.example/v1",
+      "NEXORA_MODEL_NAME=legacy-model",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096"
+    ].join("\n"), "utf8");
+    writeFileSync(join(workspace, ".nexora", "desktop-host.json"), JSON.stringify({
+      version: 1,
+      projects: [{
+        path: workspace,
+        name: "Legacy",
+        sessions: [],
+        hiddenRunIds: [],
+        modelProfiles: [{
+          id: "environment",
+          name: "Legacy model",
+          baseUrl: "https://legacy.example/v1",
+          model: "legacy-model",
+          contextWindowTokens: 64_000,
+          decisionOutputTokens: 4_096,
+          transport: "native_tools"
+        }],
+        selectedModelProfileId: "environment"
+      }]
+    }), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const snapshot = await service.snapshot();
+    expect(snapshot.workspace).toMatchObject({
+      selectedModelProfileId: "environment",
+      providerConfigured: true,
+      modelProfiles: [{ id: "environment", apiKeyConfigured: true }]
+    });
+    const migrated = JSON.parse(readFileSync(join(workspace, ".nexora", "desktop-host.json"), "utf8")) as {
+      version: number;
+      modelProfiles: unknown[];
+      projects: Array<Record<string, unknown>>;
+    };
+    expect(migrated.version).toBe(2);
+    expect(migrated.modelProfiles).toHaveLength(1);
+    expect(migrated.projects[0]).not.toHaveProperty("modelProfiles");
+    expect(JSON.stringify(snapshot)).not.toContain("legacy-secret");
+    expect(JSON.stringify(migrated)).not.toContain("legacy-secret");
+    await service.close();
+  });
+
   it("creates, selects, updates and deletes Workspace model profiles without exposing API keys", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-models-"));
     roots.push(workspace);
@@ -65,6 +115,19 @@ describe("E130 Desktop Project and continuous Session", () => {
     await service.deleteModelProfile("primary-fast");
     expect(readFileSync(join(workspace, ".env"), "utf8")).not.toContain("secondary-secret");
     expect(readFileSync(join(workspace, ".nexora", "desktop-host.json"), "utf8")).not.toContain("primary-secret");
+    const globalProject = mkdtempSync(join(tmpdir(), "nexora-e130-global-models-"));
+    roots.push(globalProject);
+    const globalSnapshot = await service.addProject(globalProject);
+    expect(globalSnapshot.workspace).toMatchObject({ path: globalProject, providerConfigured: true });
+    expect(globalSnapshot.workspace.modelProfiles.map(({ id }) => id)).toEqual(["primary"]);
+    const storedHost = JSON.parse(readFileSync(join(workspace, ".nexora", "desktop-host.json"), "utf8")) as {
+      version: number;
+      modelProfiles: unknown[];
+      projects: Array<Record<string, unknown>>;
+    };
+    expect(storedHost.version).toBe(2);
+    expect(storedHost.modelProfiles).toHaveLength(1);
+    expect(storedHost.projects.every((project) => !("modelProfiles" in project))).toBe(true);
     await service.close();
 
     const reopened = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -174,7 +237,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     const secondProject = mkdtempSync(join(tmpdir(), "nexora-e130-project-"));
     roots.push(secondProject);
     const switched = await service.addProject(secondProject);
-    expect(switched.workspace).toMatchObject({ path: secondProject, providerConfigured: false });
+    expect(switched.workspace).toMatchObject({ path: secondProject, providerConfigured: true });
     expect(switched.workspace.projects.map(({ path }) => path)).toEqual(expect.arrayContaining([workspace, secondProject]));
     const removed = await service.removeSession(workspace, sessionId);
     const sourceProject = removed.workspace.projects.find(({ path }) => path === workspace)!;
@@ -229,6 +292,16 @@ describe("E130 Desktop Project and continuous Session", () => {
     const service = new DesktopRuntimeService({ workspace: firstWorkspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
     await service.startSession("Keep working in the first Project.");
     await waitFor(() => calls === 1);
+    const configuredWhileRunning = await service.saveModelProfile({
+      id: "global-fast",
+      name: "Global Fast",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "qwen3.7-fast",
+      decisionOutputTokens: 2_048,
+      transport: "structured_output"
+    });
+    expect(configuredWhileRunning.session?.inspection.status).toBe("running");
+    expect(configuredWhileRunning.workspace.modelProfiles.map(({ id }) => id)).toContain("global-fast");
     const switched = await service.addProject(secondWorkspace);
     expect(switched.workspace.path).toBe(secondWorkspace);
     expect(switched.session).toBeNull();

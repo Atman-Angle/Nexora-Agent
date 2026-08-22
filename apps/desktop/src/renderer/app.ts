@@ -126,7 +126,6 @@ function sidebar(state: DesktopSnapshot): string {
 
 function header(state: DesktopSnapshot): string {
   const session = state.session;
-  const running = session?.inspection.status === "running";
   const context = session === null ? null : contextUsage(session);
   return `
     <header class="session-header">
@@ -136,7 +135,7 @@ function header(state: DesktopSnapshot): string {
       </div>
       <div class="header-actions">
         ${context === null ? "" : `<div class="context-usage" title="Latest model call: ${context.used.toLocaleString()} of ${context.window.toLocaleString()} input-context tokens"><span>Context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
-        ${state.workspace.modelProfiles.length === 0 ? "" : `<select class="model-switch" data-profile-select title="Model for new Runs" ${running ? "disabled" : ""}>${state.workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`}
+        ${state.workspace.modelProfiles.length === 0 ? "" : `<select class="model-switch" data-profile-select title="Model for new Runs in this Project">${state.workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`}
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="Session view">
           <button class="${mode === "conversation" ? "active" : ""}" data-view="conversation">Conversation</button>
@@ -360,7 +359,7 @@ function settings(state: DesktopSnapshot): string {
   const providerValue = profile?.baseUrl ?? editingProviderBaseUrl ?? providers[0]?.baseUrl ?? "new";
   const addingProvider = providerValue === "new";
   return `<div class="modal-backdrop" data-action="close-settings"><section class="settings-modal" role="dialog" aria-modal="true">
-    <header><div><h2>Model settings</h2><small>${escapeHtml(state.workspace.name)}</small></div><button data-action="close-settings">×</button></header>
+    <header><div><h2>Global model settings</h2><small>Available to all Projects · ${escapeHtml(state.workspace.name)} selects one model</small></div><button data-action="close-settings">×</button></header>
     <div class="model-profile-list">${profiles.map((item) => `<div class="model-profile-row ${item.id === state.workspace.selectedModelProfileId ? "selected" : ""}"><button data-profile-edit="${escapeAttr(item.id)}"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.model)}</small></button><button data-profile-delete="${escapeAttr(item.id)}" title="Delete model">×</button></div>`).join("")}<button class="new-model" data-profile-edit="new">＋ Add model</button></div>
     <form data-form="model-profile" class="settings-form">
       ${profile === undefined ? "" : `<input type="hidden" name="id" value="${escapeAttr(profile.id)}" />`}
@@ -373,7 +372,7 @@ function settings(state: DesktopSnapshot): string {
       <label>Tool transport<select name="transport"><option value="native_tools" ${profile?.transport !== "structured_output" ? "selected" : ""}>Native tools · streaming</option><option value="structured_output" ${profile?.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label>
       <button class="primary" ${busy ? "disabled" : ""}>${profile === undefined ? "Add model" : "Save model"}</button>
     </form>
-    <p>Provider connections are reused across models with the same Base URL. The selected model applies to new Runs. API Keys are never returned to the Renderer and the selected model is mirrored to <code>.env</code> for CLI compatibility.</p>
+    <p>Providers, API Keys and models are global to Nexora Desktop. Each Project selects one model for future Runs. Active Runs keep their existing Provider. API Keys are never returned to the Renderer; a Project selection is mirrored to its <code>.env</code> for CLI compatibility.</p>
   </section></div>`;
 }
 

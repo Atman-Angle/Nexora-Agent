@@ -56,6 +56,8 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 | GUI 概念 | 唯一事实来源 | GUI 权限 |
 | --- | --- | --- |
 | Project | Workspace + Desktop Host 最近项目元数据 | 添加、切换；不复制 Workspace 文件状态 |
+| Model catalog | Desktop Host 全局 Model Profile + secret store | 全局增删改；不改变活动 Run Provider |
+| Project model selection | Project 的 `selectedModelProfileId` | 为该 Project 的后续 Run 选择全局 Profile |
 | Session | Desktop Host 中有序 Run 引用 | 创建、打开、归档；不直接改 Run |
 | Session status | 最新 Run 的 State Machine + persisted Run | 只读投影 |
 | Plan | Run-owned Structured Plan | 只读、折叠/展开 |
@@ -161,9 +163,11 @@ Runtime 的问题作为一条 Nexora 消息进入 Conversation；底部保持普
 
 显示正式 Result 或失败 Delivery。终态 Run 不被复活；用户可以在同一 Session 输入，Desktop 创建新的后续 Run，并把上一 Run 的有界 Delivery 作为明确的 Host continuation context。
 
-## 7.1 Project model settings
+## 7.1 Global model settings
 
-Settings 为当前 Project 管理多个 OpenAI-compatible Model Profile。Provider 连接由 Base URL 和 API Key 标识，可被同一厂商的多个 Model Profile 复用；新增同 Provider 模型时用户只需选择 Provider 并填写 Model ID、可选 Context Window、decision output tokens 和 Tool transport，不重复填写连接信息。Workspace 只选择一个 Model Profile，选择只影响后续新 Run；活动 Run 不热切换 Provider。选中 Profile 镜像到当前 Workspace 的本地 `.env`，保持 CLI 兼容。API Key 只在用户输入和有界 IPC 提交时进入 Renderer，保存后的 Snapshot 不得回显 Key。保存、删除或切换配置前必须停止正在运行的 Run，并重建该 Project Runtime。
+Settings 管理 Nexora Desktop 安装级的 OpenAI-compatible Model Profile 目录。Provider 连接由 Base URL 和 API Key 标识，可被同一厂商的多个 Model Profile 复用；新增同 Provider 模型时用户只需选择 Provider 并填写 Model ID、可选 Context Window、decision output tokens 和 Tool transport，不重复填写连接信息。每个 Project 只保存一个 `selectedModelProfileId`，选择只影响该 Project 的后续新 Run；活动 Run 固定使用创建时的 Provider，不热切换也不因全局配置编辑而中断。
+
+全局 Profile 元数据保存在 Desktop Host 配置，Provider secret 保存在独立 Host secret 文件，不进入 Project 元数据、Renderer Snapshot 或普通日志。选中 Profile 的兼容配置镜像到对应 Workspace 的本地 `.env`，使原有 CLI 可继续使用相同 Provider。全局 Profile 可以在任意 Project 运行时增删改；受影响 Project 的 Runtime 仅在该 Project 没有活动 Session、且准备创建后续 Run 时安全重建。切换 Project 或打开 Settings 不受其他 Project 的运行状态限制。
 
 ## 8. Activity / Trajectory
 
@@ -209,7 +213,7 @@ Electron 与 Node Runtime Host 只交换 JSON 请求、公开 Snapshot 和错误
 
 Desktop Host 可以持久化最近 Project、Session→Run 引用、归档和移除 tombstone；这些只控制导航与 Conversation 组合，不能修改或替代 Run Status、Plan、Invocation、Evidence、Result 或 Completion Gate。
 
-每个已打开 Project 拥有一个独立 Workspace Runtime 和订阅。切换 Project 只改变当前 Renderer 投影，原 Project 的 Run 可继续在后台执行；同一 Workspace 仍只能由一个 Runtime 实例控制。修改模型设置只重建当前 Project 的 Runtime，关闭 Desktop 时统一释放全部订阅和 Runtime。
+一个 Nexora Desktop Host 在同一进程内为每个已打开 Project 持有独立 Workspace Runtime 和订阅；这不是为每个 Workspace 安装一份 Nexora。切换 Project 只改变当前 Renderer 投影，原 Project 的 Run 可继续在后台执行；同一 Workspace 仍只能由一个 Runtime 实例控制。全局模型变更不会重建或中断活动 Runtime；受影响 Project 在下一次安全创建 Run 前按需重建。关闭 Desktop 时统一释放全部订阅和 Runtime。
 
 ## 11. Required public read projections
 
@@ -258,7 +262,7 @@ Feature Core 完成需要以下可复现证据：
 16. Project、Session 归档/恢复/移除和模型设置重启后保持，且 API Key 不出现在 Snapshot。
 17. `native_tools` 的公开 Provider 文本可以跨 Worker/IPC 增量显示，失败 Attempt 不保留，token delta 不进入 Runtime Authority；
 18. Agent output 和 Result 安全渲染 Markdown，Enter / Shift+Enter / IME 行为可验收；
-19. Workspace 可增删改选 Model Profile，自定义模型可声明 Context Window，切换只影响后续 Run。
+19. Settings 可全局增删改 Model Profile，同一 Provider 的多个模型复用连接和密钥；每个 Project 独立选择 Profile，切换只影响后续 Run，活动 Run 不被中断。
 
 ## 14. Delivery layers
 
