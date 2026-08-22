@@ -97,6 +97,7 @@ describe("D4 packed Developer API consumer", () => {
     )) as {
       exports: Record<string, unknown>;
       engines: Record<string, string>;
+      license: string;
       publishConfig: Record<string, string>;
       repository: { type: string; url: string; directory: string };
     };
@@ -108,17 +109,20 @@ describe("D4 packed Developer API consumer", () => {
       engines: Record<string, string>;
       dependencies: Record<string, string>;
       publishConfig: Record<string, string>;
+      license: string;
       repository: { type: string; url: string; directory: string };
     };
     expect(Object.keys(runtimePackage.exports).sort()).toEqual([".", "./internal"]);
     expect(Object.keys(harnessPackage.exports).sort()).toEqual([".", "./testing"]);
     expect(runtimePackage.engines.node).toBe(">=20");
     expect(harnessPackage.engines.node).toBe(">=20");
+    expect(runtimePackage.license).toBe("Apache-2.0");
+    expect(harnessPackage.license).toBe("Apache-2.0");
     expect(runtimePackage.publishConfig.access).toBe("public");
     expect(harnessPackage.publishConfig.access).toBe("public");
     expect(runtimePackage.repository.directory).toBe("packages/runtime");
     expect(harnessPackage.repository.directory).toBe("packages/harness");
-    expect(harnessPackage.dependencies["@nexora/runtime"]).toBe("1.1.0");
+    expect(harnessPackage.dependencies["@nexora/runtime"]).toBe("0.1.0");
   }, 60_000);
 });
 
@@ -130,6 +134,7 @@ function assertReleaseTarball(tarball: string): void {
   ).split(/\r?\n/).filter(Boolean).map((entry) => entry.replaceAll("\\", "/"));
   expect(entries).toContain("package/package.json");
   expect(entries).toContain("package/README.md");
+  expect(entries).toContain("package/LICENSE");
   expect(entries.some((entry) => entry.startsWith("package/dist/"))).toBe(true);
   expect(entries.filter((entry) => (
     entry.startsWith("package/src/")

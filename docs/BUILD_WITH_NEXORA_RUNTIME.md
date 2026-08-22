@@ -15,7 +15,7 @@ npm install @nexora/harness
 ```powershell
 pnpm --filter @nexora/runtime pack --pack-destination D:\tmp\nexora-package
 pnpm --filter @nexora/harness pack --pack-destination D:\tmp\nexora-package
-npm install D:\tmp\nexora-package\nexora-runtime-1.1.0.tgz D:\tmp\nexora-package\nexora-harness-1.1.0.tgz
+npm install D:\tmp\nexora-package\nexora-runtime-0.1.0.tgz D:\tmp\nexora-package\nexora-harness-0.1.0.tgz
 ```
 
 ## 完整宿主示例

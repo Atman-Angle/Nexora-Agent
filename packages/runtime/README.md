@@ -6,4 +6,4 @@ Most applications should compose this package through `@nexora/harness`. Direct 
 
 Documentation and source: [Nexora Agent](https://github.com/Atman-Angle/Nexora-Agent)
 
-> Pre-release: the package is not yet published to npm and no open-source license has been selected.
+Version `0.1.0` is licensed under Apache-2.0. The package is not yet published to npm; until publication, install it from a locally produced tarball.

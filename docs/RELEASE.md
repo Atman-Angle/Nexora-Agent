@@ -4,8 +4,9 @@
 
 Nexora is release-candidate source, not a published npm release. `@nexora/runtime` and
 `@nexora/harness` are currently unavailable from the public npm registry, this machine is not
-authenticated to npm, and the repository owner has not selected an open-source license or
-confirmed the first public version.
+authenticated to npm. The repository and both packages are licensed under Apache-2.0, the first
+public version is `0.1.0`, and the repository owner has confirmed publish access to the npm
+`@nexora` scope.
 
 ## Repository gate
 
@@ -23,16 +24,13 @@ pnpm test:supervisor-coordinator
 CI runs the complete suite on Ubuntu and the packed external Consumer on Windows. Real Provider
 canaries are not supplied credentials in CI and remain separately authorized external acceptance.
 
-## Owner decisions
+## Resolved release identity
 
-Before a public release, the repository owner must explicitly record:
+The repository owner has explicitly selected:
 
-1. the open-source license;
-2. ownership and publish permission for the npm `@nexora` scope;
-3. the first public version and compatibility commitment.
-
-After the license is selected, add the root `LICENSE`, package `license` metadata, and remove the
-pre-release/no-license notices in the root and package READMEs in the same reviewed change.
+1. Apache-2.0 for the repository and both npm packages;
+2. npm `@nexora` scope ownership and publish permission;
+3. `0.1.0` as the first public version.
 
 ## Pack verification
 
@@ -46,7 +44,8 @@ pnpm exec vitest run tests/runtime/d4-package-consumer.test.ts --no-file-paralle
 
 The packed Consumer is the authority for exports, installability and the trusted execution loop.
 Tarballs must contain only package metadata, README and declared `dist` output; Harness must depend
-on the concrete Runtime release version rather than `workspace:*`.
+on the concrete Runtime release version `0.1.0` rather than `workspace:*`. Each tarball must carry
+its own Apache-2.0 `LICENSE`.
 
 ## Authorized publication
 

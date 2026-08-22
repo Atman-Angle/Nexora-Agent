@@ -275,7 +275,7 @@ Nexora-Agent/
 
 ## Project status
 
-Nexora Agent is currently pre-release. The Runtime, CLI, Research Agent, and Context & Memory Harnesses can be built and tested in this repository; npm publication, long-running hosted deployment, and an open-source license have not yet been completed or declared.
+Nexora Agent is currently pre-release. The Runtime, CLI, Research Agent, and Context & Memory Harnesses can be built and tested in this repository; npm publication and long-running hosted deployment have not yet been completed.
 
 ```powershell
 pnpm typecheck
@@ -284,4 +284,4 @@ pnpm build
 pnpm test
 ```
 
-> No license has been declared. Confirm licensing before adoption, distribution, or publication.
+Licensed under the [Apache License 2.0](LICENSE).

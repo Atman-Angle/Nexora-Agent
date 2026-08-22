@@ -6,7 +6,9 @@ mode: DIRECT
 risk: L2
 spec_status: approved
 development_authorization: approved
-implementation_status: substantial
+implementation_status: complete
+release_version: 0.1.0
+license: Apache-2.0
 depends_on:
   - context-eviction-reference-retention
   - constrained-context-completion-capacity
@@ -21,12 +23,13 @@ target_status: release_ready
 
 ## Current State
 
-- 仓库没有 `LICENSE`；README 明确声明尚未选择许可证；
+- 仓库与两个发布包均使用 Apache-2.0，并在公开 metadata/README 中保持一致；
 - CI 已覆盖 Ubuntu 全量质量门禁和 Windows packed external consumer；
 - 两个包的公开 metadata、README、tarball manifest gate 和 D4/D5 包外 Consumer 已实现；
 - 发布 SOP 已固定版本、pack、Runtime-first publish、provenance、tag 和 registry consumer 顺序；
-- 包尚未发布到 npm；License、首发版本和 `@nexora` scope 权限仍等待仓库所有者确认；
-- 本机完整回归受同步 I/O 性能退化阻塞，clean checkout CI 证据仍待获得。
+- 首发版本固定为 `0.1.0`，仓库所有者已确认拥有 npm `@nexora` scope 发布权限；
+- 包尚未发布到 npm，本机 npm 身份认证与实际 publish 仍是外部发布门禁；
+- 本地完整回归 93/93 files、446/446 tests 通过；clean checkout GitHub CI 证据仍待合并后获得。
 
 ## Scope
 
@@ -37,13 +40,13 @@ target_status: release_ready
 5. 定义版本升级、changelog、tag、GitHub Release、npm provenance/dry-run/publish 顺序；
 6. 从全新目录安装已发布或本地 tarball，通过正式 exports 跑完整可信闭环。
 
-## Required Decisions Before Implementation
+## Resolved Owner Decisions
 
-- **License：** 由仓库所有者明确选择，例如 Apache-2.0 或 MIT；Agent 不代替所有者决定。
-- **npm scope ownership：** 确认 npm 上 `@nexora` scope 的发布权限与 2FA/provenance 设置。
-- **首发版本：** 确认继续使用 `1.1.0`，或以新的 pre-release/patch 版本发布。
+- **License：** Apache-2.0；
+- **npm scope ownership：** 仓库所有者确认拥有 `@nexora` scope 发布权限；
+- **首发版本：** `0.1.0`。
 
-这些决策只阻塞实际 License/发布步骤，不阻塞 CI 和 pack gate 的本地实现。
+本机登录、2FA/provenance 验证和实际 publish 仍属于需单独授权的外部写入。
 
 ## CI Contract
 
