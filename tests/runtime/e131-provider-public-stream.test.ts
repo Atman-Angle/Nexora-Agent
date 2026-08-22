@@ -60,7 +60,7 @@ describe("E131 Provider public output stream", () => {
       requestBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write('data: {"choices":[{"delta":{"content":"**Verified"}}]}\n\n');
-      response.write('data: {"choices":[{"delta":{"content":" result**"},"finish_reason":"stop"}]}\n\n');
+      response.write('data: {"choices":[{"delta":{"content":" result**"},"finish_reason":"stop"}],"usage":null}\n\n');
       response.end("data: [DONE]\n\n");
     });
     servers.push(server);

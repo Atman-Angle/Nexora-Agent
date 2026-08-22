@@ -92,6 +92,33 @@ describe("E065 Provider transient failure recovery", () => {
     expect(invalidFetch).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts an explicit null usage field as unavailable Provider metering", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        type: "request_input",
+        question: "Which target should be used?",
+        reason: "A target is required."
+      }) } }],
+      usage: null
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example",
+      apiKey: "test",
+      model: "test",
+      fetch
+    });
+
+    await expect(provider.decide(context, operation)).resolves.toEqual({
+      text: JSON.stringify({
+        type: "request_input",
+        question: "Which target should be used?",
+        reason: "A target is required."
+      }),
+      toolCalls: [],
+      finishReason: null
+    });
+  });
+
   it("performs one physical request per Provider Adapter call", async () => {
     const fetch = vi.fn().mockImplementation(async () => new Response("rate limited", { status: 429 }));
     const provider = createOpenAICompatibleProvider({

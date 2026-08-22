@@ -306,7 +306,7 @@ const ProviderResponseSchema = z.object({
       }).passthrough()).optional()
     }).passthrough()
   }).passthrough()).min(1),
-  usage: ProviderUsageSchema.optional()
+  usage: ProviderUsageSchema.nullable().optional()
 }).passthrough();
 
 const ProviderStreamChunkSchema = z.object({
@@ -324,7 +324,7 @@ const ProviderStreamChunkSchema = z.object({
       }).passthrough()).optional()
     }).passthrough()
   }).passthrough()).optional(),
-  usage: ProviderUsageSchema.optional()
+  usage: ProviderUsageSchema.nullable().optional()
 }).passthrough();
 
 async function normalizeStreamingResponse(
@@ -338,7 +338,7 @@ async function normalizeStreamingResponse(
   let buffer = "";
   let content = "";
   let finishReason: string | null = null;
-  let usage: z.infer<typeof ProviderUsageSchema> | undefined;
+  let usage: z.infer<typeof ProviderUsageSchema> | null | undefined;
   const calls = new Map<number, { id: string; name: string; arguments: string }>();
 
   const consumeEvent = (event: string): void => {
@@ -496,7 +496,7 @@ function normalizeUsage(
   readonly totalTokens: number;
   readonly cache: ProviderCacheUsage;
 } {
-  if (usage === undefined) return null;
+  if (usage === undefined || usage === null) return null;
   const inputTokens = usage.prompt_tokens ?? usage.input_tokens;
   const outputTokens = usage.completion_tokens ?? usage.output_tokens;
   if (inputTokens === undefined || outputTokens === undefined) return null;
