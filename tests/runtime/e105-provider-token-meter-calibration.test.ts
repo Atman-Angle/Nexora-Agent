@@ -114,6 +114,7 @@ describe("E105 Provider token meter calibration", () => {
 
     try {
       const result = await runtime.start({ input: "Inspect a target." });
+      const inspection = await runtime.openRun(result.runId).inspect();
       const call = (await runtime.inspect(result.runId)).modelCalls[0]!;
 
       expect(call).toMatchObject({
@@ -124,6 +125,13 @@ describe("E105 Provider token meter calibration", () => {
         actualTotalTokens: 130
       });
       expect(call.measuredInputTokens).not.toBe(call.actualInputTokens);
+      expect(inspection.contextUsage).toEqual({
+        modelCallId: call.id,
+        inputTokens: 123,
+        inputTokenSource: "provider",
+        contextWindowTokens: 32_000,
+        hardInputLimitTokens: 15_616
+      });
     } finally {
       await runtime.close();
     }

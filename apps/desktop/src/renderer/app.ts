@@ -18,6 +18,7 @@ let mode: "conversation" | "activity" = "conversation";
 let planOpen = false;
 let settingsOpen = false;
 let editingProfileId: string | "new" | null = null;
+let editingProviderBaseUrl: string | "new" | null = null;
 let busy = false;
 let error: string | null = null;
 let draft = "";
@@ -124,6 +125,7 @@ function sidebar(state: DesktopSnapshot): string {
 function header(state: DesktopSnapshot): string {
   const session = state.session;
   const running = session?.inspection.status === "running";
+  const context = session === null ? null : contextUsage(session);
   return `
     <header class="session-header">
       <div>
@@ -131,6 +133,7 @@ function header(state: DesktopSnapshot): string {
         ${session === null ? "" : `<small>${statusLabel(session.inspection.status)}</small>`}
       </div>
       <div class="header-actions">
+        ${context === null ? "" : `<div class="context-usage" title="Latest model call: ${context.used.toLocaleString()} of ${context.window.toLocaleString()} input-context tokens"><span>Context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
         ${state.workspace.modelProfiles.length === 0 ? "" : `<select class="model-switch" data-profile-select title="Model for new Runs" ${running ? "disabled" : ""}>${state.workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`}
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="Session view">
@@ -308,20 +311,24 @@ function settings(state: DesktopSnapshot): string {
   const profiles = state.workspace.modelProfiles;
   const editingId = editingProfileId ?? state.workspace.selectedModelProfileId ?? "new";
   const profile = profiles.find((item) => item.id === editingId);
+  const providers = [...new Map(profiles.map((item) => [item.baseUrl.trim().replace(/\/+$/, "").toLowerCase(), item])).values()];
+  const providerValue = profile?.baseUrl ?? editingProviderBaseUrl ?? providers[0]?.baseUrl ?? "new";
+  const addingProvider = providerValue === "new";
   return `<div class="modal-backdrop" data-action="close-settings"><section class="settings-modal" role="dialog" aria-modal="true">
     <header><div><h2>Model settings</h2><small>${escapeHtml(state.workspace.name)}</small></div><button data-action="close-settings">×</button></header>
     <div class="model-profile-list">${profiles.map((item) => `<div class="model-profile-row ${item.id === state.workspace.selectedModelProfileId ? "selected" : ""}"><button data-profile-edit="${escapeAttr(item.id)}"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.model)}</small></button><button data-profile-delete="${escapeAttr(item.id)}" title="Delete model">×</button></div>`).join("")}<button class="new-model" data-profile-edit="new">＋ Add model</button></div>
     <form data-form="model-profile" class="settings-form">
       ${profile === undefined ? "" : `<input type="hidden" name="id" value="${escapeAttr(profile.id)}" />`}
       <label>Name<input name="name" value="${escapeAttr(profile?.name ?? "")}" placeholder="Work model" required /></label>
-      <label>Base URL<input name="baseUrl" type="url" value="${escapeAttr(profile?.baseUrl ?? "")}" placeholder="https://provider.example/v1" required /></label>
-      <label>API Key<input name="apiKey" type="password" placeholder="${profile?.apiKeyConfigured ? "Configured · leave blank to keep" : "Required"}" ${profile === undefined ? "required" : ""} /></label>
+      <label>Provider<select name="providerBaseUrl" data-provider-select>${providers.map((item) => `<option value="${escapeAttr(item.baseUrl)}" ${providerValue === item.baseUrl ? "selected" : ""}>${escapeHtml(providerName(item.baseUrl))}</option>`).join("")}<option value="new" ${addingProvider ? "selected" : ""}>＋ New provider</option></select></label>
+      ${addingProvider ? `<label>Base URL<input name="baseUrl" type="url" value="" placeholder="https://provider.example/v1" required /></label>` : ""}
+      <label>API Key<input name="apiKey" type="password" placeholder="${addingProvider ? "Required for new provider" : "Shared by this provider · leave blank to keep"}" ${addingProvider ? "required" : ""} /></label>
       <label>Model ID<input name="model" value="${escapeAttr(profile?.model ?? "")}" placeholder="Model identifier" required /></label>
       <div class="settings-grid"><label>Context window<input name="contextWindowTokens" type="number" min="1" value="${profile?.contextWindowTokens ?? ""}" placeholder="Known model default" /></label><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${profile?.decisionOutputTokens ?? 4096}" required /></label></div>
       <label>Tool transport<select name="transport"><option value="native_tools" ${profile?.transport !== "structured_output" ? "selected" : ""}>Native tools · streaming</option><option value="structured_output" ${profile?.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label>
       <button class="primary" ${busy ? "disabled" : ""}>${profile === undefined ? "Add model" : "Save model"}</button>
     </form>
-    <p>The selected profile applies to new Runs in this Workspace. API Keys are never returned to the Renderer. The selected profile is mirrored to <code>.env</code> for CLI compatibility.</p>
+    <p>Provider connections are reused across models with the same Base URL. The selected model applies to new Runs. API Keys are never returned to the Renderer and the selected model is mirrored to <code>.env</code> for CLI compatibility.</p>
   </section></div>`;
 }
 
@@ -394,8 +401,14 @@ function bindActions(): void {
   });
   document.querySelectorAll<HTMLElement>("[data-profile-edit]").forEach((element) => element.addEventListener("click", () => {
     editingProfileId = element.dataset.profileEdit ?? "new";
+    const selected = snapshot?.workspace.modelProfiles.find((item) => item.id === editingProfileId);
+    editingProviderBaseUrl = selected?.baseUrl ?? snapshot?.workspace.modelProfiles[0]?.baseUrl ?? "new";
     render();
   }));
+  document.querySelector<HTMLSelectElement>("[data-provider-select]")?.addEventListener("change", (event) => {
+    editingProviderBaseUrl = (event.currentTarget as HTMLSelectElement).value;
+    render();
+  });
   document.querySelectorAll<HTMLElement>("[data-profile-delete]").forEach((element) => element.addEventListener("click", () => {
     const id = element.dataset.profileDelete;
     if (id === undefined || !window.confirm("Delete this model profile?")) return;
@@ -429,10 +442,11 @@ function bindActions(): void {
     void perform(async () => {
       const contextWindowTokens = Number(data.get("contextWindowTokens"));
       const id = String(data.get("id") ?? "").trim();
+      const providerBaseUrl = String(data.get("providerBaseUrl") ?? "new");
       const next = await window.nexora.saveModelProfile({
         ...(id ? { id } : {}),
         name: String(data.get("name") ?? ""),
-        baseUrl: String(data.get("baseUrl") ?? ""),
+        baseUrl: providerBaseUrl === "new" ? String(data.get("baseUrl") ?? "") : providerBaseUrl,
         ...(typeof apiKey === "string" && apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         model: String(data.get("model") ?? ""),
         ...(Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
@@ -543,6 +557,16 @@ function toolLabel(name: string, input: unknown): string {
   const lower = name.toLowerCase();
   const action = lower.includes("read") ? "Read" : lower.includes("search") ? "Search" : lower.includes("write") || lower.includes("patch") ? "Edited" : lower.includes("shell") || lower.includes("command") ? "Run" : humanize(name);
   return target === null ? action : `${action} ${compact(target, 100)}`;
+}
+function contextUsage(session: SessionView): { used: number; window: number; percent: number } | null {
+  const usage = session.inspection.contextUsage;
+  if (usage === null) return null;
+  return { used: usage.inputTokens, window: usage.contextWindowTokens, percent: Math.min(100, Math.round(usage.inputTokens / usage.contextWindowTokens * 100)) };
+}
+function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value); }
+function providerName(baseUrl: string): string {
+  try { return new URL(baseUrl).hostname.replace(/^api\./, ""); }
+  catch { return baseUrl; }
 }
 function toolIcon(name: string): string { const lower = name.toLowerCase(); return lower.includes("read") ? "⌘" : lower.includes("search") ? "⌕" : lower.includes("write") || lower.includes("patch") ? "✎" : lower.includes("shell") || lower.includes("command") ? ">_" : "·"; }
 function statusLabel(status: string): string { return ({ running: "正在工作", waiting_for_input: "需要回复", waiting_for_approval: "需要确认", blocked: "已暂停", succeeded: "已完成", failed: "未完成", cancelled: "已取消" } as Record<string, string>)[status] ?? humanize(status); }

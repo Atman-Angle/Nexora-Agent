@@ -1,4 +1,5 @@
 import type {
+  ModelCallRecord,
   RunSnapshot,
   ToolInvocation
 } from "./contracts.js";
@@ -15,7 +16,8 @@ import { deriveFailureHandoff } from "./failure-handoff.js";
 export function projectRunInspection(
   snapshot: RunSnapshot,
   invocations: readonly ToolInvocation[],
-  lastEventSequence: number
+  lastEventSequence: number,
+  modelCalls: readonly ModelCallRecord[] = []
 ): RunInspection {
   const pendingRequest: PublicPendingRequest | null = snapshot.pendingRequest === null
     ? null
@@ -75,6 +77,7 @@ export function projectRunInspection(
     reason: "tool_result_unknown"
   }));
   const recovery = recoveries[0] ?? null;
+  const latestModelCall = modelCalls.at(-1);
   return deepFreeze({
     runId: snapshot.runId,
     revision: snapshot.revision,
@@ -94,6 +97,13 @@ export function projectRunInspection(
     result: projectRunFinalResult(snapshot),
     delivery: snapshot.delivery,
     error: snapshot.lastError,
+    contextUsage: latestModelCall === undefined ? null : {
+      modelCallId: latestModelCall.id,
+      inputTokens: latestModelCall.actualInputTokens ?? latestModelCall.measuredInputTokens,
+      inputTokenSource: latestModelCall.actualInputTokens === null ? "measured" : "provider",
+      contextWindowTokens: latestModelCall.contextWindowTokens,
+      hardInputLimitTokens: latestModelCall.hardInputLimitTokens
+    },
     lastEventSequence
   });
 }

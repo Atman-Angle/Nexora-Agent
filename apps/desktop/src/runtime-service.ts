@@ -112,9 +112,12 @@ export class DesktopRuntimeService {
   }
 
   async addProject(path: string): Promise<DesktopSnapshot> {
-    this.#ensureProject(path);
+    const next = resolve(path);
+    this.#ensureProject(next);
     this.#writeHostConfig();
-    return await this.snapshot();
+    if (next.toLowerCase() === this.#workspace.toLowerCase()) return await this.snapshot();
+    if (await this.#hasRunningSession()) return await this.snapshot();
+    return await this.setWorkspace(next);
   }
 
   async startSession(goal: string): Promise<DesktopSnapshot> {
@@ -211,6 +214,7 @@ export class DesktopRuntimeService {
     await this.#closeRuntime();
     const project = this.#currentProject();
     this.#preserveSelectedApiKey(project);
+    this.#preserveProviderApiKey(project, input.baseUrl);
     const id = input.id?.trim() || randomUUID();
     const existing = project.modelProfiles.find((profile) => profile.id === id);
     const profile: StoredModelProfile = {
@@ -225,7 +229,7 @@ export class DesktopRuntimeService {
     if (existing === undefined) project.modelProfiles.push(profile);
     else project.modelProfiles[project.modelProfiles.indexOf(existing)] = profile;
     if (input.apiKey?.trim()) {
-      this.#updateEnvFile({ [profileApiKeyName(id)]: input.apiKey.trim() });
+      this.#updateEnvFile({ [providerApiKeyName(profile.baseUrl)]: input.apiKey.trim() });
     }
     project.selectedModelProfileId ??= id;
     if (project.selectedModelProfileId === id) this.#applySelectedModelProfile(project);
@@ -240,8 +244,12 @@ export class DesktopRuntimeService {
     const id = requireText(profileId, "Model profile ID");
     if (!project.modelProfiles.some((profile) => profile.id === id)) throw new Error("Model profile not found in this Workspace.");
     this.#preserveSelectedApiKey(project);
+    const removed = project.modelProfiles.find((profile) => profile.id === id)!;
     project.modelProfiles = project.modelProfiles.filter((profile) => profile.id !== id);
     this.#updateEnvFile({ [profileApiKeyName(id)]: null });
+    if (!project.modelProfiles.some((profile) => sameProvider(profile.baseUrl, removed.baseUrl))) {
+      this.#updateEnvFile({ [providerApiKeyName(removed.baseUrl)]: null });
+    }
     if (project.selectedModelProfileId === id) {
       project.selectedModelProfileId = project.modelProfiles[0]?.id ?? null;
       this.#applySelectedModelProfile(project);
@@ -375,9 +383,12 @@ export class DesktopRuntimeService {
   }
 
   async #assertCanSwitchWorkspace(): Promise<void> {
-    if (this.#runtime === null) return;
-    const active = (await this.#runtime.listRuns()).find((run) => run.status === "running");
-    if (active !== undefined) throw new Error("A Session is still running. Stop it before changing Project or model settings.");
+    if (await this.#hasRunningSession()) throw new Error("A Session is still running. Stop it before changing Project or model settings.");
+  }
+
+  async #hasRunningSession(): Promise<boolean> {
+    if (this.#runtime === null) return false;
+    return (await this.#runtime.listRuns()).some((run) => run.status === "running");
   }
 
   #assertSessionNotRunning(session: StoredSession): void {
@@ -460,7 +471,8 @@ export class DesktopRuntimeService {
   }
 
   #profileApiKey(profile: StoredModelProfile, environment: ProviderEnvironment): string | undefined {
-    return environment[profileApiKeyName(profile.id)]?.trim()
+    return environment[providerApiKeyName(profile.baseUrl)]?.trim()
+      || environment[profileApiKeyName(profile.id)]?.trim()
       || (profile.id === "environment" ? environment.NEXORA_MODEL_API_KEY?.trim() : undefined);
   }
 
@@ -469,7 +481,15 @@ export class DesktopRuntimeService {
     if (selected === undefined) return;
     const environment = readEnv(join(this.#workspace, ".env"));
     const key = this.#profileApiKey(selected, environment);
-    if (key !== undefined) this.#updateEnvFile({ [profileApiKeyName(selected.id)]: key });
+    if (key !== undefined) this.#updateEnvFile({ [providerApiKeyName(selected.baseUrl)]: key });
+  }
+
+  #preserveProviderApiKey(project: StoredProject, baseUrl: string): void {
+    const environment = readEnv(join(this.#workspace, ".env"));
+    const source = project.modelProfiles.find((profile) => sameProvider(profile.baseUrl, baseUrl));
+    if (source === undefined) return;
+    const key = this.#profileApiKey(source, environment);
+    if (key !== undefined) this.#updateEnvFile({ [providerApiKeyName(source.baseUrl)]: key });
   }
 
   #applySelectedModelProfile(project: StoredProject): void {
@@ -560,6 +580,15 @@ function environmentModelProfile(workspace: string): StoredModelProfile | null {
 function profileApiKeyName(profileId: string): string {
   const suffix = createHash("sha256").update(profileId).digest("hex").slice(0, 16).toUpperCase();
   return `NEXORA_DESKTOP_MODEL_${suffix}_API_KEY`;
+}
+
+function providerApiKeyName(baseUrl: string): string {
+  const suffix = createHash("sha256").update(baseUrl.trim().replace(/\/+$/, "").toLowerCase()).digest("hex").slice(0, 16).toUpperCase();
+  return `NEXORA_DESKTOP_PROVIDER_${suffix}_API_KEY`;
+}
+
+function sameProvider(left: string, right: string): boolean {
+  return left.trim().replace(/\/+$/, "").toLowerCase() === right.trim().replace(/\/+$/, "").toLowerCase();
 }
 
 function writeFileAtomic(path: string, content: string): void {

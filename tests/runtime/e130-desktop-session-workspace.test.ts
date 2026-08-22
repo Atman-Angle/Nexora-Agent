@@ -49,6 +49,20 @@ describe("E130 Desktop Project and continuous Session", () => {
     const deleted = await service.deleteModelProfile("secondary");
     expect(deleted.workspace).toMatchObject({ selectedModelProfileId: "primary", model: "custom-primary" });
     expect(deleted.workspace.modelProfiles.map(({ id }) => id)).toEqual(["primary"]);
+    const sibling = await service.saveModelProfile({
+      id: "primary-fast",
+      name: "Primary Fast",
+      baseUrl: "https://primary.example/v1",
+      model: "custom-primary-fast",
+      contextWindowTokens: 32_000,
+      decisionOutputTokens: 2_048,
+      transport: "native_tools"
+    });
+    expect(sibling.workspace.modelProfiles.find(({ id }) => id === "primary-fast")?.apiKeyConfigured).toBe(true);
+    const siblingSelected = await service.selectModelProfile("primary-fast");
+    expect(siblingSelected.workspace).toMatchObject({ selectedModelProfileId: "primary-fast", providerConfigured: true });
+    expect(readFileSync(join(workspace, ".env"), "utf8")).toContain('NEXORA_MODEL_API_KEY="primary-secret"');
+    await service.deleteModelProfile("primary-fast");
     expect(readFileSync(join(workspace, ".env"), "utf8")).not.toContain("secondary-secret");
     expect(readFileSync(join(workspace, ".nexora", "desktop-host.json"), "utf8")).not.toContain("primary-secret");
     await service.close();
@@ -159,7 +173,7 @@ describe("E130 Desktop Project and continuous Session", () => {
 
     const secondProject = mkdtempSync(join(tmpdir(), "nexora-e130-project-"));
     roots.push(secondProject);
-    const switched = await service.setWorkspace(secondProject);
+    const switched = await service.addProject(secondProject);
     expect(switched.workspace).toMatchObject({ path: secondProject, providerConfigured: false });
     expect(switched.workspace.projects.map(({ path }) => path)).toEqual(expect.arrayContaining([workspace, secondProject]));
     const removed = await service.removeSession(workspace, sessionId);

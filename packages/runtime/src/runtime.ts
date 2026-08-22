@@ -839,7 +839,8 @@ export class RuntimeEngine {
     const snapshot = projectRunInspection(
       slice.run,
       slice.invocations,
-      slice.lastEventSequence
+      slice.lastEventSequence,
+      this.#store.listModelCalls(runId)
     );
     const subscription = this.#subscribeHandle(runId, listener, {
       afterSequence: slice.lastEventSequence
@@ -1237,7 +1238,8 @@ export class RuntimeEngine {
     return projectRunInspection(
       slice.run,
       slice.invocations,
-      slice.lastEventSequence
+      slice.lastEventSequence,
+      this.#store.listModelCalls(runId)
     );
   }
 
@@ -2674,7 +2676,8 @@ export class RuntimeEngine {
     const childInspection = projectRunInspection(
       child,
       this.#store.listToolInvocations(child.runId),
-      this.#store.getLastEvent(child.runId)?.sequence ?? 0
+      this.#store.getLastEvent(child.runId)?.sequence ?? 0,
+      this.#store.listModelCalls(child.runId)
     );
     return deepFreeze({ branch, forkBase, child: childInspection });
   }

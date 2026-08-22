@@ -207,6 +207,13 @@ export type RunInspection = {
   readonly result: RunFinalResult | null;
   readonly delivery: RunDelivery | null;
   readonly error: PublicRunError | null;
+  readonly contextUsage: {
+    readonly modelCallId: string;
+    readonly inputTokens: number;
+    readonly inputTokenSource: "provider" | "measured";
+    readonly contextWindowTokens: number;
+    readonly hardInputLimitTokens: number;
+  } | null;
   readonly lastEventSequence: number;
 };
 

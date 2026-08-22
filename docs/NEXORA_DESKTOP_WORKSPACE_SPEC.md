@@ -83,6 +83,8 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 
 状态使用用户语言，例如“正在工作”“需要回复”“需要确认”“已暂停”“已完成”“未完成”“已取消”。不显示统计、预算图表、Invocation 数量、项目管理字段或批量操作。
 
+Session header 可显示一个紧凑的 Context 占用提示。它只投影最近一次真实 Model Call 的 `actualInputTokens`（不可用时使用 `measuredInputTokens`）与 `contextWindowTokens`，不累计估算、不形成 Dashboard，也不由 Renderer 自行计数。
+
 Session 列表必须来自 Runtime 的持久化事实。Desktop 不维护状态副本。若 Runtime 尚无安全的 Run 枚举投影，应先补充最小只读 Contract，而不是读取 Core Store 或建立独立历史数据库。
 
 ## 5. Conversation flow
@@ -161,7 +163,7 @@ Composer 始终可输入，并同时提供停止入口。用户发送时，Deskt
 
 ## 7.1 Project model settings
 
-Settings 为当前 Project 管理多个 OpenAI-compatible Model Profile：名称、Base URL、API Key、Model ID、可选 Context Window、decision output tokens 和 Tool transport。Workspace 只选择一个 Profile，选择只影响后续新 Run；活动 Run 不热切换 Provider。选中 Profile 镜像到当前 Workspace 的本地 `.env`，保持 CLI 兼容。API Key 只在用户输入和有界 IPC 提交时进入 Renderer，保存后的 Snapshot 不得回显 Key。保存、删除或切换配置前必须停止正在运行的 Run，并重建该 Project Runtime。
+Settings 为当前 Project 管理多个 OpenAI-compatible Model Profile。Provider 连接由 Base URL 和 API Key 标识，可被同一厂商的多个 Model Profile 复用；新增同 Provider 模型时用户只需选择 Provider 并填写 Model ID、可选 Context Window、decision output tokens 和 Tool transport，不重复填写连接信息。Workspace 只选择一个 Model Profile，选择只影响后续新 Run；活动 Run 不热切换 Provider。选中 Profile 镜像到当前 Workspace 的本地 `.env`，保持 CLI 兼容。API Key 只在用户输入和有界 IPC 提交时进入 Renderer，保存后的 Snapshot 不得回显 Key。保存、删除或切换配置前必须停止正在运行的 Run，并重建该 Project Runtime。
 
 ## 8. Activity / Trajectory
 
