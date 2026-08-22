@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { renderMarkdown } from "../../apps/desktop/src/renderer/markdown.js";
 import { shouldSendOnEnter } from "../../apps/desktop/src/renderer/keyboard.js";
+import { createPublicOutputBatcher, publicOutputPreview, PUBLIC_OUTPUT_PREVIEW_CHARS } from "../../apps/desktop/src/renderer/public-output-batcher.js";
 import { workspaceOutputs } from "../../apps/desktop/src/renderer/workspace-outputs.js";
 
 describe("E132 Desktop Markdown", () => {
@@ -45,6 +46,22 @@ describe("E132 Desktop compact process output and deliverables", () => {
     expect(css).toContain(".public-output-body");
     expect(css).toContain("max-height: 2.9em");
     expect(css).toContain(".public-output.expanded .public-output-body");
+  });
+
+  it("coalesces token floods and keeps collapsed process DOM bounded", () => {
+    const scheduled: Array<() => void> = [];
+    const flushes: string[][] = [];
+    const batcher = createPublicOutputBatcher(
+      (flush) => scheduled.push(flush),
+      (keys) => flushes.push([...keys])
+    );
+    for (let index = 0; index < 5_000; index += 1) batcher.queue("run:call:attempt");
+    expect(scheduled).toHaveLength(1);
+    scheduled[0]!();
+    expect(flushes).toEqual([["run:call:attempt"]]);
+    const preview = publicOutputPreview("reasoning ".repeat(10_000));
+    expect(preview.length).toBe(PUBLIC_OUTPUT_PREVIEW_CHARS + 1);
+    expect(preview.startsWith("…")).toBe(true);
   });
 
   it("projects only successful workspace writes and patches as deduplicated deliverables", () => {

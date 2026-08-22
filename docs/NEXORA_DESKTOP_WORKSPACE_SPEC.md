@@ -87,6 +87,8 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 
 Session header 可显示一个紧凑的 Context 占用提示。它只投影最近一次真实 Model Call 的 `actualInputTokens`（不可用时使用 `measuredInputTokens`）与 `contextWindowTokens`，不累计估算、不形成 Dashboard，也不由 Renderer 自行计数。
 
+该提示属于当前 Session 最新 Run 的当前 Turn，不是 Project 总量，也不把 Session 内历史 Run 的 token 相加。连续 Session 的后续 Run 只按真实 continuation context 重新计算；GUI 不得把模型实际未接收的历史内容计入 Context。
+
 Session 列表必须来自 Runtime 的持久化事实。Desktop 不维护状态副本。若 Runtime 尚无安全的 Run 枚举投影，应先补充最小只读 Contract，而不是读取 Core Store 或建立独立历史数据库。
 
 ## 5. Conversation flow
@@ -108,7 +110,7 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 
 权威条目由 `RunInspection`、持久化 Runtime Event、Tool Invocation、Evidence 和 Result 确定性投影。Provider 的公开文字是临时 Conversation 投影，必须标记为 Agent 输出，不得被当作 Tool 成功、Evidence 或完成事实；可以显示 Provider 明确返回的 `reasoning_content`，但不得生成、补全或推断 Provider 未返回的隐藏推理，也不得根据时间间隔编造“思考过程”。
 
-Provider 过程文字默认放在最多两行的紧凑动态框中，避免长 reasoning 淹没 Conversation；用户可以在原位置展开查看该次 Provider 实际返回的完整过程文字，再次点击收起。折叠状态只属于 Renderer 展示偏好，不成为 Runtime 状态。
+Provider 过程文字默认放在最多两行的紧凑动态框中，避免长 reasoning 淹没 Conversation；用户可以在原位置展开查看该次 Provider 实际返回的完整过程文字，再次点击收起。折叠状态只属于 Renderer 展示偏好，不成为 Runtime 状态。Renderer 必须合并高频 token delta；折叠时只挂载有界 Markdown 预览，展开后才节流渲染完整 Markdown，不能让 Provider 流阻塞 Composer 或停止操作。
 
 Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的 `content` 与 `reasoning_content` 增量。`reasoning_content` 只进入临时展示通道，不并入最终 `ModelResponse.text`。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。`native_tools` 可使用 SSE；`structured_output` 未完成的 JSON 不作为 Markdown 展示。
 

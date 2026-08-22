@@ -7,6 +7,7 @@ import type {
 import type { AgentPublicOutputEvent } from "@nexora/harness";
 import { shouldSendOnEnter } from "./keyboard.js";
 import { renderMarkdown } from "./markdown.js";
+import { createPublicOutputBatcher, publicOutputPreview, PUBLIC_OUTPUT_FLUSH_MS } from "./public-output-batcher.js";
 import { workspaceOutputs, type WorkspaceOutput } from "./workspace-outputs.js";
 
 declare global {
@@ -34,6 +35,10 @@ type PublicOutputSegment = {
   completed: boolean;
 };
 const publicOutputs = new Map<string, PublicOutputSegment>();
+const publicOutputBatcher = createPublicOutputBatcher(
+  (flush) => window.setTimeout(flush, PUBLIC_OUTPUT_FLUSH_MS),
+  flushPublicOutputs
+);
 
 window.setInterval(() => updateElapsedLabels(), 1_000);
 
@@ -136,7 +141,7 @@ function header(state: DesktopSnapshot): string {
         ${session === null ? "" : `<small>${statusLabel(session.inspection.status)}</small>`}
       </div>
       <div class="header-actions">
-        ${context === null ? "" : `<div class="context-usage" title="Latest model call: ${context.used.toLocaleString()} of ${context.window.toLocaleString()} input-context tokens"><span>Context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
+        ${context === null ? "" : `<div class="context-usage" title="Current Session · latest Run model call: ${context.used.toLocaleString()} of ${context.window.toLocaleString()} input-context tokens. This is not a Project total."><span>Turn context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
         ${state.workspace.modelProfiles.length === 0 ? "" : `<select class="model-switch" data-profile-select title="Model for new Runs in this Project">${state.workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`}
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="Session view">
@@ -202,7 +207,7 @@ function conversation(session: SessionView): string {
       items.push({ at: segment.occurredAt, order: runIndex * 1_000_000 + 500, html: `
         <article class="message agent-message public-output ${segment.completed ? "completed" : "streaming"} ${expanded ? "expanded" : ""}" data-public-output="${escapeAttr(segment.key)}">
           <div class="public-output-header"><div class="message-label">Nexora ${segment.completed ? "" : "· Streaming"}</div><button class="public-output-toggle" data-public-output-toggle="${escapeAttr(segment.key)}">${expanded ? "收起" : "查看全部"}</button></div>
-          <div class="public-output-body"><div class="markdown-body">${renderMarkdown(segment.text)}</div></div>
+          <div class="public-output-body"><div class="markdown-body">${renderMarkdown(expanded ? segment.text : publicOutputPreview(segment.text))}</div></div>
         </article>
       ` });
     }
@@ -535,6 +540,7 @@ function bindActions(): void {
 function updatePublicOutput(event: AgentPublicOutputEvent): void {
   const key = `${event.runId}:${event.modelCallId}:${event.attemptId}`;
   if (event.type === "text.discarded") {
+    publicOutputBatcher.discard(key);
     publicOutputs.delete(key);
     render();
     return;
@@ -554,17 +560,23 @@ function updatePublicOutput(event: AgentPublicOutputEvent): void {
   }
   if (event.type === "text.delta" && event.text !== undefined) existing.text += event.text;
   if (event.type === "text.completed") existing.completed = true;
-  const element = document.querySelector<HTMLElement>(`[data-public-output="${CSS.escape(key)}"]`);
-  if (element === null) {
-    render();
-    return;
+  publicOutputBatcher.queue(key);
+}
+
+function flushPublicOutputs(keys: readonly string[]): void {
+  for (const key of keys) {
+    const output = publicOutputs.get(key);
+    if (output === undefined) continue;
+    const element = document.querySelector<HTMLElement>(`[data-public-output="${CSS.escape(key)}"]`);
+    if (element === null) continue;
+    element.classList.toggle("streaming", !output.completed);
+    element.classList.toggle("completed", output.completed);
+    const label = element.querySelector<HTMLElement>(".message-label");
+    if (label !== null) label.textContent = output.completed ? "Nexora" : "Nexora · Streaming";
+    const body = element.querySelector<HTMLElement>(".markdown-body");
+    if (body === null) continue;
+    body.innerHTML = renderMarkdown(expandedPublicOutputs.has(key) ? output.text : publicOutputPreview(output.text));
   }
-  element.classList.toggle("streaming", !existing.completed);
-  element.classList.toggle("completed", existing.completed);
-  const label = element.querySelector<HTMLElement>(".message-label");
-  if (label !== null) label.textContent = existing.completed ? "Nexora" : "Nexora · Streaming";
-  const body = element.querySelector<HTMLElement>(".markdown-body");
-  if (body !== null) body.innerHTML = renderMarkdown(existing.text);
 }
 
 function deliverableLinks(outputs: readonly WorkspaceOutput[]): string {
