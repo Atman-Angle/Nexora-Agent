@@ -58,6 +58,17 @@ export type SessionRunView = {
   readonly userInput: string;
   readonly inspection: RunInspection;
   readonly history: AuditHistoryPage;
+  readonly publicOutputs: readonly PersistedPublicOutput[];
+};
+
+export type PersistedPublicOutput = {
+  readonly key: string;
+  readonly runId: string;
+  readonly modelCallId: string;
+  readonly attemptId: string;
+  readonly occurredAt: string;
+  readonly reasoning: string;
+  readonly content: string;
 };
 
 export type SessionView = {

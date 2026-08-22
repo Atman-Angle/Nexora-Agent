@@ -205,17 +205,22 @@ export async function requestModel(
         });
         let attemptUsage: ProviderTokenUsage | undefined;
         let publicSequence = 0;
+        let publicReasoning = "";
+        let publicContent = "";
         try {
           const value = await services.provider.decide(effectiveContext, {
             signal,
             compiledPrompt: effectivePrompt,
             reportTokenUsage: (usage) => { attemptUsage = parseProviderTokenUsage(usage); },
             ...(services.publicOutputListener === undefined ? {} : {
-              reportPublicTextDelta: (text: string) => {
+              reportPublicTextDelta: (text: string, channel = "content") => {
                 if (text.length === 0) return;
+                if (channel === "reasoning") publicReasoning += text;
+                else publicContent += text;
                 publicSequence += 1;
                 emitPublicOutput(services.publicOutputListener, {
                   type: "text.delta",
+                  channel,
                   runId: requested.runId,
                   modelCallId: intent.id,
                   attemptId,
@@ -241,7 +246,17 @@ export async function requestModel(
             attemptId,
             callId: intent.id,
             status: "succeeded",
-            responsePayload: redactAuditPayload(value),
+            responsePayload: publicSequence === 0
+              ? redactAuditPayload(value)
+              : {
+                  response: redactAuditPayload(value),
+                  publicOutput: {
+                    schemaVersion: 1,
+                    reasoning: publicReasoning,
+                    content: publicContent
+                  }
+                },
+            captureResponsePayload: publicSequence > 0,
             ...(attemptUsage === undefined ? {} : {
               actualInputTokens: attemptUsage.inputTokens,
               actualOutputTokens: attemptUsage.outputTokens,

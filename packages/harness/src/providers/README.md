@@ -74,14 +74,14 @@ Provider 返回最终 `text` 后，Harness 只提交 summary。Runtime 从当前
 | `model` | 必填 | 模型名 |
 | `temperature` | `0` | 采样温度，`0..2` |
 | `maxTokens` | `reservedOutputTokens.decision`（默认 `4096`） | decision 请求的 `max_tokens` |
-| `timeoutMs` | 通用模型 `60000`；`qwen3.7-flash` `180000` | 单次请求超时；显式配置始终优先 |
+| `timeoutMs` | `60000` | 单次请求超时；显式配置始终优先，本地 timeout 作为可重试 Provider failure 进入 Harness 的审计 Attempt 路径 |
 | `reasoning` | `"dynamic"` | Provider-neutral 推理策略（见下） |
 | `thinkingToggleParam` | 不发送 | 厂商请求体里切换推理的参数名（DashScope 为 `enable_thinking`） |
 | `stream` | `false` | `native_tools` 使用 SSE，并通过临时公共输出回调转发 Provider 明确返回的 `content` 和 `reasoning_content` 增量 |
 
 环境入口还读取 `NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM` 和 `NEXORA_MODEL_STREAM`（`true|false`）。`openAICompatibleProviderFromEnv` 优先根据 `NEXORA_MODEL_NAME` 从同一 Adapter 的 capability catalog 解析窗口与输出能力；未知模型必须显式提供 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`，不会猜测 Context Window。Harness 从模型总窗口扣除当前 phase 输出预留，最终 wire input 必须落在剩余 hard input limit 内；Runtime 只持久化 resulting ledger 状态。
 
-公共文字增量不是 Runtime Event、Evidence 或完成事实。`reasoning_content` 只作为 Provider 暴露的过程文字转发，不进入最终 `ModelResponse.text`，Harness 不生成、补全或推断 Provider 未返回的隐藏推理。Harness 为每个 Run / Model Call / Attempt 标识增量；失败 Attempt 会发出丢弃通知。Host 可以临时渲染这些公开文字，但最终仍必须使用完整 `ModelResponse` 和 Runtime Completion Gate。`structured_output` 的半成品 JSON 不流式展示。
+公共文字增量不是 Runtime Event、Evidence 或完成事实。`reasoning_content` 只作为 Provider 暴露的过程文字转发，不进入最终 `ModelResponse.text`，Harness 不生成、补全或推断 Provider 未返回的隐藏推理。Harness 为每个 Run / Model Call / Attempt 标识增量；失败 Attempt 会发出丢弃通知。成功 Attempt 可由 Host 请求 Runtime 将已脱敏的 reasoning/content transcript 保存为内容寻址 Artifact，并由 `responseArtifactRef` 关联到该 Attempt；失败、取消或中断 Attempt 不保存 transcript。最终状态仍只使用完整 `ModelResponse` 和 Runtime Completion Gate。`structured_output` 的半成品 JSON 不流式展示。
 
 同一 capability catalog 还可以保存由固定真实 usage 数据集验证的 estimated wire-meter 校准。`qwen3.7-flash` 的 E101 decision 样本最大 actual-to-UTF8/4 偏差为 1.66×，因此使用带余量的 1.8×。`deepseek-v4-flash-0731` 已登记供应商公布的 1M 上下文与 393,216 共享输出上限，但在取得固定 usage 校准集前继续使用通用 `nexora:utf8-bytes/4:v1`，不会借用 Qwen 比率。Ledger 记录完整 meter 名称并继续标记 `estimated`，Provider 返回的 actual usage 原样保留。`tokenMeter` 注入的精确 tokenizer 优先于 catalog 校准；未知模型不会猜测能力或校准值。
 

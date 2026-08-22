@@ -179,6 +179,48 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(calls).toBe(1);
   });
 
+  it("restores successful Provider reasoning and content after Desktop reopen", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-durable-stream-"));
+    roots.push(workspace);
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"choices":[{"delta":{"reasoning_content":"Inspecting the request. "}}]}\n\n');
+      response.write('data: {"choices":[{"delta":{"content":"**I am Nexora.**"}}]}\n\n');
+      response.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-response","type":"function","function":{"name":"nexora_respond","arguments":"{\\"text\\":\\"**I am Nexora.**\\"}"}}]},"finish_reason":"tool_calls"}],"usage":null}\n\n');
+      response.end("data: [DONE]\n\n");
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=qwen3.7-flash",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=native_tools"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const started = await service.startSession("Who are you?");
+    const sessionId = started.session!.id;
+    const completed = await waitForStatus(service, "succeeded");
+    expect(completed.session?.runs[0]?.publicOutputs).toEqual([
+      expect.objectContaining({
+        reasoning: "Inspecting the request. ",
+        content: "**I am Nexora.**"
+      })
+    ]);
+    await service.close();
+
+    const reopened = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const restored = await reopened.openSession(workspace, sessionId);
+    expect(restored.session?.runs[0]?.publicOutputs).toEqual(completed.session?.runs[0]?.publicOutputs);
+    await reopened.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  });
+
   it("continues terminal Runs in one Session and persists archive/remove navigation without exposing the API key", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-desktop-"));
     roots.push(workspace);

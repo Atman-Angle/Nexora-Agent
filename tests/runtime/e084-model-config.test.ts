@@ -67,7 +67,7 @@ describe("E084 Model / Provider configuration", () => {
     ).rejects.toThrow("Provider request timed out.");
   });
 
-  it("allows qwen3.7-flash reasoning calls longer than the generic 60-second timeout", async () => {
+  it("uses the generic 60-second timeout for qwen3.7-flash", async () => {
     vi.useFakeTimers();
     let providerAborted = false;
     const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
@@ -88,9 +88,8 @@ describe("E084 Model / Provider configuration", () => {
     const rejection = expect(decision).rejects.toThrow("Provider request timed out.");
 
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(providerAborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(120_000);
     await rejection;
+    expect(providerAborted).toBe(true);
   });
 
   it("maps the reasoning policy to the declared vendor thinking toggle", async () => {

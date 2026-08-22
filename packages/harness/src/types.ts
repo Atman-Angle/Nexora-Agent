@@ -15,15 +15,18 @@ export type RuntimeMemoryOptions = {
   readonly scope: MemoryScope;
 };
 
-export type AgentPublicOutputEvent = {
-  readonly type: "text.delta" | "text.completed" | "text.discarded";
+type AgentPublicOutputEventBase = {
   readonly runId: string;
   readonly modelCallId: string;
   readonly attemptId: string;
   readonly sequence: number;
   readonly occurredAt: string;
-  readonly text?: string;
 };
+
+export type AgentPublicOutputEvent = AgentPublicOutputEventBase & (
+  | { readonly type: "text.delta"; readonly channel: "reasoning" | "content"; readonly text: string }
+  | { readonly type: "text.completed" | "text.discarded" }
+);
 
 export type AgentPublicOutputListener = (event: AgentPublicOutputEvent) => void;
 

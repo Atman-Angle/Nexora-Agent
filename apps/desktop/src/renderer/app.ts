@@ -8,6 +8,7 @@ import type { AgentPublicOutputEvent } from "@nexora/harness";
 import { shouldSendOnEnter } from "./keyboard.js";
 import { renderMarkdown } from "./markdown.js";
 import { createPublicOutputBatcher, publicOutputPreview, PUBLIC_OUTPUT_FLUSH_MS } from "./public-output-batcher.js";
+import { toolOutputPreview } from "./tool-output-preview.js";
 import { workspaceOutputs, type WorkspaceOutput } from "./workspace-outputs.js";
 
 declare global {
@@ -29,8 +30,10 @@ const expandedPublicOutputs = new Set<string>();
 const collapsedProjects = new Set<string>();
 type PublicOutputSegment = {
   readonly key: string;
+  readonly baseKey: string;
   readonly runId: string;
   readonly occurredAt: string;
+  readonly channel: "reasoning" | "content";
   text: string;
   completed: boolean;
 };
@@ -185,6 +188,7 @@ function conversation(session: SessionView): string {
     ` });
     for (const invocation of run.inspection.invocations) {
       const expanded = expandedTools.has(invocation.id);
+      const outputPreview = toolOutputPreview(invocation.resultJson, invocation.errorJson);
       items.push({ at: invocation.startedAt, order: runIndex * 1_000_000 + invocation.planVersion * 1000, html: `
       <article class="activity-line ${statusClass(invocation.status)}">
         <button class="activity-summary" data-tool="${escapeAttr(invocation.id)}">
@@ -193,6 +197,7 @@ function conversation(session: SessionView): string {
           <small>${invocationStatus(invocation.status)}${duration(invocation.startedAt, invocation.completedAt)}</small>
           <span class="disclosure">${expanded ? "⌃" : "⌄"}</span>
         </button>
+        ${expanded || outputPreview === null ? "" : `<pre class="tool-output-preview">${escapeHtml(outputPreview)}</pre>`}
         ${expanded ? `<div class="activity-detail">
           <dl><dt>Tool</dt><dd>${escapeHtml(invocation.toolName)}</dd><dt>Invocation</dt><dd>${escapeHtml(invocation.id)}</dd><dt>Step</dt><dd>${escapeHtml(invocation.stepId)}</dd></dl>
           <details open><summary>Input</summary><pre>${escapeHtml(pretty(invocation.inputJson))}</pre></details>
@@ -203,13 +208,18 @@ function conversation(session: SessionView): string {
       </article>
     ` });
     }
-    for (const segment of publicOutputs.values()) {
-      if (segment.runId !== run.inspection.runId) continue;
+    for (const segment of publicOutputSegments(run)) {
       const expanded = expandedPublicOutputs.has(segment.key);
-      items.push({ at: segment.occurredAt, order: runIndex * 1_000_000 + 500, html: `
-        <article class="message agent-message public-output ${segment.completed ? "completed" : "streaming"} ${expanded ? "expanded" : ""}" data-public-output="${escapeAttr(segment.key)}">
-          <div class="public-output-header"><div class="message-label">Nexora ${segment.completed ? "" : "· Streaming"}</div><button class="public-output-toggle" data-public-output-toggle="${escapeAttr(segment.key)}">${expanded ? "收起" : "查看全部"}</button></div>
+      const order = runIndex * 1_000_000 + 500 + (segment.channel === "reasoning" ? 0 : 1);
+      items.push({ at: segment.occurredAt, order, html: segment.channel === "reasoning" ? `
+        <article class="think-output public-output ${segment.completed ? "completed" : "streaming"} ${expanded ? "expanded" : ""}" data-public-output="${escapeAttr(segment.key)}">
+          <div class="public-output-header"><div class="message-label">Think ${segment.completed ? "" : "· Streaming"}</div><button class="public-output-toggle" data-public-output-toggle="${escapeAttr(segment.key)}">${expanded ? "收起" : "查看全部"}</button></div>
           <div class="public-output-body"><div class="markdown-body">${renderMarkdown(expanded ? segment.text : publicOutputPreview(segment.text))}</div></div>
+        </article>
+      ` : `
+        <article class="message agent-message public-content ${segment.completed ? "completed" : "streaming"}" data-public-output="${escapeAttr(segment.key)}">
+          <div class="message-label">Nexora ${segment.completed ? "" : "· Streaming"}</div>
+          <div class="markdown-body">${renderMarkdown(segment.text)}</div>
         </article>
       ` });
     }
@@ -274,8 +284,8 @@ function conversation(session: SessionView): string {
     if (run.inspection.result !== null) {
       const result = run.inspection.result;
       const outputs = workspaceOutputs(run.inspection.invocations);
-      const summaryAlreadyStreamed = [...publicOutputs.values()].some((segment) => (
-        segment.runId === run.inspection.runId
+      const summaryAlreadyStreamed = publicOutputSegments(run).some((segment) => (
+        segment.channel === "content"
         && segment.completed
         && segment.text.trim() === result.summary.trim()
       ));
@@ -558,29 +568,76 @@ function bindActions(): void {
   }));
 }
 
+function publicOutputSegments(run: SessionView["runs"][number]): PublicOutputSegment[] {
+  const segments = new Map<string, PublicOutputSegment>();
+  for (const output of run.publicOutputs) {
+    if (output.reasoning !== "") {
+      const key = `${output.key}:reasoning`;
+      segments.set(key, {
+        key,
+        baseKey: output.key,
+        runId: output.runId,
+        occurredAt: output.occurredAt,
+        channel: "reasoning",
+        text: output.reasoning,
+        completed: true
+      });
+    }
+    if (output.content !== "") {
+      const key = `${output.key}:content`;
+      segments.set(key, {
+        key,
+        baseKey: output.key,
+        runId: output.runId,
+        occurredAt: output.occurredAt,
+        channel: "content",
+        text: output.content,
+        completed: true
+      });
+    }
+  }
+  for (const output of publicOutputs.values()) {
+    if (output.runId === run.inspection.runId) segments.set(output.key, output);
+  }
+  return [...segments.values()];
+}
+
 function updatePublicOutput(event: AgentPublicOutputEvent): void {
-  const key = `${event.runId}:${event.modelCallId}:${event.attemptId}`;
+  const baseKey = `${event.runId}:${event.modelCallId}:${event.attemptId}`;
   if (event.type === "text.discarded") {
-    publicOutputBatcher.discard(key);
-    publicOutputs.delete(key);
+    for (const [key, output] of publicOutputs) {
+      if (output.baseKey !== baseKey) continue;
+      publicOutputBatcher.discard(key);
+      publicOutputs.delete(key);
+    }
     render();
     return;
   }
+  if (event.type === "text.completed") {
+    for (const [key, output] of publicOutputs) {
+      if (output.baseKey !== baseKey) continue;
+      output.completed = true;
+      publicOutputBatcher.queue(key);
+    }
+    return;
+  }
+  if (event.type !== "text.delta") return;
+  const key = `${baseKey}:${event.channel}`;
   const existing = publicOutputs.get(key);
   if (existing === undefined) {
-    if (event.type !== "text.delta" || event.text === undefined) return;
     publicOutputs.set(key, {
       key,
+      baseKey,
       runId: event.runId,
       occurredAt: event.occurredAt,
+      channel: event.channel,
       text: event.text,
       completed: false
     });
     render();
     return;
   }
-  if (event.type === "text.delta" && event.text !== undefined) existing.text += event.text;
-  if (event.type === "text.completed") existing.completed = true;
+  existing.text += event.text;
   publicOutputBatcher.queue(key);
 }
 
@@ -593,10 +650,17 @@ function flushPublicOutputs(keys: readonly string[]): void {
     element.classList.toggle("streaming", !output.completed);
     element.classList.toggle("completed", output.completed);
     const label = element.querySelector<HTMLElement>(".message-label");
-    if (label !== null) label.textContent = output.completed ? "Nexora" : "Nexora · Streaming";
+    if (label !== null) {
+      const prefix = output.channel === "reasoning" ? "Think" : "Nexora";
+      label.textContent = output.completed ? prefix : `${prefix} · Streaming`;
+    }
     const body = element.querySelector<HTMLElement>(".markdown-body");
     if (body === null) continue;
-    body.innerHTML = renderMarkdown(expandedPublicOutputs.has(key) ? output.text : publicOutputPreview(output.text));
+    body.innerHTML = renderMarkdown(
+      output.channel === "content" || expandedPublicOutputs.has(key)
+        ? output.text
+        : publicOutputPreview(output.text)
+    );
   }
 }
 

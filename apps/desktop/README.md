@@ -35,9 +35,9 @@ pnpm desktop
 1. 点击左上角 `＋` 添加 Project；每个 Project 对应一个 Workspace。
 2. 点击 **New Task**，在底部输入目标并提交。
    普通问答可由 Harness 基于现有权威 Context 直接回复；依赖当前项目文件、Git、命令或外部状态时，Agent 会进入同一 Run 的真实 Tool / Evidence 路径。
-3. 在 Conversation 中查看模型公开的流式工作说明、轻量 Tool 活动、Validation 和正式 Result。`native_tools` 支持 Provider 实际返回的 `content` / `reasoning_content` SSE 增量；高频增量会合并刷新，折叠时只渲染两行有界 Markdown，展开后节流渲染完整 Markdown，不作为 Evidence 或完成事实，失败 Attempt 会从界面丢弃。`structured_output` 等待完整 JSON，不显示伪造流。
+3. 在 Conversation 中查看模型公开的流式工作说明、轻量 Tool 活动、Validation 和正式 Result。`native_tools` 支持 Provider 实际返回的 `content` / `reasoning_content` SSE 增量；reasoning 默认只渲染两行有界 Markdown，点击后展开完整内容。成功 Attempt 的两种公开文字保存为 Runtime Artifact，重启 Desktop 后仍可在同一 Session 查看；失败、取消或超时 Attempt 的临时文字会丢弃。它们不作为 Evidence 或完成事实。`structured_output` 等待完整 JSON，不显示伪造流。
 4. 正式结果会把成功写入或补丁产生的 Workspace 文件显示为去重后的可点击产物；HTML 使用默认浏览器，文档和其他文件使用系统默认应用。打开前由 Desktop Host 重新验证 Project 和路径边界。
-5. 点击 Tool 行可展开真实参数、结果、错误、耗时和 Invocation ID。
+5. Tool 名称和状态默认保持单行，并显示最多 8 行的真实结果或错误预览；点击 Tool 行可展开完整参数、结果、错误、耗时、Invocation ID 和 Artifact。
 6. Runtime 存在 Structured Plan 时，Composer 上方会出现只读 Plan 摘要；点击原地展开。
 7. Runtime 等待输入或审批时，Composer 自动切换为回答或批准/拒绝入口。
 8. 点击 **Activity** 在同一主区域查看持久化 Trajectory；不会打开第三栏。

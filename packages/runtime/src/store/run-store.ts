@@ -1105,7 +1105,8 @@ export class RunStore {
           callId: attempt.callId, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
           status: input.status,
           ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
-          ...(input.responseDigest === undefined ? {} : { responseDigest: input.responseDigest })
+          ...(input.responseDigest === undefined ? {} : { responseDigest: input.responseDigest }),
+          ...(input.responseArtifactRef === undefined ? {} : { responseArtifactRef: input.responseArtifactRef })
         }
       });
       return this.#requireProviderAttempt(input.attemptId);

@@ -43,7 +43,7 @@ export type ProviderCompletionRequest = {
 export type ProviderCompletionOperation = {
   readonly signal: AbortSignal;
   readonly reportTokenUsage?: (usage: ProviderTokenUsage) => void;
-  readonly reportPublicTextDelta?: (text: string) => void;
+  readonly reportPublicTextDelta?: (text: string, channel?: "reasoning" | "content") => void;
 };
 
 export type ProviderRequestTokenMeter = (

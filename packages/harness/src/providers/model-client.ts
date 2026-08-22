@@ -419,6 +419,8 @@ export type ProviderTokenUsage = {
   readonly cache?: ProviderCacheUsage;
 };
 
+export type PublicTextChannel = "reasoning" | "content";
+
 export type ProviderTokenMeter = (
   phase: ModelCallPhase,
   context: ModelDecisionContext,
@@ -428,7 +430,7 @@ export type ProviderTokenMeter = (
 export type RuntimeOperationContext = {
   readonly signal: AbortSignal;
   readonly reportTokenUsage?: (usage: ProviderTokenUsage) => void;
-  readonly reportPublicTextDelta?: (text: string) => void;
+  readonly reportPublicTextDelta?: (text: string, channel?: PublicTextChannel) => void;
   readonly compiledPrompt?: CompiledPrompt;
 };
 

@@ -1663,9 +1663,13 @@ export class RuntimeEngine {
     );
     const responseCapture = input.responsePayload === undefined
       ? undefined
-      : this.#captureAuditPayload(input.responsePayload, audit?.capturePolicy ?? "metadata");
+      : this.#captureAuditPayload(
+          input.responsePayload,
+          input.captureResponsePayload === true ? "redacted" : audit?.capturePolicy ?? "metadata"
+        );
+    const { captureResponsePayload: _captureResponsePayload, ...completion } = input;
     const attempt = this.#store.completeProviderAttempt({
-      ...input,
+      ...completion,
       ...(responseCapture === undefined ? {} : {
         responseDigest: responseCapture.digest,
         ...(responseCapture.artifactRef === undefined ? {} : { responseArtifactRef: responseCapture.artifactRef })

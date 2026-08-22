@@ -115,6 +115,7 @@ export type ProviderAttemptCompletion = {
   readonly status: "succeeded" | "failed" | "cancelled";
   readonly errorCode?: string;
   readonly responsePayload?: unknown;
+  readonly captureResponsePayload?: boolean;
   readonly actualInputTokens?: number;
   readonly actualOutputTokens?: number;
   readonly actualTotalTokens?: number;

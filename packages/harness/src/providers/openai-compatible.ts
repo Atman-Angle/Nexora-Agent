@@ -61,7 +61,7 @@ const MODEL_CAPABILITIES: Readonly<Record<string, {
   "qwen3.7-flash": Object.freeze({
     contextWindowTokens: 1_000_000,
     maxOutputTokens: 131_072,
-    defaultTimeoutMs: 180_000,
+    defaultTimeoutMs: 60_000,
     estimatedInputMultiplier: Object.freeze({ decision: 1.8 })
   }),
   "deepseek-v4-flash-0731": Object.freeze({
@@ -199,11 +199,15 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     ...(tokenMeter === undefined ? {} : { measureTokens: tokenMeter }),
     async complete(request, operation) {
       const controller = new AbortController();
+      let timedOut = false;
       const forwardAbort = (): void => controller.abort(operation.signal.reason);
       if (operation.signal.aborted) forwardAbort();
       else operation.signal.addEventListener("abort", forwardAbort, { once: true });
       const timer = setTimeout(
-        () => controller.abort(new Error("Provider request timed out.")),
+        () => {
+          timedOut = true;
+          controller.abort(new Error("Provider request timed out."));
+        },
         timeoutMs
       );
       try {
@@ -265,6 +269,9 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
           body.choices[0]!.finish_reason
         );
       } catch (error) {
+        if (timedOut && !operation.signal.aborted) {
+          throw new RetryableProviderError("Provider request timed out.");
+        }
         if (
           !operation.signal.aborted
           && (error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError"))
@@ -356,12 +363,12 @@ async function normalizeStreamingResponse(
       if (choice.finish_reason !== undefined && choice.finish_reason !== null) finishReason = choice.finish_reason;
       const reasoningDelta = choice.delta.reasoning_content;
       if (reasoningDelta !== undefined && reasoningDelta !== null && reasoningDelta.length > 0) {
-        operation.reportPublicTextDelta?.(reasoningDelta);
+        operation.reportPublicTextDelta?.(reasoningDelta, "reasoning");
       }
       const delta = choice.delta.content;
       if (delta !== undefined && delta !== null && delta.length > 0) {
         content += delta;
-        operation.reportPublicTextDelta?.(delta);
+        operation.reportPublicTextDelta?.(delta, "content");
       }
       for (const call of choice.delta.tool_calls ?? []) {
         const current = calls.get(call.index) ?? { id: "", name: "", arguments: "" };

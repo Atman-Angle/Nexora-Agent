@@ -6,6 +6,7 @@ import { renderMarkdown } from "../../apps/desktop/src/renderer/markdown.js";
 import { shouldSendOnEnter } from "../../apps/desktop/src/renderer/keyboard.js";
 import { createPublicOutputBatcher, publicOutputPreview, PUBLIC_OUTPUT_PREVIEW_CHARS } from "../../apps/desktop/src/renderer/public-output-batcher.js";
 import { workspaceOutputs } from "../../apps/desktop/src/renderer/workspace-outputs.js";
+import { toolOutputPreview, TOOL_OUTPUT_PREVIEW_LINES } from "../../apps/desktop/src/renderer/tool-output-preview.js";
 
 describe("E132 Desktop Markdown", () => {
   it("renders useful Markdown while escaping model-provided HTML and unsafe links", () => {
@@ -75,5 +76,15 @@ describe("E132 Desktop compact process output and deliverables", () => {
       { path: "site/index.html", name: "index.html", kind: "website" },
       { path: "reports/result.docx", name: "result.docx", kind: "document" }
     ]);
+  });
+
+  it("shows a bounded real Tool result preview while preserving full details elsewhere", () => {
+    const content = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n");
+    const preview = toolOutputPreview({ path: "README.md", content }, null)!;
+    expect(preview.split("\n")).toHaveLength(TOOL_OUTPUT_PREVIEW_LINES + 1);
+    expect(preview).toContain("line 1");
+    expect(preview).not.toContain("line 20");
+    expect(toolOutputPreview(null, { code: "INVALID_PATH", message: "Expected a directory." }))
+      .toBe("Expected a directory.");
   });
 });

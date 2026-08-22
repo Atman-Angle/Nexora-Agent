@@ -50,7 +50,7 @@ describe("E065 Provider transient failure recovery", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("aborts one timed-out decision request without an Adapter retry", async () => {
+  it("classifies one timed-out decision request for audited Harness retry without an Adapter retry", async () => {
     const fetch = vi.fn()
       .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
         init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
@@ -63,7 +63,7 @@ describe("E065 Provider transient failure recovery", () => {
       fetch
     });
 
-    await expect(provider.decide(context, operation)).rejects.toThrow("aborted");
+    await expect(provider.decide(context, operation)).rejects.toThrow("Provider request timed out.");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 

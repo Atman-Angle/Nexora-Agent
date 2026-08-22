@@ -20,6 +20,7 @@ import type {
   ModelProfileInput,
   ModelProfileView,
   SessionControl,
+  PersistedPublicOutput,
   SessionRunView,
   SessionView,
   WorkspaceView
@@ -78,6 +79,7 @@ export class DesktopRuntimeService {
   readonly #activeSessionIds = new Map<string, string>();
   readonly #subscriptions = new Map<string, RuntimeSubscription>();
   readonly #dirtyRuntimeKeys = new Set<string>();
+  readonly #publicOutputArtifacts = new Map<string, { readonly reasoning: string; readonly content: string }>();
 
   constructor(input: { readonly workspace: string; readonly onSnapshot: (snapshot: DesktopSnapshot) => void; readonly onError: (message: string) => void; readonly onPublicOutput?: (event: AgentPublicOutputEvent) => void }) {
     this.#workspace = resolve(input.workspace);
@@ -408,11 +410,61 @@ export class DesktopRuntimeService {
     const runs: SessionRunView[] = [];
     for (const turn of session.turns) {
       const handle = runtime.openRun(turn.runId);
-      runs.push({ userInput: turn.userInput, inspection: await handle.inspect(), history: await handle.history({ limit: 200 }) });
+      const [inspection, history, publicOutputHistory] = await Promise.all([
+        handle.inspect(),
+        handle.history({ limit: 200 }),
+        handle.history({ types: ["provider.attempt.succeeded"], limit: 200 })
+      ]);
+      runs.push({
+        userInput: turn.userInput,
+        inspection,
+        history,
+        publicOutputs: await this.#persistedPublicOutputs(runtime, publicOutputHistory.records)
+      });
     }
     const latest = runs.at(-1);
     if (latest === undefined) throw new Error("Desktop Session has no Runtime Run.");
     return { id: session.id, title: session.title, runs, inspection: latest.inspection, history: latest.history };
+  }
+
+  async #persistedPublicOutputs(
+    runtime: AgentRuntime,
+    records: SessionRunView["history"]["records"]
+  ): Promise<PersistedPublicOutput[]> {
+    const succeeded = records.filter((record) => record.type === "provider.attempt.succeeded");
+    const outputs = await Promise.all(succeeded.map(async (record): Promise<PersistedPublicOutput | null> => {
+      const payload = objectValue(record.payload);
+      const modelCallId = stringValue(payload.callId);
+      const attemptId = stringValue(payload.attemptId);
+      const artifactRef = stringValue(payload.responseArtifactRef);
+      if (modelCallId === null || attemptId === null || artifactRef === null) return null;
+      try {
+        let publicOutput = this.#publicOutputArtifacts.get(artifactRef);
+        if (publicOutput === undefined) {
+          const envelope = objectValue(JSON.parse((await runtime.readArtifactText(artifactRef, 1_000_000)).text));
+          const value = objectValue(envelope.publicOutput);
+          publicOutput = {
+            reasoning: stringValue(value.reasoning) ?? "",
+            content: stringValue(value.content) ?? ""
+          };
+          this.#publicOutputArtifacts.set(artifactRef, publicOutput);
+        }
+        const { reasoning, content } = publicOutput;
+        if (reasoning === "" && content === "") return null;
+        return {
+          key: `${record.runId}:${modelCallId}:${attemptId}`,
+          runId: record.runId,
+          modelCallId,
+          attemptId,
+          occurredAt: record.occurredAt,
+          reasoning,
+          content
+        };
+      } catch {
+        return null;
+      }
+    }));
+    return outputs.filter((output): output is PersistedPublicOutput => output !== null);
   }
 
   async #prepareRuntimeForNewRun(): Promise<void> {
@@ -698,6 +750,16 @@ function requireText(value: string, label: string): string {
 function compact(value: string, limit: number): string {
   const text = value.replace(/\s+/g, " ").trim();
   return text.length <= limit ? text : `${text.slice(0, limit - 3)}...`;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

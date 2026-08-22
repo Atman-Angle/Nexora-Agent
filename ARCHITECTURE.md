@@ -151,7 +151,7 @@ Production objective-only Model Plan 不自动生成 Acceptance Check。Plan 只
 
 `model_calls` 仍是 logical call Authority；`model_call_audits` 只保存该调用的 Context Manifest、capture policy 和 payload provenance，`provider_attempts` 只保存其下的物理请求 Attempt。Harness 构造 Manifest、脱敏 payload 并决定机械重试，Runtime 通过专用 port 原子持久化；具体 Provider Adapter 每次调用只执行一个物理请求。三者都不拥有 Run Status、Plan、Tool Effect、Evidence 或 Result。
 
-公共审计读取只支持单 Run、sequence cursor、有限 type filter 和最多 200 条记录；没有读取全部 Journal 的快捷路径。`RunHandle.modelCallTrace` 可按 logical call 精确读取 Manifest 和 Attempts。Journal/Artifact digest 校验失败后，Runtime 在新的 Provider 或 Tool Effect 前失败。默认 `metadata` 不保存正文；Host 显式选择 `redacted` 时也只保存 Harness 确定性脱敏后的白名单数据，Authorization、Cookie、secret 及 reasoning/thinking 字段不得进入审计 Artifact。
+公共审计读取只支持单 Run、sequence cursor、有限 type filter 和最多 200 条记录；没有读取全部 Journal 的快捷路径。`RunHandle.modelCallTrace` 可按 logical call 精确读取 Manifest 和 Attempts。Journal/Artifact digest 校验失败后，Runtime 在新的 Provider 或 Tool Effect 前失败。默认 `metadata` 不保存正文；Host 显式选择 `redacted` 时也只保存 Harness 确定性脱敏后的白名单数据，Authorization、Cookie 和 secret 不得进入 Artifact。Model Call request/audit Artifact 仍不得保存 reasoning/thinking；只有 Provider 明确返回、Harness 已公开流出的成功 Attempt transcript 可以作为独立的 redacted response Artifact 持久化，并由 `provider_attempts.responseArtifactRef` 引用。该 transcript 不拥有 Result、Evidence、Completion 或 Run 状态，失败、取消和中断 Attempt 不持久化临时文字。
 
 ## 3. 技术边界
 
