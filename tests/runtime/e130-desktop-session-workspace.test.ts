@@ -12,6 +12,48 @@ afterEach(() => {
 });
 
 describe("E130 Desktop Project and continuous Session", () => {
+  it("projects one automatic grounded direct response without Tool Evidence", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-direct-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const content = {
+        text: null,
+        toolCalls: [{ name: "nexora_respond", arguments: { text: "I am Nexora." } }],
+        finishReason: "tool_calls"
+      };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=qwen3.7-flash",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    await service.startSession("Who are you?");
+    const completed = await waitForStatus(service, "succeeded");
+    expect(completed.session?.inspection).toMatchObject({
+      status: "succeeded",
+      completion: { evidence: "auto", requiredToolNames: [] },
+      evidence: [],
+      invocations: []
+    });
+    expect(completed.session?.runs[0]?.inspection.result?.summary).toBe("I am Nexora.");
+    await service.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    expect(calls).toBe(1);
+  });
+
   it("continues terminal Runs in one Session and persists archive/remove navigation without exposing the API key", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-desktop-"));
     roots.push(workspace);

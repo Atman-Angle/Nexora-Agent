@@ -6,6 +6,7 @@ import { JsonValueSchema } from "@nexora/runtime/internal";
 export const UPDATE_PLAN_CONTROL = "nexora_update_plan";
 export const REQUEST_INPUT_CONTROL = "nexora_request_input";
 export const DELEGATE_WORKERS_CONTROL = "nexora_delegate_workers";
+export const DIRECT_RESPONSE_CONTROL = "nexora_respond";
 
 const NonEmptyString = z.string().trim().min(1);
 export const ModelTextSchema = NonEmptyString.transform((value) => value.slice(0, 32_000));
@@ -26,6 +27,11 @@ export const ModelInputRequestSchema = z.object({
   reason: NonEmptyString
 }).strict();
 export type ModelInputRequest = z.infer<typeof ModelInputRequestSchema>;
+
+export const ModelDirectResponseSchema = z.object({
+  text: ModelTextSchema
+}).strict();
+export type ModelDirectResponse = z.infer<typeof ModelDirectResponseSchema>;
 
 export const ProviderToolCallSchema = z.object({
   callId: NonEmptyString,
@@ -49,7 +55,10 @@ export const ModelResponseSchema = z.object({
 export type ModelResponse = z.infer<typeof ModelResponseSchema>;
 
 export function isControlCall(call: ProviderToolCall): boolean {
-  return call.name === UPDATE_PLAN_CONTROL || call.name === REQUEST_INPUT_CONTROL || call.name === DELEGATE_WORKERS_CONTROL;
+  return call.name === UPDATE_PLAN_CONTROL
+    || call.name === REQUEST_INPUT_CONTROL
+    || call.name === DELEGATE_WORKERS_CONTROL
+    || call.name === DIRECT_RESPONSE_CONTROL;
 }
 
 function callId(value: string | undefined): string {
@@ -111,6 +120,9 @@ export const modelResponses = Object.freeze({
       { question: input.question, reason: input.reason },
       input.callId
     );
+  },
+  direct(input: ModelDirectResponse & { readonly callId?: string }): ModelResponse {
+    return singleToolResponse(DIRECT_RESPONSE_CONTROL, { text: input.text }, input.callId);
   }
 });
 

@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import {
   AgentProfileRegistry,
+  DIRECT_RESPONSE_CONTROL,
   ModelResponseSchema,
   REQUEST_INPUT_CONTROL,
   compilePrompt,
@@ -44,7 +45,8 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     expect(compiled.system).toContain("strategyOnly");
     expect(compiled.system).toContain("grant approval and finish");
     expect(compiled.strategy.profile?.digest).toBe(injected.digest);
-    expect(compiled.tools).toHaveLength(4);
+    expect(compiled.tools).toHaveLength(5);
+    expect(compiled.tools.some((tool) => tool.name === DIRECT_RESPONSE_CONTROL)).toBe(true);
     expect(compiled.tools.some((tool) => tool.name === "nexora_delegate_workers")).toBe(true);
   });
 

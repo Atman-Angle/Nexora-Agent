@@ -6,6 +6,7 @@ import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
+  DIRECT_RESPONSE_CONTROL,
   isControlCall,
   type ModelResponse
 } from "./providers/model-response.js";
@@ -19,6 +20,7 @@ import {
   compileModelPlan,
   compileProviderToolCalls,
   parseDelegationControl,
+  parseDirectResponseControl,
   parseInputControl,
   parseModelResponse,
   parsePlanControl
@@ -157,7 +159,12 @@ export async function runAgentLoop(
         );
         summary = response.toolCalls.length === 0 ? response.text ?? undefined : undefined;
         if (summary !== undefined) {
-          run = await runtime.dispatch(run, compileModelFinish(run, summary), signal, observer);
+          run = await runtime.dispatch(
+            run,
+            compileModelFinish(run, summary, bareTextCompletionMode(run, decisionContext)),
+            signal,
+            observer
+          );
           if (run.status !== "running") break;
         }
       } catch (error) {
@@ -177,6 +184,7 @@ export async function runAgentLoop(
       const planCalls = response.toolCalls.filter((call) => call.name === UPDATE_PLAN_CONTROL);
       const inputCalls = response.toolCalls.filter((call) => call.name === REQUEST_INPUT_CONTROL);
       const delegationCalls = response.toolCalls.filter((call) => call.name === DELEGATE_WORKERS_CONTROL);
+      const directResponseCalls = response.toolCalls.filter((call) => call.name === DIRECT_RESPONSE_CONTROL);
       const runtimeCalls = response.toolCalls.filter((call) => !isControlCall(call));
       if (planCalls.length > 1) {
         throw new ActionRejectedError(`A Provider response may contain at most one ${UPDATE_PLAN_CONTROL} call.`);
@@ -189,20 +197,28 @@ export async function runAgentLoop(
           `${DELEGATION_ACTION_MUST_BE_EXCLUSIVE}: Delegation was not accepted. No Child Run was created. Choose delegation or ordinary tool execution, not both.`
         );
       }
+      if (directResponseCalls.length > 1 || (directResponseCalls.length === 1 && response.toolCalls.length !== 1)) {
+        throw new ActionRejectedError(`${DIRECT_RESPONSE_CONTROL} must be the only call in a Provider response.`);
+      }
       if (decisionContext.delegationMode === "required"
         && decisionContext.delegationAllowed !== false
         && decisionContext.delegationSatisfied !== true
-        && response.toolCalls.length === 0) {
+        && (response.toolCalls.length === 0 || directResponseCalls.length === 1)) {
         throw new ActionRejectedError(
           "DELEGATION_REQUIRED: Delegate at least two safe independent Worker objectives, or request the missing user input; Parent-only completion is forbidden by Host policy."
         );
       }
       const planUpdate = planCalls.length === 1 ? parsePlanControl(planCalls[0]!) : null;
       const inputRequest = inputCalls.length === 1 ? parseInputControl(inputCalls[0]!) : null;
+      const directResponse = directResponseCalls.length === 1
+        ? parseDirectResponseControl(directResponseCalls[0]!)
+        : null;
       const actionTypes = [
         ...(planUpdate === null ? [] : ["set_plan"]),
         ...(inputRequest !== null
           ? ["request_input"]
+          : directResponse !== null
+            ? ["propose_finish"]
           : delegationCalls.length === 1
             ? ["delegate_workers"]
           : runtimeCalls.length > 0
@@ -224,7 +240,14 @@ export async function runAgentLoop(
           );
         }
       }
-      if (inputCalls.length === 1) {
+      if (directResponse !== null) {
+        run = await runtime.dispatch(
+          run,
+          compileModelFinish(run, directResponse.text, "direct_response"),
+          signal,
+          observer
+        );
+      } else if (inputCalls.length === 1) {
         if (shouldRepairPrematureInputRequest(run, decisionContext)) {
           run = runtime.rejectResponse(
             run,
@@ -246,7 +269,11 @@ export async function runAgentLoop(
         const toolAction = compileProviderToolCalls(run, runtimeCalls);
         run = await runtime.dispatch(run, toolAction, signal, observer);
       } else if (response.toolCalls.length === 0) {
-        const finishAction = compileModelFinish(run, response.text!);
+        const finishAction = compileModelFinish(
+          run,
+          response.text!,
+          bareTextCompletionMode(run, decisionContext)
+        );
         run = await runtime.dispatch(run, finishAction, signal, observer);
       }
       if (delegationCalls.length === 1) {
@@ -274,6 +301,19 @@ export async function runAgentLoop(
     }
   }
   return toRunResult(run);
+}
+
+function bareTextCompletionMode(
+  run: RunSnapshot,
+  context: DecisionContextResult["context"]
+): "task_result" | "direct_response" {
+  const executionStarted = run.currentPlan !== null
+    || run.taskContract !== null
+    || run.budgetsUsed.toolCalls > 0;
+  return !executionStarted
+    && (context.tools.length === 0 || run.completionRequirements.evidence === "optional")
+    ? "direct_response"
+    : "task_result";
 }
 
 function shouldRepairPrematureInputRequest(

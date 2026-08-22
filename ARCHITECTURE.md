@@ -196,7 +196,7 @@ Provider Adapter 每轮归一化为只含事实的 `ModelResponse`：
 { text: string | null, toolCalls: [{ callId, name, arguments }], finishReason: string | null }
 ```
 
-Provider 只选择 Runtime Tool、提供业务参数、调用 `nexora_update_plan` / `nexora_request_input` 控件或返回最终文本，不提供 Runtime-owned Task Contract、Requirement、Plan/Step/Check/Invocation/Evidence ID、version、binding、Approval、Action 或完成状态。Harness 按响应形状确定性路由：Plan control 编译 `set_plan`，Runtime Tool calls 编译 `call_tool`/`execute_step`，input control 编译 `request_input`，无调用的非空文本编译 `propose_finish`。控件不产生 Tool Invocation；Runtime 只校验并执行内部机械命令。
+Provider 只选择 Runtime Tool、提供业务参数、调用 `nexora_respond` / `nexora_update_plan` / `nexora_request_input` 控件或返回已有执行事实的最终文本，不提供 Runtime-owned Task Contract、Requirement、Plan/Step/Check/Invocation/Evidence ID、version、binding、Approval、Action 或完成状态。Harness 按响应形状确定性路由：`nexora_respond` 只表达“现有 Authority 已足够”的直接回复提议，Plan control 编译 `set_plan`，Runtime Tool calls 编译 `call_tool`/`execute_step`，input control 编译 `request_input`，执行后的非空文本编译 task-result `propose_finish`。控件不产生 Tool Invocation；Runtime 对直接回复和任务结果分别执行机械 hard gate。
 
 Harness 在调用 Provider 前自动恢复最新 Input 明确点名的已发布 ref、最高相关 Memory，以及 active Task 未满足的 `context_ref` Check；成功恢复通过 Runtime port 生成真实 Run-owned Context Evidence，失败仍遵守统一 scope/digest/预算错误。Provider 不需要也不能提交恢复协议命令。
 

@@ -58,7 +58,7 @@ flowchart TD
     MATCH -- "否" --> OUTCOME["只保存真实 Invocation outcome<br/>不伪造 Check Evidence"]
     EVIDENCE --> LOOP
     OUTCOME --> LOOP
-    COMPILE -- "text → propose_finish" --> CITE["Runtime 自动派生 Result provenance<br/>真实 Evidence + Invocation + Artifact"]
+    COMPILE -- "respond control / final text → propose_finish" --> CITE["Runtime 按 direct_response / task_result<br/>执行确定性 Completion Gate"]
     CITE --> DET["确定性 Completion Gate<br/>状态 + 未决请求 + Invocation + mechanical Checks"]
     DET -- "失败" --> REPAIR["具体机械缺口 + 有界局部修复"]
     REPAIR --> LOOP

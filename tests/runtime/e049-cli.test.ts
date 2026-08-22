@@ -75,6 +75,34 @@ describe("E049 natural-language CLI", () => {
     expect(result.stderr).toContain("MODEL_CONFIG_ERROR");
   });
 
+  it("automatically accepts a grounded direct-response control with workspace Tools registered", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e049-cli-direct-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume the request */ }
+      calls += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(
+        structuredTool("nexora_respond", { text: "I am Nexora." })
+      ) } }] }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+
+    const direct = await spawnCli(["Who are you?", "--cwd", workspace], providerEnvironment(address.port));
+    server.close();
+
+    expect(direct.code).toBe(0);
+    expect(JSON.parse(direct.stdout)).toMatchObject({
+      status: "succeeded",
+      summary: "I am Nexora.",
+      evidence: []
+    });
+    expect(calls).toBe(1);
+  });
+
   it("blocks Tool-enabled text-only completion unless the Host opts into a direct answer", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e049-cli-completion-"));
     roots.push(workspace);

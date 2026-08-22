@@ -9,12 +9,15 @@ import {
   ModelResponseSchema,
   ModelPlanUpdateSchema,
   ModelInputRequestSchema,
+  ModelDirectResponseSchema,
+  DIRECT_RESPONSE_CONTROL,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
   type ModelPlanTask,
   type ModelPlanUpdate,
   type ModelInputRequest,
+  type ModelDirectResponse,
   type ModelResponse,
   type ProviderToolCall
 } from "./providers/model-response.js";
@@ -82,6 +85,13 @@ export function parseInputControl(call: ProviderToolCall): ModelInputRequest {
   return ModelInputRequestSchema.parse(call.arguments);
 }
 
+export function parseDirectResponseControl(call: ProviderToolCall): ModelDirectResponse {
+  if (call.name !== DIRECT_RESPONSE_CONTROL) {
+    throw new ActionRejectedError(`Expected ${DIRECT_RESPONSE_CONTROL}, received ${call.name}.`);
+  }
+  return ModelDirectResponseSchema.parse(call.arguments);
+}
+
 export function compileModelPlan(
   run: RunSnapshot,
   update: ModelPlanUpdate,
@@ -130,9 +140,10 @@ export function compileProviderToolCalls(
 
 export function compileModelFinish(
   _run: RunSnapshot,
-  text: string
+  text: string,
+  completionMode: "task_result" | "direct_response" = "task_result"
 ): Extract<RuntimeAction, { type: "propose_finish" }> {
-  return { type: "propose_finish", summary: text };
+  return { type: "propose_finish", summary: text, completionMode };
 }
 
 function compilePlanTasks(input: {

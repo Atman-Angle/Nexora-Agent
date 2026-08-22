@@ -31,29 +31,33 @@ The current Runtime has four system-level liveness gaps:
 
 ## 3. Completion Contract
 
-The Host owns mechanical completion requirements because only the embedding
-application knows whether a request is a direct answer, an observation, a
-workspace mutation or a domain operation. The Provider may not create, weaken
-or replace these requirements.
+The Host owns explicit mechanical completion requirements. When the Host does
+not force a mode, Harness may propose either a grounded direct response or an
+Evidence-backed task result during the normal decision turn. The Provider may
+not create, weaken or replace Host requirements, and Runtime remains the only
+completion authority.
 
 Every Run persists one `CompletionRequirements` value:
 
 ```ts
 type CompletionRequirements = {
-  evidence: "optional" | "required";
+  evidence: "auto" | "optional" | "required";
   requiredToolNames: readonly string[];
 };
 ```
 
 Rules:
 
-- with no registered Tools, the default is `evidence: "optional"`;
-- with one or more registered Tools, the safe default is
-  `evidence: "required"`;
-- a Host must explicitly select `optional` for a direct-answer Run when Tools
-  are registered;
+- the default is `evidence: "auto"`, independent of registered Tool count;
+- Harness uses `nexora_respond` only when the complete answer is grounded in
+  authoritative Context already present and no Plan, Tool, user input or
+  external observation is needed;
+- Runtime accepts an `auto` direct response only before Plan/Tool execution;
+- an `auto` task result requires eligible persisted Evidence;
+- a Host may explicitly select `optional` to permit a direct answer or
+  `required` to forbid one;
 - every `requiredToolNames` entry must name a registered Tool and implies
-  `evidence: "required"`;
+  a strict Evidence-backed task result;
 - completion requires at least one eligible persisted Evidence item when
   Evidence is required;
 - every required Tool must have at least one successful Invocation whose
@@ -64,9 +68,10 @@ This is a mechanical guarantee. Semantic or domain correctness still belongs
 to Host-declared Tools, checks and external graders; the Runtime must not claim
 that arbitrary natural language is semantically proved.
 
-The workspace CLI uses the safe Evidence-required default. It exposes explicit
-direct-answer and required-Tool options rather than classifying intent with
-hard-coded words or another model call.
+CLI and Desktop use the same `auto` path. Harness makes the grounding decision
+inside the existing Provider turn; it does not use hard-coded intent words or
+an additional classifier call. `--direct-answer` and required-Tool options
+remain explicit Host overrides.
 
 ## 4. Resumable Resource Boundaries
 
@@ -118,9 +123,9 @@ invent a lossy summary.
 ## 7. Acceptance
 
 1. An effect request followed by text-only Provider output cannot succeed under
-   the default Tool-enabled completion requirements.
-2. Tool-free direct answers and explicitly opted-in direct answers still
-   succeed without fabricated Evidence.
+   default `auto` completion.
+2. A Tool-enabled Run can complete one explicit grounded direct response
+   without fabricated Evidence, while explicit Host requirements remain strict.
 3. Required Tool names are configuration-validated and completion-enforced.
 4. Every Runtime budget pause is inspectable and resumes only with the required
    monotonic extension; completed Effects are not replayed.

@@ -61,6 +61,7 @@ Nexora 提供 Harness 与 Runtime 两层。它不是另一个 Agent 人格，也
 - **它必须承受进程中断。** 持久状态允许进程重启后重新打开 Run。
 - **它不能盲目重复副作用。** Recovery 能区分安全重试和状态未知的非幂等操作。
 - **它的结果必须可信。** Evidence 与 Completion Gate 阻止看似合理的模型文本冒充成功。
+- **它区分有依据的直接回复与真实执行。** Harness 可以根据已有权威 Context 直接回答；涉及工作区或外部事实的任务仍必须产生真实 Tool Evidence。
 - **它可以有界委派工作。** Supervisor 能协调隔离的 Child Run，但 Worker 不获得 Parent Authority。
 - **它需要进入真实产品。** Nexora 通过 TypeScript API 嵌入，不接管领域数据或 UI。
 

@@ -167,7 +167,8 @@ const RequestInputActionSchema = z.object({
 
 const ProposeFinishActionSchema = z.object({
   type: z.literal("propose_finish"),
-  summary: NonEmptyString
+  summary: NonEmptyString,
+  completionMode: z.enum(["task_result", "direct_response"]).default("task_result")
 }).strict();
 
 const DelegateWorkerAssignmentSchema = z.object({
@@ -254,7 +255,7 @@ export const RuntimeBudgetExtensionSchema = z.object({
 export type RuntimeBudgetExtension = z.infer<typeof RuntimeBudgetExtensionSchema>;
 
 export const CompletionRequirementsSchema = z.object({
-  evidence: z.enum(["optional", "required"]),
+  evidence: z.enum(["auto", "optional", "required"]),
   requiredToolNames: z.array(NonEmptyString).default([])
 }).strict().superRefine((requirements, context) => {
   if (new Set(requirements.requiredToolNames).size !== requirements.requiredToolNames.length) {
@@ -315,7 +316,7 @@ export const RunSnapshotSchema = z.object({
   currentPlan: StructuredPlanSchema.nullable(),
   stepProgress: z.array(StepProgressSchema),
   pendingRequest: PendingRequestSchema.nullable(),
-  completionRequirements: CompletionRequirementsSchema.default({ evidence: "optional", requiredToolNames: [] }),
+  completionRequirements: CompletionRequirementsSchema.default({ evidence: "auto", requiredToolNames: [] }),
   budgets: RuntimeBudgetsSchema,
   budgetsUsed: BudgetUsageSchema,
   result: RunResultRecordSchema.nullable(),
@@ -705,7 +706,7 @@ export function createInitialRunSnapshot(input: {
     currentPlan: null,
     stepProgress: [],
     pendingRequest: null,
-    completionRequirements: input.completionRequirements ?? { evidence: "optional", requiredToolNames: [] },
+    completionRequirements: input.completionRequirements ?? { evidence: "auto", requiredToolNames: [] },
     budgets: input.budgets ?? DEFAULT_RUNTIME_BUDGETS,
     budgetsUsed: { iterations: 0, modelCalls: 0, toolCalls: 0, retries: 0, startedAt: now },
     result: null,

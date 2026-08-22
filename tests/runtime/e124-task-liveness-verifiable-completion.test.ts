@@ -14,6 +14,7 @@ import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
 import {
   ScriptedRuntimeProvider,
   responseCall,
+  responseDirect,
   responseInput,
   responseText,
   successfulReadTool
@@ -26,6 +27,25 @@ afterEach(() => {
 });
 
 describe("E124 task liveness and verifiable completion", () => {
+  it("allows a Tool-enabled Run to make one explicit grounded direct response", async () => {
+    const workspace = tempRoot();
+    const provider = new ScriptedRuntimeProvider([responseDirect("I am Nexora.")]);
+    const runtime = createAgent({ workspace, provider, tools: [successfulReadTool()] });
+
+    const result = await runtime.start({ input: "Who are you?" });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result).toMatchObject({ status: "succeeded", stopReason: "COMPLETED", evidence: [] });
+    expect(view.snapshot.completionRequirements).toEqual({ evidence: "auto", requiredToolNames: [] });
+    expect(view.toolInvocations).toEqual([]);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
+    expect(view.events.find((event) => event.type === "model.turn")?.payload).toMatchObject({
+      controlCallCount: 1,
+      compiledActionTypes: ["propose_finish"]
+    });
+  });
+
   it("rejects text-only completion until the default Tool-enabled Run has real Evidence", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
@@ -40,7 +60,29 @@ describe("E124 task liveness and verifiable completion", () => {
     await runtime.close();
 
     expect(result).toMatchObject({ status: "succeeded", stopReason: "COMPLETED" });
-    expect(view.snapshot.completionRequirements).toEqual({ evidence: "required", requiredToolNames: [] });
+    expect(view.snapshot.completionRequirements).toEqual({ evidence: "auto", requiredToolNames: [] });
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
+    expect(view.toolInvocations).toHaveLength(1);
+    expect(result.evidence).toHaveLength(1);
+  });
+
+  it("does not let a direct-response proposal bypass an explicit Host Evidence requirement", async () => {
+    const workspace = tempRoot();
+    const provider = new ScriptedRuntimeProvider([
+      responseDirect("No inspection is necessary."),
+      responseCall("filesystem.read", { path: "target.txt" }),
+      responseText("The target was inspected with persisted Evidence.")
+    ]);
+    const runtime = createAgent({ workspace, provider, tools: [successfulReadTool()] });
+
+    const result = await runtime.start({
+      input: "Inspect target.txt.",
+      completion: { evidence: "required", requiredToolNames: [] }
+    });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result).toMatchObject({ status: "succeeded", stopReason: "COMPLETED" });
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
     expect(view.toolInvocations).toHaveLength(1);
     expect(result.evidence).toHaveLength(1);

@@ -23,6 +23,7 @@ import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
+  DIRECT_RESPONSE_CONTROL,
   isControlCall
 } from "./providers/model-response.js";
 import {
@@ -93,7 +94,7 @@ function validateProvider(provider: RuntimeProvider): RuntimeProvider {
 }
 
 function validateReservedToolNames(tools: CreateAgentOptions["tools"]): void {
-  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL, DELEGATE_WORKERS_CONTROL]);
+  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL, DELEGATE_WORKERS_CONTROL, DIRECT_RESPONSE_CONTROL]);
   const conflict = tools.find((tool) => reserved.has(tool.contract.identity.name));
   if (conflict !== undefined) {
     throw new Error(`Runtime Tool name is reserved for a Harness control: ${conflict.contract.identity.name}`);
@@ -229,7 +230,10 @@ async function dispatchAgentAction(
   }
   if (action.type === "set_plan") return runtime.commitPlan(run, action, observer);
   if (action.type === "propose_finish") {
-    return runtime.completeRun(run, { summary: action.summary }, observer);
+    return runtime.completeRun(run, {
+      summary: action.summary,
+      completionMode: action.completionMode
+    }, observer);
   }
   return await runtime.dispatch(run, action, signal, observer);
 }

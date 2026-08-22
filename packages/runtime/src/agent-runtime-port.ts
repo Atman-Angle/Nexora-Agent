@@ -182,7 +182,10 @@ export interface AgentRuntimePort {
   withHeartbeat<T>(runId: string, operation: () => Promise<T>): Promise<T>;
   completeRun(
     run: RunSnapshot,
-    input: { readonly summary: string },
+    input: {
+      readonly summary: string;
+      readonly completionMode: "task_result" | "direct_response";
+    },
     observer?: RuntimeObserver
   ): RunSnapshot;
 }

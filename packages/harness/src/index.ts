@@ -137,6 +137,8 @@ export {
   ModelPlanTaskSchema,
   ProviderToolCallSchema,
   ModelInputRequestSchema,
+  ModelDirectResponseSchema,
+  DIRECT_RESPONSE_CONTROL,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
@@ -145,7 +147,8 @@ export {
   type ModelPlanUpdate,
   type ModelPlanTask,
   type ProviderToolCall,
-  type ModelInputRequest
+  type ModelInputRequest,
+  type ModelDirectResponse
 } from "./providers/model-response.js";
 
 export {

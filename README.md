@@ -61,6 +61,7 @@ Use Nexora when an Agent must do more than return one model response:
 - **It must survive interruption.** Persisted state allows a Run to be reopened after a process restart.
 - **It cannot repeat side effects blindly.** Recovery distinguishes safe retry from unknown non-idempotent effects.
 - **Its result must be defensible.** Evidence and the Completion Gate prevent plausible model text from impersonating success.
+- **It distinguishes grounded replies from executed work.** The Harness may answer directly from authoritative context, while workspace or external work still requires real Tool Evidence.
 - **It can delegate bounded work.** A Supervisor can coordinate isolated Child Runs without giving Workers authority over the Parent.
 - **It lives inside a real product.** Nexora embeds through a TypeScript API and does not take ownership of domain data or UI.
 

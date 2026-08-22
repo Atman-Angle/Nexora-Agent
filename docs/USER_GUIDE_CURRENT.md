@@ -41,14 +41,15 @@ pnpm nexora "读取 note.txt，把 before 改成 after，运行测试并确认�
 
 未提供目标时，CLI 会提示 `What should Nexora do?`。在PowerShell等TTY终端中，带目标的CLI也会留在当前进程：遇到Approval时显示精确Action并询问，遇到Input Request时直接收集回答，直到终态。成功时`summary`直接包含经过验证的最终回答。管道、CI等非TTY环境保持一次调用返回`waiting`。
 
-CLI 注册了工作区 Tool，因此默认完成要求至少一项合法 Evidence。纯问答任务必须由调用方显式声明：
+CLI 注册了工作区 Tool，但默认 `auto` 完成语义允许 Harness 在现有权威 Context 足够时直接回答；依赖当前文件、Git、命令或外部状态的请求仍必须调用对应 Tool 并产生 Evidence。无需为普通纯问答增加参数：
 
 ```powershell
+pnpm nexora "你是谁" --cwd D:\project
 pnpm nexora "解释这段错误信息" --cwd D:\project --direct-answer
 pnpm nexora "读取配置并确认内容" --cwd D:\project --require-tool filesystem.read
 ```
 
-`--require-tool` 可重复；它只接受已注册 Tool。CLI 不通过关键词或额外模型调用猜测任务类型。
+`--direct-answer` 保留为 Host 显式宽松覆盖；`--require-tool` 可重复且只接受已注册 Tool。CLI 不通过关键词或额外模型调用猜测任务类型；Harness 在正常决策轮中选择 grounded direct response 或 Tool，Runtime 最终校验。
 
 ### 查看 Run
 
@@ -201,7 +202,7 @@ ModelResponse.toolCalls = [] + 非空 ModelResponse.text
 
 完成阶段不再调用同步语义 Validator。Plan、TaskContract、Evidence/Invocation ID、digest、Fencing 和 Result provenance 都由 Runtime 确定性检查，不交给模型生成或判断。objective-only Plan Step 是导航，不自动产生 required Check；只有 Host/Tool Contract 明确声明的机械 Check 才能阻塞完成。
 
-跨 Run 或 digest 不一致的 Evidence、started/unknown Invocation、未决 Approval、未满足的 required mechanical Check、非零命令和 Provider 失败均不能成为成功。历史 failed Invocation 本身不阻塞模型采用其他真实路径完成；未注册 Tool 的 Runtime 默认允许空 provenance，已注册 Tool 时只有 Host 显式选择 `evidence: "optional"` 才允许直接回答，任何路径都不能伪造 Evidence。
+跨 Run 或 digest 不一致的 Evidence、started/unknown Invocation、未决 Approval、未满足的 required mechanical Check、非零命令和 Provider 失败均不能成为成功。历史 failed Invocation 本身不阻塞模型采用其他真实路径完成；默认 `auto` 只允许尚未开始 Plan/Tool 的 grounded direct response 使用空 provenance，任务结果仍必须引用真实 Evidence，任何路径都不能伪造 Evidence。
 
 ## 8. 当前限制
 

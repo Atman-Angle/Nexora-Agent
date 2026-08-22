@@ -33,6 +33,7 @@ pnpm desktop
 
 1. 点击左上角 `＋` 添加 Project；每个 Project 对应一个 Workspace。
 2. 点击 **New Task**，在底部输入目标并提交。
+   普通问答可由 Harness 基于现有权威 Context 直接回复；依赖当前项目文件、Git、命令或外部状态时，Agent 会进入同一 Run 的真实 Tool / Evidence 路径。
 3. 在 Conversation 中查看用户输入、轻量 Tool 活动、Validation 和正式 Result。
 4. 点击 Tool 行可展开真实参数、结果、错误、耗时和 Invocation ID。
 5. Runtime 存在 Structured Plan 时，Composer 上方会出现只读 Plan 摘要；点击原地展开。

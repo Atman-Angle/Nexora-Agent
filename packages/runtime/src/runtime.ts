@@ -332,7 +332,7 @@ export class RuntimeEngine {
         : RuntimeBudgetsSchema.parse(input.budgets);
       completionRequirements = CompletionRequirementsSchema.parse(
         input.completion ?? {
-          evidence: this.#tools.size === 0 ? "optional" : "required",
+          evidence: "auto",
           requiredToolNames: []
         }
       );
@@ -1594,7 +1594,7 @@ export class RuntimeEngine {
 
   #completeAgentRun(
     run: RunSnapshot,
-    input: { readonly summary: string },
+    input: { readonly summary: string; readonly completionMode: "task_result" | "direct_response" },
     observer?: RuntimeObserver
   ): RunSnapshot {
     const activeWorkers = this.#store.listBranches(run.runId).filter((branch) => {
@@ -1608,7 +1608,8 @@ export class RuntimeEngine {
     const validation = validateCompletion(
       run,
       this.#store.listToolInvocations(run.runId),
-      (digest) => new ArtifactStore(this.#artifactDir).verify(digest)
+      (digest) => new ArtifactStore(this.#artifactDir).verify(digest),
+      input.completionMode
     );
     if (!validation.passed) {
       throw new ActionRejectedError(`Completion is not valid: ${validation.issues.join(", ")}`);
@@ -1647,7 +1648,7 @@ export class RuntimeEngine {
       run,
       succeeded,
       "run.succeeded",
-      { evidenceIds, completionGate: "deterministic" },
+      { evidenceIds, completionGate: "deterministic", completionMode: input.completionMode },
       observer
     );
   }

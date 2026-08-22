@@ -21,7 +21,8 @@ export function digestTaskContract(contract: TaskContract): string {
 export function validateCompletion(
   run: RunSnapshot,
   invocations: readonly ToolInvocation[],
-  artifactExists: (digest: string) => boolean = () => true
+  artifactExists: (digest: string) => boolean = () => true,
+  completionMode: "task_result" | "direct_response" = "task_result"
 ): CompletionValidation {
   const issues: string[] = [];
   const plan = run.currentPlan;
@@ -60,7 +61,20 @@ export function validateCompletion(
     return true;
   });
 
-  if (run.completionRequirements.evidence === "required" && eligibleEvidence.length === 0) {
+  if (completionMode === "direct_response") {
+    if (
+      run.completionRequirements.evidence === "required"
+      || run.completionRequirements.requiredToolNames.length > 0
+    ) {
+      issues.push("DIRECT_RESPONSE_FORBIDDEN_BY_HOST");
+    }
+    if (plan !== null || contract !== null) issues.push("DIRECT_RESPONSE_AFTER_PLAN");
+    if (invocations.length > 0) issues.push("DIRECT_RESPONSE_AFTER_TOOL");
+  }
+
+  const evidenceRequired = run.completionRequirements.evidence === "required"
+    || (run.completionRequirements.evidence === "auto" && completionMode === "task_result");
+  if (evidenceRequired && eligibleEvidence.length === 0) {
     issues.push("COMPLETION_EVIDENCE_REQUIRED");
   }
   for (const toolName of run.completionRequirements.requiredToolNames) {

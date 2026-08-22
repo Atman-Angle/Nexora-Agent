@@ -7,6 +7,7 @@ import type {
   RuntimeProvider
 } from "../../packages/harness/src/index.js";
 import {
+  DIRECT_RESPONSE_CONTROL,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL
 } from "../../packages/harness/src/index.js";
@@ -197,6 +198,10 @@ export function responsePlanAndTools(
 
 export function responseInput(question: string, reason: string): ModelResponse {
   return responseCall(REQUEST_INPUT_CONTROL, { question, reason });
+}
+
+export function responseDirect(text: string): ModelResponse {
+  return responseCall(DIRECT_RESPONSE_CONTROL, { text });
 }
 
 export function responseText(text: string): ModelResponse {

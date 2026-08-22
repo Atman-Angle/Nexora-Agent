@@ -64,7 +64,8 @@ Harness routing is deterministic:
 | one or more registered Runtime Tool calls | `call_tool` or `execute_step` |
 | `nexora_update_plan` control call | `set_plan` |
 | `nexora_request_input` control call | `request_input` |
-| no calls and non-empty text | `propose_finish` |
+| `nexora_respond` control | grounded direct-response `propose_finish` |
+| no calls and non-empty text | task-result `propose_finish` (or direct only when no Tools / Host explicitly permits it) |
 | no calls and empty text | reject as a Provider response protocol error |
 
 If text and Tool calls coexist, Tool calls take precedence and text is audit-only; it cannot finish the Run. A request-input control call must be the only call in its response. A Plan control call may precede Runtime Tool calls in the same response. Provider batches remain bounded to eight calls.
