@@ -22,6 +22,7 @@ afterEach(() => {
   }
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe("E084 Model / Provider configuration", () => {
@@ -64,6 +65,32 @@ describe("E084 Model / Provider configuration", () => {
     await expect(
       provider.decide(decisionContext(null), { signal: new AbortController().signal })
     ).rejects.toThrow("Provider request timed out.");
+  });
+
+  it("allows qwen3.7-flash reasoning calls longer than the generic 60-second timeout", async () => {
+    vi.useFakeTimers();
+    let providerAborted = false;
+    const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        providerAborted = true;
+        reject(init.signal?.reason);
+      });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const provider = openAICompatibleProviderFromEnv({
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
+      NEXORA_MODEL_API_KEY: "test-key",
+      NEXORA_MODEL_NAME: "qwen3.7-flash"
+    });
+    const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
+    const rejection = expect(decision).rejects.toThrow("Provider request timed out.");
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(providerAborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(120_000);
+    await rejection;
   });
 
   it("maps the reasoning policy to the declared vendor thinking toggle", async () => {

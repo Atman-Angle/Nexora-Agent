@@ -243,7 +243,7 @@ export async function runAgentLoop(
       if (directResponse !== null) {
         run = await runtime.dispatch(
           run,
-          compileModelFinish(run, directResponse.text, "direct_response"),
+          compileModelFinish(run, directResponse.text, directControlCompletionMode(run)),
           signal,
           observer
         );
@@ -314,6 +314,14 @@ function bareTextCompletionMode(
     && (context.tools.length === 0 || run.completionRequirements.evidence === "optional")
     ? "direct_response"
     : "task_result";
+}
+
+function directControlCompletionMode(run: RunSnapshot): "task_result" | "direct_response" {
+  return run.currentPlan !== null
+    || run.taskContract !== null
+    || run.budgetsUsed.toolCalls > 0
+    ? "task_result"
+    : "direct_response";
 }
 
 function shouldRepairPrematureInputRequest(

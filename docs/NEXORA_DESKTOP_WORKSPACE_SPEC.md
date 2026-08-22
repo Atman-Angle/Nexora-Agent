@@ -97,7 +97,7 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 
 - 用户提交的目标或对 Input Request 的回复；
 - Runtime 真正持久化并通过公开 Contract 暴露的 Agent delivery / result；
-- Provider 通过 Harness 公共输出通道返回的公开 `content/text` 工作说明；
+- Provider 通过 Harness 公共输出通道明确返回的 `content` / `reasoning_content` 过程文字；
 - Plan 更新摘要；
 - Read、Search、Command、Edit 等 Tool Invocation；
 - Tool 成功、失败或结果未知；
@@ -106,9 +106,9 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 - Artifact 产生；
 - Run blocked、resumed、failed、cancelled 或 succeeded。
 
-权威条目由 `RunInspection`、持久化 Runtime Event、Tool Invocation、Evidence 和 Result 确定性投影。Provider 的公开文字是临时 Conversation 投影，必须标记为 Agent 输出，不得被当作 Tool 成功、Evidence 或完成事实；不得显示模型私有推理或根据时间间隔编造“思考过程”。
+权威条目由 `RunInspection`、持久化 Runtime Event、Tool Invocation、Evidence 和 Result 确定性投影。Provider 的公开文字是临时 Conversation 投影，必须标记为 Agent 输出，不得被当作 Tool 成功、Evidence 或完成事实；可以显示 Provider 明确返回的 `reasoning_content`，但不得生成、补全或推断 Provider 未返回的隐藏推理，也不得根据时间间隔编造“思考过程”。
 
-Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的公开文字增量。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。`native_tools` 可使用 SSE；`structured_output` 未完成的 JSON 不作为 Markdown 展示。
+Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的 `content` 与 `reasoning_content` 增量。`reasoning_content` 只进入临时展示通道，不并入最终 `ModelResponse.text`。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。`native_tools` 可使用 SSE；`structured_output` 未完成的 JSON 不作为 Markdown 展示。
 
 Agent 公开输出和正式 Result 使用经过转义的 Markdown 渲染。原始 HTML 和非 `http`、`https`、`mailto` 链接不得成为可执行内容。
 
@@ -235,7 +235,7 @@ Desktop 不能为了界面完整读取内部 Store。实现前需要验证并在
 - Fork / Merge UI、多 Agent 拓扑或 Worker 调度面板；
 - 向 active Run 并发追加输入、复活终态 Run，或物理删除 Runtime 审计记录；
 - Memory、MCP、Skill、插件市场或 Workflow 编辑器；
-- 模型私有思维链、伪造流式文本或不存在的主动输入能力；Provider 实际返回的公开 `content/text` 不属于私有思维链；
+- 未由 Provider 返回的隐藏思维链、伪造流式文本或不存在的主动输入能力；Provider 明确返回的 `content` / `reasoning_content` 可以作为非权威临时过程文字展示；
 - 云同步、账户、自动更新、签名发布或多平台发布承诺。
 
 后续能力只能由真实 Desktop 使用摩擦或 Runtime Contract 缺口触发。

@@ -88,7 +88,7 @@ const runtime = createAgent({
 - `NEXORA_MODEL_API_KEY`；
 - `NEXORA_MODEL_NAME`；
 - `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`；
-- 可选 `NEXORA_MODEL_TIMEOUT_MS`；
+- 可选 `NEXORA_MODEL_TIMEOUT_MS`；未设置时通用模型为 60 秒，capability catalog 中的 `qwen3.7-flash` 为 180 秒；
 
 decision 输出预算必须是正整数、小于模型总上下文，并且不超过模型最大输出能力。总上下文窗口由 Adapter 根据 `NEXORA_MODEL_NAME` 的已验证能力自动匹配，不接受生产环境手工覆盖；未知模型会在创建 Run 前失败，不能猜测窗口。
 
@@ -511,7 +511,7 @@ Provider 通过 `nexora_update_plan` control 提交可选 `goal` 与有序 `{ ob
 
 Plan 是可选导航，不是执行许可或 Tool 白名单。已知工作跨多个文件/组件、包含相互依赖的实现与验证结果，或预计超过三次 Tool 调用时，应在首次 mutation 前以 2–7 个可独立验证的剩余 outcome 创建初始 Plan；范围未知时只做最小必要的只读探索，再在 mutation 前创建 Plan。直接回答、一次观察或一个明显的局部修改不需要 Plan。outcome 完成后立即从快照移除，因此后续快照可以只剩最后 1 项；冲突或新事实改变剩余工作时立即修订，不能把历史 Tool 调用清单当作 TODO。
 
-生产 `ModelResponse` 不接受模型 Action。Harness 只按原生/strict-structured Tool Calls、`nexora_respond`、`nexora_update_plan`、`nexora_request_input` 和已有执行事实后的非空最终文本确定性路由。native mode 的普通 JSON content 永远不会被解析或执行；空响应、未知 Tool、非法 batch 和旧 Action envelope 都会整体拒绝。
+生产 `ModelResponse` 不接受模型 Action。Harness 只按原生/strict-structured Tool Calls、`nexora_respond`、`nexora_update_plan`、`nexora_request_input` 和已有执行事实后的非空最终文本确定性路由。`nexora_respond` 在尚未执行 Plan/Tool 时是 direct response；若 Provider 在已有执行事实后误用它，同一文字按 evidence-gated task result 处理，不绕过 Completion Gate，也不额外请求模型修正控制名称。native mode 的普通 JSON content 永远不会被解析或执行；空响应、未知 Tool、非法 batch 和旧 Action envelope 都会整体拒绝。
 
 `createAgent()` 还可接收 Host Policy、由 `createAgentProfileSnapshot()` 创建的版本化 Profile，以及 Host 授权的 Project Instructions。Prompt Compiler 以 Kernel/Transport/Host/Profile/Project/Tool 的稳定顺序编译请求，Profile 仅是 strategy-only 内容，不能改变 Tool、权限、Approval、Evidence、Completion Gate 或 Run Status。Provider Adapter 每个 Run 固定选择 `native_tools` 或 strict `structured_output`，并把实际 cache usage 按 Attempt 写入审计。
 

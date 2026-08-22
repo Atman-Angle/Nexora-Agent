@@ -96,6 +96,29 @@ describe("E119 progressive Agent execution", () => {
     await runtime.close();
   });
 
+  it("treats nexora_respond after Plan and Tool execution as an evidence-gated task result", async () => {
+    const runtime = createAgent({
+      workspace: tempRoot(),
+      provider: decisionProvider([
+        () => responsePlanAndTools({
+          goal: "Read customer-42.",
+          tasks: [{ objective: "Read the current customer record." }]
+        }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]),
+        () => responseCall("nexora_respond", { text: "Customer 42 is active." })
+      ]),
+      tools: [recordLookupTool()]
+    });
+
+    const result = await runtime.start({ input: "Read customer-42." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "succeeded", summary: "Customer 42 is active." });
+    expect(view.snapshot.result?.evidenceIds).toEqual([view.snapshot.evidence[0]!.id]);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
+    expect(view.modelCalls).toHaveLength(2);
+    await runtime.close();
+  });
+
   it("allows read-only exploration before creating a Plan", async () => {
     const contexts: ModelDecisionContext[] = [];
     const runtime = createAgent({

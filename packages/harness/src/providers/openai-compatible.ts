@@ -55,11 +55,13 @@ class RetryableProviderError extends Error {
 const MODEL_CAPABILITIES: Readonly<Record<string, {
   readonly contextWindowTokens: number;
   readonly maxOutputTokens: number;
+  readonly defaultTimeoutMs?: number;
   readonly estimatedInputMultiplier?: Readonly<Record<ProviderCompletionRequest["phase"], number>>;
 }>> = Object.freeze({
   "qwen3.7-flash": Object.freeze({
     contextWindowTokens: 1_000_000,
     maxOutputTokens: 131_072,
+    defaultTimeoutMs: 180_000,
     estimatedInputMultiplier: Object.freeze({ decision: 1.8 })
   }),
   "deepseek-v4-flash-0731": Object.freeze({
@@ -80,7 +82,7 @@ export function openAICompatibleProviderFromEnv(
   const model = required(environment, "NEXORA_MODEL_NAME");
   const modelCapability = MODEL_CAPABILITIES[model];
   const timeoutRaw = environment.NEXORA_MODEL_TIMEOUT_MS?.trim();
-  const timeoutMs = timeoutRaw ? Number(timeoutRaw) : 60_000;
+  const timeoutMs = timeoutRaw ? Number(timeoutRaw) : modelCapability?.defaultTimeoutMs ?? 60_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
     throw new ModelConfigError("NEXORA_MODEL_TIMEOUT_MS must be a positive integer.");
   }
@@ -159,7 +161,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     baseUrl = z.string().url().parse(options.baseUrl).replace(/\/$/, "");
     apiKey = z.string().trim().min(1).parse(options.apiKey);
     model = z.string().trim().min(1).parse(options.model);
-    timeoutMs = z.number().int().positive().parse(options.timeoutMs ?? 60_000);
+    timeoutMs = z.number().int().positive().parse(options.timeoutMs ?? MODEL_CAPABILITIES[model]?.defaultTimeoutMs ?? 60_000);
     temperature = z.number().min(0).max(2).parse(options.temperature ?? 0);
     reasoning = options.reasoning ?? "dynamic";
     thinkingToggleParam = options.thinkingToggleParam === undefined
@@ -314,6 +316,7 @@ const ProviderStreamChunkSchema = z.object({
     finish_reason: z.string().nullable().optional(),
     delta: z.object({
       content: z.string().nullable().optional(),
+      reasoning_content: z.string().nullable().optional(),
       tool_calls: z.array(z.object({
         index: z.number().int().nonnegative(),
         id: z.string().optional(),
@@ -351,6 +354,10 @@ async function normalizeStreamingResponse(
     if (chunk.usage !== undefined) usage = chunk.usage;
     for (const choice of chunk.choices ?? []) {
       if (choice.finish_reason !== undefined && choice.finish_reason !== null) finishReason = choice.finish_reason;
+      const reasoningDelta = choice.delta.reasoning_content;
+      if (reasoningDelta !== undefined && reasoningDelta !== null && reasoningDelta.length > 0) {
+        operation.reportPublicTextDelta?.(reasoningDelta);
+      }
       const delta = choice.delta.content;
       if (delta !== undefined && delta !== null && delta.length > 0) {
         content += delta;

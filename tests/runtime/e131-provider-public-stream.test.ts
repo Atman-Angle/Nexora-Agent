@@ -59,6 +59,7 @@ describe("E131 Provider public output stream", () => {
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       requestBody = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
       response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"choices":[{"delta":{"reasoning_content":"Checking current facts. "}}]}\n\n');
       response.write('data: {"choices":[{"delta":{"content":"**Verified"}}]}\n\n');
       response.write('data: {"choices":[{"delta":{"content":" result**"},"finish_reason":"stop"}],"usage":null}\n\n');
       response.end("data: [DONE]\n\n");
@@ -86,10 +87,41 @@ describe("E131 Provider public output stream", () => {
 
     expect(requestBody).toMatchObject({ stream: true });
     expect(result).toMatchObject({ status: "succeeded", summary: "**Verified result**" });
-    expect(output.map((event) => event.type)).toEqual(["text.delta", "text.delta", "text.completed"]);
+    expect(output.map((event) => event.type)).toEqual(["text.delta", "text.delta", "text.delta", "text.completed"]);
     expect(output.filter((event) => event.type === "text.delta").map((event) => event.text).join(""))
-      .toBe("**Verified result**");
+      .toBe("Checking current facts. **Verified result**");
     expect(output.every((event) => event.runId === result.runId)).toBe(true);
     expect(JSON.stringify(inspection.events)).not.toContain("text.delta");
+  });
+
+  it("discards provider-exposed process text when its Model attempt fails", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e131-discard-"));
+    roots.push(workspace);
+    const output: AgentPublicOutputEvent[] = [];
+    const runtime = createAgent({
+      workspace,
+      provider: {
+        modelProfile: {
+          provider: "test",
+          model: "test-model",
+          contextWindowTokens: 16_000,
+          reservedOutputTokens: { decision: 1_000 },
+          softLimitRatio: 0.8
+        },
+        transport: { kind: "native_tools", promptCache: { mode: "disabled" } },
+        async decide(_context, operation) {
+          operation.reportPublicTextDelta?.("This failed attempt must disappear.");
+          throw new Error("Provider failed after emitting process text.");
+        }
+      },
+      tools: [],
+      publicOutputListener: (event) => output.push(event)
+    });
+
+    const result = await runtime.start({ input: "Fail after a visible partial response." });
+    await runtime.close();
+
+    expect(result).toMatchObject({ status: "blocked", stopReason: "PROVIDER_UNAVAILABLE" });
+    expect(output.map((event) => event.type)).toEqual(["text.delta", "text.discarded"]);
   });
 });
