@@ -14,12 +14,13 @@ pnpm install
 NEXORA_MODEL_BASE_URL=https://your-provider.example/v1
 NEXORA_MODEL_API_KEY=replace-me
 NEXORA_MODEL_NAME=your-supported-model
+NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000
 NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096
 NEXORA_MODEL_TOOL_TRANSPORT=native_tools
 '@ | Set-Content -LiteralPath .env
 ```
 
-模型必须存在于当前 Harness capability catalog。Provider 只支持 `native_tools` 或 `structured_output`；具体兼容性见 [`packages/harness/src/providers/README.md`](../../packages/harness/src/providers/README.md)。
+内置 capability catalog 已知的模型可以省略 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`；自定义模型必须明确填写真实 Context Window。Provider 支持 `native_tools` 或 `structured_output`，具体兼容性见 [`packages/harness/src/providers/README.md`](../../packages/harness/src/providers/README.md)。
 
 启动桌面应用：
 
@@ -34,7 +35,7 @@ pnpm desktop
 1. 点击左上角 `＋` 添加 Project；每个 Project 对应一个 Workspace。
 2. 点击 **New Task**，在底部输入目标并提交。
    普通问答可由 Harness 基于现有权威 Context 直接回复；依赖当前项目文件、Git、命令或外部状态时，Agent 会进入同一 Run 的真实 Tool / Evidence 路径。
-3. 在 Conversation 中查看用户输入、轻量 Tool 活动、Validation 和正式 Result。
+3. 在 Conversation 中查看模型公开的流式工作说明、轻量 Tool 活动、Validation 和正式 Result。`native_tools` 支持公开 `content/text` 的真实 SSE 增量；`structured_output` 等待完整 JSON，不显示伪造流。
 4. 点击 Tool 行可展开真实参数、结果、错误、耗时和 Invocation ID。
 5. Runtime 存在 Structured Plan 时，Composer 上方会出现只读 Plan 摘要；点击原地展开。
 6. Runtime 等待输入或审批时，Composer 自动切换为回答或批准/拒绝入口。
@@ -42,9 +43,10 @@ pnpm desktop
 8. Agent 运行时 Composer 仍可输入。发送会先安全中断当前 Run，再在同一 Session 创建下一 Run；方形按钮只停止当前 Run。
 9. Run 终态后 Composer 仍可继续输入，Conversation 和 Activity 会保留同一 Session 中的全部 Run。
 10. Session 行悬停后可归档、恢复或从 Desktop 移除。移除不会物理删除 Runtime Run 和审计证据。
-11. Settings 可配置 Base URL、API Key、Model、decision tokens 和 Tool transport；运行中的 Session 必须先停止。
+11. `Enter` 发送，`Shift + Enter` 换行；中文输入法仍在组字时不会误发送。
+12. Settings 可增删改当前 Workspace 的 OpenAI-compatible 模型 Profile，包括 Base URL、API Key、Model ID、Context Window、decision tokens 和 Tool transport。顶部模型选择器决定后续新 Run 使用的 Profile；运行中的 Session 必须先停止才能切换。
 
-Run 数据保存在所选 Workspace 的 `.nexora` 中。Desktop 的最近 Project、Session→Run 链和归档导航信息保存在启动 Workspace 的 `.nexora/desktop-host.json`；它们不改变 Runtime Authority。不要直接编辑数据库或这些 Host 元数据。
+Run 数据保存在所选 Workspace 的 `.nexora` 中。Desktop 的最近 Project、Session→Run 链、模型 Profile 元数据和归档导航信息保存在启动 Workspace 的 `.nexora/desktop-host.json`；选中 Profile 会镜像到 Workspace `.env`，因此原有 CLI 继续使用同一配置。API Key 不进入 Renderer Snapshot。Host 元数据不改变 Runtime Authority。
 
 ## 测试与验收
 
@@ -55,7 +57,7 @@ pnpm typecheck
 pnpm lint
 pnpm build
 pnpm --filter @nexora/desktop build
-pnpm vitest run tests/runtime/d1-developer-runtime-golden-path.test.ts tests/runtime/d2-run-handle-interaction.test.ts tests/runtime/d2-runtime-events.test.ts tests/runtime/d4-package-consumer.test.ts tests/runtime/e129-desktop-read-projections.test.ts tests/runtime/e130-desktop-session-workspace.test.ts --no-file-parallelism
+pnpm vitest run tests/runtime/e084-model-config.test.ts tests/runtime/e121-provider-native-tool-protocol.test.ts tests/runtime/e129-desktop-read-projections.test.ts tests/runtime/e130-desktop-session-workspace.test.ts tests/runtime/e131-provider-public-stream.test.ts tests/runtime/e132-desktop-markdown.test.ts --no-file-parallelism
 ```
 
 使用 `.env` 中真实 Provider 的桌面端到端 UAT：
@@ -64,7 +66,7 @@ pnpm vitest run tests/runtime/d1-developer-runtime-golden-path.test.ts tests/run
 pnpm desktop:uat
 ```
 
-不使用外部凭据、同时验证“终态后在同一 Session 继续”的确定性 Electron UAT：
+不使用外部凭据，同时验证 Enter 发送、公开文字流、Markdown、真实 Tool/Evidence 和“终态后在同一 Session 继续”的确定性 Electron UAT：
 
 ```powershell
 pnpm desktop:uat:deterministic

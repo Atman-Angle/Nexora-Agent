@@ -93,6 +93,7 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 
 - 用户提交的目标或对 Input Request 的回复；
 - Runtime 真正持久化并通过公开 Contract 暴露的 Agent delivery / result；
+- Provider 通过 Harness 公共输出通道返回的公开 `content/text` 工作说明；
 - Plan 更新摘要；
 - Read、Search、Command、Edit 等 Tool Invocation；
 - Tool 成功、失败或结果未知；
@@ -101,9 +102,11 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 - Artifact 产生；
 - Run blocked、resumed、failed、cancelled 或 succeeded。
 
-所有条目由 `RunInspection`、持久化 Runtime Event、Tool Invocation、Evidence 和 Result 确定性投影。不得显示模型私有推理或根据时间间隔编造“思考过程”。
+权威条目由 `RunInspection`、持久化 Runtime Event、Tool Invocation、Evidence 和 Result 确定性投影。Provider 的公开文字是临时 Conversation 投影，必须标记为 Agent 输出，不得被当作 Tool 成功、Evidence 或完成事实；不得显示模型私有推理或根据时间间隔编造“思考过程”。
 
-当前公开 `RunInspection` 没有提供中间 Agent 文本，因此首版不得把 `model.requested`、`model.turn` 或事件间空档翻译成“正在思考”或虚构回复。只有 Runtime 未来明确持久化并公开用户可见 Agent output 后，Conversation 才能显示相应条目。
+Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的公开文字增量。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。`native_tools` 可使用 SSE；`structured_output` 未完成的 JSON 不作为 Markdown 展示。
+
+Agent 公开输出和正式 Result 使用经过转义的 Markdown 渲染。原始 HTML 和非 `http`、`https`、`mailto` 链接不得成为可执行内容。
 
 Tool 条目默认是一行轻量活动：动作、目标、状态、可用时显示耗时。点击后在原地展开真实输入、结果、错误、Invocation ID 和时间信息。大内容只显示摘要并引用 Artifact。
 
@@ -134,6 +137,8 @@ Composer 是所有人机介入的统一入口，并由当前 `RunInspection` 决
 
 接受非空目标并通过 Runtime 创建新 Run。
 
+普通 Composer 使用 `Enter` 发送、`Shift + Enter` 换行；输入法组合输入期间不得把 Enter 当作提交。
+
 ### Running
 
 Composer 始终可输入，并同时提供停止入口。用户发送时，Desktop 必须先调用当前 Run 的安全取消 Contract；取消完成后才可在同一 Session 创建后续 Run。若未知副作用阻止取消，不得创建后续 Run，必须进入 Recovery。
@@ -156,7 +161,7 @@ Composer 始终可输入，并同时提供停止入口。用户发送时，Deskt
 
 ## 7.1 Project model settings
 
-Settings 为当前 Project 配置 OpenAI-compatible Provider 的 Base URL、API Key、Model、decision output tokens 和 Tool transport。配置写入当前 Workspace 的本地 `.env`，显式系统环境变量仍优先。API Key 只在用户输入和有界 IPC 提交时进入 Renderer，保存后的 Snapshot 不得回显 Key。保存配置前必须停止正在运行的 Run，并重建该 Project Runtime。
+Settings 为当前 Project 管理多个 OpenAI-compatible Model Profile：名称、Base URL、API Key、Model ID、可选 Context Window、decision output tokens 和 Tool transport。Workspace 只选择一个 Profile，选择只影响后续新 Run；活动 Run 不热切换 Provider。选中 Profile 镜像到当前 Workspace 的本地 `.env`，保持 CLI 兼容。API Key 只在用户输入和有界 IPC 提交时进入 Renderer，保存后的 Snapshot 不得回显 Key。保存、删除或切换配置前必须停止正在运行的 Run，并重建该 Project Runtime。
 
 ## 8. Activity / Trajectory
 
@@ -224,7 +229,7 @@ Desktop 不能为了界面完整读取内部 Store。实现前需要验证并在
 - Fork / Merge UI、多 Agent 拓扑或 Worker 调度面板；
 - 向 active Run 并发追加输入、复活终态 Run，或物理删除 Runtime 审计记录；
 - Memory、MCP、Skill、插件市场或 Workflow 编辑器；
-- 模型思维链、伪造流式文本或不存在的主动输入能力；
+- 模型私有思维链、伪造流式文本或不存在的主动输入能力；Provider 实际返回的公开 `content/text` 不属于私有思维链；
 - 云同步、账户、自动更新、签名发布或多平台发布承诺。
 
 后续能力只能由真实 Desktop 使用摩擦或 Runtime Contract 缺口触发。
@@ -249,6 +254,9 @@ Feature Core 完成需要以下可复现证据：
 14. 运行中 Composer 可输入；发送会先取消旧 Run，再把新 Run 追加到同一 Session，且不能绕过 unknown Effect Recovery；
 15. 终态后可在同一 Session 创建后续 Run，Conversation 和 Activity 保留每个 Run 的边界；
 16. Project、Session 归档/恢复/移除和模型设置重启后保持，且 API Key 不出现在 Snapshot。
+17. `native_tools` 的公开 Provider 文本可以跨 Worker/IPC 增量显示，失败 Attempt 不保留，token delta 不进入 Runtime Authority；
+18. Agent output 和 Result 安全渲染 Markdown，Enter / Shift+Enter / IME 行为可验收；
+19. Workspace 可增删改选 Model Profile，自定义模型可声明 Context Window，切换只影响后续 Run。
 
 ## 14. Delivery layers
 

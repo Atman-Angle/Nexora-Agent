@@ -4,6 +4,9 @@ import type {
   SessionControl,
   SessionView
 } from "../shared.js";
+import type { AgentPublicOutputEvent } from "@nexora/harness";
+import { shouldSendOnEnter } from "./keyboard.js";
+import { renderMarkdown } from "./markdown.js";
 
 declare global {
   interface Window { nexora: DesktopBridge }
@@ -14,10 +17,19 @@ let snapshot: DesktopSnapshot | null = null;
 let mode: "conversation" | "activity" = "conversation";
 let planOpen = false;
 let settingsOpen = false;
+let editingProfileId: string | "new" | null = null;
 let busy = false;
 let error: string | null = null;
 let draft = "";
 const expandedTools = new Set<string>();
+type PublicOutputSegment = {
+  readonly key: string;
+  readonly runId: string;
+  readonly occurredAt: string;
+  text: string;
+  completed: boolean;
+};
+const publicOutputs = new Map<string, PublicOutputSegment>();
 
 window.nexora.onSnapshot((next) => {
   snapshot = next;
@@ -29,6 +41,7 @@ window.nexora.onError((message) => {
   error = message;
   render();
 });
+window.nexora.onPublicOutput((event) => updatePublicOutput(event));
 
 void window.nexora.bootstrap()
   .then((next) => { snapshot = next; render(); })
@@ -108,18 +121,22 @@ function sidebar(state: DesktopSnapshot): string {
 
 function header(state: DesktopSnapshot): string {
   const session = state.session;
+  const running = session?.inspection.status === "running";
   return `
     <header class="session-header">
       <div>
         <strong>${session === null ? "New task" : escapeHtml(session.title)}</strong>
         ${session === null ? "" : `<small>${statusLabel(session.inspection.status)}</small>`}
       </div>
+      <div class="header-actions">
+        ${state.workspace.modelProfiles.length === 0 ? "" : `<select class="model-switch" data-profile-select title="Model for new Runs" ${running ? "disabled" : ""}>${state.workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`}
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="Session view">
           <button class="${mode === "conversation" ? "active" : ""}" data-view="conversation">Conversation</button>
           <button class="${mode === "activity" ? "active" : ""}" data-view="activity">Activity</button>
         </nav>
       `}
+      </div>
     </header>
   `;
 }
@@ -170,6 +187,15 @@ function conversation(session: SessionView): string {
       </article>
     ` });
     }
+    for (const segment of publicOutputs.values()) {
+      if (segment.runId !== run.inspection.runId) continue;
+      items.push({ at: segment.occurredAt, order: runIndex * 1_000_000 + 500, html: `
+        <article class="message agent-message public-output ${segment.completed ? "completed" : "streaming"}" data-public-output="${escapeAttr(segment.key)}">
+          <div class="message-label">Nexora ${segment.completed ? "" : "· Working"}</div>
+          <div class="markdown-body">${renderMarkdown(segment.text)}</div>
+        </article>
+      ` });
+    }
     for (const record of run.history.records) {
       if (record.type !== "validation.passed" && record.type !== "validation.failed") continue;
       items.push({ at: record.occurredAt, order: runIndex * 1_000_000 + record.sequence, html: `
@@ -181,10 +207,15 @@ function conversation(session: SessionView): string {
     }
     if (run.inspection.result !== null) {
       const result = run.inspection.result;
+      const summaryAlreadyStreamed = [...publicOutputs.values()].some((segment) => (
+        segment.runId === run.inspection.runId
+        && segment.completed
+        && segment.text.trim() === result.summary.trim()
+      ));
       items.push({ at: result.delivery.createdAt, order: runIndex * 1_000_000 + 999_999, html: `
       <article class="result ${result.status}">
         <div class="result-icon">${result.status === "succeeded" ? "✓" : "!"}</div>
-        <div><small>${result.status === "succeeded" ? "Nexora completed this turn" : result.status === "cancelled" ? "Turn interrupted" : "Turn ended"}</small><p>${escapeHtml(result.summary)}</p>
+        <div><small>${result.status === "succeeded" ? "Nexora completed this turn" : result.status === "cancelled" ? "Turn interrupted" : "Turn ended"}</small>${summaryAlreadyStreamed ? "" : `<div class="markdown-body">${renderMarkdown(result.summary)}</div>`}
         ${result.resultArtifact === null ? "" : `<button class="text-button" data-artifact="${escapeAttr(result.resultArtifact)}">View full result</button>`}</div>
       </article>
     ` });
@@ -272,18 +303,23 @@ function followUpComposer(session: SessionView, running: boolean): string {
 }
 
 function settings(state: DesktopSnapshot): string {
-  const provider = state.workspace.providerSettings;
+  const profiles = state.workspace.modelProfiles;
+  const editingId = editingProfileId ?? state.workspace.selectedModelProfileId ?? "new";
+  const profile = profiles.find((item) => item.id === editingId);
   return `<div class="modal-backdrop" data-action="close-settings"><section class="settings-modal" role="dialog" aria-modal="true">
     <header><div><h2>Model settings</h2><small>${escapeHtml(state.workspace.name)}</small></div><button data-action="close-settings">×</button></header>
-    <form data-form="provider-settings" class="settings-form">
-      <label>Base URL<input name="baseUrl" type="url" value="${escapeAttr(provider.baseUrl)}" placeholder="https://provider.example/v1" required /></label>
-      <label>API Key<input name="apiKey" type="password" placeholder="${provider.apiKeyConfigured ? "Configured · leave blank to keep" : "Required"}" /></label>
-      <label>Model<input name="model" value="${escapeAttr(provider.model)}" placeholder="Model identifier" required /></label>
-      <div class="settings-grid"><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${provider.decisionOutputTokens}" required /></label>
-      <label>Tool transport<select name="transport"><option value="native_tools" ${provider.transport === "native_tools" ? "selected" : ""}>Native tools</option><option value="structured_output" ${provider.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label></div>
-      <button class="primary" ${busy ? "disabled" : ""}>Save and reload Runtime</button>
+    <div class="model-profile-list">${profiles.map((item) => `<div class="model-profile-row ${item.id === state.workspace.selectedModelProfileId ? "selected" : ""}"><button data-profile-edit="${escapeAttr(item.id)}"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(item.model)}</small></button><button data-profile-delete="${escapeAttr(item.id)}" title="Delete model">×</button></div>`).join("")}<button class="new-model" data-profile-edit="new">＋ Add model</button></div>
+    <form data-form="model-profile" class="settings-form">
+      ${profile === undefined ? "" : `<input type="hidden" name="id" value="${escapeAttr(profile.id)}" />`}
+      <label>Name<input name="name" value="${escapeAttr(profile?.name ?? "")}" placeholder="Work model" required /></label>
+      <label>Base URL<input name="baseUrl" type="url" value="${escapeAttr(profile?.baseUrl ?? "")}" placeholder="https://provider.example/v1" required /></label>
+      <label>API Key<input name="apiKey" type="password" placeholder="${profile?.apiKeyConfigured ? "Configured · leave blank to keep" : "Required"}" ${profile === undefined ? "required" : ""} /></label>
+      <label>Model ID<input name="model" value="${escapeAttr(profile?.model ?? "")}" placeholder="Model identifier" required /></label>
+      <div class="settings-grid"><label>Context window<input name="contextWindowTokens" type="number" min="1" value="${profile?.contextWindowTokens ?? ""}" placeholder="Known model default" /></label><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${profile?.decisionOutputTokens ?? 4096}" required /></label></div>
+      <label>Tool transport<select name="transport"><option value="native_tools" ${profile?.transport !== "structured_output" ? "selected" : ""}>Native tools · streaming</option><option value="structured_output" ${profile?.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label>
+      <button class="primary" ${busy ? "disabled" : ""}>${profile === undefined ? "Add model" : "Save model"}</button>
     </form>
-    <p>Saved to this Project's <code>.env</code>. The API Key is never returned to the Renderer. Explicit system environment variables take precedence.</p>
+    <p>The selected profile applies to new Runs in this Workspace. API Keys are never returned to the Renderer. The selected profile is mirrored to <code>.env</code> for CLI compatibility.</p>
   </section></div>`;
 }
 
@@ -335,13 +371,26 @@ function bindActions(): void {
     const action = element.dataset.action;
     if (action === "workspace") { draft = ""; void perform(() => window.nexora.chooseWorkspace().then((next) => { if (next !== null) setSnapshot(next); })); }
     else if (action === "new-task") { snapshot = snapshot === null ? null : { ...snapshot, session: null }; draft = ""; mode = "conversation"; render(); }
-    else if (action === "settings") { settingsOpen = true; render(); }
+    else if (action === "settings") { settingsOpen = true; editingProfileId = null; render(); }
     else if (action === "close-settings") { if (event.target === element || element.tagName === "BUTTON") { settingsOpen = false; render(); } }
     else if (action === "dismiss-error") { error = null; render(); }
     else if (action === "plan") { planOpen = !planOpen; render(); }
     else if (["approve", "deny", "cancel", "resume", "extend-budget"].includes(action ?? "")) void controlAction(action!);
   }));
   document.querySelectorAll<HTMLElement>("[data-recovery]").forEach((element) => element.addEventListener("click", () => void recoveryAction(element.dataset.recovery!)));
+  document.querySelector<HTMLSelectElement>("[data-profile-select]")?.addEventListener("change", (event) => {
+    const id = (event.currentTarget as HTMLSelectElement).value;
+    void perform(() => window.nexora.selectModelProfile(id).then(setSnapshot));
+  });
+  document.querySelectorAll<HTMLElement>("[data-profile-edit]").forEach((element) => element.addEventListener("click", () => {
+    editingProfileId = element.dataset.profileEdit ?? "new";
+    render();
+  }));
+  document.querySelectorAll<HTMLElement>("[data-profile-delete]").forEach((element) => element.addEventListener("click", () => {
+    const id = element.dataset.profileDelete;
+    if (id === undefined || !window.confirm("Delete this model profile?")) return;
+    void perform(() => window.nexora.deleteModelProfile(id).then((next) => { editingProfileId = null; setSnapshot(next); }));
+  }));
   document.querySelector<HTMLFormElement>("[data-form='goal']")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const goal = new FormData(event.currentTarget as HTMLFormElement).get("goal");
@@ -363,23 +412,68 @@ function bindActions(): void {
       setSnapshot(next);
     });
   });
-  document.querySelector<HTMLFormElement>("[data-form='provider-settings']")?.addEventListener("submit", (event) => {
+  document.querySelector<HTMLFormElement>("[data-form='model-profile']")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget as HTMLFormElement);
     const apiKey = data.get("apiKey");
     void perform(async () => {
-      const next = await window.nexora.saveProviderSettings({
+      const contextWindowTokens = Number(data.get("contextWindowTokens"));
+      const id = String(data.get("id") ?? "").trim();
+      const next = await window.nexora.saveModelProfile({
+        ...(id ? { id } : {}),
+        name: String(data.get("name") ?? ""),
         baseUrl: String(data.get("baseUrl") ?? ""),
         ...(typeof apiKey === "string" && apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         model: String(data.get("model") ?? ""),
+        ...(Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
         decisionOutputTokens: Number(data.get("decisionOutputTokens")),
         transport: data.get("transport") === "structured_output" ? "structured_output" : "native_tools"
       });
-      settingsOpen = false;
+      editingProfileId = next.workspace.selectedModelProfileId;
       setSnapshot(next);
     });
   });
   document.querySelectorAll<HTMLTextAreaElement>("textarea[name='goal'], textarea[name='text']").forEach((input) => input.addEventListener("input", () => { draft = input.value; }));
+  document.querySelectorAll<HTMLTextAreaElement>("textarea[name='goal'], textarea[name='text']").forEach((input) => input.addEventListener("keydown", (event) => {
+    if (!shouldSendOnEnter(event, busy)) return;
+    event.preventDefault();
+    input.form?.requestSubmit();
+  }));
+}
+
+function updatePublicOutput(event: AgentPublicOutputEvent): void {
+  const key = `${event.runId}:${event.modelCallId}:${event.attemptId}`;
+  if (event.type === "text.discarded") {
+    publicOutputs.delete(key);
+    render();
+    return;
+  }
+  const existing = publicOutputs.get(key);
+  if (existing === undefined) {
+    if (event.type !== "text.delta" || event.text === undefined) return;
+    publicOutputs.set(key, {
+      key,
+      runId: event.runId,
+      occurredAt: event.occurredAt,
+      text: event.text,
+      completed: false
+    });
+    render();
+    return;
+  }
+  if (event.type === "text.delta" && event.text !== undefined) existing.text += event.text;
+  if (event.type === "text.completed") existing.completed = true;
+  const element = document.querySelector<HTMLElement>(`[data-public-output="${CSS.escape(key)}"]`);
+  if (element === null) {
+    render();
+    return;
+  }
+  element.classList.toggle("streaming", !existing.completed);
+  element.classList.toggle("completed", existing.completed);
+  const label = element.querySelector<HTMLElement>(".message-label");
+  if (label !== null) label.textContent = existing.completed ? "Nexora" : "Nexora · Working";
+  const body = element.querySelector<HTMLElement>(".markdown-body");
+  if (body !== null) body.innerHTML = renderMarkdown(existing.text);
 }
 
 async function controlAction(action: string): Promise<void> {

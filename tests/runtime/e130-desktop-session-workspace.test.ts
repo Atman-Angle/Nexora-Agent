@@ -12,6 +12,54 @@ afterEach(() => {
 });
 
 describe("E130 Desktop Project and continuous Session", () => {
+  it("creates, selects, updates and deletes Workspace model profiles without exposing API keys", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-models-"));
+    roots.push(workspace);
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+
+    const first = await service.saveModelProfile({
+      id: "primary",
+      name: "Primary",
+      baseUrl: "https://primary.example/v1",
+      apiKey: "primary-secret",
+      model: "custom-primary",
+      contextWindowTokens: 64_000,
+      decisionOutputTokens: 4_096,
+      transport: "native_tools"
+    });
+    expect(first.workspace).toMatchObject({ selectedModelProfileId: "primary", model: "custom-primary" });
+    expect(JSON.stringify(first)).not.toContain("primary-secret");
+
+    await service.saveModelProfile({
+      id: "secondary",
+      name: "Secondary",
+      baseUrl: "https://secondary.example/v1",
+      apiKey: "secondary-secret",
+      model: "custom-secondary",
+      contextWindowTokens: 128_000,
+      decisionOutputTokens: 8_192,
+      transport: "native_tools"
+    });
+    const selected = await service.selectModelProfile("secondary");
+    expect(selected.workspace).toMatchObject({ selectedModelProfileId: "secondary", model: "custom-secondary" });
+    expect(selected.workspace.modelProfiles).toHaveLength(2);
+    expect(JSON.stringify(selected)).not.toContain("secondary-secret");
+    expect(readFileSync(join(workspace, ".env"), "utf8")).toEqual(expect.stringContaining('NEXORA_MODEL_NAME="custom-secondary"'));
+
+    const deleted = await service.deleteModelProfile("secondary");
+    expect(deleted.workspace).toMatchObject({ selectedModelProfileId: "primary", model: "custom-primary" });
+    expect(deleted.workspace.modelProfiles.map(({ id }) => id)).toEqual(["primary"]);
+    expect(readFileSync(join(workspace, ".env"), "utf8")).not.toContain("secondary-secret");
+    expect(readFileSync(join(workspace, ".nexora", "desktop-host.json"), "utf8")).not.toContain("primary-secret");
+    await service.close();
+
+    const reopened = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const persisted = await reopened.snapshot();
+    expect(persisted.workspace).toMatchObject({ selectedModelProfileId: "primary", model: "custom-primary" });
+    expect(persisted.workspace.modelProfiles).toHaveLength(1);
+    await reopened.close();
+  });
+
   it("projects one automatic grounded direct response without Tool Evidence", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-direct-"));
     roots.push(workspace);
@@ -97,7 +145,9 @@ describe("E130 Desktop Project and continuous Session", () => {
     const restored = await service.archiveSession(sessionId, false);
     expect(currentProject(restored).sessions.find(({ id }) => id === sessionId)?.archived).toBe(false);
 
-    const configured = await service.saveProviderSettings({
+    const configured = await service.saveModelProfile({
+      id: "environment",
+      name: "Qwen Desktop",
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
       apiKey: "replacement-secret",
       model: "qwen3.7-flash",

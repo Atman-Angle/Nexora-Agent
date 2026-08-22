@@ -6,6 +6,7 @@ import {
 } from "@nexora/runtime/internal";
 import type { RuntimeObserver } from "@nexora/runtime/internal";
 import type { RuntimeMemoryOptions } from "./types.js";
+import type { AgentPublicOutputListener } from "./types.js";
 import {
   assessContextBudget,
   parseProviderTokenUsage,
@@ -29,12 +30,21 @@ export type RequestModelServices = {
   readonly memory?: RuntimeMemoryOptions;
   readonly capturePolicy: "metadata" | "redacted";
   readonly promptHost: PromptHostConfiguration;
+  readonly publicOutputListener?: AgentPublicOutputListener;
 };
 
 export type RequestModelResult =
   | { readonly outcome: "succeeded"; readonly run: RunSnapshot; readonly output: unknown }
   | { readonly outcome: "failed"; readonly run: RunSnapshot; readonly error: unknown }
   | { readonly outcome: "budget_exceeded"; readonly run: RunSnapshot };
+
+function emitPublicOutput(
+  listener: AgentPublicOutputListener | undefined,
+  event: Parameters<AgentPublicOutputListener>[0]
+): void {
+  try { listener?.(event); }
+  catch { /* A non-authoritative UI observer must never fail Provider execution. */ }
+}
 
 /**
  * Orchestrates one Provider call: assess the context budget, run the
@@ -190,12 +200,38 @@ export async function requestModel(
           })
         });
         let attemptUsage: ProviderTokenUsage | undefined;
+        let publicSequence = 0;
         try {
           const value = await services.provider.decide(effectiveContext, {
             signal,
             compiledPrompt: effectivePrompt,
-            reportTokenUsage: (usage) => { attemptUsage = parseProviderTokenUsage(usage); }
+            reportTokenUsage: (usage) => { attemptUsage = parseProviderTokenUsage(usage); },
+            ...(services.publicOutputListener === undefined ? {} : {
+              reportPublicTextDelta: (text: string) => {
+                if (text.length === 0) return;
+                publicSequence += 1;
+                emitPublicOutput(services.publicOutputListener, {
+                  type: "text.delta",
+                  runId: requested.runId,
+                  modelCallId: intent.id,
+                  attemptId,
+                  sequence: publicSequence,
+                  occurredAt: services.runtime.now(),
+                  text
+                });
+              }
+            })
           });
+          if (publicSequence > 0) {
+            emitPublicOutput(services.publicOutputListener, {
+              type: "text.completed",
+              runId: requested.runId,
+              modelCallId: intent.id,
+              attemptId,
+              sequence: publicSequence + 1,
+              occurredAt: services.runtime.now()
+            });
+          }
           if (attemptUsage !== undefined) reportUsage(attemptUsage);
           services.runtime.completeProviderAttempt(requested.runId, {
             attemptId,
@@ -211,6 +247,16 @@ export async function requestModel(
           });
           return value;
         } catch (error) {
+          if (publicSequence > 0) {
+            emitPublicOutput(services.publicOutputListener, {
+              type: "text.discarded",
+              runId: requested.runId,
+              modelCallId: intent.id,
+              attemptId,
+              sequence: publicSequence + 1,
+              occurredAt: services.runtime.now()
+            });
+          }
           lastError = error;
           const cancelled = signal.aborted;
           services.runtime.completeProviderAttempt(requested.runId, {

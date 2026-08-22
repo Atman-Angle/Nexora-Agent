@@ -15,6 +15,18 @@ export type RuntimeMemoryOptions = {
   readonly scope: MemoryScope;
 };
 
+export type AgentPublicOutputEvent = {
+  readonly type: "text.delta" | "text.completed" | "text.discarded";
+  readonly runId: string;
+  readonly modelCallId: string;
+  readonly attemptId: string;
+  readonly sequence: number;
+  readonly occurredAt: string;
+  readonly text?: string;
+};
+
+export type AgentPublicOutputListener = (event: AgentPublicOutputEvent) => void;
+
 export type CreateAgentOptions = {
   readonly workspace: string;
   readonly dataDir?: string;
@@ -30,6 +42,7 @@ export type CreateAgentOptions = {
   readonly createId?: () => string;
   readonly leaseTtlMs?: number;
   readonly delegationPolicy?: DelegationPolicy;
+  readonly publicOutputListener?: AgentPublicOutputListener;
 };
 
 /** @deprecated Use CreateAgentOptions. */

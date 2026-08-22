@@ -191,13 +191,13 @@ pnpm typecheck
 
 ### 打开 Desktop Agent Workspace
 
-在仓库根目录创建 `.env`，配置 `NEXORA_MODEL_BASE_URL`、`NEXORA_MODEL_API_KEY`、`NEXORA_MODEL_NAME` 和 `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`，然后运行：
+在仓库根目录创建 `.env`，配置 `NEXORA_MODEL_BASE_URL`、`NEXORA_MODEL_API_KEY`、`NEXORA_MODEL_NAME` 和 `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`；自定义模型还需配置 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`。然后运行：
 
 ```powershell
 pnpm desktop
 ```
 
-Desktop 是一个两栏 Runtime 宿主：左侧按 Project（Workspace）组织 Session，中间是唯一的 Conversation / Activity 执行面。Composer 在运行中和终态后都可继续输入；Desktop 通过安全中断并追加新 Run，让多个 Run 留在同一用户 Session。归档、移除和模型配置属于 Host 导航设置，Run、Plan、Invocation、Approval、Evidence 和 Result Authority 仍只在 Runtime。
+Desktop 是一个两栏 Runtime 宿主：左侧按 Project（Workspace）组织 Session，中间是唯一的 Conversation / Activity 执行面。`native_tools` Provider 返回的公开文字可以真实流式显示，Agent 输出和 Result 支持安全 Markdown；Tool、Evidence、Validation 和完成状态仍只来自 Runtime Authority。Enter 发送、Shift+Enter 换行，Composer 在运行中和终态后都可继续输入。Settings 可增删改模型 Profile，每个 Workspace 选择后续 Run 使用的模型，不会修改已有 Run 状态。
 
 使用 `pnpm desktop:uat` 可运行真实 Provider 的 Electron 验收链路。Provider 配置、交互状态、测试命令、UAT 产物和当前发布门禁见 [Desktop 使用与验证指南](apps/desktop/README.md)。
 

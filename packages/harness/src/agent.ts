@@ -16,7 +16,7 @@ import {
   requestModel,
   type RequestModelServices
 } from "./provider-gateway.js";
-import type { CreateAgentOptions, RuntimeMemoryOptions } from "./types.js";
+import type { AgentPublicOutputListener, CreateAgentOptions, RuntimeMemoryOptions } from "./types.js";
 import { allowedActions } from "./runtime-policy.js";
 import { contextSourceFromState } from "./context/source.js";
 import {
@@ -32,7 +32,12 @@ import {
 } from "./profile.js";
 import { DEFAULT_DELEGATION_POLICY, DelegationPolicySchema, type DelegationPolicy } from "./multi-agent.js";
 
-export type { CreateAgentOptions, RuntimeMemoryOptions } from "./types.js";
+export type {
+  AgentPublicOutputEvent,
+  AgentPublicOutputListener,
+  CreateAgentOptions,
+  RuntimeMemoryOptions
+} from "./types.js";
 
 /** Public composition root for Harness semantics plus Runtime mechanics. */
 export function createAgent(options: CreateAgentOptions): RuntimeEngine {
@@ -47,7 +52,7 @@ export function createAgent(options: CreateAgentOptions): RuntimeEngine {
     }
     resolveProviderModelProfile(provider);
     const delegationPolicy = DelegationPolicySchema.parse(options.delegationPolicy ?? DEFAULT_DELEGATION_POLICY);
-    const driver = createAgentDriver(provider, memory, capturePolicy, promptHost, delegationPolicy);
+    const driver = createAgentDriver(provider, memory, capturePolicy, promptHost, delegationPolicy, options.publicOutputListener);
     return new RuntimeEngine({
       workspace: options.workspace,
       tools: options.tools,
@@ -123,12 +128,13 @@ function createAgentDriver(
   memory: RuntimeMemoryOptions | undefined,
   capturePolicy: "metadata" | "redacted",
   promptHost: PromptHostConfiguration,
-  delegationPolicy: DelegationPolicy
+  delegationPolicy: DelegationPolicy,
+  publicOutputListener: AgentPublicOutputListener | undefined
 ): AgentDriver {
   return {
     async run(runtime, initial, signal, observer): Promise<RunResult> {
       return await runAgentLoop(
-        createLoopPort({ runtime, provider, memory, capturePolicy, promptHost, delegationPolicy }),
+        createLoopPort({ runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, publicOutputListener }),
         initial,
         signal,
         observer
@@ -147,8 +153,9 @@ function createLoopPort(input: {
   readonly capturePolicy: "metadata" | "redacted";
   readonly promptHost: PromptHostConfiguration;
   readonly delegationPolicy: DelegationPolicy;
+  readonly publicOutputListener: AgentPublicOutputListener | undefined;
 }): AgentLoopRuntimePort {
-  const { runtime, provider, memory, capturePolicy, promptHost, delegationPolicy } = input;
+  const { runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, publicOutputListener } = input;
   return {
     now: () => runtime.now(),
     createId: () => runtime.createId(),
@@ -173,7 +180,7 @@ function createLoopPort(input: {
       runtime.recordContextEvidence(run, facts, observer)
     ),
     requestDecision: async (run, context, signal, observer) => await requestModel(
-      gatewayServices(runtime, provider, memory, capturePolicy, promptHost),
+      gatewayServices(runtime, provider, memory, capturePolicy, promptHost, publicOutputListener),
       run,
       context,
       { providerContractVersion: context.providerContractVersion },
@@ -243,13 +250,15 @@ function gatewayServices(
   provider: RuntimeProvider,
   memory: RuntimeMemoryOptions | undefined,
   capturePolicy: "metadata" | "redacted",
-  promptHost: PromptHostConfiguration
+  promptHost: PromptHostConfiguration,
+  publicOutputListener: AgentPublicOutputListener | undefined
 ): RequestModelServices {
   return {
     provider,
     runtime,
     capturePolicy,
     promptHost,
+    ...(publicOutputListener === undefined ? {} : { publicOutputListener }),
     ...(memory === undefined ? {} : { memory })
   };
 }

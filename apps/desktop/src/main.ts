@@ -6,15 +6,18 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { RuntimeWorkerClient } from "./runtime-worker-client.js";
-import type { DesktopSnapshot, ProviderSettingsInput, SessionControl } from "./shared.js";
+import type { DesktopSnapshot, ModelProfileInput, SessionControl } from "./shared.js";
 
 const RunIdSchema = z.string().trim().min(1).max(256);
 const GoalSchema = z.string().trim().min(1).max(200_000);
 const PathSchema = z.string().trim().min(1).max(32_000);
-const ProviderSettingsSchema = z.object({
+const ModelProfileSchema = z.object({
+  id: RunIdSchema.optional(),
+  name: z.string().trim().min(1).max(128),
   baseUrl: z.string().url().max(4_000),
   apiKey: z.string().max(20_000).optional(),
   model: z.string().trim().min(1).max(256),
+  contextWindowTokens: z.number().int().positive().max(10_000_000).optional(),
   decisionOutputTokens: z.number().int().positive().max(1_000_000),
   transport: z.enum(["native_tools", "structured_output"])
 }).strict();
@@ -47,7 +50,8 @@ function runtime(): RuntimeWorkerClient {
   service = new RuntimeWorkerClient({
     workspace: initialWorkspace,
     onSnapshot: (snapshot) => window?.webContents.send("desktop:snapshot", snapshot),
-    onError: (message) => window?.webContents.send("desktop:error", message)
+    onError: (message) => window?.webContents.send("desktop:error", message),
+    onPublicOutput: (event) => window?.webContents.send("desktop:public-output", event)
   });
   return service;
 }
@@ -110,12 +114,23 @@ async function runDesktopUat(reportPath: string): Promise<void> {
   await window!.webContents.executeJavaScript(`new Promise((resolveSubmit, rejectSubmit) => {
     const deadline = Date.now() + 10000;
     const submit = () => {
+      const settingsButton = document.querySelector('[data-action="settings"]');
+      if (settingsButton instanceof HTMLButtonElement) {
+        settingsButton.click();
+        const settingsForm = document.querySelector('[data-form="model-profile"]');
+        const modelInput = settingsForm?.querySelector('input[name="model"]');
+        if (!(settingsForm instanceof HTMLFormElement) || !(modelInput instanceof HTMLInputElement) || modelInput.value.length === 0) {
+          rejectSubmit(new Error('Desktop model Profile Settings did not project the Workspace model.'));
+          return;
+        }
+        document.querySelector('.settings-modal [data-action="close-settings"]')?.click();
+      }
       const form = document.querySelector('[data-form="goal"]');
       const input = form?.querySelector('textarea[name="goal"]');
       if (form instanceof HTMLFormElement && input instanceof HTMLTextAreaElement) {
         input.value = ${JSON.stringify(goal)};
         input.dispatchEvent(new Event('input', { bubbles: true }));
-        form.requestSubmit();
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
         resolveSubmit(true);
       } else if (Date.now() >= deadline) rejectSubmit(new Error('Desktop goal Composer did not become ready.'));
       else setTimeout(submit, 100);
@@ -147,7 +162,7 @@ async function runDesktopUat(reportPath: string): Promise<void> {
       if (!(form instanceof HTMLFormElement) || !(input instanceof HTMLTextAreaElement)) throw new Error('Desktop follow-up Composer is not ready.');
       input.value = ${JSON.stringify(continuation)};
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      form.requestSubmit();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
       return true;
     })()`, true);
     const continuationDeadline = Date.now() + timeoutMs;
@@ -166,6 +181,8 @@ async function runDesktopUat(reportPath: string): Promise<void> {
   }
 
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
+  const publicOutputCount = await window!.webContents.executeJavaScript(`document.querySelectorAll('.public-output .markdown-body').length`, true) as number;
+  if (publicOutputCount < 1) throw new Error("Desktop UAT did not render Provider public output.");
   const image = await window!.webContents.capturePage({ x: 0, y: 0, width: 1180, height: 800 });
   if (image.isEmpty()) throw new Error("Electron rendered an empty UAT capture.");
   await mkdir(dirname(capturePath), { recursive: true });
@@ -192,6 +209,8 @@ async function runDesktopUat(reportPath: string): Promise<void> {
     })),
     evidence: inspection.evidence.map((item) => ({ id: item.id, kind: item.kind, producedAt: item.producedAt })),
     eventCount: snapshot.session.history.records.length,
+    publicOutputCount,
+    modelProfileCount: snapshot.workspace.modelProfiles.length,
     capturePath
   };
   await mkdir(dirname(reportPath), { recursive: true });
@@ -223,8 +242,14 @@ ipcMain.handle("desktop:archive-session", async (_event, sessionId: unknown, arc
 ipcMain.handle("desktop:remove-session", async (_event, sessionId: unknown) => (
   await runtime().removeSession(RunIdSchema.parse(sessionId))
 ));
-ipcMain.handle("desktop:save-provider-settings", async (_event, input: unknown) => (
-  await runtime().saveProviderSettings(ProviderSettingsSchema.parse(input) as ProviderSettingsInput)
+ipcMain.handle("desktop:save-model-profile", async (_event, input: unknown) => (
+  await runtime().saveModelProfile(ModelProfileSchema.parse(input) as ModelProfileInput)
+));
+ipcMain.handle("desktop:delete-model-profile", async (_event, profileId: unknown) => (
+  await runtime().deleteModelProfile(RunIdSchema.parse(profileId))
+));
+ipcMain.handle("desktop:select-model-profile", async (_event, profileId: unknown) => (
+  await runtime().selectModelProfile(RunIdSchema.parse(profileId))
 ));
 ipcMain.handle("desktop:control", async (_event, runId: unknown, input: unknown) => {
   await runtime().control(RunIdSchema.parse(runId), ControlSchema.parse(input) as SessionControl);

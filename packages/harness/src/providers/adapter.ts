@@ -43,6 +43,7 @@ export type ProviderCompletionRequest = {
 export type ProviderCompletionOperation = {
   readonly signal: AbortSignal;
   readonly reportTokenUsage?: (usage: ProviderTokenUsage) => void;
+  readonly reportPublicTextDelta?: (text: string) => void;
 };
 
 export type ProviderRequestTokenMeter = (
@@ -156,7 +157,10 @@ export function defineProviderAdapter(
           signal,
           ...(operation.reportTokenUsage === undefined
             ? {}
-            : { reportTokenUsage: operation.reportTokenUsage })
+            : { reportTokenUsage: operation.reportTokenUsage }),
+          ...(operation.reportPublicTextDelta === undefined
+            ? {}
+            : { reportPublicTextDelta: operation.reportPublicTextDelta })
         }
       );
       signal.throwIfAborted();

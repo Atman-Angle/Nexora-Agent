@@ -8,6 +8,7 @@ import type { ProviderPromptCachePolicy, ProviderTransportProfile } from "../pro
 import { decisionHasSemanticPressure } from "../provider-policy.js";
 import {
   defineProviderAdapter,
+  type ProviderCompletionOperation,
   type ProviderCompletionRequest,
   type ProviderRequestTokenMeter
 } from "./adapter.js";
@@ -33,6 +34,7 @@ export type OpenAICompatibleProviderOptions = {
   readonly softLimitRatio?: number;
   readonly tokenMeter?: ProviderRequestTokenMeter;
   readonly fetch?: typeof globalThis.fetch;
+  readonly stream?: boolean;
 };
 
 export type OpenAICompatibleProviderEnvironmentOptions = {
@@ -76,7 +78,7 @@ export function openAICompatibleProviderFromEnv(
   const baseUrl = required(environment, "NEXORA_MODEL_BASE_URL");
   const apiKey = required(environment, "NEXORA_MODEL_API_KEY");
   const model = required(environment, "NEXORA_MODEL_NAME");
-  const modelCapability = resolveModelCapability(model);
+  const modelCapability = MODEL_CAPABILITIES[model];
   const timeoutRaw = environment.NEXORA_MODEL_TIMEOUT_MS?.trim();
   const timeoutMs = timeoutRaw ? Number(timeoutRaw) : 60_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
@@ -99,16 +101,23 @@ export function openAICompatibleProviderFromEnv(
   if (cacheRaw !== "automatic" && cacheRaw !== "disabled") {
     throw new ModelConfigError('NEXORA_MODEL_PROMPT_CACHE must be "automatic" or "disabled".');
   }
-  if (environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS?.trim()) {
+  const streamRaw = environment.NEXORA_MODEL_STREAM?.trim() ?? "false";
+  if (streamRaw !== "true" && streamRaw !== "false") {
+    throw new ModelConfigError('NEXORA_MODEL_STREAM must be "true" or "false".');
+  }
+  const explicitContextWindow = environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS?.trim();
+  const contextWindowTokens = environmentOptions.contextWindowTokensOverride !== undefined
+    ? positiveInteger(environmentOptions.contextWindowTokensOverride, "contextWindowTokensOverride")
+    : explicitContextWindow !== undefined
+      ? positiveInteger(Number(explicitContextWindow), "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS")
+      : modelCapability?.contextWindowTokens;
+  if (contextWindowTokens === undefined) {
     throw new ModelConfigError(
-      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS is not supported; context capacity is resolved from NEXORA_MODEL_NAME."
+      `Model capabilities are unknown for ${model}; NEXORA_MODEL_CONTEXT_WINDOW_TOKENS is required.`
     );
   }
-  const contextWindowTokens = environmentOptions.contextWindowTokensOverride === undefined
-    ? modelCapability.contextWindowTokens
-    : positiveInteger(environmentOptions.contextWindowTokensOverride, "contextWindowTokensOverride");
   const decisionOutputTokens = requiredPositiveInteger(environment, "NEXORA_MODEL_DECISION_OUTPUT_TOKENS");
-  if (decisionOutputTokens > modelCapability.maxOutputTokens) {
+  if (modelCapability !== undefined && decisionOutputTokens > modelCapability.maxOutputTokens) {
     throw new ModelConfigError(
       `NEXORA_MODEL_DECISION_OUTPUT_TOKENS must not exceed the ${modelCapability.maxOutputTokens}-token output capability of ${model}.`
     );
@@ -126,7 +135,8 @@ export function openAICompatibleProviderFromEnv(
     transport: transportRaw,
     promptCache: { mode: cacheRaw },
     contextWindowTokens,
-    reservedOutputTokens: { decision: decisionOutputTokens }
+    reservedOutputTokens: { decision: decisionOutputTokens },
+    stream: streamRaw === "true"
   });
 }
 
@@ -144,6 +154,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let softLimitRatio: number;
   let tokenMeter: ProviderRequestTokenMeter | undefined;
   let fetchImplementation: typeof globalThis.fetch;
+  let stream: boolean;
   try {
     baseUrl = z.string().url().parse(options.baseUrl).replace(/\/$/, "");
     apiKey = z.string().trim().min(1).parse(options.apiKey);
@@ -167,6 +178,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       throw new Error("Reserved output tokens must be smaller than the context window.");
     }
     fetchImplementation = options.fetch ?? globalThis.fetch;
+    stream = z.boolean().parse(options.stream ?? false);
     if (typeof fetchImplementation !== "function") throw new Error("A Fetch implementation is required.");
   } catch (error) {
     if (error instanceof ModelConfigError) throw error;
@@ -193,6 +205,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         timeoutMs
       );
       try {
+        const shouldStream = stream && request.transport.kind === "native_tools";
         const response = await fetchImplementation(`${baseUrl}/chat/completions`, {
           method: "POST",
           headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
@@ -200,6 +213,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
             model,
             temperature,
             max_tokens: decisionOutputTokens,
+            ...(shouldStream ? { stream: true } : {}),
             messages: providerMessages(request),
             ...(request.responseFormat.kind === "json_schema"
               ? {
@@ -237,6 +251,9 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
             : Error;
           throw new ErrorType(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
         }
+        if (shouldStream && response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+          return await normalizeStreamingResponse(response, request, operation);
+        }
         const body = ProviderResponseSchema.parse(await response.json());
         const usage = normalizeUsage(body.usage, request.transport.promptCache?.mode ?? "automatic");
         if (usage !== null) operation.reportTokenUsage?.(usage);
@@ -261,6 +278,19 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   });
 }
 
+const ProviderUsageSchema = z.object({
+  prompt_tokens: z.number().int().nonnegative().optional(),
+  completion_tokens: z.number().int().nonnegative().optional(),
+  total_tokens: z.number().int().nonnegative().optional(),
+  input_tokens: z.number().int().nonnegative().optional(),
+  output_tokens: z.number().int().nonnegative().optional(),
+  prompt_tokens_details: z.object({ cached_tokens: z.number().int().nonnegative().optional() }).passthrough().optional(),
+  input_tokens_details: z.object({ cached_tokens: z.number().int().nonnegative().optional() }).passthrough().optional(),
+  prompt_cache_hit_tokens: z.number().int().nonnegative().optional(),
+  prompt_cache_miss_tokens: z.number().int().nonnegative().optional(),
+  cache_creation_input_tokens: z.number().int().nonnegative().optional()
+}).passthrough();
+
 const ProviderResponseSchema = z.object({
   choices: z.array(z.object({
     finish_reason: z.string().nullable().optional(),
@@ -276,23 +306,92 @@ const ProviderResponseSchema = z.object({
       }).passthrough()).optional()
     }).passthrough()
   }).passthrough()).min(1),
-  usage: z.object({
-    prompt_tokens: z.number().int().nonnegative().optional(),
-    completion_tokens: z.number().int().nonnegative().optional(),
-    total_tokens: z.number().int().nonnegative().optional(),
-    input_tokens: z.number().int().nonnegative().optional(),
-    output_tokens: z.number().int().nonnegative().optional(),
-    prompt_tokens_details: z.object({
-      cached_tokens: z.number().int().nonnegative().optional()
-    }).passthrough().optional(),
-    input_tokens_details: z.object({
-      cached_tokens: z.number().int().nonnegative().optional()
-    }).passthrough().optional(),
-    prompt_cache_hit_tokens: z.number().int().nonnegative().optional(),
-    prompt_cache_miss_tokens: z.number().int().nonnegative().optional(),
-    cache_creation_input_tokens: z.number().int().nonnegative().optional()
-  }).passthrough().optional()
+  usage: ProviderUsageSchema.optional()
 }).passthrough();
+
+const ProviderStreamChunkSchema = z.object({
+  choices: z.array(z.object({
+    finish_reason: z.string().nullable().optional(),
+    delta: z.object({
+      content: z.string().nullable().optional(),
+      tool_calls: z.array(z.object({
+        index: z.number().int().nonnegative(),
+        id: z.string().optional(),
+        function: z.object({
+          name: z.string().optional(),
+          arguments: z.string().optional()
+        }).passthrough().optional()
+      }).passthrough()).optional()
+    }).passthrough()
+  }).passthrough()).optional(),
+  usage: ProviderUsageSchema.optional()
+}).passthrough();
+
+async function normalizeStreamingResponse(
+  response: Response,
+  request: ProviderCompletionRequest,
+  operation: ProviderCompletionOperation
+): Promise<ModelResponse> {
+  if (response.body === null) throw new RetryableProviderError("Provider returned an empty stream body.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let finishReason: string | null = null;
+  let usage: z.infer<typeof ProviderUsageSchema> | undefined;
+  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+
+  const consumeEvent = (event: string): void => {
+    const data = event.split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (data.length === 0 || data === "[DONE]") return;
+    const chunk = ProviderStreamChunkSchema.parse(JSON.parse(data));
+    if (chunk.usage !== undefined) usage = chunk.usage;
+    for (const choice of chunk.choices ?? []) {
+      if (choice.finish_reason !== undefined && choice.finish_reason !== null) finishReason = choice.finish_reason;
+      const delta = choice.delta.content;
+      if (delta !== undefined && delta !== null && delta.length > 0) {
+        content += delta;
+        operation.reportPublicTextDelta?.(delta);
+      }
+      for (const call of choice.delta.tool_calls ?? []) {
+        const current = calls.get(call.index) ?? { id: "", name: "", arguments: "" };
+        if (call.id !== undefined) current.id += call.id;
+        if (call.function?.name !== undefined) current.name += call.function.name;
+        if (call.function?.arguments !== undefined) current.arguments += call.function.arguments;
+        calls.set(call.index, current);
+      }
+    }
+  };
+
+  while (true) {
+    const next = await reader.read();
+    buffer += decoder.decode(next.value, { stream: !next.done });
+    let match = /\r?\n\r?\n/.exec(buffer);
+    while (match !== null) {
+      consumeEvent(buffer.slice(0, match.index));
+      buffer = buffer.slice(match.index + match[0].length);
+      match = /\r?\n\r?\n/.exec(buffer);
+    }
+    if (next.done) break;
+  }
+  if (buffer.trim().length > 0) consumeEvent(buffer);
+  const normalizedUsage = normalizeUsage(usage, request.transport.promptCache?.mode ?? "automatic");
+  if (normalizedUsage !== null) operation.reportTokenUsage?.(normalizedUsage);
+  const toolCalls = [...calls.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([, call]) => ({
+      id: call.id,
+      type: "function" as const,
+      function: { name: call.name, arguments: call.arguments }
+    }));
+  return normalizeAssistantMessage({
+    content: content.length === 0 ? null : content,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  }, request, finishReason);
+}
 
 function normalizeAssistantMessage(
   message: z.infer<typeof ProviderResponseSchema>["choices"][number]["message"],
@@ -540,16 +639,4 @@ function calibratedTokenMeter(model: string): ProviderRequestTokenMeter | undefi
       meter: `nexora:${model}:utf8-bytes/4*x${multiplier}:e101-v1`
     };
   };
-}
-
-function resolveModelCapability(model: string): {
-  readonly contextWindowTokens: number;
-  readonly maxOutputTokens: number;
-  readonly estimatedInputMultiplier?: Readonly<Record<ProviderCompletionRequest["phase"], number>>;
-} {
-  const capability = MODEL_CAPABILITIES[model];
-  if (capability !== undefined) return capability;
-  throw new ModelConfigError(
-    `Model capabilities are unknown for ${model}; add a verified Provider capability before using the environment entry.`
-  );
 }

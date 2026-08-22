@@ -23,11 +23,14 @@ if (deterministic) {
   server = createServer(async (request, response) => {
     for await (const chunk of request) void chunk;
     calls += 1;
-    const content = calls % 2 === 1
-      ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }], finishReason: "tool_calls" }
-      : { text: `Desktop turn ${calls / 2} completed.`, toolCalls: [], finishReason: "stop" };
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    if (calls % 2 === 1) {
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "Reading **target.txt**.", tool_calls: [{ index: 0, id: `read-${calls}`, function: { name: "filesystem_read", arguments: "{\"path\":\"target.txt\"}" } }] }, finish_reason: "tool_calls" }] })}\n\n`);
+    } else {
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "**Desktop turn " } }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `${calls / 2} completed.**` }, finish_reason: "stop" }] })}\n\n`);
+    }
+    response.end("data: [DONE]\n\n");
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();
@@ -37,7 +40,7 @@ if (deterministic) {
     "NEXORA_MODEL_API_KEY=desktop-uat-key",
     "NEXORA_MODEL_NAME=qwen3.7-flash",
     "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-    "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    "NEXORA_MODEL_TOOL_TRANSPORT=native_tools"
   ].join("\n"), "utf8");
   Object.assign(uatEnvironment, {
     NEXORA_DESKTOP_WORKSPACE: fixture,
@@ -81,6 +84,8 @@ console.log(JSON.stringify({
   status: report.status,
   invocations: report.invocations.length,
   evidence: report.evidence.length,
+  publicOutputCount: report.publicOutputCount,
+  modelProfileCount: report.modelProfileCount,
   reportPath,
   capturePath
 }, null, 2));

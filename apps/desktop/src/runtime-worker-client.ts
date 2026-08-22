@@ -3,7 +3,8 @@ import { createInterface } from "node:readline";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { DesktopSnapshot, ProviderSettingsInput, SessionControl } from "./shared.js";
+import type { AgentPublicOutputEvent } from "@nexora/harness";
+import type { DesktopSnapshot, ModelProfileInput, SessionControl } from "./shared.js";
 
 type PendingRequest = {
   readonly resolve: (value: unknown) => void;
@@ -15,6 +16,7 @@ export class RuntimeWorkerClient {
   readonly #pending = new Map<number, PendingRequest>();
   readonly #onSnapshot: (snapshot: DesktopSnapshot) => void;
   readonly #onError: (message: string) => void;
+  readonly #onPublicOutput: (event: AgentPublicOutputEvent) => void;
   #sequence = 0;
   #closed = false;
 
@@ -22,9 +24,11 @@ export class RuntimeWorkerClient {
     readonly workspace: string;
     readonly onSnapshot: (snapshot: DesktopSnapshot) => void;
     readonly onError: (message: string) => void;
+    readonly onPublicOutput: (event: AgentPublicOutputEvent) => void;
   }) {
     this.#onSnapshot = input.onSnapshot;
     this.#onError = input.onError;
+    this.#onPublicOutput = input.onPublicOutput;
     const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "runtime-worker.js");
     this.#child = spawn("node", [workerPath, input.workspace], {
       cwd: input.workspace,
@@ -46,7 +50,9 @@ export class RuntimeWorkerClient {
   openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("openSession", projectPath, sessionId) as Promise<DesktopSnapshot>; }
   archiveSession(sessionId: string, archived: boolean): Promise<DesktopSnapshot> { return this.#invoke("archiveSession", sessionId, archived) as Promise<DesktopSnapshot>; }
   removeSession(sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("removeSession", sessionId) as Promise<DesktopSnapshot>; }
-  saveProviderSettings(settings: ProviderSettingsInput): Promise<DesktopSnapshot> { return this.#invoke("saveProviderSettings", settings) as Promise<DesktopSnapshot>; }
+  saveModelProfile(profile: ModelProfileInput): Promise<DesktopSnapshot> { return this.#invoke("saveModelProfile", profile) as Promise<DesktopSnapshot>; }
+  deleteModelProfile(profileId: string): Promise<DesktopSnapshot> { return this.#invoke("deleteModelProfile", profileId) as Promise<DesktopSnapshot>; }
+  selectModelProfile(profileId: string): Promise<DesktopSnapshot> { return this.#invoke("selectModelProfile", profileId) as Promise<DesktopSnapshot>; }
   async control(runId: string, control: SessionControl): Promise<void> { await this.#invoke("control", runId, control); }
   readArtifact(digest: string): Promise<unknown> { return this.#invoke("readArtifact", digest); }
 
@@ -78,6 +84,10 @@ export class RuntimeWorkerClient {
     }
     if (value.type === "runtime-error") {
       this.#onError(String(value.message));
+      return;
+    }
+    if (value.type === "public-output") {
+      this.#onPublicOutput(value.event as AgentPublicOutputEvent);
       return;
     }
     if (value.type !== "response" || typeof value.id !== "number") return;

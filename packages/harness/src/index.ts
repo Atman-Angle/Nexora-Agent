@@ -2,7 +2,9 @@ export {
   createAgent,
   createRuntime,
   type CreateAgentOptions,
-  type RuntimeMemoryOptions
+  type RuntimeMemoryOptions,
+  type AgentPublicOutputEvent,
+  type AgentPublicOutputListener
 } from "./agent.js";
 export type { CreateRuntimeOptions } from "./types.js";
 

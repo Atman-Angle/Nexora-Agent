@@ -226,7 +226,7 @@ describe("E084 Model / Provider configuration", () => {
     };
 
     expect(() => openAICompatibleProviderFromEnv(connection)).toThrow(
-      "Model capabilities are unknown for test-model"
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS is required"
     );
     expect(() => openAICompatibleProviderFromEnv({
       ...connection,
@@ -238,12 +238,13 @@ describe("E084 Model / Provider configuration", () => {
       NEXORA_MODEL_NAME: "qwen3.7-flash",
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "131073"
     })).toThrow("must not exceed the 131072-token output capability of qwen3.7-flash");
-    expect(() => openAICompatibleProviderFromEnv({
+    const custom = openAICompatibleProviderFromEnv({
       ...connection,
       ...explicitBudgetEnvironment(),
-      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_NAME: "test-model",
       NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: "12000"
-    })).toThrow("context capacity is resolved from NEXORA_MODEL_NAME");
+    });
+    expect(custom.modelProfile).toMatchObject({ model: "test-model", contextWindowTokens: 12_000 });
   });
 
   it("rejects an unknown reasoning value from environment", () => {

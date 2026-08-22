@@ -9,7 +9,9 @@ contextBridge.exposeInMainWorld("nexora", Object.freeze({
   openSession: (projectPath, sessionId) => ipcRenderer.invoke("desktop:open-session", projectPath, sessionId),
   archiveSession: (sessionId, archived) => ipcRenderer.invoke("desktop:archive-session", sessionId, archived),
   removeSession: (sessionId) => ipcRenderer.invoke("desktop:remove-session", sessionId),
-  saveProviderSettings: (settings) => ipcRenderer.invoke("desktop:save-provider-settings", settings),
+  saveModelProfile: (profile) => ipcRenderer.invoke("desktop:save-model-profile", profile),
+  deleteModelProfile: (profileId) => ipcRenderer.invoke("desktop:delete-model-profile", profileId),
+  selectModelProfile: (profileId) => ipcRenderer.invoke("desktop:select-model-profile", profileId),
   control: (runId, control) => ipcRenderer.invoke("desktop:control", runId, control),
   readArtifact: (digest) => ipcRenderer.invoke("desktop:read-artifact", digest),
   onSnapshot: (listener) => {
@@ -21,5 +23,10 @@ contextBridge.exposeInMainWorld("nexora", Object.freeze({
     const handler = (_event, message) => listener(message);
     ipcRenderer.on("desktop:error", handler);
     return () => ipcRenderer.removeListener("desktop:error", handler);
+  },
+  onPublicOutput: (listener) => {
+    const handler = (_event, value) => listener(value);
+    ipcRenderer.on("desktop:public-output", handler);
+    return () => ipcRenderer.removeListener("desktop:public-output", handler);
   }
 }));

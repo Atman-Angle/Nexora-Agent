@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 
 import {
@@ -6,6 +7,7 @@ import {
   createAgentProfileSnapshot,
   createBuiltInTools,
   openAICompatibleProviderFromEnv,
+  type AgentPublicOutputEvent,
   type RunHandle,
   type RunInspection,
   type RuntimeSubscription
@@ -15,8 +17,8 @@ import type {
   DesktopSessionSummary,
   DesktopSnapshot,
   ProjectView,
-  ProviderSettingsInput,
-  ProviderSettingsView,
+  ModelProfileInput,
+  ModelProfileView,
   SessionControl,
   SessionRunView,
   SessionView,
@@ -44,12 +46,29 @@ type StoredSession = {
   pendingRequestKind: "input" | "approval" | null;
   updatedAt: string;
 };
-type StoredProject = { path: string; name: string; sessions: StoredSession[]; hiddenRunIds: string[] };
+type StoredModelProfile = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  contextWindowTokens: number | null;
+  decisionOutputTokens: number;
+  transport: "native_tools" | "structured_output";
+};
+type StoredProject = {
+  path: string;
+  name: string;
+  sessions: StoredSession[];
+  hiddenRunIds: string[];
+  modelProfiles: StoredModelProfile[];
+  selectedModelProfileId: string | null;
+};
 type HostConfig = { version: 1; projects: StoredProject[] };
 
 export class DesktopRuntimeService {
   readonly #onSnapshot: (snapshot: DesktopSnapshot) => void;
   readonly #onError: (message: string) => void;
+  readonly #onPublicOutput: (event: AgentPublicOutputEvent) => void;
   readonly #hostConfigPath: string;
   #hostConfig: HostConfig;
   #workspace: string;
@@ -58,13 +77,14 @@ export class DesktopRuntimeService {
   #activeSessionId: string | null = null;
   #subscription: RuntimeSubscription | null = null;
 
-  constructor(input: { readonly workspace: string; readonly onSnapshot: (snapshot: DesktopSnapshot) => void; readonly onError: (message: string) => void }) {
+  constructor(input: { readonly workspace: string; readonly onSnapshot: (snapshot: DesktopSnapshot) => void; readonly onError: (message: string) => void; readonly onPublicOutput?: (event: AgentPublicOutputEvent) => void }) {
     this.#workspace = resolve(input.workspace);
     this.#hostConfigPath = join(this.#workspace, ".nexora", "desktop-host.json");
     this.#hostConfig = this.#readHostConfig();
     this.#ensureProject(this.#workspace);
     this.#onSnapshot = input.onSnapshot;
     this.#onError = input.onError;
+    this.#onPublicOutput = input.onPublicOutput ?? (() => {});
   }
 
   async snapshot(): Promise<DesktopSnapshot> {
@@ -179,17 +199,60 @@ export class DesktopRuntimeService {
     return await this.snapshot();
   }
 
-  async saveProviderSettings(settings: ProviderSettingsInput): Promise<DesktopSnapshot> {
+  async saveModelProfile(input: ModelProfileInput): Promise<DesktopSnapshot> {
     await this.#assertCanSwitchWorkspace();
     await this.#closeRuntime();
-    const values: Record<string, string> = {
-      NEXORA_MODEL_BASE_URL: requireText(settings.baseUrl, "Provider base URL"),
-      NEXORA_MODEL_NAME: requireText(settings.model, "Model name"),
-      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(settings.decisionOutputTokens),
-      NEXORA_MODEL_TOOL_TRANSPORT: settings.transport
+    const project = this.#currentProject();
+    this.#preserveSelectedApiKey(project);
+    const id = input.id?.trim() || randomUUID();
+    const existing = project.modelProfiles.find((profile) => profile.id === id);
+    const profile: StoredModelProfile = {
+      id,
+      name: requireText(input.name, "Profile name"),
+      baseUrl: requireText(input.baseUrl, "Provider base URL"),
+      model: requireText(input.model, "Model name"),
+      contextWindowTokens: input.contextWindowTokens ?? null,
+      decisionOutputTokens: input.decisionOutputTokens,
+      transport: input.transport
     };
-    if (settings.apiKey?.trim()) values.NEXORA_MODEL_API_KEY = settings.apiKey.trim();
-    this.#updateEnvFile(values);
+    if (existing === undefined) project.modelProfiles.push(profile);
+    else project.modelProfiles[project.modelProfiles.indexOf(existing)] = profile;
+    if (input.apiKey?.trim()) {
+      this.#updateEnvFile({ [profileApiKeyName(id)]: input.apiKey.trim() });
+    }
+    project.selectedModelProfileId ??= id;
+    if (project.selectedModelProfileId === id) this.#applySelectedModelProfile(project);
+    this.#writeHostConfig();
+    return await this.snapshot();
+  }
+
+  async deleteModelProfile(profileId: string): Promise<DesktopSnapshot> {
+    await this.#assertCanSwitchWorkspace();
+    await this.#closeRuntime();
+    const project = this.#currentProject();
+    const id = requireText(profileId, "Model profile ID");
+    if (!project.modelProfiles.some((profile) => profile.id === id)) throw new Error("Model profile not found in this Workspace.");
+    this.#preserveSelectedApiKey(project);
+    project.modelProfiles = project.modelProfiles.filter((profile) => profile.id !== id);
+    this.#updateEnvFile({ [profileApiKeyName(id)]: null });
+    if (project.selectedModelProfileId === id) {
+      project.selectedModelProfileId = project.modelProfiles[0]?.id ?? null;
+      this.#applySelectedModelProfile(project);
+    }
+    this.#writeHostConfig();
+    return await this.snapshot();
+  }
+
+  async selectModelProfile(profileId: string): Promise<DesktopSnapshot> {
+    await this.#assertCanSwitchWorkspace();
+    await this.#closeRuntime();
+    const project = this.#currentProject();
+    const id = requireText(profileId, "Model profile ID");
+    if (!project.modelProfiles.some((profile) => profile.id === id)) throw new Error("Model profile not found in this Workspace.");
+    this.#preserveSelectedApiKey(project);
+    project.selectedModelProfileId = id;
+    this.#applySelectedModelProfile(project);
+    this.#writeHostConfig();
     return await this.snapshot();
   }
 
@@ -214,6 +277,7 @@ export class DesktopRuntimeService {
     this.#runtime = createAgent({
       workspace: this.#workspace,
       provider: openAICompatibleProviderFromEnv(this.#providerEnvironment()),
+      publicOutputListener: this.#onPublicOutput,
       profile: DESKTOP_PROFILE,
       tools: createBuiltInTools({ artifactDir: join(this.#workspace, ".nexora", "artifacts") })
     });
@@ -284,7 +348,11 @@ export class DesktopRuntimeService {
           updatedAt: session.updatedAt
         }))
       })),
-      providerSettings: this.#providerSettings(environment)
+      modelProfiles: this.#currentProject().modelProfiles.map((profile): ModelProfileView => ({
+        ...profile,
+        apiKeyConfigured: Boolean(this.#profileApiKey(profile, environment))
+      })),
+      selectedModelProfileId: this.#currentProject().selectedModelProfileId
     };
   }
 
@@ -322,8 +390,24 @@ export class DesktopRuntimeService {
     const absolute = resolve(path);
     let project = this.#hostConfig.projects.find((item) => item.path.toLowerCase() === absolute.toLowerCase());
     if (project === undefined) {
-      project = { path: absolute, name: basename(absolute), sessions: [], hiddenRunIds: [] };
+      project = {
+        path: absolute,
+        name: basename(absolute),
+        sessions: [],
+        hiddenRunIds: [],
+        modelProfiles: [],
+        selectedModelProfileId: null
+      };
       this.#hostConfig.projects.push(project);
+    }
+    if (!Array.isArray(project.modelProfiles)) project.modelProfiles = [];
+    if ((project as Partial<StoredProject>).selectedModelProfileId === undefined) project.selectedModelProfileId = null;
+    if (project.modelProfiles.length === 0) {
+      const imported = environmentModelProfile(absolute);
+      if (imported !== null) {
+        project.modelProfiles.push(imported);
+        project.selectedModelProfileId = imported.id;
+      }
     }
     return project;
   }
@@ -336,24 +420,66 @@ export class DesktopRuntimeService {
 
   #providerEnvironment(): ProviderEnvironment {
     const environment = { ...readEnv(join(this.#workspace, ".env")), ...process.env };
-    return { NEXORA_MODEL_PROVIDER: "openai-compatible", ...environment };
+    const project = this.#currentProject();
+    const selected = project.modelProfiles.find((profile) => profile.id === project.selectedModelProfileId);
+    if (selected === undefined) return { NEXORA_MODEL_PROVIDER: "openai-compatible", ...environment, NEXORA_MODEL_STREAM: "true" };
+    const apiKey = this.#profileApiKey(selected, environment);
+    return {
+      ...environment,
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: selected.baseUrl,
+      NEXORA_MODEL_NAME: selected.model,
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(selected.decisionOutputTokens),
+      NEXORA_MODEL_TOOL_TRANSPORT: selected.transport,
+      ...(selected.contextWindowTokens === null ? {} : { NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: String(selected.contextWindowTokens) }),
+      ...(apiKey === undefined ? {} : { NEXORA_MODEL_API_KEY: apiKey }),
+      NEXORA_MODEL_STREAM: "true"
+    };
   }
 
   #providerConfigured(environment = this.#providerEnvironment()): boolean {
     return Boolean(environment.NEXORA_MODEL_BASE_URL?.trim() && environment.NEXORA_MODEL_API_KEY?.trim() && environment.NEXORA_MODEL_NAME?.trim() && environment.NEXORA_MODEL_DECISION_OUTPUT_TOKENS?.trim());
   }
 
-  #providerSettings(environment: ProviderEnvironment): ProviderSettingsView {
-    return {
-      baseUrl: environment.NEXORA_MODEL_BASE_URL?.trim() ?? "",
-      apiKeyConfigured: Boolean(environment.NEXORA_MODEL_API_KEY?.trim()),
-      model: environment.NEXORA_MODEL_NAME?.trim() ?? "",
-      decisionOutputTokens: Number(environment.NEXORA_MODEL_DECISION_OUTPUT_TOKENS ?? 4096),
-      transport: environment.NEXORA_MODEL_TOOL_TRANSPORT === "structured_output" ? "structured_output" : "native_tools"
-    };
+  #profileApiKey(profile: StoredModelProfile, environment: ProviderEnvironment): string | undefined {
+    return environment[profileApiKeyName(profile.id)]?.trim()
+      || (profile.id === "environment" ? environment.NEXORA_MODEL_API_KEY?.trim() : undefined);
   }
 
-  #updateEnvFile(values: Record<string, string>): void {
+  #preserveSelectedApiKey(project: StoredProject): void {
+    const selected = project.modelProfiles.find((profile) => profile.id === project.selectedModelProfileId);
+    if (selected === undefined) return;
+    const environment = readEnv(join(this.#workspace, ".env"));
+    const key = this.#profileApiKey(selected, environment);
+    if (key !== undefined) this.#updateEnvFile({ [profileApiKeyName(selected.id)]: key });
+  }
+
+  #applySelectedModelProfile(project: StoredProject): void {
+    const selected = project.modelProfiles.find((profile) => profile.id === project.selectedModelProfileId);
+    if (selected === undefined) {
+      this.#updateEnvFile({
+        NEXORA_MODEL_BASE_URL: null,
+        NEXORA_MODEL_API_KEY: null,
+        NEXORA_MODEL_NAME: null,
+        NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: null,
+        NEXORA_MODEL_DECISION_OUTPUT_TOKENS: null,
+        NEXORA_MODEL_TOOL_TRANSPORT: null
+      });
+      return;
+    }
+    const environment = readEnv(join(this.#workspace, ".env"));
+    const key = this.#profileApiKey(selected, environment);
+    this.#updateEnvFile({
+      NEXORA_MODEL_BASE_URL: selected.baseUrl,
+      NEXORA_MODEL_NAME: selected.model,
+      NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: selected.contextWindowTokens === null ? null : String(selected.contextWindowTokens),
+      NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(selected.decisionOutputTokens),
+      NEXORA_MODEL_TOOL_TRANSPORT: selected.transport,
+      NEXORA_MODEL_API_KEY: key ?? null
+    });
+  }
+
+  #updateEnvFile(values: Record<string, string | null>): void {
     const path = join(this.#workspace, ".env");
     const lines = existsSync(path) ? readFileSync(path, "utf8").split(/\r?\n/) : [];
     const pending = new Map(Object.entries(values));
@@ -363,10 +489,10 @@ export class DesktopRuntimeService {
       const key = match[1]!;
       const value = pending.get(key)!;
       pending.delete(key);
-      return `${key}=${JSON.stringify(value)}`;
+      return value === null ? null : `${key}=${JSON.stringify(value)}`;
     });
-    for (const [key, value] of pending) next.push(`${key}=${JSON.stringify(value)}`);
-    writeFileAtomic(path, `${next.join("\n").replace(/\n+$/, "")}\n`);
+    for (const [key, value] of pending) if (value !== null) next.push(`${key}=${JSON.stringify(value)}`);
+    writeFileAtomic(path, `${next.filter((line): line is string => line !== null).join("\n").replace(/\n+$/, "")}\n`);
   }
 
   #readHostConfig(): HostConfig {
@@ -393,6 +519,29 @@ function readEnv(path: string): ProviderEnvironment {
     } else environment[match[1]!] = raw.startsWith("'") && raw.endsWith("'") ? raw.slice(1, -1) : raw;
   }
   return environment;
+}
+
+function environmentModelProfile(workspace: string): StoredModelProfile | null {
+  const environment = readEnv(join(workspace, ".env"));
+  const baseUrl = environment.NEXORA_MODEL_BASE_URL?.trim();
+  const model = environment.NEXORA_MODEL_NAME?.trim();
+  const decisionOutputTokens = Number(environment.NEXORA_MODEL_DECISION_OUTPUT_TOKENS);
+  if (!baseUrl || !model || !Number.isInteger(decisionOutputTokens) || decisionOutputTokens <= 0) return null;
+  const contextWindowTokens = Number(environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS);
+  return {
+    id: "environment",
+    name: model,
+    baseUrl,
+    model,
+    contextWindowTokens: Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? contextWindowTokens : null,
+    decisionOutputTokens,
+    transport: environment.NEXORA_MODEL_TOOL_TRANSPORT === "structured_output" ? "structured_output" : "native_tools"
+  };
+}
+
+function profileApiKeyName(profileId: string): string {
+  const suffix = createHash("sha256").update(profileId).digest("hex").slice(0, 16).toUpperCase();
+  return `NEXORA_DESKTOP_MODEL_${suffix}_API_KEY`;
 }
 
 function writeFileAtomic(path: string, content: string): void {
