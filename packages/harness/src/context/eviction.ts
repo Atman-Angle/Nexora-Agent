@@ -30,6 +30,23 @@ export function evictDecisionContextOnce(
       memoryCandidates: context.memoryCandidates.slice(0, -1)
     });
   }
+  const continuation = context.continuation ?? [];
+  const fullTurn = continuation.find((turn) => turn.payloadMode === "full");
+  if (fullTurn !== undefined) {
+    return rebuildDecisionContext(context, {
+      continuation: continuation.map((turn) => turn.sourceRunId === fullTurn.sourceRunId
+        ? compactContinuationTurn(turn)
+        : turn)
+    });
+  }
+  const referenceTurn = continuation.slice(0, -1).find((turn) => turn.payloadMode === "compact");
+  if (referenceTurn !== undefined) {
+    return rebuildDecisionContext(context, {
+      continuation: continuation.map((turn) => turn.sourceRunId === referenceTurn.sourceRunId
+        ? referenceContinuationTurn(turn)
+        : turn)
+    });
+  }
   if (context.sessionArchive !== undefined) {
     if (context.sessionArchive.milestones.length > 0) {
       return rebuildDecisionContext(context, {
@@ -158,16 +175,25 @@ export function evictDecisionContextTowardBudget(
 ): ModelDecisionContext | null {
   if (measuredInputTokens <= targetInputTokens) return null;
   const helpfulFacts = context.rehydratedFacts.filter((fact) => fact.origin !== "harness_helpful");
+  const continuationTurns = context.continuation ?? [];
+  const continuationCanContract = continuationTurns.some((turn, index) => (
+    turn.payloadMode === "full"
+    || (index < continuationTurns.length - 1 && turn.payloadMode === "compact")
+  ));
   if (
     context.historyCandidates.length > 0
     || context.memoryCandidates.length > 0
     || context.sessionArchive !== undefined
     || helpfulFacts.length !== context.rehydratedFacts.length
+    || continuationCanContract
   ) {
     return rebuildDecisionContext(context, {
       historyCandidates: [],
       memoryCandidates: [],
-      rehydratedFacts: helpfulFacts
+      rehydratedFacts: helpfulFacts,
+      continuation: continuationTurns.map((turn, index, turns) => (
+        index === turns.length - 1 ? compactContinuationTurn(turn) : referenceContinuationTurn(turn)
+      ))
     }, true);
   }
 
@@ -243,6 +269,56 @@ export function evictDecisionContextTowardBudget(
   return changed
     ? rebuildDecisionContext(context, { toolObservations: observations })
     : evictDecisionContextOnce(context);
+}
+
+function compactContinuationTurn(
+  turn: NonNullable<ModelDecisionContext["continuation"]>[number]
+): NonNullable<ModelDecisionContext["continuation"]>[number] {
+  if (turn.payloadMode === "reference") return turn;
+  return {
+    ...turn,
+    outcome: turn.outcome === null ? null : {
+      ...turn.outcome,
+      summary: boundedText(turn.outcome.summary, 1_024),
+      unfinishedWork: turn.outcome.unfinishedWork.map((item) => boundedText(item, 256)),
+      exactCause: turn.outcome.exactCause === null ? null : {
+        code: turn.outcome.exactCause.code,
+        message: boundedText(turn.outcome.exactCause.message, 512)
+      }
+    },
+    plan: turn.plan === null ? null : {
+      goal: boundedText(turn.plan.goal, 512),
+      steps: turn.plan.steps.map((step) => ({
+        objective: boundedText(step.objective, 256),
+        status: step.status
+      }))
+    },
+    events: turn.events.map((event) => ({ ...event, data: null })),
+    toolFacts: turn.toolFacts.map((fact) => ({ ...fact, input: null, facts: null, error: null })),
+    payloadMode: "compact"
+  };
+}
+
+function referenceContinuationTurn(
+  turn: NonNullable<ModelDecisionContext["continuation"]>[number]
+): NonNullable<ModelDecisionContext["continuation"]>[number] {
+  return {
+    ...compactContinuationTurn(turn),
+    inputs: turn.inputs.map((input) => ({ ...input, text: `[available by ${input.ref}]` })),
+    outcome: turn.outcome === null ? null : {
+      ...turn.outcome,
+      summary: boundedText(turn.outcome.summary, 512),
+      unfinishedWork: [],
+      exactCause: turn.outcome.exactCause === null ? null : {
+        code: turn.outcome.exactCause.code,
+        message: boundedText(turn.outcome.exactCause.message, 256)
+      }
+    },
+    plan: null,
+    events: [],
+    toolFacts: [],
+    payloadMode: "reference"
+  };
 }
 
 function continuationObservationMode(value: unknown): "full" | "fragment" | "reference" | null {

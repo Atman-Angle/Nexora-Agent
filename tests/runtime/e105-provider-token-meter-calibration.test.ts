@@ -152,7 +152,7 @@ function decisionContext(text: string): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:e105" },
-    providerContractVersion: 5,
+    providerContractVersion: 6,
     activeInvocations: [],
     toolObservations: [],
     rehydratedFacts: [],

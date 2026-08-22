@@ -1,6 +1,7 @@
 export type RuntimeErrorCode =
   | "INVALID_CONFIGURATION"
   | "INVALID_INPUT"
+  | "INVALID_CONTINUATION"
   | "RUN_NOT_FOUND"
   | "RUN_BUSY"
   | "RUN_STATE_CONFLICT"

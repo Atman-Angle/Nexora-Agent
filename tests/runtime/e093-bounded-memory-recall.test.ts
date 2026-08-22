@@ -348,7 +348,7 @@ function memoryDecisionContext(): ModelDecisionContext {
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:placeholder" },
-    providerContractVersion: 5,
+    providerContractVersion: 6,
     activeInvocations: [],
     toolObservations: [{
       invocationId: "old",

@@ -26,6 +26,7 @@ export type {
   AgentDriver,
   AgentRuntimePort,
   AgentStateView,
+  ContinuationStateView,
   AgentToolDescriptor,
   ContextEvidenceFact,
   FinishProposal,

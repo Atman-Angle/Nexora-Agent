@@ -60,7 +60,8 @@ export type RuntimeDelegationPolicy = {
     readonly maxDurationMs?: number | undefined;
   };
 };
-export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets; readonly completion?: CompletionRequirements };
+export type RunContinuationInput = { readonly parentRunId: string };
+export type StartInput = { readonly input: string; readonly budgets?: RuntimeBudgets; readonly completion?: CompletionRequirements; readonly continuation?: RunContinuationInput };
 export type ApprovalDecision = { readonly requestId: string; readonly approved: boolean; readonly reason?: string };
 export type RecoveryDecision =
   | { readonly invocationId: string; readonly outcome: "confirmed_succeeded"; readonly subjectRef: string }
@@ -102,7 +103,7 @@ export type RunView = {
   readonly toolAttempts: readonly ToolAttempt[];
   readonly modelCalls: readonly ModelCallRecord[];
 };
-export type RunOptions = { readonly budgets?: RuntimeBudgets; readonly completion?: CompletionRequirements };
+export type RunOptions = { readonly budgets?: RuntimeBudgets; readonly completion?: CompletionRequirements; readonly continuation?: RunContinuationInput };
 
 type DeepReadonly<T> =
   T extends (...args: never[]) => unknown
@@ -190,6 +191,7 @@ export type RunFinalResult =
 
 export type RunInspection = {
   readonly runId: string;
+  readonly continuation: DeepReadonly<RunSnapshot["continuation"]> | null;
   readonly revision: number;
   readonly status: PublicRunStatus;
   readonly stopReason: string | null;

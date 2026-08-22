@@ -67,6 +67,20 @@ flowchart TD
 
 ## 2. 权威与读写位置
 
+### Session continuation
+
+```text
+Host exact new input + parentRunId
+→ Runtime validates terminal Parent and unresolved effects
+→ Child snapshot persists immutable parent revision/event boundary
+→ Runtime port exposes only verified ancestors
+→ Harness rebuilds ancestor Inputs/Outcomes/Tool facts
+→ Provider-aware full → compact → reference projection
+→ one measured Provider call
+```
+
+Desktop Session 只保存有序 Run 引用用于导航；它不拼接历史 goal，也不拥有 Context。完整历史仍在各 Run 的 Input/Event/Invocation/Evidence/Artifact Authority 中。跨 Run ref 使用 `run:<runId>/...` namespace，并且只有当前 lineage 中已发布且 digest 匹配的 ref 可以恢复；sibling、其他 Workspace 和损坏 boundary 统一不可用。
+
 | 数据 | 创建 | 修改 | 读取/消费 | 持久化/销毁 |
 | --- | --- | --- | --- | --- |
 | 自然语言输入 | CLI/调用方 | Resume 只追加 | Provider 决策、Task Contract | `runs.snapshot_json.inputHistory`；不改写 |

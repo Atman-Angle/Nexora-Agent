@@ -8,6 +8,7 @@ import {
 } from "@nexora/runtime/internal";
 import type {
   HistoryCandidate,
+  ContinuationTurn,
   MemoryCandidate,
   JsonValue,
   RehydratedFact,
@@ -54,6 +55,7 @@ export function isValidSourceRefFormat(ref: string): boolean {
     || /^invocation:[a-zA-Z0-9._-]{1,100}$/.test(ref)
     || /^evidence:[a-zA-Z0-9._-]{1,100}$/.test(ref)
     || /^artifact:sha256:[0-9a-f]{64}$/.test(ref)
+    || /^run:[^/]{1,200}\/(?:input:[1-9][0-9]*|event:[1-9][0-9]*|invocation:[a-zA-Z0-9._-]{1,100}|evidence:[a-zA-Z0-9._-]{1,100})$/.test(ref)
     || memoryIdFromRef(ref) !== null;
 }
 
@@ -80,6 +82,7 @@ export function buildAvailableContextRefs(args: {
   readonly artifacts: ContextArtifactSource;
   readonly historyCandidates?: readonly HistoryCandidate[];
   readonly memoryCandidates?: readonly MemoryCandidate[];
+  readonly continuation?: readonly ContinuationTurn[];
   /** Fork Base inherited refs (parent facts at the fork point) the child may request. */
   readonly inheritedRefs?: Readonly<Record<string, string>>;
 }): Map<string, string> {
@@ -107,6 +110,38 @@ export function buildAvailableContextRefs(args: {
   }
   for (const candidate of args.memoryCandidates ?? []) {
     manifest.set(candidate.ref, candidate.digest);
+  }
+  for (const turn of args.continuation ?? []) {
+    const ancestor = store.getRun(turn.sourceRunId);
+    if (ancestor === null) continue;
+    const ancestorAuthority = buildContextAuthority({ run: ancestor, store, artifacts });
+    for (const entry of turn.inputs) {
+      manifest.set(entry.ref, digestText(entry.text));
+    }
+    for (const event of ancestorAuthority.events) {
+      manifest.set(`run:${turn.sourceRunId}/event:${event.sequence}`, digestRunEvent(event));
+    }
+    for (const invocation of ancestorAuthority.invocations) {
+      const innerRef = `invocation:${invocation.id}`;
+      const resolved = resolveSourceRef(innerRef, ancestorAuthority);
+      if (resolved !== null) manifest.set(`run:${turn.sourceRunId}/${innerRef}`, resolved.digest);
+    }
+    for (const evidence of ancestor.evidence) {
+      const innerRef = `evidence:${evidence.id}`;
+      const resolved = resolveSourceRef(innerRef, ancestorAuthority);
+      if (resolved !== null) manifest.set(`run:${turn.sourceRunId}/${innerRef}`, resolved.digest);
+      if (evidence.artifactRef !== null) {
+        const artifactRef = `artifact:${evidence.artifactRef}`;
+        const artifact = resolveSourceRef(artifactRef, ancestorAuthority);
+        if (artifact !== null) manifest.set(artifactRef, artifact.digest);
+      }
+    }
+    const artifact = turn.outcome?.resultArtifact;
+    if (artifact !== null && artifact !== undefined && artifacts.has(artifact)) {
+      const ref = `artifact:${artifact}`;
+      const resolved = resolveSourceRef(ref, ancestorAuthority);
+      if (resolved !== null) manifest.set(ref, resolved.digest);
+    }
   }
   // The bounded Session Archive publishes complete same-Run Input/Event
   // ranges. Populate their exact digest entries directly instead of resolving
@@ -345,9 +380,14 @@ export function resolveRehydratedFact(args: {
       ? { ref, kind: "memory", origin, digest, content: record as unknown as JsonValue, error: null, trust: "untrusted_memory_data" }
       : { ref, kind: "memory", origin, digest: "", content: null, error: "REF_UNAVAILABLE", trust: "untrusted_memory_data" };
   }
-  const resolved = resolveSourceRef(ref, authority);
+  const namespaced = parseNamespacedRef(ref);
+  const selectedRun = namespaced === null ? null : store.getRun(namespaced.runId);
+  const selectedAuthority = selectedRun === null
+    ? authority
+    : buildContextAuthority({ run: selectedRun, store, artifacts });
+  const resolved = resolveSourceRef(namespaced?.innerRef ?? ref, selectedAuthority);
   if (resolved !== null && manifest.get(ref) === resolved.digest) {
-    const content = readAuthorityContent(resolved, authority, artifacts);
+    const content = readAuthorityContent(resolved, selectedAuthority, artifacts);
     if (content !== null) {
       return { ref, kind: kindOf(resolved.kind), origin, digest: resolved.digest, content, error: null };
     }
@@ -378,6 +418,11 @@ export function resolveRehydratedFact(args: {
     }
   }
   return { ref, kind: kindOfPrefix(ref), origin, digest: "", content: null, error: "REF_UNAVAILABLE" };
+}
+
+function parseNamespacedRef(ref: string): { readonly runId: string; readonly innerRef: string } | null {
+  const match = /^run:([^/]+)\/(.+)$/.exec(ref);
+  return match === null ? null : { runId: match[1]!, innerRef: match[2]! };
 }
 
 export type RehydratedAdmission = {
@@ -544,6 +589,8 @@ function kindOf(kind: "input" | "invocation" | "evidence" | "event" | "artifact"
 }
 
 function kindOfPrefix(ref: string): RehydratedFact["kind"] {
+  const namespaced = parseNamespacedRef(ref);
+  if (namespaced !== null) return kindOfPrefix(namespaced.innerRef);
   if (ref.startsWith("memory:")) return "memory";
   if (ref.startsWith("input:")) return "input";
   if (ref.startsWith("event:")) return "event";

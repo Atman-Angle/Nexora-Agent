@@ -87,7 +87,7 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 
 Session header 可显示一个紧凑的 Context 占用提示。它只投影最近一次真实 Model Call 的 `actualInputTokens`（不可用时使用 `measuredInputTokens`）与 `contextWindowTokens`，不累计估算、不形成 Dashboard，也不由 Renderer 自行计数。
 
-该提示属于当前 Session 最新 Run 的当前 Turn，不是 Project 总量，也不把 Session 内历史 Run 的 token 相加。连续 Session 的后续 Run 只按真实 continuation context 重新计算；GUI 不得把模型实际未接收的历史内容计入 Context。
+该提示属于当前 Session 最新 Run 的最近一次真实 Model Call，不是 Project 总量，也不把 Session 内历史调用的 token 相加。连续 Session 的后续 Run 按 [Session Context Continuity Spec](SESSION_CONTEXT_CONTINUITY_SPEC.md) 从完整 continuation chain 构建有界 Context；GUI 只显示模型实际收到的 active Context 使用量，不把持久化但未进入本次 wire 的历史内容计入占用。
 
 Session 列表必须来自 Runtime 的持久化事实。Desktop 不维护状态副本。若 Runtime 尚无安全的 Run 枚举投影，应先补充最小只读 Contract，而不是读取 Core Store 或建立独立历史数据库。
 
@@ -165,7 +165,7 @@ Runtime 的问题作为一条 Nexora 消息进入 Conversation；底部保持普
 
 ### Terminal
 
-显示正式 Result 或失败 Delivery。终态 Run 不被复活；用户可以在同一 Session 输入，Desktop 创建新的后续 Run，并把上一 Run 的有界 Delivery 作为明确的 Host continuation context。
+显示正式 Result 或失败 Delivery。终态 Run 不被复活；用户可以在同一 Session 输入，Desktop 通过 Runtime 的正式 continuation Contract 创建后续 Run。Harness 按 [Session Context Continuity Spec](SESSION_CONTEXT_CONTINUITY_SPEC.md) 从可验证 lineage 重建同一 Session 的完整逻辑 Context；Desktop 不再把上一 Run 的 Delivery 拼接进新 goal。
 
 ## 7.1 Global model settings
 
@@ -269,6 +269,7 @@ Feature Core 完成需要以下可复现证据：
 17. `native_tools` 的公开 Provider 文本可以跨 Worker/IPC 增量显示，失败 Attempt 不保留，token delta 不进入 Runtime Authority；
 18. Agent output 和 Result 安全渲染 Markdown，Enter / Shift+Enter / IME 行为可验收；
 19. Settings 可全局增删改 Model Profile，同一 Provider 的多个模型复用连接和密钥；每个 Project 独立选择 Profile，切换只影响后续 Run，活动 Run 不被中断。
+20. 同一 Session 的后续 Run 通过 Runtime continuation lineage 恢复历史 Context；Desktop 不拼接 continuation goal，重启后 lineage、Context projection 与真实 Model Call 使用量保持一致。
 
 ## 14. Delivery layers
 

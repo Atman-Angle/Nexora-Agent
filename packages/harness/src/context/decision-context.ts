@@ -27,6 +27,7 @@ import {
   projectRunContext
 } from "./projection.js";
 import { projectNativeToolContinuation } from "./native-continuation.js";
+import { projectContinuationTurns } from "./continuation.js";
 import { projectHistoryCandidates } from "./history-candidates.js";
 import {
   admitRehydratedFacts,
@@ -70,6 +71,7 @@ export function buildDecisionContext(args: {
   const invocations = store.listToolInvocations(run.runId);
   const events = store.listEvents(run.runId);
   const observations = projectRelevantToolObservations(run, invocations);
+  const continuation = projectContinuationTurns(store);
   const inherited = args.forkContext === undefined || args.forkContext === null
     ? undefined
     : (() => {
@@ -108,6 +110,7 @@ export function buildDecisionContext(args: {
     artifacts,
     historyCandidates,
     memoryCandidates,
+    continuation,
     ...(inherited === undefined ? {} : { inheritedRefs: inherited.refs })
   });
 
@@ -177,7 +180,8 @@ export function buildDecisionContext(args: {
       event.type === "runtime.event" && event.payload.name === "workers.delegation.accepted"
     )),
     run: projectedRun,
-    providerContractVersion: 5 as const,
+    continuation,
+    providerContractVersion: 6 as const,
     activeInvocations: invocations
       .filter((invocation): invocation is ToolInvocation & { readonly status: "started" | "unknown" } => (
         invocation.status === "started" || invocation.status === "unknown"
@@ -230,6 +234,7 @@ export function buildDecisionContext(args: {
     workerRun: projection.workerRun,
     delegationSatisfied: projection.delegationSatisfied,
     run: projection.run,
+    continuation: projection.continuation,
     projection: {
       schemaVersion: 1 as const,
       digest: digestJson(projection)

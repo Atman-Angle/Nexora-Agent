@@ -362,7 +362,7 @@ function decisionContext(currentPlan: unknown, semanticPressure = false): ModelD
       lastError: null
     },
     projection: { schemaVersion: 1, digest: "sha256:test" },
-    providerContractVersion: 5,
+    providerContractVersion: 6,
     activeInvocations: [],
     toolObservations: [],
     rehydratedFacts: [],

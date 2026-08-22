@@ -896,7 +896,7 @@ describe("E050 Provider response contract convergence", () => {
 
     expect(resumed.status).toBe("waiting");
     expect(provider.contexts[2]).toMatchObject({
-      providerContractVersion: 5,
+      providerContractVersion: 6,
       run: {
         taskContract: expect.objectContaining({ inputVersion: 1 }),
         inputCount: 2

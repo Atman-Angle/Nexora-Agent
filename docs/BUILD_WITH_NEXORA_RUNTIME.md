@@ -612,7 +612,7 @@ Testing Kit 使用生产 `createAgent()`、真实临时 workspace 和 SQLite；c
 
 ## 成功与证据 Contract
 
-Provider Contract v5 只提交最终 text、可选 objective-only Plan、Tool name/arguments，或 human-input control。Harness 从原始输入和 objective 派生 Runtime Task Contract，但不自动生成 Acceptance Check。Provider 的最终 `text` 只成为 summary；Runtime 从真实 Evidence、Invocation 和 Artifact 自动派生 provenance，并直接执行 deterministic Completion Gate。新生产路径没有同步 Validator。
+Provider Contract v6 只提交最终 text、可选 objective-only Plan、Tool name/arguments，或 human-input control；若 Host 显式创建 Run continuation，Harness 还会从 Runtime 验证的祖先 Authority 构建有界历史投影。Harness 从原始输入和 objective 派生 Runtime Task Contract，但不自动生成 Acceptance Check。Provider 的最终 `text` 只成为 summary；Runtime 从真实 Evidence、Invocation 和 Artifact 自动派生 provenance，并直接执行 deterministic Completion Gate。新生产路径没有同步 Validator。
 
 以下情况都不会成功：
 

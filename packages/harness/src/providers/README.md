@@ -42,6 +42,8 @@ Provider 必须在一个 Run 内固定声明一种能力：
 
 不支持任一能力的 Provider 必须显式失败，不能降级到 JSON-object、Prompt 约定或已删除的 Action wire。
 
+Provider Contract v6 在同一投影中增加 Runtime-verified continuation ancestors。祖先 Input、正式 Outcome、Tool/Evidence/Artifact facts 由 Harness 从 Authority 重建，按 `full → compact → reference` 收缩，并使用 `run:<runId>/...` ref 精确恢复；Host summary、Provider reasoning delta 和 sibling Run 不进入该历史。
+
 OpenAI-compatible 生产 Adapter 把底层 Decision Context 统一投影为 `AgentWorkingContext`：`task`、`plan`、`workingSet`、`recentOutcome`、`relevantMemory` 与 `capabilities`。`workingSet` 从完整 Invocation Authority 折叠并保留相关 Tool 参数、结果/错误、repeatCount、恢复事实、当前文件、workspaceChanged、已完成工作、未解决问题与可读 Artifact refs；当前文件 read/write/patch 链不会因 Plan revision 或最近 Observation 数量而消失。这只是可重建的 Harness 投影，不新增 Store 或状态所有权。
 
 ### History Candidates Contract

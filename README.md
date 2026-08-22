@@ -94,10 +94,11 @@ The stable strategy prefix is digested and audited on every Model Call. Provider
 
 ## Context: a bounded view of durable Run state
 
-Nexora does not treat the model prompt as the Agent's memory or source of truth. On every Provider call, the Harness rebuilds a bounded **Agent Working Context** from Runtime authority: the current input and task contract, the Run-owned Plan and progress, relevant Tool Observations, Evidence, interaction state, and recovery facts. The projection is disposable; deleting it cannot delete or rewrite what actually happened.
+Nexora does not treat the model prompt as the Agent's memory or source of truth. On every Provider call, the Harness rebuilds a bounded **Agent Working Context** from Runtime authority: the current Run plus any Runtime-verified continuation ancestors, the Run-owned Plan and progress, relevant Tool Observations, Evidence, interaction state, and recovery facts. Complete history stays in Run authority while the active model context stays bounded; deleting its projection cannot delete or rewrite what actually happened.
 
 ```text
 persisted Run authority
+  + verified continuation ancestor authority
   → bounded working projection
   → token measurement
   → deterministic eviction when needed
@@ -112,6 +113,7 @@ persisted Run authority
 | **Deterministic eviction** | Lower-value Tool payloads shrink from full content to fragment, reference, or omission using stable priority rules. Active checks, unresolved failures, safety facts, Evidence, and current work remain ahead of ordinary history. No LLM decides what to evict. |
 | **History navigation and rehydration** | Bounded `historyCandidates` are internal Harness navigation metadata and are not sent by the production Adapter. The Harness restores published refs named by the latest input, active `context_ref` requirements, the highest-ranked eligible Memory, and critical Tool facts into digest-checked `rehydratedFacts`; unavailable, altered, or oversized facts remain typed unavailable data instead of being guessed or stopping the Run. |
 | **Restart and branch isolation** | Context is rebuilt from persisted authority after restart. A branch inherits a read-only fork base but owns its workspace, history, Evidence, and completion state, so it cannot mutate or complete its parent. |
+| **Session continuation** | A Host can start a child Run with the exact new input and `continuation.parentRunId`. Runtime persists an immutable parent boundary; the Harness projects ancestor inputs, outcomes and Tool facts as `full → compact → reference`, while sibling Runs remain unavailable. |
 
 The ordering is deliberate: current task and authoritative Evidence first, rebuildable history second. Context management may change what the model can see in one call, but it cannot change Run Status, Plan, Invocation, Evidence, Approval, or the Completion Gate.
 

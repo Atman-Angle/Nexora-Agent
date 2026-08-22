@@ -31,6 +31,7 @@ Harness 与 Runtime 已物理拆为 `@nexora/harness` 和 `@nexora/runtime`。�
 ```text
 TaskContract
 Run
+RunContinuation
 RuntimeAction
 StructuredPlan
 RuntimeTool
@@ -64,13 +65,16 @@ Input History
 Task Contract
 Structured Plan
 Tool Observations
-Session Archive
+Run-local Session Archive
+Verified Continuation Ancestors
 Fresh External Facts
 ```
 
-上下文不是完整聊天历史，而是每轮从权威事实构建的有界决策输入。当前 Context Projection 不再把完整 `RunSnapshot` 交给 Provider，但会持续投影全部原始用户输入；Task Contract 只是工作表示，不能覆盖或隐藏输入。Tool Observation 由完整 persisted Invocation Authority 确定性派生，先折叠相同 Tool/input/outcome，再标记 active Check、未解决错误、安全失败、当前文件链和 predecessor Evidence。候选没有固定条数或单条 4 KiB 可见性上限；正常投影完整保留，只有 Provider-aware Token Meter 超过 soft/hard limit 时才按 retention class 与 `stepOrder → invocationSequence → invocationId` 收缩。大型 critical payload 可在真实容量压力下变为固定片段与精确引用，普通历史可变为引用或移除；当前文件 read/write/patch 链在普通历史之后收缩。每份最终投影带稳定 digest，但 digest 不拥有 Run 状态。
+完整 Context 历史不是一份聊天文本或 Prompt 副本，而是当前 Run 与经过 Runtime 校验的 `RunContinuation` 祖先 Authority。Host 只可用 `{ continuation: { parentRunId } }` 声明后续 Run；Runtime 在创建时固定 Parent revision/event boundary，并要求 Parent 已终态且没有 unresolved Tool effect。Child 的 `inputHistory[0]` 始终只保存本轮原始用户输入。Harness 每轮从该完整 lineage 重建有界决策输入，Provider 只收到当前窗口容纳的投影；Task Contract 和压缩结果都不能覆盖、隐藏或反写原始事实。
 
-Session Archive 是同一 Run 的有界历史索引，不是第二个 Memory Store。它只发布已持久化 Input/Event 的 sequence 范围，以及最多 16 条由 Input、Plan 修订、失败、拒绝和 Branch Event 确定性派生的 Milestone；首个目标 Input、最新 Input 和每种已出现的 Event 类别各保留一个代表，其余位置再按既有安全优先级与时间填充，避免重复失败淹没其他导航入口。标签最长 180 字符，只用于导航。最新 Input 明确包含范围内的 `input:<sequence>` / `event:<sequence>` 时，Harness 在 Provider 决策前通过 Runtime port 从 Run/Input/Event Authority 精确恢复原始内容。删除 Archive 投影不影响任何事实，下一轮可从 Store 重建。
+当前 Run 的 Tool Observation 由完整 persisted Invocation Authority 确定性派生，先折叠相同 Tool/input/outcome，再标记 active Check、未解决错误、安全失败、当前文件链和 predecessor Evidence。Continuation Turn 从祖先 Input、terminal Result/Delivery、Invocation、Evidence 与 Artifact 确定性投影，按 `full → compact → reference` 收缩；直接 Parent 的输入和正式 Outcome 优先保留，更早 Turn 可退为带 Run namespace 的精确引用。大型 payload 继续使用既有 fragment/reference 策略。每份最终投影带稳定 digest，但 digest 不拥有 Run 状态。
+
+Run-local Session Archive 是同一 Run 的有界历史索引，不是跨 Run Session，也不是第二个 Memory Store。它只发布已持久化 Input/Event 的 sequence 范围，以及最多 16 条由 Input、Plan 修订、失败、拒绝和 Branch Event 确定性派生的 Milestone；首个目标 Input、最新 Input 和每种已出现的 Event 类别各保留一个代表，其余位置再按既有安全优先级与时间填充，避免重复失败淹没其他导航入口。标签最长 180 字符，只用于导航。最新 Input 明确包含范围内的 `input:<sequence>` / `event:<sequence>` 时，Harness 在 Provider 决策前通过 Runtime port 从 Run/Input/Event Authority 精确恢复原始内容。删除 Archive 投影不影响任何事实，下一轮可从 Store 重建。
 
 `historyCandidates` 是与当前任务相关的有界关系导航，不是全文、向量或 Memory 检索。Harness 只从 Runtime 提供的当前 Run Authority 与显式 Fork Base 确定性派生最多 8 条、合计不超过 4 KiB 的候选，关系包括同 Check、Step、Tool、精确 Input、路径、错误码，以及已关联的 Evidence、Artifact、Approval 和 Fork Base。每条只携带 `ref`、少量 `relatedRefs`、category、reasons、hint 与 occurredAt，不复制历史事实；最新 Input 明确点名候选 ref 或 active `context_ref` Check 要求该 ref 时才自动读取原始内容。候选 ref 进入同一 digest/作用域 manifest，sibling、其他 Run 和 parent post-fork 内容不可见。删除候选投影不会删除事实，也不新增表、索引、模型调用或 Authority。
 

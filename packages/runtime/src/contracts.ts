@@ -305,12 +305,20 @@ export const RunDeliverySchema = z.object({
 }).strict();
 export type RunDelivery = z.infer<typeof RunDeliverySchema>;
 
+export const RunContinuationSchema = z.object({
+  parentRunId: NonEmptyString,
+  parentRevision: z.number().int().nonnegative(),
+  parentLastEventSequence: z.number().int().positive()
+}).strict();
+export type RunContinuation = z.infer<typeof RunContinuationSchema>;
+
 export const RunSnapshotSchema = z.object({
   schemaVersion: z.literal(1),
   runId: NonEmptyString,
   revision: z.number().int().nonnegative(),
   status: RunStatusSchema,
   stopReason: NonEmptyString.nullable(),
+  continuation: RunContinuationSchema.optional(),
   inputHistory: z.array(InputEntrySchema).min(1),
   taskContract: TaskContractSchema.nullable(),
   currentPlan: StructuredPlanSchema.nullable(),
@@ -692,6 +700,7 @@ export function createInitialRunSnapshot(input: {
   now: string;
   budgets?: RuntimeBudgets;
   completionRequirements?: CompletionRequirements;
+  continuation?: RunContinuation;
 }): RunSnapshot {
   const text = NonEmptyString.parse(input.input);
   const now = IsoDateTime.parse(input.now);
@@ -701,6 +710,7 @@ export function createInitialRunSnapshot(input: {
     revision: 0,
     status: "running",
     stopReason: null,
+    ...(input.continuation === undefined ? {} : { continuation: input.continuation }),
     inputHistory: [{ id: randomUUID(), sequence: 1, text, receivedAt: now }],
     taskContract: null,
     currentPlan: null,

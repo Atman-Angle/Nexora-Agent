@@ -38,6 +38,13 @@ export type ContextEvidenceFact = {
 
 export type AgentToolDescriptor = Pick<RuntimeTool, "contract">;
 
+export type ContinuationStateView = {
+  readonly run: RunSnapshot;
+  readonly invocations: readonly ToolInvocation[];
+  readonly attempts: readonly ToolAttempt[];
+  readonly events: readonly RunEvent[];
+};
+
 /** One immutable, revision-consistent mechanical view consumed by the Harness. */
 export type AgentStateView = {
   readonly run: RunSnapshot;
@@ -46,6 +53,8 @@ export type AgentStateView = {
   readonly invocations: readonly ToolInvocation[];
   readonly attempts: readonly ToolAttempt[];
   readonly events: readonly RunEvent[];
+  /** Verified direct ancestors, ordered oldest to newest. */
+  readonly continuationAncestors: readonly ContinuationStateView[];
   readonly forkContext: ForkContext | null;
   readonly parentRun: RunSnapshot | null;
   readonly parentInvocations: readonly ToolInvocation[];

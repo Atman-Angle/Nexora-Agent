@@ -21,7 +21,7 @@ const context = {
     lastError: null
   },
   projection: { schemaVersion: 1 as const, digest: "sha256:test" },
-  providerContractVersion: 5 as const,
+  providerContractVersion: 6 as const,
   activeInvocations: [],
   toolObservations: [],
   contextCheckpoint: null,

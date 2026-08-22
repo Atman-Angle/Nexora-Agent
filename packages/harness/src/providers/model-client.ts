@@ -65,8 +65,48 @@ export type ProjectedRunContext = {
   };
 };
 
+export type ContinuationTurn = {
+  readonly sourceRunId: string;
+  readonly status: "succeeded" | "failed" | "cancelled";
+  readonly inputs: readonly {
+    readonly ref: string;
+    readonly sequence: number;
+    readonly text: string;
+  }[];
+  readonly outcome: null | {
+    readonly summary: string;
+    readonly resultArtifact: string | null;
+    readonly unfinishedWork: readonly string[];
+    readonly exactCause: null | { readonly code: string; readonly message: string };
+  };
+  readonly plan: null | {
+    readonly goal: string;
+    readonly steps: readonly {
+      readonly objective: string;
+      readonly status: "pending" | "active" | "completed" | "failed";
+    }[];
+  };
+  readonly events: readonly {
+    readonly ref: string;
+    readonly type: string;
+    readonly occurredAt: string;
+    readonly data: JsonValue | null;
+  }[];
+  readonly toolFacts: readonly {
+    readonly ref: string;
+    readonly toolName: string;
+    readonly status: "succeeded" | "failed";
+    readonly input: JsonValue | null;
+    readonly facts: JsonValue | null;
+    readonly error: JsonValue | null;
+  }[];
+  readonly evidenceRefs: readonly string[];
+  readonly occurredAt: string;
+  readonly payloadMode: "full" | "compact" | "reference";
+};
+
 export type ModelDecisionContext = {
-  readonly providerContractVersion: 5;
+  readonly providerContractVersion: 6;
   readonly workspace: string;
   /** Derived from Host policy and ForkContext; Worker Runs cannot delegate further. */
   readonly delegationAllowed?: boolean;
@@ -74,6 +114,8 @@ export type ModelDecisionContext = {
   readonly workerRun?: boolean;
   readonly delegationSatisfied?: boolean;
   readonly run: ProjectedRunContext;
+  /** Bounded projection of verified continuation ancestors, oldest to newest. */
+  readonly continuation?: readonly ContinuationTurn[];
   readonly projection: {
     readonly schemaVersion: 1;
     readonly digest: string;
@@ -244,6 +286,7 @@ export type RepairContext = {
 export type AgentWorkingContext = {
   readonly task: {
     readonly inputs: readonly string[];
+    readonly continuation: readonly ContinuationTurn[];
   };
   readonly plan: null | {
     readonly tasks: readonly {

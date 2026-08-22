@@ -191,6 +191,7 @@ export function compilePrompt(input: {
   const authority = authorityContext(input.context);
   const dynamic = {
     originalTaskContract: {
+      continuation: input.context.continuation ?? [],
       userInputs: input.context.run.inputHistory,
       derivedTaskContract: input.context.run.taskContract
     },
@@ -455,6 +456,7 @@ function controlToolContracts(includeDelegation = true): readonly ProviderToolCo
 function authorityContext(context: ModelDecisionContext): unknown {
   return {
     userInputs: context.run.inputHistory,
+    continuation: context.continuation ?? [],
     taskContract: context.run.taskContract,
     plan: context.run.currentPlan,
     progress: context.run.stepProgress,

@@ -384,7 +384,7 @@ function profile(id: string, version: string, principle: string): AgentProfileSn
 
 function context(tools = [tool("records.lookup")]): ModelDecisionContext {
   return {
-    providerContractVersion: 5,
+    providerContractVersion: 6,
     workspace: "D:\\fixture",
     run: {
       inputCount: 1,

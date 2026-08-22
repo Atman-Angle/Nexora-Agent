@@ -11,3 +11,15 @@ Version `0.1.0` is licensed under Apache-2.0. The package is not yet published t
 ## Host read projections
 
 Host applications can use `runtime.listRuns()` to restore a bounded list of persisted Runs, `RunHandle.inspect()` to read the current public state and input history, and `runtime.readArtifactText()` to read a digest-verified, size-limited text Artifact. These APIs are read-only projections; Store internals remain private.
+
+## Run continuation
+
+Start an explicit continuation without changing the new user input:
+
+```ts
+const next = runtime.run(userInput, {
+  continuation: { parentRunId: previousRunId }
+});
+```
+
+The parent must exist in the same Runtime Store, be terminal, and have no unresolved Tool effect. Runtime persists its revision and last-event boundary in the child snapshot and `run.created` event. Invalid lineage fails with `INVALID_CONTINUATION`; a normal `runtime.run(input)` remains an independent Run.

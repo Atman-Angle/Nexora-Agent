@@ -209,7 +209,7 @@ function decisionContext(options: {
       }
     },
     projection: { schemaVersion: 1, digest: `sha256:${"0".repeat(64)}` },
-    providerContractVersion: 5,
+    providerContractVersion: 6,
     activeInvocations: [],
     toolObservations: options.withObservation ? [{
       invocationId: "invocation-1",

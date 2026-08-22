@@ -80,6 +80,7 @@ export function projectRunInspection(
   const latestModelCall = modelCalls.at(-1);
   return deepFreeze({
     runId: snapshot.runId,
+    continuation: snapshot.continuation ?? null,
     revision: snapshot.revision,
     status,
     stopReason: snapshot.stopReason,

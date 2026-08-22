@@ -12,6 +12,7 @@ export interface ContextSource {
   listEvents(runId: string): readonly RunEvent[];
   listToolInvocations(runId: string): readonly ToolInvocation[];
   listToolAttempts(runId: string): readonly ToolAttempt[];
+  listContinuationRuns?(): readonly RunSnapshot[];
 }
 
 export interface ContextArtifactSource {
@@ -20,18 +21,24 @@ export interface ContextArtifactSource {
 }
 
 export function contextSourceFromState(state: AgentStateView): ContextSource {
+  const continuation = new Map(state.continuationAncestors.map((ancestor) => [ancestor.run.runId, ancestor]));
   return Object.freeze({
     getRun: (runId: string) => {
       if (runId === state.run.runId) return state.run;
       if (state.forkContext?.parentRunId === runId) return state.parentRun;
-      return null;
+      return continuation.get(runId)?.run ?? null;
     },
-    listEvents: (runId: string) => runId === state.run.runId ? state.events : [],
+    listEvents: (runId: string) => runId === state.run.runId
+      ? state.events
+      : continuation.get(runId)?.events ?? [],
     listToolInvocations: (runId: string) => {
       if (runId === state.run.runId) return state.invocations;
       if (state.forkContext?.parentRunId === runId) return state.parentInvocations;
-      return [];
+      return continuation.get(runId)?.invocations ?? [];
     },
-    listToolAttempts: (runId: string) => runId === state.run.runId ? state.attempts : []
+    listToolAttempts: (runId: string) => runId === state.run.runId
+      ? state.attempts
+      : continuation.get(runId)?.attempts ?? [],
+    listContinuationRuns: () => state.continuationAncestors.map((ancestor) => ancestor.run)
   });
 }

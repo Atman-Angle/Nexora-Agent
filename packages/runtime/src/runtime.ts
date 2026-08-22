@@ -86,6 +86,7 @@ import type {
   RunHandleResumeOptions,
   RunInspection,
   RunOptions,
+  RunContinuationInput,
   RunResult,
   RunSummary,
   RunView,
@@ -142,6 +143,7 @@ export type {
   RunInspection,
   RunHandleResumeOptions,
   RunOptions,
+  RunContinuationInput,
   RunResult,
   RunSummary,
   TextArtifactView,
@@ -349,6 +351,9 @@ export class RuntimeEngine {
       });
     }
     const now = this.#now();
+    const continuation = input.continuation === undefined
+      ? undefined
+      : this.#resolveContinuation(input.continuation);
     let snapshot: RunSnapshot;
     try {
       snapshot = createInitialRunSnapshot({
@@ -357,6 +362,7 @@ export class RuntimeEngine {
         workspace: this.#workspace,
         now,
         completionRequirements,
+        ...(continuation === undefined ? {} : { continuation }),
         ...(budgets === undefined ? {} : { budgets })
       });
     } catch (error) {
@@ -375,7 +381,8 @@ export class RuntimeEngine {
       payload: {
         inputSequence: 1,
         inputId: snapshot.inputHistory[0]!.id,
-        inputDigest: digestCanonicalJson(snapshot.inputHistory[0]!.text)
+        inputDigest: digestCanonicalJson(snapshot.inputHistory[0]!.text),
+        ...(snapshot.continuation === undefined ? {} : { continuation: snapshot.continuation })
       }
     });
     this.#localRunIds.add(created.runId);
@@ -1434,6 +1441,7 @@ export class RuntimeEngine {
       invocations: Object.freeze(this.#store.listToolInvocations(runId)),
       attempts: Object.freeze(this.#store.listToolAttempts(runId)),
       events: Object.freeze(this.#store.listEvents(runId)),
+      continuationAncestors: Object.freeze(this.#continuationAncestors(run)),
       forkContext,
       parentRun,
       parentInvocations: Object.freeze(
@@ -1444,6 +1452,102 @@ export class RuntimeEngine {
         ? null
         : this.#store.getModelCallAudit(latestModelCall.id)
     });
+  }
+
+  #resolveContinuation(input: RunContinuationInput): NonNullable<RunSnapshot["continuation"]> {
+    const parentRunId = typeof input.parentRunId === "string" ? input.parentRunId.trim() : "";
+    if (parentRunId === "") {
+      throw new RuntimeError({
+        code: "INVALID_CONTINUATION",
+        message: "Continuation parentRunId must be a non-empty Run ID."
+      });
+    }
+    const parent = this.#store.getRun(parentRunId);
+    if (parent === null) {
+      throw new RuntimeError({
+        code: "INVALID_CONTINUATION",
+        message: "Continuation parent is unavailable in this Runtime Store."
+      });
+    }
+    if (!isTerminalRun(parent)) {
+      throw new RuntimeError({
+        code: "INVALID_CONTINUATION",
+        runId: parentRunId,
+        message: "Continuation parent must be terminal."
+      });
+    }
+    if (this.#store.listToolInvocations(parentRunId).some((invocation) => (
+      invocation.status === "started" || invocation.status === "unknown"
+    ))) {
+      throw new RuntimeError({
+        code: "INVALID_CONTINUATION",
+        runId: parentRunId,
+        message: "Continuation parent has an unresolved Tool effect."
+      });
+    }
+    // Reading the verified chain also rejects legacy corruption and cycles
+    // before a new immutable edge is persisted.
+    this.#continuationAncestors(parent);
+    const lastEventSequence = this.#store.listEvents(parentRunId).at(-1)?.sequence;
+    if (lastEventSequence === undefined) {
+      throw new RuntimeError({
+        code: "INVALID_CONTINUATION",
+        runId: parentRunId,
+        message: "Continuation parent has no persisted event boundary."
+      });
+    }
+    return {
+      parentRunId,
+      parentRevision: parent.revision,
+      parentLastEventSequence: lastEventSequence
+    };
+  }
+
+  #continuationAncestors(run: RunSnapshot): AgentStateView["continuationAncestors"] {
+    const newestFirst: Array<AgentStateView["continuationAncestors"][number]> = [];
+    const visited = new Set<string>([run.runId]);
+    let child = run;
+    while (child.continuation !== undefined) {
+      const edge = child.continuation;
+      if (visited.has(edge.parentRunId)) {
+        throw new RuntimeError({
+          code: "INVALID_CONTINUATION",
+          runId: run.runId,
+          message: "Continuation lineage contains a cycle."
+        });
+      }
+      visited.add(edge.parentRunId);
+      const parent = this.#store.getRun(edge.parentRunId);
+      const events = parent === null ? [] : this.#store.listEvents(parent.runId);
+      if (
+        parent === null
+        || parent.revision !== edge.parentRevision
+        || events.at(-1)?.sequence !== edge.parentLastEventSequence
+        || !isTerminalRun(parent)
+      ) {
+        throw new RuntimeError({
+          code: "INVALID_CONTINUATION",
+          runId: run.runId,
+          message: "Continuation lineage no longer matches its persisted authority boundary."
+        });
+      }
+      const invocations = this.#store.listToolInvocations(parent.runId);
+      if (invocations.some((invocation) => invocation.status === "started" || invocation.status === "unknown")) {
+        throw new RuntimeError({
+          code: "INVALID_CONTINUATION",
+          runId: run.runId,
+          message: "Continuation lineage contains an unresolved Tool effect."
+        });
+      }
+      newestFirst.push(Object.freeze({
+        run: parent,
+        invocations: Object.freeze(invocations),
+        attempts: Object.freeze(this.#store.listToolAttempts(parent.runId)),
+        events: Object.freeze(events)
+      }));
+      child = parent;
+    }
+    return newestFirst.reverse();
   }
 
   #beginModelCall(
@@ -2959,6 +3063,10 @@ export class RuntimeEngine {
     }
   }
 
+}
+
+function isTerminalRun(run: RunSnapshot): boolean {
+  return run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
 }
 
 function compileChildBudgets(

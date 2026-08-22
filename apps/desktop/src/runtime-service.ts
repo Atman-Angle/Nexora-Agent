@@ -159,14 +159,9 @@ export class DesktopRuntimeService {
     } else if (["waiting_for_input", "waiting_for_approval", "blocked"].includes(inspection.status)) {
       throw new Error(`Resolve the current ${inspection.status} state before sending a follow-up.`);
     }
-    const context = inspection.result?.summary ?? inspection.delivery?.summary ?? `The previous Run ended with status ${inspection.status}.`;
-    const continuationGoal = [
-      "Continue the same Desktop Session using the prior Runtime outcome as context.",
-      `Prior Run ${inspection.runId}: ${compact(context, 4_000)}`,
-      "New user input (preserve exactly):",
-      text
-    ].join("\n\n");
-    const handle = runtime.run(continuationGoal);
+    const handle = runtime.run(text, {
+      continuation: { parentRunId: inspection.runId }
+    });
     session.turns.push({ runId: handle.id, userInput: text });
     session.archived = false;
     session.status = "running";

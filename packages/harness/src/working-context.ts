@@ -37,7 +37,8 @@ export function projectAgentWorkingContext(
   const repair = context.repair ?? null;
   return {
     task: {
-      inputs: context.run.inputHistory.map((entry) => entry.text)
+      inputs: context.run.inputHistory.map((entry) => entry.text),
+      continuation: context.continuation ?? []
     },
     plan: context.run.currentPlan === null ? null : { tasks },
     workingSet: {

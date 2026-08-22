@@ -184,8 +184,11 @@ describe("E130 Desktop Project and continuous Session", () => {
     roots.push(workspace);
     writeFileSync(join(workspace, "target.txt"), "verified\n", "utf8");
     let calls = 0;
+    const requestBodies: string[] = [];
     const server = createServer(async (request, response) => {
-      for await (const _chunk of request) { /* consume request */ }
+      let body = "";
+      for await (const chunk of request) body += String(chunk);
+      requestBodies.push(body);
       calls += 1;
       const content = calls % 2 === 1
         ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }], finishReason: "tool_calls" }
@@ -209,12 +212,28 @@ describe("E130 Desktop Project and continuous Session", () => {
     const sessionId = started.session!.id;
     const first = await waitForStatus(service, "succeeded");
     expect(first.session).toMatchObject({ id: sessionId, runs: [{ userInput: "Read target.txt" }] });
+    const firstRunId = first.session!.runs[0]!.inspection.runId;
 
     await service.continueSession(sessionId, "Read it once more");
     const continued = await waitForStatus(service, "succeeded");
     expect(continued.session?.id).toBe(sessionId);
     expect(continued.session?.runs.map(({ userInput }) => userInput)).toEqual(["Read target.txt", "Read it once more"]);
     expect(continued.session?.runs.every(({ inspection }) => inspection.status === "succeeded")).toBe(true);
+    expect(continued.session?.runs[1]?.inspection).toMatchObject({
+      continuation: { parentRunId: firstRunId },
+      inputs: [{ text: "Read it once more" }]
+    });
+
+    await service.continueSession(sessionId, "Explain both earlier requests");
+    const thirdTurn = await waitForStatus(service, "succeeded");
+    expect(thirdTurn.session?.runs.map(({ userInput }) => userInput)).toEqual([
+      "Read target.txt",
+      "Read it once more",
+      "Explain both earlier requests"
+    ]);
+    expect(requestBodies[4]).toContain("Read target.txt");
+    expect(requestBodies[4]).toContain("Read it once more");
+    expect(requestBodies[4]).toContain("Explain both earlier requests");
 
     const archived = await service.archiveSession(workspace, sessionId, true);
     expect(archived.session).toBeNull();
@@ -253,7 +272,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     await reopened.close();
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-    expect(calls).toBe(4);
+    expect(calls).toBe(6);
   });
 
   it("switches Projects while the previous Project Run continues in the background", async () => {
