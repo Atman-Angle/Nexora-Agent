@@ -16,8 +16,10 @@
 <p align="center">
   <img alt="Node.js 20+" src="https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square">
+  <img alt="版本 0.1.0" src="https://img.shields.io/badge/version-0.1.0-5EA2FF?style=flat-square">
+  <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-5CE1A4?style=flat-square">
   <img alt="可嵌入 Runtime" src="https://img.shields.io/badge/Runtime-embeddable-F4F7FA?style=flat-square">
-  <img alt="Pre-release" src="https://img.shields.io/badge/status-pre--release-8B98A7?style=flat-square">
+  <img alt="Release candidate" src="https://img.shields.io/badge/status-release%20candidate-8B98A7?style=flat-square">
 </p>
 
 <p align="center">
@@ -59,6 +61,7 @@ Nexora 提供 Harness 与 Runtime 两层。它不是另一个 Agent 人格，也
 - **它必须承受进程中断。** 持久状态允许进程重启后重新打开 Run。
 - **它不能盲目重复副作用。** Recovery 能区分安全重试和状态未知的非幂等操作。
 - **它的结果必须可信。** Evidence 与 Completion Gate 阻止看似合理的模型文本冒充成功。
+- **它可以有界委派工作。** Supervisor 能协调隔离的 Child Run，但 Worker 不获得 Parent Authority。
 - **它需要进入真实产品。** Nexora 通过 TypeScript API 嵌入，不接管领域数据或 UI。
 
 对于简单、无状态的一次性聊天调用，Nexora 可能没有必要。它面向具有状态、副作用、人工交互或明确完成 Contract 的 Agent。
@@ -66,6 +69,21 @@ Nexora 提供 Harness 与 Runtime 两层。它不是另一个 Agent 人格，也
 全部原始用户输入在 Run 内持续可见；模型生成的 Task Contract 或 Plan 不能替换它们。Harness 按已有事实、Tool 探寻、有界重试和换路径的顺序消解不确定性，最后才询问用户。存在可用 Tool 且尚未尝试时，第一次输入请求会返回模型做一次自主纠错；真正属于用户的选择仍会暂停 Run。
 
 每个终态或外部阻塞的 Run 都暴露用户可读 **Delivery**。成功 Delivery 使用已验证的模型结果；失败、取消和阻塞 Run 使用确定性 Delivery，说明已产生 Artifact、已确认事实、未完成工作、确切原因和下一步，绝不把部分进度改写成成功。
+
+## 有界 Multi-Agent 协调
+
+Nexora 通过持久化 Parent/Child Run 支持 Supervisor/Coordinator 执行。Parent 一次委派一组有界、彼此独立的 Assignment；每个 Worker 获得隔离 Branch workspace、明确 Tool allowlist、Profile 和预算。Worker 不能继续委派、不能直接修改 Parent workspace，也不能宣布 Parent 完成。
+
+```text
+Parent 决策
+  → 有界 Worker batch
+  → 隔离 Child Run 与 Branch workspace
+  → 持久 Join 与失败隔离
+  → Child Observation 返回 Parent
+  → 正常 Tool / Approval / Evidence 采纳路径
+```
+
+崩溃恢复会重新打开已经接受的 Child Run，而不是要求模型再次委派。blocked、waiting 或 failed Child 始终可检查；成功 Worker 输出也只有经过 Parent 正常的 Runtime Authority 与安全门采纳后，才能影响 Parent。
 
 ## 通用 Prompt 与 Agent Profile
 
@@ -159,7 +177,7 @@ pnpm benchmark:context-memory:provider
 
 ## 快速开始
 
-> Nexora Agent 目前处于 pre-release 阶段，尚未发布到 npm。下面从源码工作区开始。
+> Nexora Agent `0.1.0` 是 release candidate，尚未发布到 npm。下面从源码工作区或本地 tarball 开始。
 
 要求：Node.js 20+、pnpm 11。
 
@@ -275,7 +293,7 @@ Nexora-Agent/
 
 ## 项目状态
 
-Nexora Agent 目前处于 pre-release 阶段。Runtime、CLI、Research Agent 以及 Context & Memory Harness 均可在本仓库中构建和测试；npm 发布、长期托管服务与开源许可证尚未完成或声明。
+Nexora Agent `0.1.0` 是采用 Apache-2.0 的 release candidate。Runtime、Harness、Multi-Agent 协调、CLI、Research Agent 与 Context & Memory 验证均可在本仓库中构建和测试；公开 npm 发布与长期托管服务尚未完成。
 
 ```powershell
 pnpm typecheck
@@ -284,4 +302,4 @@ pnpm build
 pnpm test
 ```
 
-> License 尚未声明。在采用、分发或发布前，请先确认许可证。
+本项目采用 [Apache License 2.0](LICENSE)。

@@ -16,8 +16,10 @@
 <p align="center">
   <img alt="Node.js 20+" src="https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square">
+  <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-5EA2FF?style=flat-square">
+  <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-5CE1A4?style=flat-square">
   <img alt="Embeddable Runtime" src="https://img.shields.io/badge/Runtime-embeddable-F4F7FA?style=flat-square">
-  <img alt="Pre-release" src="https://img.shields.io/badge/status-pre--release-8B98A7?style=flat-square">
+  <img alt="Release candidate" src="https://img.shields.io/badge/status-release%20candidate-8B98A7?style=flat-square">
 </p>
 
 <p align="center">
@@ -59,6 +61,7 @@ Use Nexora when an Agent must do more than return one model response:
 - **It must survive interruption.** Persisted state allows a Run to be reopened after a process restart.
 - **It cannot repeat side effects blindly.** Recovery distinguishes safe retry from unknown non-idempotent effects.
 - **Its result must be defensible.** Evidence and the Completion Gate prevent plausible model text from impersonating success.
+- **It can delegate bounded work.** A Supervisor can coordinate isolated Child Runs without giving Workers authority over the Parent.
 - **It lives inside a real product.** Nexora embeds through a TypeScript API and does not take ownership of domain data or UI.
 
 For a simple stateless chat completion, Nexora may be unnecessary. It is designed for Agents whose execution has state, side effects, human interaction, or a meaningful completion contract.
@@ -66,6 +69,21 @@ For a simple stateless chat completion, Nexora may be unnecessary. It is designe
 Original user inputs remain visible throughout the Run; a model-authored Task Contract or Plan cannot replace them. The Harness directs uncertainty through existing facts, Tools, bounded retry, and alternate paths before asking the user. A first input request made before any Tool attempt is returned to the model once for autonomous correction when Tools are available; genuinely user-owned choices still pause the Run.
 
 Every terminal or externally blocked Run exposes a user-readable **Delivery**. A successful Delivery uses the validated model result. Failed, cancelled, and blocked Runs receive a deterministic Delivery that reports produced artifacts, confirmed facts, unfinished work, the exact cause, and the next action without relabeling partial progress as success.
+
+## Bounded multi-agent coordination
+
+Nexora supports Supervisor/Coordinator execution through durable Parent and Child Runs. The Parent delegates one bounded batch of independent assignments; each Worker receives an isolated branch workspace, explicit Tool allowlist, profile and budget. Workers cannot delegate again, mutate the Parent workspace directly, or declare the Parent complete.
+
+```text
+Parent decision
+  → bounded Worker batch
+  → isolated Child Runs and branch workspaces
+  → durable join and failure containment
+  → Child observations returned to Parent
+  → normal Tool / Approval / Evidence adoption path
+```
+
+Crash recovery reopens the accepted Child Runs instead of asking the model to delegate them again. A blocked, waiting or failed Child remains inspectable, while successful Worker output affects the Parent only when the Parent adopts it through the same Runtime authority and safety gates as any other action.
 
 ## General prompt and Agent Profiles
 
@@ -159,7 +177,7 @@ The current Structured Plan belongs to the Run. The application does not maintai
 
 ## Quick start
 
-> Nexora Agent is currently pre-release and is not yet published to npm. Start from the source workspace.
+> Nexora Agent `0.1.0` is a release candidate and is not yet published to npm. Start from the source workspace or locally packed tarballs.
 
 Requirements: Node.js 20+ and pnpm 11.
 
@@ -275,7 +293,7 @@ Nexora-Agent/
 
 ## Project status
 
-Nexora Agent is currently pre-release. The Runtime, CLI, Research Agent, and Context & Memory Harnesses can be built and tested in this repository; npm publication and long-running hosted deployment have not yet been completed.
+Nexora Agent `0.1.0` is an Apache-2.0 licensed release candidate. Runtime, Harness, Multi-Agent coordination, CLI, Research Agent, and Context & Memory validation can be built and tested in this repository. Public npm publication and long-running hosted deployment have not yet been completed.
 
 ```powershell
 pnpm typecheck
