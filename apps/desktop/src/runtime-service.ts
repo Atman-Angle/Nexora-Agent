@@ -173,6 +173,28 @@ export class DesktopRuntimeService {
     return await this.snapshot();
   }
 
+  async compactSession(sessionId: string): Promise<DesktopSnapshot> {
+    const runtime = this.#requireRuntime();
+    const session = this.#requireSession(sessionId);
+    const latest = session.turns.at(-1);
+    if (latest === undefined) throw new Error("Desktop Session has no Runtime Run.");
+    const handle = runtime.openRun(latest.runId);
+    let inspection = await handle.inspect();
+    if (inspection.status === "running") {
+      await handle.cancel("Interrupted by manual Context compaction from Nexora Desktop.");
+      inspection = await handle.inspect();
+    }
+    if (inspection.status !== "succeeded" && inspection.status !== "failed" && inspection.status !== "cancelled") {
+      throw new Error(`Resolve the current ${inspection.status} state before compacting Context.`);
+    }
+    await handle.compactContext();
+    session.status = inspection.status;
+    session.pendingRequestKind = null;
+    session.updatedAt = new Date().toISOString();
+    this.#writeHostConfig();
+    return await this.snapshot();
+  }
+
   async openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot> {
     const target = resolve(projectPath);
     if (target.toLowerCase() !== this.#workspace.toLowerCase()) await this.setWorkspace(target);

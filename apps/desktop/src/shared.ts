@@ -89,6 +89,7 @@ export type DesktopBridge = {
   switchProject(path: string): Promise<DesktopSnapshot>;
   startSession(goal: string): Promise<DesktopSnapshot>;
   continueSession(sessionId: string, text: string): Promise<DesktopSnapshot>;
+  compactSession(sessionId: string): Promise<DesktopSnapshot>;
   openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot>;
   archiveSession(projectPath: string, sessionId: string, archived: boolean): Promise<DesktopSnapshot>;
   removeSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot>;

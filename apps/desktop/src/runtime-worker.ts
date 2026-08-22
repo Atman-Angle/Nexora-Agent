@@ -30,6 +30,7 @@ async function handle(request: WorkerRequest): Promise<void> {
     else if (request.method === "setWorkspace") result = await service.setWorkspace(requireString(request.args[0]));
     else if (request.method === "startSession") result = await service.startSession(requireString(request.args[0]));
     else if (request.method === "continueSession") result = await service.continueSession(requireString(request.args[0]), requireString(request.args[1]));
+    else if (request.method === "compactSession") result = await service.compactSession(requireString(request.args[0]));
     else if (request.method === "openSession") result = await service.openSession(requireString(request.args[0]), requireString(request.args[1]));
     else if (request.method === "archiveSession") result = await service.archiveSession(requireString(request.args[0]), requireString(request.args[1]), requireBoolean(request.args[2]));
     else if (request.method === "removeSession") result = await service.removeSession(requireString(request.args[0]), requireString(request.args[1]));

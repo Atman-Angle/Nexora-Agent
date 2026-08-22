@@ -46,6 +46,7 @@ pnpm desktop
 11. Session 行悬停后可归档、恢复或从 Desktop 移除。移除不会物理删除 Runtime Run 和审计证据。
 12. `Enter` 发送，`Shift + Enter` 换行；中文输入法仍在组字时不会误发送。
 13. Settings 可全局增删改 OpenAI-compatible 模型 Profile，包括 Base URL、API Key、Model ID、Context Window、decision tokens 和 Tool transport。同一 Base URL 的多个模型复用 Provider 密钥；每个 Project 通过顶部选择器决定后续新 Run 使用的 Profile。Settings 编辑、Project 切换和全局模型管理不会停止其他正在运行的 Session；活动 Run 始终保留创建时的 Provider。
+14. 在普通 Composer 输入 `/压缩上下文`（兼容 `/compact`）会请求 Runtime 压缩该 Session 的历史投影；若当前 Run 正在执行，Desktop 会先安全停止它。命令不会发送给模型、不会进入输入历史，也不会删除 Conversation、Tool、Evidence 或 Artifact。下一条消息仍在同一 Session 继续；接近模型窗口限制时 Harness 也会按真实 Token Meter 自动收缩，并在 Conversation / Activity 显示持久化结果。
 
 Run 数据保存在所选 Workspace 的 `.nexora` 中。一个 Nexora Desktop Host 可以同时管理任意已添加的本地 Workspace；每个 Workspace Runtime 是同一 Host 内的隔离实例，不是单独安装 Nexora。Desktop 的最近 Project、Session→Run 链、全局 Model Profile 元数据和归档导航信息保存在启动 Workspace 的 `.nexora/desktop-host.json`；全局 Provider 密钥保存在 `.nexora/desktop-secrets.env`。每个 Project 只保存选中的 Profile ID，兼容配置会镜像到对应 Workspace `.env`，因此原有 CLI 可继续使用相同 Provider。API Key 不进入 Host JSON 或 Renderer Snapshot。Host 元数据不改变 Runtime Authority。
 
@@ -58,7 +59,7 @@ pnpm typecheck
 pnpm lint
 pnpm build
 pnpm --filter @nexora/desktop build
-pnpm vitest run tests/runtime/e084-model-config.test.ts tests/runtime/e121-provider-native-tool-protocol.test.ts tests/runtime/e129-desktop-read-projections.test.ts tests/runtime/e130-desktop-session-workspace.test.ts tests/runtime/e131-provider-public-stream.test.ts tests/runtime/e132-desktop-markdown.test.ts --no-file-parallelism
+pnpm vitest run tests/runtime/e084-model-config.test.ts tests/runtime/e121-provider-native-tool-protocol.test.ts tests/runtime/e129-desktop-read-projections.test.ts tests/runtime/e130-desktop-session-workspace.test.ts tests/runtime/e131-provider-public-stream.test.ts tests/runtime/e132-desktop-markdown.test.ts tests/runtime/e132-manual-context-compaction.test.ts --no-file-parallelism
 ```
 
 使用 `.env` 中真实 Provider 的桌面端到端 UAT：

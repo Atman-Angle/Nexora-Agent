@@ -134,6 +134,7 @@ function sidebar(state: DesktopSnapshot): string {
 function header(state: DesktopSnapshot): string {
   const session = state.session;
   const context = session === null ? null : contextUsage(session);
+  const compression = session === null ? null : latestCompaction(session);
   return `
     <header class="session-header">
       <div>
@@ -141,6 +142,7 @@ function header(state: DesktopSnapshot): string {
         ${session === null ? "" : `<small>${statusLabel(session.inspection.status)}</small>`}
       </div>
       <div class="header-actions">
+        ${compression === null ? "" : `<span class="compaction-chip" title="Persisted Runtime Context compaction event">${compression === "manual" ? "手动压缩" : "已自动压缩"}</span>`}
         ${context === null ? "" : `<div class="context-usage" title="Current Session · latest Run model call: ${context.used.toLocaleString()} of ${context.window.toLocaleString()} input-context tokens. This is not a Project total."><span>Turn context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
         ${state.workspace.modelProfiles.length === 0 ? "" : `<select class="model-switch" data-profile-select title="Model for new Runs in this Project">${state.workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`}
       ${session === null ? "" : `
@@ -219,6 +221,22 @@ function conversation(session: SessionView): string {
         <strong>${record.type.endsWith("passed") ? "Validation passed" : "Validation failed"}</strong>
       </article>
     ` });
+    }
+    for (const record of run.history.records) {
+      const payload = objectValue(record.payload);
+      const manual = record.type === "context.compaction.requested";
+      const automatic = record.type === "model.requested" && payload.compacted === true;
+      if (!manual && !automatic) continue;
+      const before = numberValue(payload.inputTokensBeforeCompaction);
+      const after = numberValue(payload.measuredInputTokens);
+      const detail = automatic && before !== null && after !== null
+        ? ` · ${formatTokens(before)} → ${formatTokens(after)}`
+        : "";
+      items.push({ at: record.occurredAt, order: runIndex * 1_000_000 + record.sequence, html: `
+        <article class="context-compaction ${manual ? "manual" : "automatic"}">
+          <span>⌁</span><strong>${manual ? "上下文已压缩" : "已自动压缩上下文"}</strong><small>${manual ? "将在下一条消息中使用" : `接近窗口限制${detail}`}</small>
+        </article>
+      ` });
     }
     const projectedInputRequestIds = new Set<string>();
     for (const record of run.history.records) {
@@ -358,7 +376,7 @@ function followUpComposer(session: SessionView, running: boolean): string {
         <button class="send-button" aria-label="${running ? "Interrupt and send" : "Send follow-up"}" ${busy ? "disabled" : ""}>↑</button>
       </div>
     </form>
-    <small>${running ? "Sending interrupts the current Run safely, then starts the next turn." : `${statusLabel(session.inspection.status)} · Continue in this Session.`}</small>
+    <small>${running ? "Sending interrupts the current Run safely, then starts the next turn." : `${statusLabel(session.inspection.status)} · Continue in this Session.`} 输入 <code>/压缩上下文</code> 可主动压缩历史。</small>
   </section>`;
 }
 
@@ -502,7 +520,10 @@ function bindActions(): void {
     const text = new FormData(event.currentTarget as HTMLFormElement).get("text");
     const sessionId = snapshot?.session?.id;
     if (typeof text === "string" && sessionId !== undefined) void perform(async () => {
-      const next = await window.nexora.continueSession(sessionId, text);
+      const command = text.trim().toLowerCase();
+      const next = command === "/压缩上下文" || command === "/compact"
+        ? await window.nexora.compactSession(sessionId)
+        : await window.nexora.continueSession(sessionId, text);
       draft = "";
       setSnapshot(next);
     });
@@ -649,6 +670,15 @@ function contextUsage(session: SessionView): { used: number; window: number; per
   if (usage === null) return null;
   return { used: usage.inputTokens, window: usage.contextWindowTokens, percent: Math.min(100, Math.round(usage.inputTokens / usage.contextWindowTokens * 100)) };
 }
+function latestCompaction(session: SessionView): "manual" | "automatic" | null {
+  const records = session.history.records;
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index]!;
+    if (record.type === "context.compaction.requested") return "manual";
+    if (record.type === "model.requested" && objectValue(record.payload).compacted === true) return "automatic";
+  }
+  return null;
+}
 function processingEnd(run: SessionView["runs"][number]): string | null {
   if (run.inspection.result !== null) return run.inspection.result.delivery.createdAt;
   if (run.inspection.pendingRequest !== null) return run.inspection.pendingRequest.createdAt;
@@ -676,6 +706,7 @@ function updateElapsedLabels(): void {
   });
 }
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value); }
+function numberValue(value: unknown): number | null { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function providerName(baseUrl: string): string {
   try { return new URL(baseUrl).hostname.replace(/^api\./, ""); }
   catch { return baseUrl; }

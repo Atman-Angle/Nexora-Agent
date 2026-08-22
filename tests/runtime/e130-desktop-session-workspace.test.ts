@@ -235,6 +235,28 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(requestBodies[4]).toContain("Read it once more");
     expect(requestBodies[4]).toContain("Explain both earlier requests");
 
+    const compacted = await service.compactSession(sessionId);
+    expect(compacted.session?.runs).toHaveLength(3);
+    expect(compacted.session?.runs[2]?.history.records.some((record) => (
+      record.type === "context.compaction.requested"
+    ))).toBe(true);
+    await service.continueSession(sessionId, "Continue after /压缩上下文");
+    const afterCompaction = await waitForStatus(service, "succeeded");
+    expect(afterCompaction.session?.runs).toHaveLength(4);
+    const compactedRequest = JSON.parse(requestBodies[6]!) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const compactedProviderInput = JSON.parse(compactedRequest.messages.at(-1)!.content) as {
+      originalTaskContract: {
+        continuation: Array<{ payloadMode: string }>;
+      };
+    };
+    expect(compactedProviderInput.originalTaskContract.continuation.map(({ payloadMode }) => payloadMode)).toEqual([
+      "reference",
+      "reference",
+      "compact"
+    ]);
+
     const archived = await service.archiveSession(workspace, sessionId, true);
     expect(archived.session).toBeNull();
     expect(currentProject(archived).sessions.find(({ id }) => id === sessionId)?.archived).toBe(true);
@@ -272,7 +294,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     await reopened.close();
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-    expect(calls).toBe(6);
+    expect(calls).toBe(8);
   });
 
   it("switches Projects while the previous Project Run continues in the background", async () => {
@@ -382,6 +404,45 @@ describe("E130 Desktop Project and continuous Session", () => {
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     expect(calls).toBe(3);
+  });
+
+  it("interrupts a running Run before recording manual Context compaction without creating a Turn", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-compact-running-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=qwen3.7-flash",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError() {} });
+    const started = await service.startSession("Wait while Context is compacted");
+    const sessionId = started.session!.id;
+    await waitFor(() => calls === 1);
+    const compacted = await service.compactSession(sessionId);
+    expect(compacted.session?.runs).toHaveLength(1);
+    expect(compacted.session?.runs[0]).toMatchObject({
+      userInput: "Wait while Context is compacted",
+      inspection: { status: "cancelled", inputs: [{ text: "Wait while Context is compacted" }] }
+    });
+    expect(compacted.session?.runs[0]?.history.records.filter((record) => (
+      record.type === "context.compaction.requested"
+    ))).toHaveLength(1);
+
+    await service.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    expect(calls).toBe(1);
   });
 });
 

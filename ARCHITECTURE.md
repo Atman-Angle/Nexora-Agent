@@ -82,6 +82,8 @@ Run-local Session Archive 是同一 Run 的有界历史索引，不是跨 Run Se
 
 Context 收缩只有一条确定性路径：Harness 先移除内部导航候选和可重建 helpful facts，再按保留等级将 Tool payload 从 full 降为 fragment、reference 或省略，必要时继续缩减其余可重建字段，并在每次变化后按 Provider Token Meter 重新计量，直到进入 hard limit 或没有合法收缩动作。这个过程不调用 LLM、不生成 Summary、不保存 Checkpoint，也不改变 Runtime Authority；即使最小投影的估算仍高于 hard limit，也由 Provider 调用返回真实结果，而不是由 Context 协议直接终止 Run。原始 Input、Invocation、Evidence、Event 与 Artifact 仍保留在 Authority 中。
 
+手动压缩复用同一投影机制，但触发事实由 Runtime 持有：terminal Run 且无 started/unknown Invocation 时，Host 可调用 `RunHandle.compactContext()`，Runtime 幂等追加 `context.compaction.requested`。下一条 continuation 只读取其创建时捕获的祖先 Event boundary；请求边界 Turn 投影为 compact，更早 Turn 投影为 reference，边界之后的 Turn 保持 full。该事件不修改 Run revision/status，不写 `context_checkpoints`，不调用模型生成摘要，也不允许 Renderer 重写历史。自动收缩仍只由 Provider Token Meter 触发，并把 `compacted`、`compactionMode`、收缩前/后 token 与 eviction count 写入 `model.requested` 审计事实。
+
 Provider-neutral Context 到生产 Wire 还有最后一层有界投影。OpenAI-compatible Adapter 每轮只投影当前任务、计划、工作集、最近结果、必要恢复事实和可用 Tool；`historyCandidates`、`memoryCandidates` 与 Session Archive 只供 Harness 选择精确事实，不进入生产 wire。空的可选集合直接省略。Adapter 还移除 workspace、内部 ID/version、Evidence、Plan/Step/Check 结构、`projection` digest 和 Observation provenance。所有实际可见字段仍纳入 Provider-neutral projection digest。该投影不保存 Provider transcript，也不产生第二套 Context 状态。
 
 ### Memory

@@ -80,6 +80,7 @@ export async function requestModel(
     return { outcome: "failed", run: runInput, error };
   }
   let assessment: ContextBudgetAssessment;
+  let inputTokensBeforeCompaction = 0;
   let tokenEvictionCount = 0;
   try {
     assessment = await assessContextBudget(
@@ -88,6 +89,7 @@ export async function requestModel(
       effectiveContext,
       effectivePrompt
     );
+    inputTokensBeforeCompaction = assessment.measurement.inputTokens;
     while (
       assessment.decision !== "within_budget"
     ) {
@@ -167,8 +169,10 @@ export async function requestModel(
       ...eventPayload,
       budgetDecision: assessment.decision,
       measuredInputTokens: assessment.measurement.inputTokens,
+      inputTokensBeforeCompaction,
       tokenEvictionCount,
-      compacted: false
+      compacted: tokenEvictionCount > 0,
+      compactionMode: tokenEvictionCount > 0 ? "automatic" : "none"
     }
   }, observer);
 

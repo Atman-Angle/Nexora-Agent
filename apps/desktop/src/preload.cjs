@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("nexora", Object.freeze({
   switchProject: (path) => ipcRenderer.invoke("desktop:switch-project", path),
   startSession: (goal) => ipcRenderer.invoke("desktop:start-session", goal),
   continueSession: (sessionId, text) => ipcRenderer.invoke("desktop:continue-session", sessionId, text),
+  compactSession: (sessionId) => ipcRenderer.invoke("desktop:compact-session", sessionId),
   openSession: (projectPath, sessionId) => ipcRenderer.invoke("desktop:open-session", projectPath, sessionId),
   archiveSession: (projectPath, sessionId, archived) => ipcRenderer.invoke("desktop:archive-session", projectPath, sessionId, archived),
   removeSession: (projectPath, sessionId) => ipcRenderer.invoke("desktop:remove-session", projectPath, sessionId),

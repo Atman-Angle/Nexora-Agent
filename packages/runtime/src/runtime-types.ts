@@ -325,6 +325,7 @@ export type RunHandle = {
   deny(options?: DenialOptions): Promise<void>;
   resume(options?: RunHandleResumeOptions): Promise<void>;
   cancel(reason?: string): Promise<void>;
+  compactContext(): Promise<void>;
 };
 
 /** Options for creating an exploratory branch from a parent Run's current revision. */

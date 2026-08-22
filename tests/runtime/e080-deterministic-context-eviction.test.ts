@@ -72,6 +72,11 @@ describe("E080 deterministic Context Eviction", () => {
     expect(JSON.parse(
       new ArtifactStore(join(dataDir, "artifacts")).getText(evidence.artifactRef!)
     )).toEqual(invocation.resultJson);
+    expect(view.events.filter((event) => event.type === "model.requested").every((event) => (
+      event.payload.compacted === false
+      && event.payload.compactionMode === "none"
+      && event.payload.tokenEvictionCount === 0
+    ))).toBe(true);
     await runtime.close();
   });
 
@@ -211,10 +216,20 @@ describe("E080 deterministic Context Eviction", () => {
       budgetDecision: "within_budget",
       projectionDigest: finalContext.projection.digest
     }));
-    expect(view.events.find((event) => (
+    const compactedEvent = view.events.find((event) => (
       event.type === "model.requested"
       && Number(event.payload.tokenEvictionCount ?? 0) > 0
-    ))).toBeDefined();
+    ));
+    expect(compactedEvent).toMatchObject({
+      payload: {
+        compacted: true,
+        compactionMode: "automatic",
+        inputTokensBeforeCompaction: 70,
+        measuredInputTokens: 55,
+        tokenEvictionCount: expect.any(Number)
+      }
+    });
+    expect(Number(compactedEvent!.payload.tokenEvictionCount)).toBeGreaterThan(0);
     await runtime.close();
   });
 

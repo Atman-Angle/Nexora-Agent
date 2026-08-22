@@ -348,6 +348,7 @@ export const AuditRecordTypeSchema = z.enum([
   "branch.merged",
   "branch.resumed",
   "cancellation.requested",
+  "context.compaction.requested",
   "context.checkpointed",
   "context.evidence_recorded",
   "context.rehydrate_requested",

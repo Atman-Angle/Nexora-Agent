@@ -7,6 +7,10 @@ import {
   referenceObservation,
   retentionClassRank
 } from "./projection.js";
+import {
+  compactContinuationTurn,
+  referenceContinuationTurn
+} from "./continuation.js";
 
 /**
  * Performs a single deterministic contraction of the decision context. A
@@ -269,56 +273,6 @@ export function evictDecisionContextTowardBudget(
   return changed
     ? rebuildDecisionContext(context, { toolObservations: observations })
     : evictDecisionContextOnce(context);
-}
-
-function compactContinuationTurn(
-  turn: NonNullable<ModelDecisionContext["continuation"]>[number]
-): NonNullable<ModelDecisionContext["continuation"]>[number] {
-  if (turn.payloadMode === "reference") return turn;
-  return {
-    ...turn,
-    outcome: turn.outcome === null ? null : {
-      ...turn.outcome,
-      summary: boundedText(turn.outcome.summary, 1_024),
-      unfinishedWork: turn.outcome.unfinishedWork.map((item) => boundedText(item, 256)),
-      exactCause: turn.outcome.exactCause === null ? null : {
-        code: turn.outcome.exactCause.code,
-        message: boundedText(turn.outcome.exactCause.message, 512)
-      }
-    },
-    plan: turn.plan === null ? null : {
-      goal: boundedText(turn.plan.goal, 512),
-      steps: turn.plan.steps.map((step) => ({
-        objective: boundedText(step.objective, 256),
-        status: step.status
-      }))
-    },
-    events: turn.events.map((event) => ({ ...event, data: null })),
-    toolFacts: turn.toolFacts.map((fact) => ({ ...fact, input: null, facts: null, error: null })),
-    payloadMode: "compact"
-  };
-}
-
-function referenceContinuationTurn(
-  turn: NonNullable<ModelDecisionContext["continuation"]>[number]
-): NonNullable<ModelDecisionContext["continuation"]>[number] {
-  return {
-    ...compactContinuationTurn(turn),
-    inputs: turn.inputs.map((input) => ({ ...input, text: `[available by ${input.ref}]` })),
-    outcome: turn.outcome === null ? null : {
-      ...turn.outcome,
-      summary: boundedText(turn.outcome.summary, 512),
-      unfinishedWork: [],
-      exactCause: turn.outcome.exactCause === null ? null : {
-        code: turn.outcome.exactCause.code,
-        message: boundedText(turn.outcome.exactCause.message, 256)
-      }
-    },
-    plan: null,
-    events: [],
-    toolFacts: [],
-    payloadMode: "reference"
-  };
 }
 
 function continuationObservationMode(value: unknown): "full" | "fragment" | "reference" | null {

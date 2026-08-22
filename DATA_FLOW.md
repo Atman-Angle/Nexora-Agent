@@ -74,12 +74,15 @@ Host exact new input + parentRunId
 → Runtime validates terminal Parent and unresolved effects
 → Child snapshot persists immutable parent revision/event boundary
 → Runtime port exposes only verified ancestors
+→ optional persisted context.compaction.requested boundary
 → Harness rebuilds ancestor Inputs/Outcomes/Tool facts
 → Provider-aware full → compact → reference projection
 → one measured Provider call
 ```
 
 Desktop Session 只保存有序 Run 引用用于导航；它不拼接历史 goal，也不拥有 Context。完整历史仍在各 Run 的 Input/Event/Invocation/Evidence/Artifact Authority 中。跨 Run ref 使用 `run:<runId>/...` namespace，并且只有当前 lineage 中已发布且 digest 匹配的 ref 可以恢复；sibling、其他 Workspace 和损坏 boundary 统一不可用。
+
+手动路径是 `Desktop slash command → terminal RunHandle.compactContext() → append-only context.compaction.requested → next continuation projection`；running Run 由 Host 先走既有 cancel，再请求压缩。自动路径是 `Provider Token Meter → deterministic eviction → model.requested compaction metadata`。两条路径都只改变后续 Provider 的派生 View，不修改或删除 Run Authority；Desktop 只投影持久事件。
 
 | 数据 | 创建 | 修改 | 读取/消费 | 持久化/销毁 |
 | --- | --- | --- | --- | --- |
@@ -93,6 +96,7 @@ Desktop Session 只保存有序 Run 引用用于导航；它不拼接历史 goal
 | Prompt Strategy | Host 选择 versioned Profile/Host Policy/Project Instructions，Harness 加入通用 Kernel、canonical Tool Schema 与单一 Transport | Compiler 固定语义优先级与 stable-prefix layout；Profile revision 必须显式 | Provider system/input/tools；只影响策略，不影响权限或完成 | 每次调用以 digest/manifest 写入 `model_call_audits.manifest_json.strategy`；正文按 capture policy |
 | ModelResponse Contract | Adapter 归一化 `text/toolCalls/finishReason`；Harness 校验 call ID、名称、参数与 bounded batch | 每轮独立、整批先校验后执行；普通 native content 不解析为 Tool | Provider 表达文本或 Tool Call facts；不得携带 Runtime-owned Action/ID | 进程内只读数据；不是第二权威 |
 | Context Budget | Harness 使用 Provider Model Profile + Provider-aware Token Meter | 每次 decision 调用前对最终 wire 重算 | Harness 触发确定性收缩并发送最小合法投影；预算判定不直接失败 Run | 通过 Runtime port 写 `model_calls`；不写回 Context/Run task facts |
+| Context Compaction Request | Host 在 terminal Run 调用 `RunHandle.compactContext()` | Runtime 校验状态、未决 Effect 和审计完整性后幂等追加 | 下一 continuation 的 Harness ancestor 投影；Desktop Conversation / Activity | `run_events.context.compaction.requested`；不写 checkpoint、不改输入和 Run Status |
 | Context + Memory Benchmark | versioned scenario manifest + 生产 Adapter/Runtime + 本地确定性 Provider stub | runner 收集 Vitest 与持久化 Run/Evidence/Model Call 证据，缺失/failed/skipped 一律失败 | 验证 Eviction、恢复、完成与安全合同；不参与生产决策 | timestamped report；不是 Run、Context、Memory 或 Provider Authority，不能代替真实 Provider Eval |
 | Model Call Ledger | Harness 在 Provider 调用前请求 Runtime 创建 logical call | Harness 报告 success/failure/cancel/interrupted/refused 与 usage，Runtime 持久化 | `runtime.inspect(runId).modelCalls`、成本/诊断 | `model_calls`；只拥有调用审计，不参与 Plan/Evidence/完成判断 |
 | Context Manifest / Provider Attempt | Harness 从最终 Context、Prompt strategy 与 stable-prefix manifest 构造 refs/digests，并对每个物理 Provider 请求逐次报告实际 cache usage | Runtime 专用 port 持久化；进程接管把 started Attempt 标记 interrupted | `RunHandle.modelCallTrace(callId)`、Profile/Transport/cache/retry 审计 | `model_call_audits` / `provider_attempts`；从属于 logical call，不拥有任务状态 |

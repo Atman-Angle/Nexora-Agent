@@ -790,6 +790,9 @@ export class RuntimeEngine {
       },
       cancel: async (reason?: string) => {
         await this.#cancelHandle(runId, reason);
+      },
+      compactContext: async () => {
+        await this.#compactContextHandle(runId);
       }
     });
   }
@@ -1250,6 +1253,34 @@ export class RuntimeEngine {
     );
   }
 
+  async #compactContextHandle(runId: string): Promise<void> {
+    this.#assertOpen();
+    this.#assertControlIdle(runId);
+    const run = this.#requireRun(runId);
+    if (!isTerminalRun(run)) {
+      throw this.#controlConflict(runId, "Context compaction requires a terminal Run.");
+    }
+    const invocations = this.#store.listToolInvocations(runId);
+    if (invocations.some((invocation) => invocation.status === "started" || invocation.status === "unknown")) {
+      throw this.#controlConflict(runId, "Resolve every pending Tool effect before compacting Context.");
+    }
+    this.#assertAuditIntegrity(runId);
+    if (this.#store.listEvents(runId).some((event) => event.type === "context.compaction.requested")) return;
+    const now = this.#now();
+    this.#store.recordRunEvent({
+      runId,
+      event: {
+        type: "context.compaction.requested",
+        occurredAt: now,
+        actorType: "host",
+        causationRef: `run:${runId}`,
+        correlationRef: `run:${runId}`,
+        payload: { mode: "deterministic", requestedAt: now }
+      }
+    });
+    this.#notify(runId);
+  }
+
   async #waitForHandle(runId: string): Promise<RunInspection> {
     this.#assertOpen();
     this.#requireRun(runId);
@@ -1518,11 +1549,12 @@ export class RuntimeEngine {
       }
       visited.add(edge.parentRunId);
       const parent = this.#store.getRun(edge.parentRunId);
-      const events = parent === null ? [] : this.#store.listEvents(parent.runId);
+      const allEvents = parent === null ? [] : this.#store.listEvents(parent.runId);
+      const boundaryExists = allEvents.some((event) => event.sequence === edge.parentLastEventSequence);
       if (
         parent === null
         || parent.revision !== edge.parentRevision
-        || events.at(-1)?.sequence !== edge.parentLastEventSequence
+        || !boundaryExists
         || !isTerminalRun(parent)
       ) {
         throw new RuntimeError({
@@ -1531,6 +1563,7 @@ export class RuntimeEngine {
           message: "Continuation lineage no longer matches its persisted authority boundary."
         });
       }
+      const events = allEvents.filter((event) => event.sequence <= edge.parentLastEventSequence);
       const invocations = this.#store.listToolInvocations(parent.runId);
       if (invocations.some((invocation) => invocation.status === "started" || invocation.status === "unknown")) {
         throw new RuntimeError({

@@ -235,6 +235,9 @@ ipcMain.handle("desktop:start-session", async (_event, goal: unknown) => (
 ipcMain.handle("desktop:continue-session", async (_event, sessionId: unknown, text: unknown) => (
   await runtime().continueSession(RunIdSchema.parse(sessionId), GoalSchema.parse(text))
 ));
+ipcMain.handle("desktop:compact-session", async (_event, sessionId: unknown) => (
+  await runtime().compactSession(RunIdSchema.parse(sessionId))
+));
 ipcMain.handle("desktop:open-session", async (_event, projectPath: unknown, sessionId: unknown) => (
   await runtime().openSession(PathSchema.parse(projectPath), RunIdSchema.parse(sessionId))
 ));
