@@ -139,10 +139,10 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(continued.session?.runs.map(({ userInput }) => userInput)).toEqual(["Read target.txt", "Read it once more"]);
     expect(continued.session?.runs.every(({ inspection }) => inspection.status === "succeeded")).toBe(true);
 
-    const archived = await service.archiveSession(sessionId, true);
+    const archived = await service.archiveSession(workspace, sessionId, true);
     expect(archived.session).toBeNull();
     expect(currentProject(archived).sessions.find(({ id }) => id === sessionId)?.archived).toBe(true);
-    const restored = await service.archiveSession(sessionId, false);
+    const restored = await service.archiveSession(workspace, sessionId, false);
     expect(currentProject(restored).sessions.find(({ id }) => id === sessionId)?.archived).toBe(false);
 
     const configured = await service.saveModelProfile({
@@ -157,13 +157,15 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(JSON.stringify(configured)).not.toContain("replacement-secret");
     expect(readFileSync(join(workspace, ".env"), "utf8")).toContain('NEXORA_MODEL_DECISION_OUTPUT_TOKENS="2048"');
 
-    const removed = await service.removeSession(sessionId);
-    expect(currentProject(removed).sessions.some(({ id }) => id === sessionId)).toBe(false);
     const secondProject = mkdtempSync(join(tmpdir(), "nexora-e130-project-"));
     roots.push(secondProject);
     const switched = await service.setWorkspace(secondProject);
     expect(switched.workspace).toMatchObject({ path: secondProject, providerConfigured: false });
     expect(switched.workspace.projects.map(({ path }) => path)).toEqual(expect.arrayContaining([workspace, secondProject]));
+    const removed = await service.removeSession(workspace, sessionId);
+    const sourceProject = removed.workspace.projects.find(({ path }) => path === workspace)!;
+    expect(sourceProject.sessions.some(({ id }) => id === sessionId)).toBe(false);
+    expect(removed.workspace.path).toBe(secondProject);
     await service.setWorkspace(workspace);
     await service.close();
 
@@ -207,6 +209,12 @@ describe("E130 Desktop Project and continuous Session", () => {
     const started = await service.startSession("Wait for a Provider response");
     const sessionId = started.session!.id;
     await waitFor(() => calls === 1);
+    const addedProject = mkdtempSync(join(tmpdir(), "nexora-e130-added-while-running-"));
+    roots.push(addedProject);
+    const added = await service.addProject(addedProject);
+    expect(added.workspace.path).toBe(workspace);
+    expect(added.workspace.projects.map(({ path }) => path)).toContain(addedProject);
+    expect(added.session?.inspection.status).toBe("running");
     await service.continueSession(sessionId, "Interrupt and read target.txt");
     const completed = await waitForStatus(service, "succeeded");
     expect(completed.session?.runs).toHaveLength(2);

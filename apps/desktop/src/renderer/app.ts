@@ -22,6 +22,7 @@ let busy = false;
 let error: string | null = null;
 let draft = "";
 const expandedTools = new Set<string>();
+const collapsedProjects = new Set<string>();
 type PublicOutputSegment = {
   readonly key: string;
   readonly runId: string;
@@ -86,6 +87,7 @@ function render(): void {
 function sidebar(state: DesktopSnapshot): string {
   const projects = state.workspace.projects.map((project) => {
     const current = project.path.toLowerCase() === state.workspace.path.toLowerCase();
+    const collapsed = collapsedProjects.has(project.path.toLowerCase());
     const active = project.sessions.filter((session) => !session.archived);
     const archived = project.sessions.filter((session) => session.archived);
     const rows = (sessions: typeof project.sessions, archivedGroup: boolean) => sessions.map((session) => `
@@ -95,14 +97,14 @@ function sidebar(state: DesktopSnapshot): string {
           ${session.pendingRequestKind === null ? "" : `<span class="attention" title="需要处理"></span>`}
         </button>
         <span class="session-actions">
-          <button title="${archivedGroup ? "Restore" : "Archive"}" data-session-action="archive" data-session="${escapeAttr(session.id)}" data-archived="${archivedGroup ? "false" : "true"}">${archivedGroup ? "↥" : "⌄"}</button>
-          <button title="Remove from Desktop" data-session-action="remove" data-session="${escapeAttr(session.id)}">×</button>
+          <button title="${archivedGroup ? "Restore" : "Archive"}" data-session-action="archive" data-session="${escapeAttr(session.id)}" data-project-path="${escapeAttr(project.path)}" data-archived="${archivedGroup ? "false" : "true"}">${archivedGroup ? "↥" : "⌄"}</button>
+          <button title="Remove from Desktop" data-session-action="remove" data-session="${escapeAttr(session.id)}" data-project-path="${escapeAttr(project.path)}">×</button>
         </span>
       </div>
     `).join("");
     return `<section class="project-group ${current ? "current" : ""}">
-      <button class="project-heading" data-project-path="${escapeAttr(project.path)}"><span>⌄</span><strong>${escapeHtml(project.name)}</strong></button>
-      ${current ? `<div class="project-sessions">${rows(active, false) || `<p class="sidebar-empty">No sessions yet</p>`}${archived.length === 0 ? "" : `<details class="archived"><summary>Archived · ${archived.length}</summary>${rows(archived, true)}</details>`}</div>` : ""}
+      <div class="project-heading"><button class="project-disclosure" data-project-toggle="${escapeAttr(project.path)}" title="${collapsed ? "Expand" : "Collapse"}">${collapsed ? "›" : "⌄"}</button><button class="project-select" data-project-switch="${escapeAttr(project.path)}"><strong>${escapeHtml(project.name)}</strong></button></div>
+      ${collapsed ? "" : `<div class="project-sessions">${rows(active, false) || `<p class="sidebar-empty">No sessions yet</p>`}${archived.length === 0 ? "" : `<details class="archived"><summary>Archived · ${archived.length}</summary>${rows(archived, true)}</details>`}</div>`}
     </section>`;
   }).join("");
   return `
@@ -334,8 +336,15 @@ function bindActions(): void {
       void perform(() => window.nexora.openSession(projectPath, sessionId).then(setSnapshot));
     }
   }));
-  document.querySelectorAll<HTMLElement>("[data-project-path]:not([data-session])").forEach((element) => element.addEventListener("click", () => {
-    const path = element.dataset.projectPath;
+  document.querySelectorAll<HTMLElement>("[data-project-toggle]").forEach((element) => element.addEventListener("click", () => {
+    const path = element.dataset.projectToggle;
+    if (path === undefined) return;
+    const key = path.toLowerCase();
+    if (collapsedProjects.has(key)) collapsedProjects.delete(key); else collapsedProjects.add(key);
+    render();
+  }));
+  document.querySelectorAll<HTMLElement>("[data-project-switch]").forEach((element) => element.addEventListener("click", () => {
+    const path = element.dataset.projectSwitch;
     if (path !== undefined && path.toLowerCase() !== snapshot?.workspace.path.toLowerCase()) {
       draft = "";
       void perform(() => window.nexora.switchProject(path).then(setSnapshot));
@@ -343,12 +352,13 @@ function bindActions(): void {
   }));
   document.querySelectorAll<HTMLElement>("[data-session-action]").forEach((element) => element.addEventListener("click", () => {
     const sessionId = element.dataset.session;
-    if (sessionId === undefined) return;
+    const projectPath = element.dataset.projectPath;
+    if (sessionId === undefined || projectPath === undefined) return;
     if (element.dataset.sessionAction === "archive") {
       const archived = element.dataset.archived === "true";
-      void perform(() => window.nexora.archiveSession(sessionId, archived).then(setSnapshot));
+      void perform(() => window.nexora.archiveSession(projectPath, sessionId, archived).then(setSnapshot));
     } else if (window.confirm("Remove this Session from Nexora Desktop? Persisted Runtime Runs and audit evidence will be retained.")) {
-      void perform(() => window.nexora.removeSession(sessionId).then(setSnapshot));
+      void perform(() => window.nexora.removeSession(projectPath, sessionId).then(setSnapshot));
     }
   }));
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((element) => element.addEventListener("click", () => {

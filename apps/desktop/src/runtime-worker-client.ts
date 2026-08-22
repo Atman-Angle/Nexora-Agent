@@ -44,12 +44,13 @@ export class RuntimeWorkerClient {
   }
 
   snapshot(): Promise<DesktopSnapshot> { return this.#invoke("snapshot") as Promise<DesktopSnapshot>; }
+  addProject(path: string): Promise<DesktopSnapshot> { return this.#invoke("addProject", path) as Promise<DesktopSnapshot>; }
   setWorkspace(path: string): Promise<DesktopSnapshot> { return this.#invoke("setWorkspace", path) as Promise<DesktopSnapshot>; }
   startSession(goal: string): Promise<DesktopSnapshot> { return this.#invoke("startSession", goal) as Promise<DesktopSnapshot>; }
   continueSession(sessionId: string, text: string): Promise<DesktopSnapshot> { return this.#invoke("continueSession", sessionId, text) as Promise<DesktopSnapshot>; }
   openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("openSession", projectPath, sessionId) as Promise<DesktopSnapshot>; }
-  archiveSession(sessionId: string, archived: boolean): Promise<DesktopSnapshot> { return this.#invoke("archiveSession", sessionId, archived) as Promise<DesktopSnapshot>; }
-  removeSession(sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("removeSession", sessionId) as Promise<DesktopSnapshot>; }
+  archiveSession(projectPath: string, sessionId: string, archived: boolean): Promise<DesktopSnapshot> { return this.#invoke("archiveSession", projectPath, sessionId, archived) as Promise<DesktopSnapshot>; }
+  removeSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("removeSession", projectPath, sessionId) as Promise<DesktopSnapshot>; }
   saveModelProfile(profile: ModelProfileInput): Promise<DesktopSnapshot> { return this.#invoke("saveModelProfile", profile) as Promise<DesktopSnapshot>; }
   deleteModelProfile(profileId: string): Promise<DesktopSnapshot> { return this.#invoke("deleteModelProfile", profileId) as Promise<DesktopSnapshot>; }
   selectModelProfile(profileId: string): Promise<DesktopSnapshot> { return this.#invoke("selectModelProfile", profileId) as Promise<DesktopSnapshot>; }

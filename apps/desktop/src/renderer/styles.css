@@ -22,7 +22,10 @@ button { border: 0; cursor: pointer; }
 .session-list { min-height: 0; flex: 1; overflow: auto; }
 .project-group { margin-bottom: 5px; }
 .project-heading { display: flex; width: 100%; gap: 6px; align-items: center; padding: 6px 9px; border-radius: 7px; color: #777671; background: transparent; text-align: left; }
-.project-heading span { color: #aaa9a4; font-size: 9px; }.project-heading strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
+.project-disclosure { flex: 0 0 14px; height: 18px; border-radius: 4px; color: #aaa9a4; background: transparent; font-size: 13px; }
+.project-disclosure:hover { color: #55544f; background: rgba(30,30,27,.055); }
+.project-select { min-width: 0; flex: 1; overflow: hidden; background: transparent; text-align: left; }
+.project-heading strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
 .project-group.current .project-heading { color: #30302d; }
 .project-sessions { padding-left: 8px; }
 .session-row { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px; border-radius: 8px; background: transparent; text-align: left; }

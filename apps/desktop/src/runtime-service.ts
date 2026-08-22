@@ -111,6 +111,12 @@ export class DesktopRuntimeService {
     return await this.snapshot();
   }
 
+  async addProject(path: string): Promise<DesktopSnapshot> {
+    this.#ensureProject(path);
+    this.#writeHostConfig();
+    return await this.snapshot();
+  }
+
   async startSession(goal: string): Promise<DesktopSnapshot> {
     const text = requireText(goal, "Task goal");
     const runtime = this.#requireRuntime();
@@ -178,8 +184,9 @@ export class DesktopRuntimeService {
     return await this.snapshot();
   }
 
-  async archiveSession(sessionId: string, archived: boolean): Promise<DesktopSnapshot> {
-    const session = this.#requireSession(sessionId);
+  async archiveSession(projectPath: string, sessionId: string, archived: boolean): Promise<DesktopSnapshot> {
+    const project = this.#requireProject(projectPath);
+    const session = this.#requireProjectSession(project, sessionId);
     this.#assertSessionNotRunning(session);
     session.archived = archived;
     session.updatedAt = new Date().toISOString();
@@ -188,9 +195,9 @@ export class DesktopRuntimeService {
     return await this.snapshot();
   }
 
-  async removeSession(sessionId: string): Promise<DesktopSnapshot> {
-    const project = this.#currentProject();
-    const session = this.#requireSession(sessionId);
+  async removeSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot> {
+    const project = this.#requireProject(projectPath);
+    const session = this.#requireProjectSession(project, sessionId);
     this.#assertSessionNotRunning(session);
     project.hiddenRunIds = [...new Set([...project.hiddenRunIds, ...session.turns.map(({ runId }) => runId)])];
     project.sessions = project.sessions.filter(({ id }) => id !== sessionId);
@@ -413,7 +420,18 @@ export class DesktopRuntimeService {
   }
 
   #requireSession(sessionId: string): StoredSession {
-    const session = this.#currentProject().sessions.find(({ id }) => id === sessionId);
+    return this.#requireProjectSession(this.#currentProject(), sessionId);
+  }
+
+  #requireProject(path: string): StoredProject {
+    const absolute = resolve(path);
+    const project = this.#hostConfig.projects.find((item) => item.path.toLowerCase() === absolute.toLowerCase());
+    if (project === undefined) throw new Error("Desktop Project not found.");
+    return project;
+  }
+
+  #requireProjectSession(project: StoredProject, sessionId: string): StoredSession {
+    const session = project.sessions.find(({ id }) => id === sessionId);
     if (session === undefined) throw new Error("Desktop Session not found in this Project.");
     return session;
   }

@@ -222,8 +222,9 @@ ipcMain.handle("desktop:bootstrap", async () => await runtime().snapshot());
 ipcMain.handle("desktop:choose-workspace", async () => {
   const result = await dialog.showOpenDialog(window!, { properties: ["openDirectory"] });
   const path = result.filePaths[0];
-  return result.canceled || path === undefined ? null : await runtime().setWorkspace(path);
+  return result.canceled || path === undefined ? null : await runtime().addProject(path);
 });
+ipcMain.handle("desktop:add-project", async (_event, path: unknown) => await runtime().addProject(PathSchema.parse(path)));
 ipcMain.handle("desktop:switch-project", async (_event, path: unknown) => (
   await runtime().setWorkspace(PathSchema.parse(path))
 ));
@@ -236,11 +237,11 @@ ipcMain.handle("desktop:continue-session", async (_event, sessionId: unknown, te
 ipcMain.handle("desktop:open-session", async (_event, projectPath: unknown, sessionId: unknown) => (
   await runtime().openSession(PathSchema.parse(projectPath), RunIdSchema.parse(sessionId))
 ));
-ipcMain.handle("desktop:archive-session", async (_event, sessionId: unknown, archived: unknown) => (
-  await runtime().archiveSession(RunIdSchema.parse(sessionId), z.boolean().parse(archived))
+ipcMain.handle("desktop:archive-session", async (_event, projectPath: unknown, sessionId: unknown, archived: unknown) => (
+  await runtime().archiveSession(PathSchema.parse(projectPath), RunIdSchema.parse(sessionId), z.boolean().parse(archived))
 ));
-ipcMain.handle("desktop:remove-session", async (_event, sessionId: unknown) => (
-  await runtime().removeSession(RunIdSchema.parse(sessionId))
+ipcMain.handle("desktop:remove-session", async (_event, projectPath: unknown, sessionId: unknown) => (
+  await runtime().removeSession(PathSchema.parse(projectPath), RunIdSchema.parse(sessionId))
 ));
 ipcMain.handle("desktop:save-model-profile", async (_event, input: unknown) => (
   await runtime().saveModelProfile(ModelProfileSchema.parse(input) as ModelProfileInput)

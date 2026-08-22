@@ -85,12 +85,13 @@ export type SessionControl =
 export type DesktopBridge = {
   bootstrap(): Promise<DesktopSnapshot>;
   chooseWorkspace(): Promise<DesktopSnapshot | null>;
+  addProject(path: string): Promise<DesktopSnapshot>;
   switchProject(path: string): Promise<DesktopSnapshot>;
   startSession(goal: string): Promise<DesktopSnapshot>;
   continueSession(sessionId: string, text: string): Promise<DesktopSnapshot>;
   openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot>;
-  archiveSession(sessionId: string, archived: boolean): Promise<DesktopSnapshot>;
-  removeSession(sessionId: string): Promise<DesktopSnapshot>;
+  archiveSession(projectPath: string, sessionId: string, archived: boolean): Promise<DesktopSnapshot>;
+  removeSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot>;
   saveModelProfile(profile: ModelProfileInput): Promise<DesktopSnapshot>;
   deleteModelProfile(profileId: string): Promise<DesktopSnapshot>;
   selectModelProfile(profileId: string): Promise<DesktopSnapshot>;

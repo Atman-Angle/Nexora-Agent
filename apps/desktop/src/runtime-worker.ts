@@ -26,12 +26,13 @@ async function handle(request: WorkerRequest): Promise<void> {
   try {
     let result: unknown;
     if (request.method === "snapshot") result = await service.snapshot();
+    else if (request.method === "addProject") result = await service.addProject(requireString(request.args[0]));
     else if (request.method === "setWorkspace") result = await service.setWorkspace(requireString(request.args[0]));
     else if (request.method === "startSession") result = await service.startSession(requireString(request.args[0]));
     else if (request.method === "continueSession") result = await service.continueSession(requireString(request.args[0]), requireString(request.args[1]));
     else if (request.method === "openSession") result = await service.openSession(requireString(request.args[0]), requireString(request.args[1]));
-    else if (request.method === "archiveSession") result = await service.archiveSession(requireString(request.args[0]), requireBoolean(request.args[1]));
-    else if (request.method === "removeSession") result = await service.removeSession(requireString(request.args[0]));
+    else if (request.method === "archiveSession") result = await service.archiveSession(requireString(request.args[0]), requireString(request.args[1]), requireBoolean(request.args[2]));
+    else if (request.method === "removeSession") result = await service.removeSession(requireString(request.args[0]), requireString(request.args[1]));
     else if (request.method === "saveModelProfile") result = await service.saveModelProfile(request.args[0] as Parameters<typeof service.saveModelProfile>[0]);
     else if (request.method === "deleteModelProfile") result = await service.deleteModelProfile(requireString(request.args[0]));
     else if (request.method === "selectModelProfile") result = await service.selectModelProfile(requireString(request.args[0]));
