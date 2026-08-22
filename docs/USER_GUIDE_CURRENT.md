@@ -1,6 +1,6 @@
 # Nexora 1.1 当前用户指南
 
-Nexora 1.1 当前有两个正式入口：接受自然语言目标的 CLI，以及可供 Node.js/TypeScript 程序调用的 `@nexora/harness`。两者共享同一个 Harness Agent Loop 和同一个持久化 Runtime；Runtime 不调用 Provider，Structured Plan、状态机、Tool Invocation、Evidence 和完成 hard gate 仍只有一份。
+Nexora 1.1 当前有三个正式入口：Desktop Agent Workspace、接受自然语言目标的 CLI，以及可供 Node.js/TypeScript 程序调用的 `@nexora/harness`。三者共享同一个 Harness Agent Loop 和同一个持久化 Runtime；Runtime 不调用 Provider，Structured Plan、状态机、Tool Invocation、Evidence 和完成 hard gate 仍只有一份。
 
 ## 1. 安装与 Provider 配置
 
@@ -8,13 +8,28 @@ Nexora 1.1 当前有两个正式入口：接受自然语言目标的 CLI，以�
 
 ```powershell
 pnpm install
-Copy-Item -LiteralPath .env.example -Destination .env
-# 编辑 .env，填写 NEXORA_MODEL_BASE_URL、NEXORA_MODEL_API_KEY 和 NEXORA_MODEL_NAME
+@'
+NEXORA_MODEL_BASE_URL=https://your-provider.example/v1
+NEXORA_MODEL_API_KEY=replace-me
+NEXORA_MODEL_NAME=your-supported-model
+NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096
+NEXORA_MODEL_TOOL_TRANSPORT=native_tools
+'@ | Set-Content -LiteralPath .env
 ```
 
 CLI 的 start/resume 自动读取启动命令所在目录（`process.cwd()`）的 `.env`。显式 PowerShell/CI/系统环境变量优先于文件值；`--cwd` 指向的目标项目 `.env` 不会被读取，避免目标仓库注入 Provider 配置。`.env` 不存在时仍可使用显式环境变量；两者都没有时返回 `MODEL_CONFIG_ERROR`。`inspect` 不加载 `.env`。可选的 `NEXORA_MODEL_TIMEOUT_MS` 必须是正整数毫秒。
 
-## 2. 自然语言 CLI
+## 2. Desktop Agent Workspace
+
+```powershell
+pnpm desktop
+```
+
+开发版默认打开当前 Nexora 仓库；点击左上 Workspace 可切换目录，点击 **New Task** 创建 Session。左栏 Session 来自 Runtime 的持久 Run；中间 Conversation 显示目标、真实 Tool 活动、Validation 和终态 Result。Tool 可原地展开，Structured Plan 仅在 Runtime 实际存在时显示，Approval / Input Request / Recovery 统一进入底部 Composer。点击 **Activity** 会在同一主区域切换到完整持久 Trajectory。
+
+Desktop 关闭或重启不会建立另一套 Session 状态；它通过公开 Runtime Contract 从 `<workspace>/.nexora` 恢复。详细启动、操作、测试和真实 Provider UAT 见 [Desktop 使用与验证指南](../apps/desktop/README.md)。
+
+## 3. 自然语言 CLI
 
 直接输入目标，不需要编写 Plan 或 JSON：
 
@@ -86,7 +101,7 @@ pnpm nexora resume <run-id> --cwd D:\project --add-iterations 10 --add-model-cal
 
 预算耗尽返回 `blocked/*_BUDGET_EXCEEDED`。追加额度只提高原 Run 的绝对上限，累计用量不归零，已完成 Tool Invocation 不会重放。
 
-## 3. CLI 退出码
+## 4. CLI 退出码
 
 | 退出码 | 含义 |
 | ---: | --- |
@@ -98,7 +113,7 @@ pnpm nexora resume <run-id> --cwd D:\project --add-iterations 10 --add-model-cal
 
 文本中出现“完成”不代表成功。唯一成功判断是持久化 `snapshot.status === "succeeded"`。
 
-## 4. Node.js/TypeScript Runtime
+## 5. Node.js/TypeScript Runtime
 
 ```ts
 import {
@@ -148,7 +163,7 @@ try {
 
 Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runtime](BUILD_WITH_NEXORA_RUNTIME.md)。
 
-## 5. 内建 Tool
+## 6. 内建 Tool
 
 | Tool | 风险 | 行为 |
 | --- | --- | --- |
@@ -164,7 +179,7 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 
 每个 Tool 使用统一的 Identity→Capability→Decision→Execution→Evidence Contract。模型依据 Purpose、Non-goals、When to use、When not to use 和可产生的 Facts 选择是否调用；只有当前 active Tool 的输入示例会暴露给模型。Tool 返回 Facts 而不是最终回答，Runtime 在保存 Invocation/Evidence 前用该 Tool 的 Facts Schema 校验。
 
-## 6. 持久化和成功证据
+## 7. 持久化和成功证据
 
 默认数据目录是 `<workspace>/.nexora`：
 
@@ -186,10 +201,10 @@ ModelResponse.toolCalls = [] + 非空 ModelResponse.text
 
 跨 Run 或 digest 不一致的 Evidence、started/unknown Invocation、未决 Approval、未满足的 required mechanical Check、非零命令和 Provider 失败均不能成为成功。历史 failed Invocation 本身不阻塞模型采用其他真实路径完成；未注册 Tool 的 Runtime 默认允许空 provenance，已注册 Tool 时只有 Host 显式选择 `evidence: "optional"` 才允许直接回答，任何路径都不能伪造 Evidence。
 
-## 7. 当前限制
+## 8. 当前限制
 
 - 只有 OpenAI-compatible HTTP Provider；Transport 必须显式选择原生 Function Calling 或严格 Structured Output，没有自动探测或运行中降级。
-- 没有 Desktop、HTTP 服务、Python/Rust SDK、MCP、Workflow DSL 或领域 Agent。
+- Desktop 当前从源码运行，尚无安装包、签名、自动更新或内置 Node 分发；仍没有 HTTP 服务、Python/Rust SDK、MCP 或 Workflow DSL。
 - CLI 不提供单独的 `ask/read/patch/verify/agent/approve` 命令；这些属于已删除的旧实现。
 - 新 1.1 Runtime 不迁移或恢复旧数据库。
 - 历史运行证据不随公开源码发布，也不作为当前 API Contract；发布前应在隔离工作区重新运行本文件中的验证步骤。

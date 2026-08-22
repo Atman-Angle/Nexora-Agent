@@ -188,6 +188,18 @@ pnpm install
 pnpm typecheck
 ```
 
+### 打开 Desktop Agent Workspace
+
+在仓库根目录创建 `.env`，配置 `NEXORA_MODEL_BASE_URL`、`NEXORA_MODEL_API_KEY`、`NEXORA_MODEL_NAME` 和 `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`，然后运行：
+
+```powershell
+pnpm desktop
+```
+
+Desktop 是一个两栏 Runtime 宿主：左侧管理 Workspace 和持久 Session，中间是唯一的 Conversation / Activity 执行面。它与公共 Runtime 共享同一份 Run、Plan、Invocation、Approval、Evidence 和 Result Authority；Renderer 不维护平行状态。
+
+使用 `pnpm desktop:uat` 可运行真实 Provider 的 Electron 验收链路。Provider 配置、交互状态、测试命令、UAT 产物和当前发布门禁见 [Desktop 使用与验证指南](apps/desktop/README.md)。
+
 创建一个 Runtime，启动 Run，然后等待经过验证的结果：
 
 ```ts
@@ -269,6 +281,7 @@ Nexora-Agent/
 │  └─ runtime/                       # 可靠 Effect Runtime
 ├─ apps/
 │  ├─ cli/                           # 薄命令行宿主
+│  ├─ desktop/                       # 官方两栏 Desktop Agent Workspace
 │  └─ research-agent/                # 真实应用 Harness
 ├─ examples/
 │  └─ runtime/                       # 公共 API 使用示例
@@ -284,6 +297,8 @@ Nexora-Agent/
 
 ## 文档
 
+- [Desktop 使用与验证](apps/desktop/README.md)
+- [Desktop Workspace Feature Spec](docs/NEXORA_DESKTOP_WORKSPACE_SPEC.md)
 - [使用 Nexora Runtime 构建应用](docs/BUILD_WITH_NEXORA_RUNTIME.md)
 - [Research Agent Harness 与效果](docs/applications/research-agent.md)
 - [Context Harness 系统验证](docs/CONTEXT_HARNESS_SYSTEM_VALIDATION.md)

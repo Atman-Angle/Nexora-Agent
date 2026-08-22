@@ -188,6 +188,18 @@ pnpm install
 pnpm typecheck
 ```
 
+### Open the Desktop Agent Workspace
+
+Create a root `.env` with `NEXORA_MODEL_BASE_URL`, `NEXORA_MODEL_API_KEY`, `NEXORA_MODEL_NAME`, and `NEXORA_MODEL_DECISION_OUTPUT_TOKENS`, then run:
+
+```powershell
+pnpm desktop
+```
+
+Desktop is a two-column Runtime host: Workspace and persisted Sessions on the left, and one Conversation/Activity execution surface in the center. It uses the same Run, Plan, Invocation, Approval, Evidence, and Result authority as the public Runtime; the Renderer does not maintain a parallel state model.
+
+Run the real-Provider Electron acceptance path with `pnpm desktop:uat`. See the [Desktop usage and verification guide](apps/desktop/README.md) for configuration, interaction states, test commands, UAT artifacts, and current release gates.
+
 Create a Runtime, start a Run, and wait for its validated result:
 
 ```ts
@@ -269,6 +281,7 @@ Nexora-Agent/
 │  └─ runtime/                       # Reliable Effect Runtime
 ├─ apps/
 │  ├─ cli/                           # Thin command-line host
+│  ├─ desktop/                       # Official two-column Desktop Agent Workspace
 │  └─ research-agent/                # Real application Harness
 ├─ examples/
 │  └─ runtime/                       # Public API usage examples
@@ -284,6 +297,8 @@ Nexora-Agent/
 
 ## Documentation
 
+- [Desktop usage and verification](apps/desktop/README.md)
+- [Desktop Workspace feature specification](docs/NEXORA_DESKTOP_WORKSPACE_SPEC.md)
 - [Build with the Nexora Runtime](docs/BUILD_WITH_NEXORA_RUNTIME.md)
 - [Research Agent harness and results](docs/applications/research-agent.md)
 - [Context Harness system validation](docs/CONTEXT_HARNESS_SYSTEM_VALIDATION.md)

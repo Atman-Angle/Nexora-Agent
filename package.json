@@ -26,7 +26,8 @@
     "canary:provider-frontend": "node --env-file=.env --import tsx tests/canaries/provider-native-frontend.ts",
     "canary:qwen-multi-agent": "node --env-file=.env --import tsx tests/canaries/supervisor-real-qwen-multi-agent.ts",
     "nexora": "node --import tsx apps/cli/src/index.ts",
-    "desktop": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop start"
+    "desktop": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop start",
+    "desktop:uat": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop uat"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",

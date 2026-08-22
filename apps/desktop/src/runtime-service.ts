@@ -168,7 +168,7 @@ export class DesktopRuntimeService {
   async #sessionView(handle: RunHandle): Promise<SessionView> {
     return {
       inspection: await handle.inspect(),
-      history: await handle.history({ limit: 500 })
+      history: await handle.history({ limit: 200 })
     };
   }
 
