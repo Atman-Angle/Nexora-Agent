@@ -35,16 +35,17 @@ pnpm desktop
 1. 点击左上角 `＋` 添加 Project；每个 Project 对应一个 Workspace。
 2. 点击 **New Task**，在底部输入目标并提交。
    普通问答可由 Harness 基于现有权威 Context 直接回复；依赖当前项目文件、Git、命令或外部状态时，Agent 会进入同一 Run 的真实 Tool / Evidence 路径。
-3. 在 Conversation 中查看模型公开的流式工作说明、轻量 Tool 活动、Validation 和正式 Result。`native_tools` 支持 Provider 实际返回的 `content` / `reasoning_content` SSE 增量；过程文字不作为 Evidence 或完成事实，失败 Attempt 会从界面丢弃。`structured_output` 等待完整 JSON，不显示伪造流。
-4. 点击 Tool 行可展开真实参数、结果、错误、耗时和 Invocation ID。
-5. Runtime 存在 Structured Plan 时，Composer 上方会出现只读 Plan 摘要；点击原地展开。
-6. Runtime 等待输入或审批时，Composer 自动切换为回答或批准/拒绝入口。
-7. 点击 **Activity** 在同一主区域查看持久化 Trajectory；不会打开第三栏。
-8. Agent 运行时 Composer 仍可输入。发送会先安全中断当前 Run，再在同一 Session 创建下一 Run；方形按钮只停止当前 Run。
-9. Run 终态后 Composer 仍可继续输入，Conversation 和 Activity 会保留同一 Session 中的全部 Run。
-10. Session 行悬停后可归档、恢复或从 Desktop 移除。移除不会物理删除 Runtime Run 和审计证据。
-11. `Enter` 发送，`Shift + Enter` 换行；中文输入法仍在组字时不会误发送。
-12. Settings 可全局增删改 OpenAI-compatible 模型 Profile，包括 Base URL、API Key、Model ID、Context Window、decision tokens 和 Tool transport。同一 Base URL 的多个模型复用 Provider 密钥；每个 Project 通过顶部选择器决定后续新 Run 使用的 Profile。Settings 编辑、Project 切换和全局模型管理不会停止其他正在运行的 Session；活动 Run 始终保留创建时的 Provider。
+3. 在 Conversation 中查看模型公开的流式工作说明、轻量 Tool 活动、Validation 和正式 Result。`native_tools` 支持 Provider 实际返回的 `content` / `reasoning_content` SSE 增量；过程文字默认限制为两行，可原地展开查看完整内容，不作为 Evidence 或完成事实，失败 Attempt 会从界面丢弃。`structured_output` 等待完整 JSON，不显示伪造流。
+4. 正式结果会把成功写入或补丁产生的 Workspace 文件显示为去重后的可点击产物；HTML 使用默认浏览器，文档和其他文件使用系统默认应用。打开前由 Desktop Host 重新验证 Project 和路径边界。
+5. 点击 Tool 行可展开真实参数、结果、错误、耗时和 Invocation ID。
+6. Runtime 存在 Structured Plan 时，Composer 上方会出现只读 Plan 摘要；点击原地展开。
+7. Runtime 等待输入或审批时，Composer 自动切换为回答或批准/拒绝入口。
+8. 点击 **Activity** 在同一主区域查看持久化 Trajectory；不会打开第三栏。
+9. Agent 运行时 Composer 仍可输入。发送会先安全中断当前 Run，再在同一 Session 创建下一 Run；方形按钮只停止当前 Run。
+10. Run 终态后 Composer 仍可继续输入，Conversation 和 Activity 会保留同一 Session 中的全部 Run。
+11. Session 行悬停后可归档、恢复或从 Desktop 移除。移除不会物理删除 Runtime Run 和审计证据。
+12. `Enter` 发送，`Shift + Enter` 换行；中文输入法仍在组字时不会误发送。
+13. Settings 可全局增删改 OpenAI-compatible 模型 Profile，包括 Base URL、API Key、Model ID、Context Window、decision tokens 和 Tool transport。同一 Base URL 的多个模型复用 Provider 密钥；每个 Project 通过顶部选择器决定后续新 Run 使用的 Profile。Settings 编辑、Project 切换和全局模型管理不会停止其他正在运行的 Session；活动 Run 始终保留创建时的 Provider。
 
 Run 数据保存在所选 Workspace 的 `.nexora` 中。一个 Nexora Desktop Host 可以同时管理任意已添加的本地 Workspace；每个 Workspace Runtime 是同一 Host 内的隔离实例，不是单独安装 Nexora。Desktop 的最近 Project、Session→Run 链、全局 Model Profile 元数据和归档导航信息保存在启动 Workspace 的 `.nexora/desktop-host.json`；全局 Provider 密钥保存在 `.nexora/desktop-secrets.env`。每个 Project 只保存选中的 Profile ID，兼容配置会镜像到对应 Workspace `.env`，因此原有 CLI 可继续使用相同 Provider。API Key 不进入 Host JSON 或 Renderer Snapshot。Host 元数据不改变 Runtime Authority。
 

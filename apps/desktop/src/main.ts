@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { RuntimeWorkerClient } from "./runtime-worker-client.js";
 import type { DesktopSnapshot, ModelProfileInput, SessionControl } from "./shared.js";
+import { resolveExternalUrl, resolveKnownWorkspaceEntry } from "./workspace-entry.js";
 
 const RunIdSchema = z.string().trim().min(1).max(256);
 const GoalSchema = z.string().trim().min(1).max(200_000);
@@ -258,6 +259,20 @@ ipcMain.handle("desktop:control", async (_event, runId: unknown, input: unknown)
 ipcMain.handle("desktop:read-artifact", async (_event, digest: unknown) => (
   await runtime().readArtifact(z.string().regex(/^sha256:[a-f0-9]{64}$/).parse(digest))
 ));
+ipcMain.handle("desktop:open-workspace-entry", async (_event, projectPath: unknown, entryPath: unknown) => {
+  const snapshot = await runtime().snapshot();
+  const target = resolveKnownWorkspaceEntry(
+    snapshot.workspace.projects,
+    PathSchema.parse(projectPath),
+    PathSchema.parse(entryPath)
+  );
+  const openError = await shell.openPath(target);
+  if (openError) throw new Error(openError);
+});
+ipcMain.handle("desktop:open-external", async (_event, input: unknown) => {
+  const url = resolveExternalUrl(z.string().trim().min(1).max(8_000).parse(input));
+  await shell.openExternal(url);
+});
 
 app.whenReady().then(async () => {
   await createWindow();

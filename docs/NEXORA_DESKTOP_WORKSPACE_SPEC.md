@@ -108,6 +108,8 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 
 权威条目由 `RunInspection`、持久化 Runtime Event、Tool Invocation、Evidence 和 Result 确定性投影。Provider 的公开文字是临时 Conversation 投影，必须标记为 Agent 输出，不得被当作 Tool 成功、Evidence 或完成事实；可以显示 Provider 明确返回的 `reasoning_content`，但不得生成、补全或推断 Provider 未返回的隐藏推理，也不得根据时间间隔编造“思考过程”。
 
+Provider 过程文字默认放在最多两行的紧凑动态框中，避免长 reasoning 淹没 Conversation；用户可以在原位置展开查看该次 Provider 实际返回的完整过程文字，再次点击收起。折叠状态只属于 Renderer 展示偏好，不成为 Runtime 状态。
+
 Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的 `content` 与 `reasoning_content` 增量。`reasoning_content` 只进入临时展示通道，不并入最终 `ModelResponse.text`。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。`native_tools` 可使用 SSE；`structured_output` 未完成的 JSON 不作为 Markdown 展示。
 
 Agent 公开输出和正式 Result 使用经过转义的 Markdown 渲染。原始 HTML 和非 `http`、`https`、`mailto` 链接不得成为可执行内容。
@@ -196,6 +198,8 @@ Conversation 只显示用户能理解的结果，例如：
 Evidence、Invocation、Completion Gate 和 provenance 细节进入对应 Conversation 条目的展开区域或 Trajectory。
 
 Artifact 必须通过受限的公开读取边界访问。Renderer 不接收 Artifact Store 物理路径，也不能自行读取 `.nexora`。首版允许文本 Artifact 的有界预览和系统打开已生成 Workspace 文件；不内置文件编辑器。
+
+正式结果可从成功的 Workspace 写入 / 补丁 Tool Invocation 结果投影紧凑的可点击产物链接。相同路径去重，HTML 交给系统默认浏览器，文档和其他文件交给系统默认应用。Renderer 只提交 Project 与 Workspace 相对路径；Electron Main 必须重新验证 Project 已由 Desktop Host 管理、解析后仍位于 Project 内。Markdown 的 `http`、`https`、`mailto` 链接也只通过受限 Host IPC 打开。
 
 ## 10. Desktop host boundary
 

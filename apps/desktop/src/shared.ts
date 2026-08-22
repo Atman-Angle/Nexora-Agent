@@ -97,6 +97,8 @@ export type DesktopBridge = {
   selectModelProfile(profileId: string): Promise<DesktopSnapshot>;
   control(runId: string, control: SessionControl): Promise<void>;
   readArtifact(digest: string): Promise<TextArtifactView>;
+  openWorkspaceEntry(projectPath: string, entryPath: string): Promise<void>;
+  openExternal(url: string): Promise<void>;
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void;
   onError(listener: (message: string) => void): () => void;
   onPublicOutput(listener: (event: AgentPublicOutputEvent) => void): () => void;

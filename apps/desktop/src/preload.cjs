@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld("nexora", Object.freeze({
   selectModelProfile: (profileId) => ipcRenderer.invoke("desktop:select-model-profile", profileId),
   control: (runId, control) => ipcRenderer.invoke("desktop:control", runId, control),
   readArtifact: (digest) => ipcRenderer.invoke("desktop:read-artifact", digest),
+  openWorkspaceEntry: (projectPath, entryPath) => ipcRenderer.invoke("desktop:open-workspace-entry", projectPath, entryPath),
+  openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
   onSnapshot: (listener) => {
     const handler = (_event, snapshot) => listener(snapshot);
     ipcRenderer.on("desktop:snapshot", handler);

@@ -7,6 +7,7 @@ import type {
 import type { AgentPublicOutputEvent } from "@nexora/harness";
 import { shouldSendOnEnter } from "./keyboard.js";
 import { renderMarkdown } from "./markdown.js";
+import { workspaceOutputs, type WorkspaceOutput } from "./workspace-outputs.js";
 
 declare global {
   interface Window { nexora: DesktopBridge }
@@ -23,6 +24,7 @@ let busy = false;
 let error: string | null = null;
 let draft = "";
 const expandedTools = new Set<string>();
+const expandedPublicOutputs = new Set<string>();
 const collapsedProjects = new Set<string>();
 type PublicOutputSegment = {
   readonly key: string;
@@ -196,10 +198,11 @@ function conversation(session: SessionView): string {
     }
     for (const segment of publicOutputs.values()) {
       if (segment.runId !== run.inspection.runId) continue;
+      const expanded = expandedPublicOutputs.has(segment.key);
       items.push({ at: segment.occurredAt, order: runIndex * 1_000_000 + 500, html: `
-        <article class="message agent-message public-output ${segment.completed ? "completed" : "streaming"}" data-public-output="${escapeAttr(segment.key)}">
-          <div class="message-label">Nexora ${segment.completed ? "" : "· Streaming"}</div>
-          <div class="markdown-body">${renderMarkdown(segment.text)}</div>
+        <article class="message agent-message public-output ${segment.completed ? "completed" : "streaming"} ${expanded ? "expanded" : ""}" data-public-output="${escapeAttr(segment.key)}">
+          <div class="public-output-header"><div class="message-label">Nexora ${segment.completed ? "" : "· Streaming"}</div><button class="public-output-toggle" data-public-output-toggle="${escapeAttr(segment.key)}">${expanded ? "收起" : "查看全部"}</button></div>
+          <div class="public-output-body"><div class="markdown-body">${renderMarkdown(segment.text)}</div></div>
         </article>
       ` });
     }
@@ -247,6 +250,7 @@ function conversation(session: SessionView): string {
     }
     if (run.inspection.result !== null) {
       const result = run.inspection.result;
+      const outputs = workspaceOutputs(run.inspection.invocations);
       const summaryAlreadyStreamed = [...publicOutputs.values()].some((segment) => (
         segment.runId === run.inspection.runId
         && segment.completed
@@ -256,12 +260,14 @@ function conversation(session: SessionView): string {
       <article class="result ${result.status}">
         <div class="result-icon">${result.status === "succeeded" ? "✓" : "!"}</div>
         <div><small>${result.status === "succeeded" ? "Nexora completed this turn" : result.status === "cancelled" ? "Turn interrupted" : "Turn ended"}</small>${summaryAlreadyStreamed ? "" : `<div class="markdown-body">${renderMarkdown(result.summary)}</div>`}
-        ${result.resultArtifact === null ? "" : `<button class="text-button" data-artifact="${escapeAttr(result.resultArtifact)}">View full result</button>`}</div>
+        ${result.resultArtifact === null ? "" : `<button class="text-button" data-artifact="${escapeAttr(result.resultArtifact)}">View full result</button>`}
+        ${deliverableLinks(outputs)}</div>
       </article>
     ` });
     } else if (run.inspection.error !== null) {
+      const outputs = workspaceOutputs(run.inspection.invocations);
       items.push({ at: new Date().toISOString(), order: runIndex * 1_000_000 + 999_999, html: `
-      <article class="result failed"><div class="result-icon">!</div><div><small>Runtime error</small><p>${escapeHtml(run.inspection.error.message)}</p></div></article>
+      <article class="result failed"><div class="result-icon">!</div><div><small>Runtime error</small><p>${escapeHtml(run.inspection.error.message)}</p>${deliverableLinks(outputs)}</div></article>
     ` });
     }
   }
@@ -421,6 +427,20 @@ function bindActions(): void {
     if (expandedTools.has(id)) expandedTools.delete(id); else expandedTools.add(id);
     render();
   }));
+  document.querySelectorAll<HTMLElement>("[data-public-output-toggle]").forEach((element) => element.addEventListener("click", () => {
+    const key = element.dataset.publicOutputToggle!;
+    if (expandedPublicOutputs.has(key)) expandedPublicOutputs.delete(key); else expandedPublicOutputs.add(key);
+    render();
+  }));
+  document.querySelectorAll<HTMLElement>("[data-workspace-entry]").forEach((element) => element.addEventListener("click", () => {
+    const entryPath = element.dataset.workspaceEntry;
+    const projectPath = snapshot?.workspace.path;
+    if (entryPath !== undefined && projectPath !== undefined) void perform(() => window.nexora.openWorkspaceEntry(projectPath, entryPath));
+  }));
+  document.querySelectorAll<HTMLAnchorElement>(".markdown-body a[href]").forEach((element) => element.addEventListener("click", (event) => {
+    event.preventDefault();
+    void perform(() => window.nexora.openExternal(element.href));
+  }));
   document.querySelectorAll<HTMLElement>("[data-artifact]").forEach((element) => element.addEventListener("click", () => {
     const digest = element.dataset.artifact!;
     void perform(async () => {
@@ -545,6 +565,13 @@ function updatePublicOutput(event: AgentPublicOutputEvent): void {
   if (label !== null) label.textContent = existing.completed ? "Nexora" : "Nexora · Streaming";
   const body = element.querySelector<HTMLElement>(".markdown-body");
   if (body !== null) body.innerHTML = renderMarkdown(existing.text);
+}
+
+function deliverableLinks(outputs: readonly WorkspaceOutput[]): string {
+  if (outputs.length === 0) return "";
+  return `<div class="deliverables"><small>Outputs</small><div class="deliverable-links">${outputs.map((output) => `
+    <button class="deliverable-link" data-workspace-entry="${escapeAttr(output.path)}"><span>↗</span><span>Open ${output.kind} · ${escapeHtml(output.name)}</span></button>
+  `).join("")}</div></div>`;
 }
 
 async function controlAction(action: string): Promise<void> {
