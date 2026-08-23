@@ -64,10 +64,10 @@ describe("E084 Model / Provider configuration", () => {
 
     await expect(
       provider.decide(decisionContext(null), { signal: new AbortController().signal })
-    ).rejects.toThrow("Provider produced no response data for 5ms.");
+    ).rejects.toThrow("Provider did not return response headers for 5ms.");
   });
 
-  it("uses the generic five-minute idle timeout for qwen3.7-flash", async () => {
+  it("uses the generic one-minute response-header timeout for qwen3.7-flash", async () => {
     vi.useFakeTimers();
     let providerAborted = false;
     const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
@@ -85,9 +85,9 @@ describe("E084 Model / Provider configuration", () => {
       NEXORA_MODEL_NAME: "qwen3.7-flash"
     });
     const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
-    const rejection = expect(decision).rejects.toThrow("Provider produced no response data for 300000ms.");
+    const rejection = expect(decision).rejects.toThrow("Provider did not return response headers for 60000ms.");
 
-    await vi.advanceTimersByTimeAsync(300_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await rejection;
     expect(providerAborted).toBe(true);
   });
@@ -200,6 +200,14 @@ describe("E084 Model / Provider configuration", () => {
   });
 
   it("rejects invalid timeout, temperature and reasoning configuration", () => {
+    expect(() => openAICompatibleProviderFromEnv({
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
+      NEXORA_MODEL_API_KEY: "test-key",
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_CONNECT_TIMEOUT_MS: "0"
+    })).toThrow("NEXORA_MODEL_CONNECT_TIMEOUT_MS must be a positive integer.");
     expect(() => openAICompatibleProviderFromEnv({
       ...explicitBudgetEnvironment(),
       NEXORA_MODEL_PROVIDER: "openai-compatible",

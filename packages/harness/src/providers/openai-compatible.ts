@@ -23,6 +23,8 @@ export type OpenAICompatibleProviderOptions = {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly model: string;
+  /** Time allowed for the Provider to return HTTP response headers. */
+  readonly connectTimeoutMs?: number;
   /** Initial response and streaming idle timeout. Every complete SSE frame renews it. */
   readonly timeoutMs?: number;
   /** Independent safety ceiling for one physical Provider Attempt. */
@@ -72,6 +74,7 @@ const MODEL_CAPABILITIES: Readonly<Record<string, {
 });
 
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
+const DEFAULT_RESPONSE_HEADERS_TIMEOUT_MS = 60_000;
 const DEFAULT_ATTEMPT_MAX_DURATION_MS = 1_800_000;
 
 export function openAICompatibleProviderFromEnv(
@@ -89,6 +92,13 @@ export function openAICompatibleProviderFromEnv(
   const timeoutMs = timeoutRaw ? Number(timeoutRaw) : DEFAULT_STREAM_IDLE_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
     throw new ModelConfigError("NEXORA_MODEL_TIMEOUT_MS must be a positive integer.");
+  }
+  const connectTimeoutRaw = environment.NEXORA_MODEL_CONNECT_TIMEOUT_MS?.trim();
+  const connectTimeoutMs = connectTimeoutRaw
+    ? Number(connectTimeoutRaw)
+    : Math.min(DEFAULT_RESPONSE_HEADERS_TIMEOUT_MS, timeoutMs);
+  if (!Number.isInteger(connectTimeoutMs) || connectTimeoutMs <= 0) {
+    throw new ModelConfigError("NEXORA_MODEL_CONNECT_TIMEOUT_MS must be a positive integer.");
   }
   const maxDurationRaw = environment.NEXORA_MODEL_MAX_DURATION_MS?.trim();
   const maxDurationMs = maxDurationRaw ? Number(maxDurationRaw) : DEFAULT_ATTEMPT_MAX_DURATION_MS;
@@ -137,6 +147,7 @@ export function openAICompatibleProviderFromEnv(
     baseUrl,
     apiKey,
     model,
+    connectTimeoutMs,
     timeoutMs,
     maxDurationMs,
     temperature,
@@ -156,6 +167,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let baseUrl: string;
   let apiKey: string;
   let model: string;
+  let connectTimeoutMs: number;
   let timeoutMs: number;
   let maxDurationMs: number;
   let temperature: number;
@@ -173,6 +185,9 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     apiKey = z.string().trim().min(1).parse(options.apiKey);
     model = z.string().trim().min(1).parse(options.model);
     timeoutMs = z.number().int().positive().parse(options.timeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+    connectTimeoutMs = z.number().int().positive().parse(
+      options.connectTimeoutMs ?? Math.min(DEFAULT_RESPONSE_HEADERS_TIMEOUT_MS, timeoutMs)
+    );
     maxDurationMs = z.number().int().positive().parse(options.maxDurationMs ?? DEFAULT_ATTEMPT_MAX_DURATION_MS);
     temperature = z.number().min(0).max(2).parse(options.temperature ?? 0);
     reasoning = options.reasoning ?? "dynamic";
@@ -212,6 +227,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     async complete(request, operation) {
       const controller = new AbortController();
       let timeoutMessage: string | null = null;
+      let responseHeadersTimer: ReturnType<typeof setTimeout> | undefined;
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       const forwardAbort = (): void => controller.abort(operation.signal.reason);
       const abortForTimeout = (message: string): void => {
@@ -228,7 +244,10 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       };
       if (operation.signal.aborted) forwardAbort();
       else operation.signal.addEventListener("abort", forwardAbort, { once: true });
-      renewIdleTimeout();
+      responseHeadersTimer = setTimeout(
+        () => abortForTimeout(`Provider did not return response headers for ${connectTimeoutMs}ms.`),
+        connectTimeoutMs
+      );
       const maxDurationTimer = setTimeout(
         () => abortForTimeout(`Provider Attempt exceeded ${maxDurationMs}ms.`),
         maxDurationMs
@@ -274,13 +293,15 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
           }),
           signal: controller.signal
         });
+        clearTimeout(responseHeadersTimer);
+        responseHeadersTimer = undefined;
+        renewIdleTimeout();
         if (!response.ok) {
           const ErrorType = response.status === 429 || response.status >= 500
             ? RetryableProviderError
             : Error;
           throw new ErrorType(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
         }
-        renewIdleTimeout();
         if (shouldStream && response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
           return await normalizeStreamingResponse(response, request, operation, renewIdleTimeout);
         }
@@ -304,6 +325,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         }
         throw error;
       } finally {
+        if (responseHeadersTimer !== undefined) clearTimeout(responseHeadersTimer);
         if (idleTimer !== undefined) clearTimeout(idleTimer);
         clearTimeout(maxDurationTimer);
         operation.signal.removeEventListener("abort", forwardAbort);

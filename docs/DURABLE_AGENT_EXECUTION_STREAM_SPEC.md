@@ -38,7 +38,7 @@ Provider SSE reasoning_content / content
 
 ## Provider timeout
 
-- 所有模型使用通用的 300 秒首次响应/流式空闲时限；每个完整 SSE frame 都续期，显式 `NEXORA_MODEL_TIMEOUT_MS` 仍优先；
+- 所有模型使用通用的 60 秒响应头时限和 300 秒流式空闲时限；每个完整 SSE frame 都续期，显式配置仍优先；
 - 单个物理 Attempt 另有默认 30 分钟安全总上限，可由 `NEXORA_MODEL_MAX_DURATION_MS` 显式配置；
 - 本地 timeout 必须分类为可重试 Provider failure，沿用既有最多三次机械 Attempt；
 - timeout、失败、取消和进程中断的 reasoning 不持久化；
@@ -62,7 +62,7 @@ Provider SSE reasoning_content / content
 5. Think 默认最多两行并可展开；
 6. Tool 默认显示真实紧凑结果预览，并保留完整展开与 Artifact；
 7. Result 不重复 reasoning，正式 summary 仍来自 Completion Gate；
-8. qwen 使用通用 300 秒流式空闲 timeout，持续 SSE 活动不会被固定总时限提前切断；
+8. qwen 使用通用 60 秒响应头和 300 秒流式空闲 timeout，持续 SSE 活动不会被固定总时限提前切断；
 9. timeout 被分类为 retryable，Attempt 审计和最终 blocked/success 真实；
 10. 目标 Session 的 180 秒 timeout 和悬空 Attempt 根因有可复现证据；
 11. Provider stream、Runtime audit、Desktop projection、Markdown、Context 与 UAT 回归通过。
@@ -86,4 +86,4 @@ artifact_status: tracked
 resolved_status: done_locally
 ```
 
-本地证据：Provider/Desktop targeted、Context Quality、Runtime/Harness release、typecheck、lint、build 和 deterministic Electron UAT 均通过。真实 Provider UAT 未执行；目标 Session 的历史记录确认两次 180 秒 Provider timeout，旧失败 Attempt 的临时 reasoning 被误当成持续进度显示，后续另有一个进程退出后遗留的 `started` Attempt。当前实现使用 300 秒流式空闲 timeout、每个真实 SSE frame 续期、30 分钟 Attempt 安全总上限和既有最多三次审计重试，并且只持久化成功 Attempt transcript。成功 transcript 可能包含模型已返回的 Workspace 内容，继续受本地 Artifact 保留、磁盘加密和访问控制等部署 Release Gate 约束。
+本地证据：Provider/Desktop targeted、Context Quality、Runtime/Harness release、typecheck、lint、build 和 deterministic Electron UAT 均通过。真实 Provider UAT 未执行；目标 Session 的历史记录确认两次 180 秒 Provider timeout，旧失败 Attempt 的临时 reasoning 被误当成持续进度显示，后续另有一个进程退出后遗留的 `started` Attempt。当前实现使用 60 秒响应头 timeout、300 秒流式空闲 timeout、每个真实 SSE frame 续期、30 分钟 Attempt 安全总上限和既有最多三次审计重试，并且只持久化成功 Attempt transcript。成功 transcript 可能包含模型已返回的 Workspace 内容，继续受本地 Artifact 保留、磁盘加密和访问控制等部署 Release Gate 约束。
