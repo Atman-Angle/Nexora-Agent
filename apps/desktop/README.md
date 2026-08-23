@@ -17,10 +17,12 @@ NEXORA_MODEL_NAME=your-supported-model
 NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000
 NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096
 NEXORA_MODEL_TOOL_TRANSPORT=native_tools
+NEXORA_MODEL_TIMEOUT_MS=300000
+NEXORA_MODEL_MAX_DURATION_MS=1800000
 '@ | Set-Content -LiteralPath .env
 ```
 
-内置 capability catalog 已知的模型可以省略 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`；自定义模型必须明确填写真实 Context Window。Provider 支持 `native_tools` 或 `structured_output`，具体兼容性见 [`packages/harness/src/providers/README.md`](../../packages/harness/src/providers/README.md)。
+内置 capability catalog 已知的模型可以省略 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`；自定义模型必须明确填写真实 Context Window。Provider 支持 `native_tools` 或 `structured_output`。`NEXORA_MODEL_TIMEOUT_MS` 是首次响应/流式空闲时限，不是整个生成时长；每个真实 SSE frame 都会续期。`NEXORA_MODEL_MAX_DURATION_MS` 是独立的 Attempt 安全总上限。具体兼容性见 [`packages/harness/src/providers/README.md`](../../packages/harness/src/providers/README.md)。
 
 启动桌面应用：
 

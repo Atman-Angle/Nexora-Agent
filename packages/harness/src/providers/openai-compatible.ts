@@ -23,7 +23,10 @@ export type OpenAICompatibleProviderOptions = {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly model: string;
+  /** Initial response and streaming idle timeout. Every complete SSE frame renews it. */
   readonly timeoutMs?: number;
+  /** Independent safety ceiling for one physical Provider Attempt. */
+  readonly maxDurationMs?: number;
   readonly temperature?: number;
   readonly reasoning?: ReasoningPolicy;
   readonly thinkingToggleParam?: string;
@@ -55,13 +58,11 @@ class RetryableProviderError extends Error {
 const MODEL_CAPABILITIES: Readonly<Record<string, {
   readonly contextWindowTokens: number;
   readonly maxOutputTokens: number;
-  readonly defaultTimeoutMs?: number;
   readonly estimatedInputMultiplier?: Readonly<Record<ProviderCompletionRequest["phase"], number>>;
 }>> = Object.freeze({
   "qwen3.7-flash": Object.freeze({
     contextWindowTokens: 1_000_000,
     maxOutputTokens: 131_072,
-    defaultTimeoutMs: 60_000,
     estimatedInputMultiplier: Object.freeze({ decision: 1.8 })
   }),
   "deepseek-v4-flash-0731": Object.freeze({
@@ -69,6 +70,9 @@ const MODEL_CAPABILITIES: Readonly<Record<string, {
     maxOutputTokens: 393_216
   })
 });
+
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
+const DEFAULT_ATTEMPT_MAX_DURATION_MS = 1_800_000;
 
 export function openAICompatibleProviderFromEnv(
   environment: Record<string, string | undefined> = process.env,
@@ -82,9 +86,14 @@ export function openAICompatibleProviderFromEnv(
   const model = required(environment, "NEXORA_MODEL_NAME");
   const modelCapability = MODEL_CAPABILITIES[model];
   const timeoutRaw = environment.NEXORA_MODEL_TIMEOUT_MS?.trim();
-  const timeoutMs = timeoutRaw ? Number(timeoutRaw) : modelCapability?.defaultTimeoutMs ?? 60_000;
+  const timeoutMs = timeoutRaw ? Number(timeoutRaw) : DEFAULT_STREAM_IDLE_TIMEOUT_MS;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
     throw new ModelConfigError("NEXORA_MODEL_TIMEOUT_MS must be a positive integer.");
+  }
+  const maxDurationRaw = environment.NEXORA_MODEL_MAX_DURATION_MS?.trim();
+  const maxDurationMs = maxDurationRaw ? Number(maxDurationRaw) : DEFAULT_ATTEMPT_MAX_DURATION_MS;
+  if (!Number.isInteger(maxDurationMs) || maxDurationMs <= 0) {
+    throw new ModelConfigError("NEXORA_MODEL_MAX_DURATION_MS must be a positive integer.");
   }
   const temperatureRaw = environment.NEXORA_MODEL_TEMPERATURE?.trim();
   const temperature = temperatureRaw ? Number(temperatureRaw) : 0;
@@ -129,6 +138,7 @@ export function openAICompatibleProviderFromEnv(
     apiKey,
     model,
     timeoutMs,
+    maxDurationMs,
     temperature,
     ...(reasoningRaw === undefined ? {} : { reasoning: reasoningRaw as ReasoningPolicy }),
     ...(environment.NEXORA_MODEL_THINKING_PARAM?.trim()
@@ -147,6 +157,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let apiKey: string;
   let model: string;
   let timeoutMs: number;
+  let maxDurationMs: number;
   let temperature: number;
   let reasoning: ReasoningPolicy;
   let thinkingToggleParam: string | undefined;
@@ -161,7 +172,8 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     baseUrl = z.string().url().parse(options.baseUrl).replace(/\/$/, "");
     apiKey = z.string().trim().min(1).parse(options.apiKey);
     model = z.string().trim().min(1).parse(options.model);
-    timeoutMs = z.number().int().positive().parse(options.timeoutMs ?? MODEL_CAPABILITIES[model]?.defaultTimeoutMs ?? 60_000);
+    timeoutMs = z.number().int().positive().parse(options.timeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS);
+    maxDurationMs = z.number().int().positive().parse(options.maxDurationMs ?? DEFAULT_ATTEMPT_MAX_DURATION_MS);
     temperature = z.number().min(0).max(2).parse(options.temperature ?? 0);
     reasoning = options.reasoning ?? "dynamic";
     thinkingToggleParam = options.thinkingToggleParam === undefined
@@ -199,16 +211,27 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     ...(tokenMeter === undefined ? {} : { measureTokens: tokenMeter }),
     async complete(request, operation) {
       const controller = new AbortController();
-      let timedOut = false;
+      let timeoutMessage: string | null = null;
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
       const forwardAbort = (): void => controller.abort(operation.signal.reason);
+      const abortForTimeout = (message: string): void => {
+        if (controller.signal.aborted) return;
+        timeoutMessage = message;
+        controller.abort(new Error(message));
+      };
+      const renewIdleTimeout = (): void => {
+        if (idleTimer !== undefined) clearTimeout(idleTimer);
+        idleTimer = setTimeout(
+          () => abortForTimeout(`Provider produced no response data for ${timeoutMs}ms.`),
+          timeoutMs
+        );
+      };
       if (operation.signal.aborted) forwardAbort();
       else operation.signal.addEventListener("abort", forwardAbort, { once: true });
-      const timer = setTimeout(
-        () => {
-          timedOut = true;
-          controller.abort(new Error("Provider request timed out."));
-        },
-        timeoutMs
+      renewIdleTimeout();
+      const maxDurationTimer = setTimeout(
+        () => abortForTimeout(`Provider Attempt exceeded ${maxDurationMs}ms.`),
+        maxDurationMs
       );
       try {
         const shouldStream = stream && request.transport.kind === "native_tools";
@@ -257,8 +280,9 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
             : Error;
           throw new ErrorType(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
         }
+        renewIdleTimeout();
         if (shouldStream && response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
-          return await normalizeStreamingResponse(response, request, operation);
+          return await normalizeStreamingResponse(response, request, operation, renewIdleTimeout);
         }
         const body = ProviderResponseSchema.parse(await response.json());
         const usage = normalizeUsage(body.usage, request.transport.promptCache?.mode ?? "automatic");
@@ -269,8 +293,8 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
           body.choices[0]!.finish_reason
         );
       } catch (error) {
-        if (timedOut && !operation.signal.aborted) {
-          throw new RetryableProviderError("Provider request timed out.");
+        if (timeoutMessage !== null && !operation.signal.aborted) {
+          throw new RetryableProviderError(timeoutMessage);
         }
         if (
           !operation.signal.aborted
@@ -280,7 +304,8 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
         }
         throw error;
       } finally {
-        clearTimeout(timer);
+        if (idleTimer !== undefined) clearTimeout(idleTimer);
+        clearTimeout(maxDurationTimer);
         operation.signal.removeEventListener("abort", forwardAbort);
       }
     }
@@ -340,7 +365,8 @@ const ProviderStreamChunkSchema = z.object({
 async function normalizeStreamingResponse(
   response: Response,
   request: ProviderCompletionRequest,
-  operation: ProviderCompletionOperation
+  operation: ProviderCompletionOperation,
+  reportActivity: () => void
 ): Promise<ModelResponse> {
   if (response.body === null) throw new RetryableProviderError("Provider returned an empty stream body.");
   const reader = response.body.getReader();
@@ -352,6 +378,7 @@ async function normalizeStreamingResponse(
   const calls = new Map<number, { id: string; name: string; arguments: string }>();
 
   const consumeEvent = (event: string): void => {
+    reportActivity();
     const data = event.split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())

@@ -203,14 +203,17 @@ describe("E131 Provider public output stream", () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e131-timeout-"));
     roots.push(workspace);
     let requests = 0;
-    const server = createServer(async (request) => {
+    const server = createServer(async (request, response) => {
       for await (const _chunk of request) { /* consume request */ }
       requests += 1;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data: {"choices":[{"delta":{"reasoning_content":"Attempt is still working. "}}]}\n\n');
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    const output: AgentPublicOutputEvent[] = [];
     const runtime = createAgent({
       workspace,
       provider: createOpenAICompatibleProvider({
@@ -220,7 +223,8 @@ describe("E131 Provider public output stream", () => {
         timeoutMs: 20,
         stream: true
       }),
-      tools: []
+      tools: [],
+      publicOutputListener: (event) => output.push(event)
     });
 
     const result = await runtime.start({ input: "Time out deterministically." });
@@ -232,5 +236,11 @@ describe("E131 Provider public output stream", () => {
     expect(requests).toBe(3);
     expect(trace.attempts).toHaveLength(3);
     expect(trace.attempts.every((attempt) => attempt.status === "failed")).toBe(true);
+    expect(trace.attempts.every((attempt) => attempt.responseArtifactRef === null)).toBe(true);
+    expect(output.map((event) => event.type)).toEqual([
+      "text.delta", "text.discarded",
+      "text.delta", "text.discarded",
+      "text.delta", "text.discarded"
+    ]);
   });
 });

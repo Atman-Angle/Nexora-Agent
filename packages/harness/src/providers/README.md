@@ -74,12 +74,13 @@ Provider 返回最终 `text` 后，Harness 只提交 summary。Runtime 从当前
 | `model` | 必填 | 模型名 |
 | `temperature` | `0` | 采样温度，`0..2` |
 | `maxTokens` | `reservedOutputTokens.decision`（默认 `4096`） | decision 请求的 `max_tokens` |
-| `timeoutMs` | `60000` | 单次请求超时；显式配置始终优先，本地 timeout 作为可重试 Provider failure 进入 Harness 的审计 Attempt 路径 |
+| `timeoutMs` | `300000` | 首次响应与流式空闲超时；每个完整 SSE frame（包括 reasoning、content、Tool Call 和 heartbeat）都会续期 |
+| `maxDurationMs` | `1800000` | 单个物理 Provider Attempt 的独立安全总上限 |
 | `reasoning` | `"dynamic"` | Provider-neutral 推理策略（见下） |
 | `thinkingToggleParam` | 不发送 | 厂商请求体里切换推理的参数名（DashScope 为 `enable_thinking`） |
 | `stream` | `false` | `native_tools` 使用 SSE，并通过临时公共输出回调转发 Provider 明确返回的 `content` 和 `reasoning_content` 增量 |
 
-环境入口还读取 `NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM` 和 `NEXORA_MODEL_STREAM`（`true|false`）。`openAICompatibleProviderFromEnv` 优先根据 `NEXORA_MODEL_NAME` 从同一 Adapter 的 capability catalog 解析窗口与输出能力；未知模型必须显式提供 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`，不会猜测 Context Window。Harness 从模型总窗口扣除当前 phase 输出预留，最终 wire input 必须落在剩余 hard input limit 内；Runtime 只持久化 resulting ledger 状态。
+环境入口还读取 `NEXORA_MODEL_TIMEOUT_MS`、`NEXORA_MODEL_MAX_DURATION_MS`、`NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM` 和 `NEXORA_MODEL_STREAM`（`true|false`）。流式请求只在连续五分钟没有完整 SSE frame 时触发可重试 timeout；只要 Provider 持续发送 reasoning/content/Tool Call/heartbeat 就不会被空闲计时器中断。30 分钟总上限独立存在，用户取消始终立即生效。`openAICompatibleProviderFromEnv` 优先根据 `NEXORA_MODEL_NAME` 从同一 Adapter 的 capability catalog 解析窗口与输出能力；未知模型必须显式提供 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`，不会猜测 Context Window。Harness 从模型总窗口扣除当前 phase 输出预留，最终 wire input 必须落在剩余 hard input limit 内；Runtime 只持久化 resulting ledger 状态。
 
 公共文字增量不是 Runtime Event、Evidence 或完成事实。`reasoning_content` 只作为 Provider 暴露的过程文字转发，不进入最终 `ModelResponse.text`，Harness 不生成、补全或推断 Provider 未返回的隐藏推理。Harness 为每个 Run / Model Call / Attempt 标识增量；失败 Attempt 会发出丢弃通知。成功 Attempt 可由 Host 请求 Runtime 将已脱敏的 reasoning/content transcript 保存为内容寻址 Artifact，并由 `responseArtifactRef` 关联到该 Attempt；失败、取消或中断 Attempt 不保存 transcript。最终状态仍只使用完整 `ModelResponse` 和 Runtime Completion Gate。`structured_output` 的半成品 JSON 不流式展示。
 

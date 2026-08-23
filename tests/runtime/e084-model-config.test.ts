@@ -64,10 +64,10 @@ describe("E084 Model / Provider configuration", () => {
 
     await expect(
       provider.decide(decisionContext(null), { signal: new AbortController().signal })
-    ).rejects.toThrow("Provider request timed out.");
+    ).rejects.toThrow("Provider produced no response data for 5ms.");
   });
 
-  it("uses the generic 60-second timeout for qwen3.7-flash", async () => {
+  it("uses the generic five-minute idle timeout for qwen3.7-flash", async () => {
     vi.useFakeTimers();
     let providerAborted = false;
     const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
@@ -85,11 +85,66 @@ describe("E084 Model / Provider configuration", () => {
       NEXORA_MODEL_NAME: "qwen3.7-flash"
     });
     const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
-    const rejection = expect(decision).rejects.toThrow("Provider request timed out.");
+    const rejection = expect(decision).rejects.toThrow("Provider produced no response data for 300000ms.");
 
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(300_000);
     await rejection;
     expect(providerAborted).toBe(true);
+  });
+
+  it("keeps a streaming request alive while reasoning and heartbeat frames continue", async () => {
+    vi.useFakeTimers();
+    const encoder = new TextEncoder();
+    const fetch: typeof globalThis.fetch = async (_input, init) => new Response(new ReadableStream({
+      start(controller) {
+        const schedule = (delayMs: number, event: string, close = false): void => {
+          setTimeout(() => {
+            if (init?.signal?.aborted) return;
+            controller.enqueue(encoder.encode(event));
+            if (close) controller.close();
+          }, delayMs);
+        };
+        init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+        schedule(40, 'data: {"choices":[{"delta":{"reasoning_content":"Still working. "}}]}\n\n');
+        schedule(80, ": ping\n\n");
+        schedule(120, 'data: {"choices":[{"delta":{"content":"Completed."},"finish_reason":"stop"}]}\n\n');
+        schedule(160, "data: [DONE]\n\n", true);
+      }
+    }), { headers: { "content-type": "text/event-stream" } });
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 50,
+      maxDurationMs: 1_000,
+      stream: true,
+      fetch
+    });
+
+    const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
+    await vi.advanceTimersByTimeAsync(160);
+
+    await expect(decision).resolves.toMatchObject({ text: "Completed." });
+  });
+
+  it("keeps an independent maximum duration safety ceiling", async () => {
+    vi.useFakeTimers();
+    const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      timeoutMs: 1_000,
+      maxDurationMs: 100,
+      fetch
+    });
+    const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
+    const rejection = expect(decision).rejects.toThrow("Provider Attempt exceeded 100ms.");
+
+    await vi.advanceTimersByTimeAsync(100);
+    await rejection;
   });
 
   it("maps the reasoning policy to the declared vendor thinking toggle", async () => {
@@ -144,7 +199,15 @@ describe("E084 Model / Provider configuration", () => {
     expect(Object.keys(seen.bodies[0]!)).not.toContain("enable_thinking");
   });
 
-  it("rejects invalid temperature and reasoning configuration", () => {
+  it("rejects invalid timeout, temperature and reasoning configuration", () => {
+    expect(() => openAICompatibleProviderFromEnv({
+      ...explicitBudgetEnvironment(),
+      NEXORA_MODEL_PROVIDER: "openai-compatible",
+      NEXORA_MODEL_BASE_URL: "https://provider.example/v1",
+      NEXORA_MODEL_API_KEY: "test-key",
+      NEXORA_MODEL_NAME: "qwen3.7-flash",
+      NEXORA_MODEL_MAX_DURATION_MS: "0"
+    })).toThrow("NEXORA_MODEL_MAX_DURATION_MS must be a positive integer.");
     expect(() => createOpenAICompatibleProvider({
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",

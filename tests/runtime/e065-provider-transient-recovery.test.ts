@@ -63,7 +63,7 @@ describe("E065 Provider transient failure recovery", () => {
       fetch
     });
 
-    await expect(provider.decide(context, operation)).rejects.toThrow("Provider request timed out.");
+    await expect(provider.decide(context, operation)).rejects.toThrow("Provider produced no response data for 5ms.");
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
