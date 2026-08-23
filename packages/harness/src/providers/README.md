@@ -95,4 +95,4 @@ Provider 返回最终 `text` 后，Harness 只提交 summary。Runtime 从当前
 - `"off"`：始终关闭。
 - `"on"`：决策调用始终开启。
 
-`thinkingToggleParam` 未声明时（例如对接会拒绝未知字段的 OpenAI 兼容端点）**不发送任何推理参数**——策略 inert，由 Provider 默认行为接管，这是不支持该能力时的安全行为。要激活 dynamic 策略需显式声明，例如 DashScope：`thinkingToggleParam: "enable_thinking"`（env：`NEXORA_MODEL_THINKING_PARAM=enable_thinking`）。
+`thinkingToggleParam` 未声明时（例如对接会拒绝未知字段的 OpenAI 兼容端点）**不发送任何推理参数**——策略 inert，由 Provider 默认行为接管，这是不支持该能力时的安全行为。声明后，dynamic 会对普通机械 Turn 显式发送 `false`，只在恢复等真实语义压力下发送 `true`，避免厂商默认开启长推理。DashScope 示例：`thinkingToggleParam: "enable_thinking"`（env：`NEXORA_MODEL_THINKING_PARAM=enable_thinking`）。

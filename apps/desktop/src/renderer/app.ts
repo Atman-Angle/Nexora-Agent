@@ -8,6 +8,7 @@ import type { AgentPublicOutputEvent } from "@nexora/harness";
 import { shouldSendOnEnter } from "./keyboard.js";
 import { renderMarkdown } from "./markdown.js";
 import { createPublicOutputBatcher, PUBLIC_OUTPUT_FLUSH_MS } from "./public-output-batcher.js";
+import { compactLatest, isFormalResultContent } from "./public-output-view.js";
 import { workspaceOutputs, type WorkspaceOutput } from "./workspace-outputs.js";
 
 declare global {
@@ -210,20 +211,35 @@ function conversation(session: SessionView): string {
       </article>
     ` });
     }
-    for (const segment of publicOutputSegments(run)) {
+    const runPublicOutputs = publicOutputSegments(run);
+    const reasoningAttempts = new Set(runPublicOutputs.filter(({ channel }) => channel === "reasoning").map(({ baseKey }) => baseKey));
+    for (const segment of runPublicOutputs) {
       const expanded = expandedPublicOutputs.has(segment.key);
+      const formalResult = segment.channel === "content" && isFormalResultContent({
+        completed: segment.completed,
+        text: segment.text,
+        resultSummary: run.inspection.result?.summary ?? null
+      });
+      if (segment.channel === "content" && !formalResult && reasoningAttempts.has(segment.baseKey)) continue;
       const order = runIndex * 1_000_000 + 500 + (segment.channel === "reasoning" ? 0 : 1);
       items.push({ at: segment.occurredAt, order, html: segment.channel === "reasoning" ? `
         <article class="think-output public-output ${segment.completed ? "completed" : "streaming"} ${expanded ? "expanded" : ""}" data-public-output="${escapeAttr(segment.key)}">
           <button class="think-summary" data-public-output-toggle="${escapeAttr(segment.key)}" aria-expanded="${expanded}">
-            <span class="think-icon">⌘</span><span class="public-output-label">Think</span><span class="activity-separator">·</span><span class="think-preview">${escapeHtml(compact(segment.text, 180))}</span><span class="disclosure">${expanded ? "⌃" : "⌄"}</span>
+            <span class="think-icon">⌘</span><span class="public-output-label">Think</span><span class="activity-separator">·</span><span class="think-preview">${escapeHtml(compactLatest(segment.text, 180))}</span><span class="disclosure">${expanded ? "⌃" : "⌄"}</span>
           </button>
           ${expanded ? `<div class="public-output-body"><div class="markdown-body">${renderMarkdown(segment.text)}</div></div>` : ""}
         </article>
-      ` : `
+      ` : formalResult ? `
         <article class="message agent-message public-content ${segment.completed ? "completed" : "streaming"}" data-public-output="${escapeAttr(segment.key)}">
           <div class="message-label">Nexora ${segment.completed ? "" : "· Streaming"}</div>
           <div class="markdown-body">${renderMarkdown(segment.text)}</div>
+        </article>
+      ` : `
+        <article class="think-output working-output public-output ${segment.completed ? "completed" : "streaming"} ${expanded ? "expanded" : ""}" data-public-output="${escapeAttr(segment.key)}">
+          <button class="think-summary" data-public-output-toggle="${escapeAttr(segment.key)}" aria-expanded="${expanded}">
+            <span class="think-icon">·</span><span class="public-output-label">Working</span><span class="activity-separator">·</span><span class="think-preview">${escapeHtml(compactLatest(segment.text, 180))}</span><span class="disclosure">${expanded ? "⌃" : "⌄"}</span>
+          </button>
+          ${expanded ? `<div class="public-output-body"><div class="markdown-body">${renderMarkdown(segment.text)}</div></div>` : ""}
         </article>
       ` });
     }
@@ -424,6 +440,7 @@ function settings(state: DesktopSnapshot): string {
       <label>Model ID<input name="model" value="${escapeAttr(profile?.model ?? "")}" placeholder="Model identifier" required /></label>
       <div class="settings-grid"><label>Context window<input name="contextWindowTokens" type="number" min="1" value="${profile?.contextWindowTokens ?? ""}" placeholder="Known model default" /></label><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${profile?.decisionOutputTokens ?? 4096}" required /></label></div>
       <label>Tool transport<select name="transport"><option value="native_tools" ${profile?.transport !== "structured_output" ? "selected" : ""}>Native tools · streaming</option><option value="structured_output" ${profile?.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label>
+      <div class="settings-grid"><label>Reasoning<select name="reasoning"><option value="dynamic" ${profile?.reasoning !== "off" && profile?.reasoning !== "on" ? "selected" : ""}>Dynamic</option><option value="off" ${profile?.reasoning === "off" ? "selected" : ""}>Off</option><option value="on" ${profile?.reasoning === "on" ? "selected" : ""}>On</option></select></label><label>Thinking parameter<input name="thinkingToggleParam" value="${escapeAttr(profile?.thinkingToggleParam ?? "")}" placeholder="DashScope: enable_thinking" /></label></div>
       <button class="primary" ${busy ? "disabled" : ""}>${profile === undefined ? "Add model" : "Save model"}</button>
     </form>
     <p>Providers, API Keys and models are global to Nexora Desktop. Each Project selects one model for future Runs. Active Runs keep their existing Provider. API Keys are never returned to the Renderer; a Project selection is mirrored to its <code>.env</code> for CLI compatibility.</p>
@@ -561,6 +578,7 @@ function bindActions(): void {
       const contextWindowTokens = Number(data.get("contextWindowTokens"));
       const id = String(data.get("id") ?? "").trim();
       const providerBaseUrl = String(data.get("providerBaseUrl") ?? "new");
+      const reasoning = String(data.get("reasoning") ?? "dynamic");
       const next = await window.nexora.saveModelProfile({
         ...(id ? { id } : {}),
         name: String(data.get("name") ?? ""),
@@ -569,7 +587,9 @@ function bindActions(): void {
         model: String(data.get("model") ?? ""),
         ...(Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
         decisionOutputTokens: Number(data.get("decisionOutputTokens")),
-        transport: data.get("transport") === "structured_output" ? "structured_output" : "native_tools"
+        transport: data.get("transport") === "structured_output" ? "structured_output" : "native_tools",
+        reasoning: reasoning === "off" || reasoning === "on" ? reasoning : "dynamic",
+        thinkingToggleParam: String(data.get("thinkingToggleParam") ?? "").trim() || null
       });
       editingProfileId = next.workspace.selectedModelProfileId;
       setSnapshot(next);
@@ -670,7 +690,7 @@ function flushPublicOutputs(keys: readonly string[]): void {
       label.textContent = output.completed ? prefix : `${prefix} · Streaming`;
     }
     const preview = element.querySelector<HTMLElement>(".think-preview");
-    if (preview !== null) preview.textContent = compact(output.text, 180);
+    if (preview !== null) preview.textContent = compactLatest(output.text, 180);
     const body = element.querySelector<HTMLElement>(".markdown-body");
     if (body === null) continue;
     body.innerHTML = renderMarkdown(output.text);

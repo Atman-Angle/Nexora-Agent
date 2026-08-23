@@ -14,6 +14,7 @@ import {
   createOpenAICompatibleProvider,
   openAICompatibleProviderFromEnv
 } from "../../packages/harness/src/providers/openai-compatible.js";
+import { decisionHasSemanticPressure } from "../../packages/harness/src/reasoning-policy.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -26,6 +27,15 @@ afterEach(() => {
 });
 
 describe("E084 Model / Provider configuration", () => {
+  it("keeps protocol-only response repair out of enhanced reasoning", () => {
+    expect(decisionHasSemanticPressure(JSON.stringify({
+      currentRuntimeDirective: { kind: "invalid_response_repair" }
+    }))).toBe(false);
+    expect(decisionHasSemanticPressure(JSON.stringify({
+      currentRuntimeDirective: { kind: "tool_failure_repair" }
+    }))).toBe(true);
+  });
+
   it("passes temperature, decision maxTokens and timeout to the transport", async () => {
     const bodies: Array<{ temperature: number; max_tokens: number }> = [];
     const fetch: typeof globalThis.fetch = async (_input, init) => {
@@ -180,7 +190,7 @@ describe("E084 Model / Provider configuration", () => {
     await provider.decide(decisionContext(null), operation);
     await provider.decide(decisionContext({ id: "established" }, true), operation);
 
-    expect(seen.bodies[0]).not.toHaveProperty("enable_thinking");
+    expect(seen.bodies[0]).toHaveProperty("enable_thinking", false);
     expect(seen.bodies[1]).toHaveProperty("enable_thinking", true);
   });
 
@@ -391,9 +401,9 @@ describe("E084 Model / Provider configuration", () => {
     expect(result.status).toBe("succeeded");
     const decisionBodies = seen;
     expect(decisionBodies).toHaveLength(3);
-    expect(decisionBodies[0]).not.toHaveProperty("enable_thinking");
-    expect(decisionBodies[1]).not.toHaveProperty("enable_thinking");
-    expect(decisionBodies[2]).not.toHaveProperty("enable_thinking");
+    expect(decisionBodies[0]).toHaveProperty("enable_thinking", false);
+    expect(decisionBodies[1]).toHaveProperty("enable_thinking", false);
+    expect(decisionBodies[2]).toHaveProperty("enable_thinking", false);
     const executionPayload = JSON.parse(decisionBodies[1]!.messages[1]!.content) as {
       currentPlanAndChecks: { plan?: unknown };
     };

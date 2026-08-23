@@ -55,6 +55,8 @@ type StoredModelProfile = {
   contextWindowTokens: number | null;
   decisionOutputTokens: number;
   transport: "native_tools" | "structured_output";
+  reasoning: "off" | "dynamic" | "on";
+  thinkingToggleParam: string | null;
 };
 type StoredProject = {
   path: string;
@@ -242,7 +244,11 @@ export class DesktopRuntimeService {
       model: requireText(input.model, "Model name"),
       contextWindowTokens: input.contextWindowTokens ?? null,
       decisionOutputTokens: input.decisionOutputTokens,
-      transport: input.transport
+      transport: input.transport,
+      reasoning: input.reasoning ?? existing?.reasoning ?? "dynamic",
+      thinkingToggleParam: input.thinkingToggleParam === undefined
+        ? existing?.thinkingToggleParam ?? null
+        : input.thinkingToggleParam?.trim() || null
     };
     if (existing === undefined) this.#hostConfig.modelProfiles.push(profile);
     else this.#hostConfig.modelProfiles[this.#hostConfig.modelProfiles.indexOf(existing)] = profile;
@@ -547,6 +553,8 @@ export class DesktopRuntimeService {
       NEXORA_MODEL_NAME: selected.model,
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(selected.decisionOutputTokens),
       NEXORA_MODEL_TOOL_TRANSPORT: selected.transport,
+      NEXORA_MODEL_REASONING: selected.reasoning,
+      ...(selected.thinkingToggleParam === null ? {} : { NEXORA_MODEL_THINKING_PARAM: selected.thinkingToggleParam }),
       ...(selected.contextWindowTokens === null ? {} : { NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: String(selected.contextWindowTokens) }),
       ...(apiKey === undefined ? {} : { NEXORA_MODEL_API_KEY: apiKey }),
       NEXORA_MODEL_STREAM: "true"
@@ -575,7 +583,9 @@ export class DesktopRuntimeService {
         NEXORA_MODEL_NAME: null,
         NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: null,
         NEXORA_MODEL_DECISION_OUTPUT_TOKENS: null,
-        NEXORA_MODEL_TOOL_TRANSPORT: null
+        NEXORA_MODEL_TOOL_TRANSPORT: null,
+        NEXORA_MODEL_REASONING: null,
+        NEXORA_MODEL_THINKING_PARAM: null
       });
       return;
     }
@@ -587,6 +597,8 @@ export class DesktopRuntimeService {
       NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: selected.contextWindowTokens === null ? null : String(selected.contextWindowTokens),
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(selected.decisionOutputTokens),
       NEXORA_MODEL_TOOL_TRANSPORT: selected.transport,
+      NEXORA_MODEL_REASONING: selected.reasoning,
+      NEXORA_MODEL_THINKING_PARAM: selected.thinkingToggleParam,
       NEXORA_MODEL_API_KEY: key ?? null
     });
   }
@@ -621,7 +633,13 @@ export class DesktopRuntimeService {
         modelProfiles?: StoredModelProfile[];
         projects?: LegacyStoredProject[];
       };
-      if (value.version === 2 && Array.isArray(value.projects) && Array.isArray(value.modelProfiles)) return value as HostConfig;
+      if (value.version === 2 && Array.isArray(value.projects) && Array.isArray(value.modelProfiles)) {
+        return {
+          version: 2,
+          projects: value.projects as StoredProject[],
+          modelProfiles: value.modelProfiles.map(normalizeModelProfile)
+        };
+      }
       if (value.version === 1 && Array.isArray(value.projects)) return migrateHostConfig(value.projects);
     } catch { /* First Desktop launch has no Host metadata. */ }
     return { version: 2, modelProfiles: [], projects: [] };
@@ -677,7 +695,11 @@ function environmentModelProfile(workspace: string): StoredModelProfile | null {
     model,
     contextWindowTokens: Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? contextWindowTokens : null,
     decisionOutputTokens,
-    transport: environment.NEXORA_MODEL_TOOL_TRANSPORT === "structured_output" ? "structured_output" : "native_tools"
+    transport: environment.NEXORA_MODEL_TOOL_TRANSPORT === "structured_output" ? "structured_output" : "native_tools",
+    reasoning: environment.NEXORA_MODEL_REASONING === "off" || environment.NEXORA_MODEL_REASONING === "on"
+      ? environment.NEXORA_MODEL_REASONING
+      : "dynamic",
+    thinkingToggleParam: environment.NEXORA_MODEL_THINKING_PARAM?.trim() || null
   };
 }
 
@@ -700,7 +722,17 @@ function sameModelProfile(left: StoredModelProfile, right: StoredModelProfile): 
     && left.model === right.model
     && left.contextWindowTokens === right.contextWindowTokens
     && left.decisionOutputTokens === right.decisionOutputTokens
-    && left.transport === right.transport;
+    && left.transport === right.transport
+    && left.reasoning === right.reasoning
+    && left.thinkingToggleParam === right.thinkingToggleParam;
+}
+
+function normalizeModelProfile(profile: Partial<StoredModelProfile> & Pick<StoredModelProfile, "id" | "name" | "baseUrl" | "model" | "contextWindowTokens" | "decisionOutputTokens" | "transport">): StoredModelProfile {
+  return {
+    ...profile,
+    reasoning: profile.reasoning === "off" || profile.reasoning === "on" ? profile.reasoning : "dynamic",
+    thinkingToggleParam: profile.thinkingToggleParam?.trim() || null
+  };
 }
 
 function uniqueProfileId(preferred: string, profiles: readonly StoredModelProfile[]): string {

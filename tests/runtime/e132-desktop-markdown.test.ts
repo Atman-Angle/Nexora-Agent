@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { renderMarkdown } from "../../apps/desktop/src/renderer/markdown.js";
 import { shouldSendOnEnter } from "../../apps/desktop/src/renderer/keyboard.js";
 import { createPublicOutputBatcher } from "../../apps/desktop/src/renderer/public-output-batcher.js";
+import { compactLatest, isFormalResultContent } from "../../apps/desktop/src/renderer/public-output-view.js";
 import { workspaceOutputs } from "../../apps/desktop/src/renderer/workspace-outputs.js";
 
 describe("E132 Desktop Markdown", () => {
@@ -60,7 +61,17 @@ describe("E132 Desktop compact process output and deliverables", () => {
     scheduled[0]!();
     expect(flushes).toEqual([["run:call:attempt"]]);
     const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
-    expect(source).toContain("compact(output.text, 180)");
+    expect(source).toContain("compactLatest(output.text, 180)");
+  });
+
+  it("shows the newest streaming text and reserves full content for the formal result", () => {
+    expect(compactLatest("first second third fourth", 13)).toBe("…third fourth");
+    expect(isFormalResultContent({ completed: false, text: "Done", resultSummary: "Done" })).toBe(false);
+    expect(isFormalResultContent({ completed: true, text: "Working notes", resultSummary: "Done" })).toBe(false);
+    expect(isFormalResultContent({ completed: true, text: "Done", resultSummary: "Done" })).toBe(true);
+    const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
+    expect(source).toContain("reasoningAttempts.has(segment.baseKey)");
+    expect(source).toContain("Working</span>");
   });
 
   it("projects only successful workspace writes and patches as deduplicated deliverables", () => {

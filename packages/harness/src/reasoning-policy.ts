@@ -6,11 +6,9 @@ export function decisionHasSemanticPressure(input: string): boolean {
         readonly recentOutcome?: unknown;
       };
     };
-    if (
-      typeof payload.currentRuntimeDirective?.kind === "string"
-      && payload.currentRuntimeDirective.kind !== "normal"
-      && payload.currentRuntimeDirective.kind !== "delivery_only"
-    ) return true;
+    const directive = payload.currentRuntimeDirective?.kind;
+    if (directive === "invalid_response_repair") return false;
+    if (typeof directive === "string" && directive !== "normal" && directive !== "delivery_only") return true;
     return payload?.context?.recentOutcome !== null
       && payload?.context?.recentOutcome !== undefined;
   } catch {

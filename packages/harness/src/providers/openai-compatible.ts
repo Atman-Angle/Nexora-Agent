@@ -599,7 +599,7 @@ function resolveThinkingToggle(
   if (param === undefined) return {};
   if (reasoning === "off") return { [param]: false };
   if (reasoning === "on") return { [param]: true };
-  return decisionHasSemanticPressure(request.input) ? { [param]: true } : {};
+  return { [param]: decisionHasSemanticPressure(request.input) };
 }
 
 function toolDescription(tool: NonNullable<ProviderCompletionRequest["tools"]>[number]): string {

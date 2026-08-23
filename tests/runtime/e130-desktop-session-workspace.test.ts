@@ -312,10 +312,24 @@ describe("E130 Desktop Project and continuous Session", () => {
       apiKey: "replacement-secret",
       model: "qwen3.7-flash",
       decisionOutputTokens: 2048,
-      transport: "structured_output"
+      transport: "structured_output",
+      reasoning: "dynamic",
+      thinkingToggleParam: "enable_thinking"
     });
     expect(JSON.stringify(configured)).not.toContain("replacement-secret");
     expect(readFileSync(join(workspace, ".env"), "utf8")).toContain('NEXORA_MODEL_DECISION_OUTPUT_TOKENS="2048"');
+    expect(readFileSync(join(workspace, ".env"), "utf8")).toContain('NEXORA_MODEL_THINKING_PARAM="enable_thinking"');
+    await service.saveModelProfile({
+      id: "environment",
+      name: "Qwen Desktop",
+      baseUrl: `http://127.0.0.1:${address.port}/v1`,
+      model: "qwen3.7-flash",
+      decisionOutputTokens: 2048,
+      transport: "structured_output",
+      reasoning: "dynamic",
+      thinkingToggleParam: null
+    });
+    expect(readFileSync(join(workspace, ".env"), "utf8")).not.toContain("NEXORA_MODEL_THINKING_PARAM");
 
     const secondProject = mkdtempSync(join(tmpdir(), "nexora-e130-project-"));
     roots.push(secondProject);

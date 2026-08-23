@@ -30,6 +30,8 @@ export type ModelProfileView = {
   readonly contextWindowTokens: number | null;
   readonly decisionOutputTokens: number;
   readonly transport: "native_tools" | "structured_output";
+  readonly reasoning: "off" | "dynamic" | "on";
+  readonly thinkingToggleParam: string | null;
 };
 
 export type ModelProfileInput = {
@@ -41,6 +43,8 @@ export type ModelProfileInput = {
   readonly contextWindowTokens?: number;
   readonly decisionOutputTokens: number;
   readonly transport: "native_tools" | "structured_output";
+  readonly reasoning?: "off" | "dynamic" | "on";
+  readonly thinkingToggleParam?: string | null;
 };
 
 export type WorkspaceView = {
