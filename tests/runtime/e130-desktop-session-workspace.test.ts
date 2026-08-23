@@ -44,6 +44,87 @@ describe("E130 Desktop Project and continuous Session", () => {
     await service.close();
   });
 
+  it("removes a legacy stored Worker Session from Desktop navigation without deleting its Runtime facts", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-legacy-worker-session-"));
+    roots.push(workspace);
+    const runtime = createAgent({
+      workspace,
+      provider: new DesktopDelegationProvider(),
+      tools: [],
+      delegationPolicy: { mode: "allowed", maxConcurrentWorkers: 2 }
+    });
+    const parent = await runtime.start({
+      input: "Delegate two internal reports.",
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
+    const workerRunId = runtime.listBranches(parent.runId)[0]!.childRunId;
+    await runtime.close();
+    writeFileSync(join(workspace, ".env"), [
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_BASE_URL=https://provider.example/v1",
+      "NEXORA_MODEL_NAME=desktop-legacy-filter-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096"
+    ].join("\n"), "utf8");
+    mkdirSync(join(workspace, ".nexora"), { recursive: true });
+    writeFileSync(join(workspace, ".nexora", "desktop-host.json"), JSON.stringify({
+      version: 2,
+      modelProfiles: [],
+      projects: [{
+        path: workspace,
+        name: "Legacy Worker Project",
+        sessions: [{
+          id: workerRunId,
+          title: "Internal Worker prompt",
+          turns: [{ runId: workerRunId, userInput: "Internal Worker prompt" }],
+          archived: false,
+          status: "succeeded",
+          pendingRequestKind: null,
+          updatedAt: new Date().toISOString()
+        }],
+        hiddenRunIds: [],
+        selectedModelProfileId: null
+      }]
+    }), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const snapshot = await service.snapshot();
+    expect(currentProject(snapshot).sessions).toEqual([expect.objectContaining({ id: parent.runId })]);
+    expect(currentProject(snapshot).sessions.some(({ id }) => id === workerRunId)).toBe(false);
+    expect(await runtimeRunExists(workspace, workerRunId)).toBe(true);
+    await expect(service.openSession(workspace, workerRunId)).rejects.toThrow("Desktop Session not found");
+    await service.close();
+  });
+
+  it("does not replay terminal Session history as live Desktop updates when opened", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-history-subscription-"));
+    roots.push(workspace);
+    const runtime = createAgent({
+      workspace,
+      provider: { async decide() { return responseText("The terminal Session is ready."); } },
+      tools: []
+    });
+    const result = await runtime.start({
+      input: "Create a terminal Session with persisted history.",
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
+    await runtime.close();
+    writeFileSync(join(workspace, ".env"), [
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_BASE_URL=https://provider.example/v1",
+      "NEXORA_MODEL_NAME=desktop-history-subscription-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096"
+    ].join("\n"), "utf8");
+    const updates: unknown[] = [];
+    const service = new DesktopRuntimeService({ workspace, onSnapshot(snapshot) { updates.push(snapshot); }, onError(message) { throw new Error(message); } });
+    await service.snapshot();
+    await service.openSession(workspace, result.runId);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    expect(updates).toHaveLength(0);
+    await service.close();
+  });
+
   it("migrates Project-scoped model profiles into one global Desktop catalog", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-global-migration-"));
     roots.push(workspace);
@@ -558,6 +639,12 @@ async function waitForStatus(service: DesktopRuntimeService, status: string) {
 
 function currentProject(snapshot: Awaited<ReturnType<DesktopRuntimeService["snapshot"]>>) {
   return snapshot.workspace.projects.find(({ path }) => path === snapshot.workspace.path)!;
+}
+
+async function runtimeRunExists(workspace: string, runId: string): Promise<boolean> {
+  const runtime = createAgent({ workspace, provider: { async decide() { return responseText("not used"); } }, tools: [] });
+  try { return (await runtime.listRuns()).some((summary) => summary.runId === runId); }
+  finally { await runtime.close(); }
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

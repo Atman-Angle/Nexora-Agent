@@ -354,7 +354,11 @@ export class DesktopRuntimeService {
   async #watch(handle: RunHandle, workspace = this.#workspace): Promise<void> {
     const key = workspaceKey(workspace);
     await this.#subscriptions.get(key)?.close();
-    this.#subscriptions.set(key, handle.subscribe(() => this.#emitWorkspace(workspace)));
+    const inspection = await handle.inspect();
+    this.#subscriptions.set(key, handle.subscribe(
+      () => this.#emitWorkspace(workspace),
+      { afterSequence: inspection.lastEventSequence }
+    ));
   }
 
   async #emit(): Promise<void> {
@@ -372,6 +376,21 @@ export class DesktopRuntimeService {
 
   async #synchronizeProject(runtime: AgentRuntime, project = this.#currentProject()): Promise<void> {
     const summaries = await runtime.listRuns();
+    const byRun = new Map(summaries.map((summary) => [summary.runId, summary]));
+    const legacyInternalSessions = new Set(project.sessions.flatMap((session) => {
+      const latest = session.turns.at(-1);
+      const lineage = latest === undefined ? undefined : byRun.get(latest.runId)?.lineage;
+      return lineage !== undefined && lineage.kind !== "root" ? [session.id] : [];
+    }));
+    if (legacyInternalSessions.size > 0) {
+      project.sessions = project.sessions.filter((session) => !legacyInternalSessions.has(session.id));
+      const key = workspaceKey(project.path);
+      if (legacyInternalSessions.has(this.#activeSessionIds.get(key) ?? "")) {
+        this.#activeSessionIds.delete(key);
+        await this.#subscriptions.get(key)?.close();
+        this.#subscriptions.delete(key);
+      }
+    }
     const hidden = new Set(project.hiddenRunIds);
     const mapped = new Set(project.sessions.flatMap(({ turns }) => turns.map(({ runId }) => runId)));
     for (const summary of summaries) {
@@ -389,7 +408,6 @@ export class DesktopRuntimeService {
         });
       }
     }
-    const byRun = new Map(summaries.map((summary) => [summary.runId, summary]));
     for (const session of project.sessions) {
       const latest = session.turns.at(-1);
       const summary = latest === undefined ? undefined : byRun.get(latest.runId);
