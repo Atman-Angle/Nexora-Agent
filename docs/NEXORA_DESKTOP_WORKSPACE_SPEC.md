@@ -110,13 +110,13 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 
 权威条目由 `RunInspection`、持久化 Runtime Event、Tool Invocation、Evidence 和 Result 确定性投影。Provider 的公开文字是临时 Conversation 投影，必须标记为 Agent 输出，不得被当作 Tool 成功、Evidence 或完成事实；可以显示 Provider 明确返回的 `reasoning_content`，但不得生成、补全或推断 Provider 未返回的隐藏推理，也不得根据时间间隔编造“思考过程”。
 
-Provider 过程文字默认放在最多两行的紧凑动态框中，避免长 reasoning 淹没 Conversation；用户可以在原位置展开查看该次 Provider 实际返回的完整过程文字，再次点击收起。折叠状态只属于 Renderer 展示偏好，不成为 Runtime 状态。Renderer 必须合并高频 token delta；折叠时只挂载有界 Markdown 预览，展开后才节流渲染完整 Markdown，不能让 Provider 流阻塞 Composer 或停止操作。
+Provider reasoning 默认显示为一条 `Think · 摘要` 紧凑活动，单行截断并随真实增量更新，避免长 reasoning 淹没 Conversation；用户可以在原位置展开查看该次 Provider 实际返回的完整 Markdown，再次点击收起。折叠状态只属于 Renderer 展示偏好，不成为 Runtime 状态。Renderer 必须合并高频 token delta；折叠时只挂载有界纯文本摘要，展开后才节流渲染完整 Markdown，不能让 Provider 流阻塞 Composer 或停止操作。
 
 Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的 `content` 与 `reasoning_content` 增量。`reasoning_content` 只进入临时展示通道，不并入最终 `ModelResponse.text`。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。`native_tools` 可使用 SSE；`structured_output` 未完成的 JSON 不作为 Markdown 展示。
 
 Agent 公开输出和正式 Result 使用经过转义的 Markdown 渲染。原始 HTML 和非 `http`、`https`、`mailto` 链接不得成为可执行内容。
 
-Tool 条目默认是一行轻量活动：动作、目标、状态、可用时显示耗时。点击后在原地展开真实输入、结果、错误、Invocation ID 和时间信息。大内容只显示摘要并引用 Artifact。
+Tool 条目默认是一行轻量活动：动作、目标、状态、可用时显示耗时，不挂载 Tool 原始输出；Workspace 文件目标可以通过现有受限 Host 边界打开。点击展开入口后，才在原地显示真实输入、结果、错误、Invocation ID 和时间信息。大内容只显示摘要并引用 Artifact。
 
 Conversation 不把每个 Tool、Evidence 或 Event 做成大型卡片，也不常驻显示完整 Runtime JSON。
 
@@ -140,6 +140,8 @@ Plan 位于 Conversation 流中或 Composer 上方，默认折叠：
 ## 7. Composer states
 
 Composer 是所有人机介入的统一入口，并由当前 `RunInspection` 决定状态。
+
+普通输入态使用紧凑双层布局：上层只承载文本输入，下层承载真实提示、当前 Project 的模型选择、停止和发送。模型选择仍写入 Project 的 `selectedModelProfileId`，不成为 Composer 本地状态；界面不得为了模仿参考产品添加 Runtime 不存在的附件、访问级别或模式开关。
 
 ### New task
 

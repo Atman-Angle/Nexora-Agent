@@ -1,10 +1,4 @@
 export const PUBLIC_OUTPUT_FLUSH_MS = 80;
-export const PUBLIC_OUTPUT_PREVIEW_CHARS = 600;
-
-export function publicOutputPreview(text: string): string {
-  if (text.length <= PUBLIC_OUTPUT_PREVIEW_CHARS) return text;
-  return `…${text.slice(-PUBLIC_OUTPUT_PREVIEW_CHARS)}`;
-}
 
 export function createPublicOutputBatcher(
   schedule: (flush: () => void) => number,

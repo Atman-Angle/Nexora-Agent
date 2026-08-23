@@ -182,7 +182,7 @@ async function runDesktopUat(reportPath: string): Promise<void> {
   }
 
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
-  const publicOutputCount = await window!.webContents.executeJavaScript(`document.querySelectorAll('.public-output .markdown-body, .public-content .markdown-body').length`, true) as number;
+  const publicOutputCount = await window!.webContents.executeJavaScript(`document.querySelectorAll('.think-summary, .public-content .markdown-body').length`, true) as number;
   if (publicOutputCount < 1) throw new Error("Desktop UAT did not render Provider public output.");
   const image = await window!.webContents.capturePage({ x: 0, y: 0, width: 1180, height: 800 });
   if (image.isEmpty()) throw new Error("Electron rendered an empty UAT capture.");

@@ -4,9 +4,8 @@ import { resolve } from "node:path";
 
 import { renderMarkdown } from "../../apps/desktop/src/renderer/markdown.js";
 import { shouldSendOnEnter } from "../../apps/desktop/src/renderer/keyboard.js";
-import { createPublicOutputBatcher, publicOutputPreview, PUBLIC_OUTPUT_PREVIEW_CHARS } from "../../apps/desktop/src/renderer/public-output-batcher.js";
+import { createPublicOutputBatcher } from "../../apps/desktop/src/renderer/public-output-batcher.js";
 import { workspaceOutputs } from "../../apps/desktop/src/renderer/workspace-outputs.js";
-import { toolOutputPreview, TOOL_OUTPUT_PREVIEW_LINES } from "../../apps/desktop/src/renderer/tool-output-preview.js";
 
 describe("E132 Desktop Markdown", () => {
   it("renders useful Markdown while escaping model-provided HTML and unsafe links", () => {
@@ -42,11 +41,11 @@ describe("E132 Desktop keyboard submission", () => {
 });
 
 describe("E132 Desktop compact process output and deliverables", () => {
-  it("keeps streaming process text to two lines until the user expands it", () => {
+  it("keeps reasoning as a compact single row until the user expands it", () => {
     const css = readFileSync(resolve("apps/desktop/src/renderer/styles.css"), "utf8");
-    expect(css).toContain(".public-output-body");
-    expect(css).toContain("max-height: 2.9em");
-    expect(css).toContain(".public-output.expanded .public-output-body");
+    expect(css).toContain(".think-summary");
+    expect(css).toContain(".think-preview");
+    expect(css).toContain("text-overflow: ellipsis");
   });
 
   it("coalesces token floods and keeps collapsed process DOM bounded", () => {
@@ -60,9 +59,8 @@ describe("E132 Desktop compact process output and deliverables", () => {
     expect(scheduled).toHaveLength(1);
     scheduled[0]!();
     expect(flushes).toEqual([["run:call:attempt"]]);
-    const preview = publicOutputPreview("reasoning ".repeat(10_000));
-    expect(preview.length).toBe(PUBLIC_OUTPUT_PREVIEW_CHARS + 1);
-    expect(preview.startsWith("…")).toBe(true);
+    const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
+    expect(source).toContain("compact(output.text, 180)");
   });
 
   it("projects only successful workspace writes and patches as deduplicated deliverables", () => {
@@ -78,13 +76,11 @@ describe("E132 Desktop compact process output and deliverables", () => {
     ]);
   });
 
-  it("shows a bounded real Tool result preview while preserving full details elsewhere", () => {
-    const content = Array.from({ length: 20 }, (_, index) => `line ${index + 1}`).join("\n");
-    const preview = toolOutputPreview({ path: "README.md", content }, null)!;
-    expect(preview.split("\n")).toHaveLength(TOOL_OUTPUT_PREVIEW_LINES + 1);
-    expect(preview).toContain("line 1");
-    expect(preview).not.toContain("line 20");
-    expect(toolOutputPreview(null, { code: "INVALID_PATH", message: "Expected a directory." }))
-      .toBe("Expected a directory.");
+  it("keeps Tool results collapsed by default and preserves the explicit detail disclosure", () => {
+    const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
+    expect(source).not.toContain("toolOutputPreview(invocation.resultJson");
+    expect(source).toContain("data-tool=\"${escapeAttr(invocation.id)}\"");
+    expect(source).toContain("${expanded ? `<div class=\"activity-detail\">");
+    expect(source).toContain("data-workspace-entry=\"${escapeAttr(presentation.workspacePath)}\"");
   });
 });

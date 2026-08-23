@@ -7,8 +7,7 @@ import type {
 import type { AgentPublicOutputEvent } from "@nexora/harness";
 import { shouldSendOnEnter } from "./keyboard.js";
 import { renderMarkdown } from "./markdown.js";
-import { createPublicOutputBatcher, publicOutputPreview, PUBLIC_OUTPUT_FLUSH_MS } from "./public-output-batcher.js";
-import { toolOutputPreview } from "./tool-output-preview.js";
+import { createPublicOutputBatcher, PUBLIC_OUTPUT_FLUSH_MS } from "./public-output-batcher.js";
 import { workspaceOutputs, type WorkspaceOutput } from "./workspace-outputs.js";
 
 declare global {
@@ -147,7 +146,6 @@ function header(state: DesktopSnapshot): string {
       <div class="header-actions">
         ${compression === null ? "" : `<span class="compaction-chip" title="Persisted Runtime Context compaction event">${compression === "manual" ? "手动压缩" : "已自动压缩"}</span>`}
         ${context === null ? "" : `<div class="context-usage" title="Current Session · latest Run model call: ${context.used.toLocaleString()} of ${context.window.toLocaleString()} input-context tokens. This is not a Project total."><span>Turn context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
-        ${state.workspace.modelProfiles.length === 0 ? "" : `<select class="model-switch" data-profile-select title="Model for new Runs in this Project">${state.workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === state.workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`}
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="Session view">
           <button class="${mode === "conversation" ? "active" : ""}" data-view="conversation">Conversation</button>
@@ -188,16 +186,20 @@ function conversation(session: SessionView): string {
     ` });
     for (const invocation of run.inspection.invocations) {
       const expanded = expandedTools.has(invocation.id);
-      const outputPreview = toolOutputPreview(invocation.resultJson, invocation.errorJson);
+      const presentation = toolPresentation(invocation.toolName, invocation.inputJson);
       items.push({ at: invocation.startedAt, order: runIndex * 1_000_000 + invocation.planVersion * 1000, html: `
       <article class="activity-line ${statusClass(invocation.status)}">
-        <button class="activity-summary" data-tool="${escapeAttr(invocation.id)}">
+        <div class="activity-summary">
           <span class="activity-icon">${toolIcon(invocation.toolName)}</span>
-          <span>${escapeHtml(toolLabel(invocation.toolName, invocation.inputJson))}</span>
+          <button class="activity-toggle" data-tool="${escapeAttr(invocation.id)}" aria-expanded="${expanded}">
+            <span class="activity-kind">${escapeHtml(presentation.action)}</span>${presentation.target === null ? "" : `<span class="activity-separator">·</span>`}
+          </button>
+          ${presentation.target === null ? `<span class="activity-target"></span>` : presentation.workspacePath === null
+            ? `<span class="activity-target">${escapeHtml(presentation.target)}</span>`
+            : `<button class="activity-target workspace-target" data-workspace-entry="${escapeAttr(presentation.workspacePath)}" title="Open in workspace">${escapeHtml(presentation.target)}</button>`}
           <small>${invocationStatus(invocation.status)}${duration(invocation.startedAt, invocation.completedAt)}</small>
-          <span class="disclosure">${expanded ? "⌃" : "⌄"}</span>
-        </button>
-        ${expanded || outputPreview === null ? "" : `<pre class="tool-output-preview">${escapeHtml(outputPreview)}</pre>`}
+          <button class="disclosure" data-tool="${escapeAttr(invocation.id)}" aria-label="${expanded ? "Collapse" : "Expand"} Tool details">${expanded ? "⌃" : "⌄"}</button>
+        </div>
         ${expanded ? `<div class="activity-detail">
           <dl><dt>Tool</dt><dd>${escapeHtml(invocation.toolName)}</dd><dt>Invocation</dt><dd>${escapeHtml(invocation.id)}</dd><dt>Step</dt><dd>${escapeHtml(invocation.stepId)}</dd></dl>
           <details open><summary>Input</summary><pre>${escapeHtml(pretty(invocation.inputJson))}</pre></details>
@@ -213,8 +215,10 @@ function conversation(session: SessionView): string {
       const order = runIndex * 1_000_000 + 500 + (segment.channel === "reasoning" ? 0 : 1);
       items.push({ at: segment.occurredAt, order, html: segment.channel === "reasoning" ? `
         <article class="think-output public-output ${segment.completed ? "completed" : "streaming"} ${expanded ? "expanded" : ""}" data-public-output="${escapeAttr(segment.key)}">
-          <div class="public-output-header"><div class="message-label">Think ${segment.completed ? "" : "· Streaming"}</div><button class="public-output-toggle" data-public-output-toggle="${escapeAttr(segment.key)}">${expanded ? "收起" : "查看全部"}</button></div>
-          <div class="public-output-body"><div class="markdown-body">${renderMarkdown(expanded ? segment.text : publicOutputPreview(segment.text))}</div></div>
+          <button class="think-summary" data-public-output-toggle="${escapeAttr(segment.key)}" aria-expanded="${expanded}">
+            <span class="think-icon">⌘</span><span class="public-output-label">Think</span><span class="activity-separator">·</span><span class="think-preview">${escapeHtml(compact(segment.text, 180))}</span><span class="disclosure">${expanded ? "⌃" : "⌄"}</span>
+          </button>
+          ${expanded ? `<div class="public-output-body"><div class="markdown-body">${renderMarkdown(segment.text)}</div></div>` : ""}
         </article>
       ` : `
         <article class="message agent-message public-content ${segment.completed ? "completed" : "streaming"}" data-public-output="${escapeAttr(segment.key)}">
@@ -334,9 +338,11 @@ function plan(session: SessionView | null): string {
   const progress = new Map(session!.inspection.progress.map((item) => [item.stepId, item.status]));
   const active = current.orderedSteps.find((step) => progress.get(step.id) === "active") ?? current.orderedSteps.find((step) => progress.get(step.id) !== "completed");
   const completed = current.orderedSteps.filter((step) => progress.get(step.id) === "completed").length;
+  const activeCount = current.orderedSteps.filter((step) => progress.get(step.id) === "active").length;
+  const pending = current.orderedSteps.length - completed - activeCount;
   return `
     <section class="plan-strip ${planOpen ? "open" : ""}">
-      <button data-action="plan"><span class="plan-dot"></span><strong>${escapeHtml(active?.objective ?? "Plan complete")}</strong><span>${completed} / ${current.orderedSteps.length}</span><span>${planOpen ? "⌃" : "⌄"}</span></button>
+      <button data-action="plan" aria-expanded="${planOpen}"><span class="plan-icon">☷</span><span class="plan-title">Tasks</span><strong>${escapeHtml(active?.objective ?? "Plan complete")}</strong><span class="plan-counts">${completed} completed · ${activeCount} active · ${pending} pending</span><span class="disclosure">${planOpen ? "⌃" : "⌄"}</span></button>
       ${planOpen ? `<ol>${current.orderedSteps.map((step) => `<li class="${progress.get(step.id) ?? "pending"}"><span>${progress.get(step.id) === "completed" ? "✓" : progress.get(step.id) === "active" ? "●" : "○"}</span>${escapeHtml(step.objective)}</li>`).join("")}</ol>` : ""}
     </section>
   `;
@@ -368,26 +374,35 @@ function inputReplyComposer(): string {
   return `<section class="composer follow-up">
     <form data-form="input">
       <textarea name="text" placeholder="Reply to Nexora…" required>${escapeHtml(draft)}</textarea>
-      <button class="send-button" aria-label="Send reply" ${busy ? "disabled" : ""}>↑</button>
+      ${composerToolbar(`<button class="send-button" aria-label="Send reply" ${busy ? "disabled" : ""}>↑</button>`, "Waiting for your reply")}
     </form>
   </section>`;
 }
 
 function goalComposer(): string {
-  return `<section class="composer goal"><form data-form="goal"><textarea name="goal" placeholder="Describe a task for Nexora…" required>${escapeHtml(draft)}</textarea><button class="send-button" aria-label="Start task" ${busy ? "disabled" : ""}>↑</button></form></section>`;
+  return `<section class="composer goal"><form data-form="goal"><textarea name="goal" placeholder="Describe a task for Nexora…" required>${escapeHtml(draft)}</textarea>${composerToolbar(`<button class="send-button" aria-label="Start task" ${busy ? "disabled" : ""}>↑</button>`, "Enter to send · Shift+Enter for a new line")}</form></section>`;
 }
 
 function followUpComposer(session: SessionView, running: boolean): string {
   return `<section class="composer follow-up ${running ? "is-running" : ""}">
     <form data-form="follow-up">
       <textarea name="text" placeholder="${running ? "Type to interrupt and send…" : "Continue this Session…"}" required>${escapeHtml(draft)}</textarea>
-      <div class="composer-actions">
+      ${composerToolbar(`
         ${running ? `<button type="button" class="stop-button" data-action="cancel" title="Stop current Run" ${busy ? "disabled" : ""}>■</button>` : ""}
         <button class="send-button" aria-label="${running ? "Interrupt and send" : "Send follow-up"}" ${busy ? "disabled" : ""}>↑</button>
-      </div>
+      `, running ? "Running · sending safely interrupts this turn" : `${statusLabel(session.inspection.status)} · /压缩上下文`)}
     </form>
-    <small>${running ? "Sending interrupts the current Run safely, then starts the next turn." : `${statusLabel(session.inspection.status)} · Continue in this Session.`} 输入 <code>/压缩上下文</code> 可主动压缩历史。</small>
   </section>`;
+}
+
+function composerToolbar(actions: string, hint: string): string {
+  return `<div class="composer-toolbar"><small>${escapeHtml(hint)}</small><div class="composer-controls">${modelSelector()}${actions}</div></div>`;
+}
+
+function modelSelector(): string {
+  const workspace = snapshot?.workspace;
+  if (workspace === undefined || workspace.modelProfiles.length === 0) return "";
+  return `<select class="model-switch" data-profile-select title="Model for new Runs in this Project">${workspace.modelProfiles.map((profile) => `<option value="${escapeAttr(profile.id)}" ${profile.id === workspace.selectedModelProfileId ? "selected" : ""}>${escapeHtml(profile.name)}</option>`).join("")}</select>`;
 }
 
 function settings(state: DesktopSnapshot): string {
@@ -649,18 +664,16 @@ function flushPublicOutputs(keys: readonly string[]): void {
     if (element === null) continue;
     element.classList.toggle("streaming", !output.completed);
     element.classList.toggle("completed", output.completed);
-    const label = element.querySelector<HTMLElement>(".message-label");
+    const label = element.querySelector<HTMLElement>(".message-label, .public-output-label");
     if (label !== null) {
       const prefix = output.channel === "reasoning" ? "Think" : "Nexora";
       label.textContent = output.completed ? prefix : `${prefix} · Streaming`;
     }
+    const preview = element.querySelector<HTMLElement>(".think-preview");
+    if (preview !== null) preview.textContent = compact(output.text, 180);
     const body = element.querySelector<HTMLElement>(".markdown-body");
     if (body === null) continue;
-    body.innerHTML = renderMarkdown(
-      output.channel === "content" || expandedPublicOutputs.has(key)
-        ? output.text
-        : publicOutputPreview(output.text)
-    );
+    body.innerHTML = renderMarkdown(output.text);
   }
 }
 
@@ -722,12 +735,16 @@ function showArtifact(text: string, truncated: boolean): void {
   dialog.showModal();
 }
 
-function toolLabel(name: string, input: unknown): string {
+function toolPresentation(name: string, input: unknown): { action: string; target: string | null; workspacePath: string | null } {
   const value = objectValue(input);
   const target = stringValue(value.path) ?? stringValue(value.query) ?? stringValue(value.command) ?? stringValue(value.pattern);
   const lower = name.toLowerCase();
-  const action = lower.includes("read") ? "Read" : lower.includes("search") ? "Search" : lower.includes("write") || lower.includes("patch") ? "Edited" : lower.includes("shell") || lower.includes("command") ? "Run" : humanize(name);
-  return target === null ? action : `${action} ${compact(target, 100)}`;
+  const action = lower.includes("read") ? "Read" : lower.includes("search") ? "Search" : lower.includes("write") || lower.includes("patch") ? "Write" : lower.includes("shell") || lower.includes("command") ? "Run" : humanize(name);
+  return {
+    action,
+    target: target === null ? null : compact(target, 120),
+    workspacePath: stringValue(value.path)
+  };
 }
 function contextUsage(session: SessionView): { used: number; window: number; percent: number } | null {
   const usage = session.inspection.contextUsage;
