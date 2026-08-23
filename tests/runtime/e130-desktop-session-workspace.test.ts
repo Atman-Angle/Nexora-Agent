@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DesktopRuntimeService } from "../../apps/desktop/src/runtime-service.js";
+import { DesktopRuntimeService, desktopToolApprovalPolicy } from "../../apps/desktop/src/runtime-service.js";
 import { createAgent, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import { responseCall, responseText } from "./runtime-testkit.js";
 
@@ -531,6 +531,93 @@ describe("E130 Desktop Project and continuous Session", () => {
     await service.close();
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  });
+
+  it("auto-approves bounded workspace writes but keeps process execution user-gated", async () => {
+    expect(desktopToolApprovalPolicy("filesystem.write")).toBe("auto_approve");
+    expect(desktopToolApprovalPolicy("filesystem.patch")).toBe("auto_approve");
+    expect(desktopToolApprovalPolicy("shell.execute")).toBe("require_user");
+
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-auto-approval-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const content = calls === 1
+        ? { text: null, toolCalls: [{ name: "filesystem.write", arguments: { path: "result.txt", content: "approved by Desktop policy\n" } }], finishReason: "tool_calls" }
+        : { text: "Created result.txt.", toolCalls: [], finishReason: "stop" };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=desktop-auto-approval-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    await service.startSession("Create result.txt in this Workspace.");
+    const completed = await waitForStatus(service, "succeeded");
+    expect(readFileSync(join(workspace, "result.txt"), "utf8")).toBe("approved by Desktop policy\n");
+    expect(completed.session?.inspection.invocations).toEqual([
+      expect.objectContaining({ toolName: "filesystem.write", status: "succeeded" })
+    ]);
+    expect(completed.session?.history.records.filter(({ type }) => type === "approval.requested")).toHaveLength(1);
+    expect(completed.session?.history.records.filter(({ type }) => type === "approval.granted")).toHaveLength(1);
+
+    await service.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    expect(calls).toBe(2);
+  });
+
+  it("does not auto-approve shell execution without an OS sandbox", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-risk-approval-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const content = {
+        text: null,
+        toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "process.exit(0)"], cwd: ".", timeoutMs: 60_000 } }],
+        finishReason: "tool_calls"
+      };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=desktop-risk-approval-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    await service.startSession("Run the requested process.");
+    const waiting = await waitForStatus(service, "waiting_for_approval");
+    expect(waiting.session?.inspection.pendingRequest).toEqual(expect.objectContaining({
+      kind: "approval",
+      toolName: "shell.execute"
+    }));
+    expect(waiting.session?.inspection.invocations).toHaveLength(0);
+
+    await service.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    expect(calls).toBe(1);
   });
 
   it("interrupts a running Run before sending the next turn in the same Session", async () => {

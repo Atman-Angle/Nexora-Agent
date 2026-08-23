@@ -10,6 +10,7 @@ import {
   type AgentPublicOutputEvent,
   type RunHandle,
   type RunInspection,
+  type RuntimeEvent,
   type RuntimeSubscription
 } from "@nexora/harness";
 
@@ -34,6 +35,15 @@ const DESKTOP_PROFILE = createAgentProfileSnapshot({
   strategy: { principles: ["Inspect workspace facts before changing files.", "Keep changes scoped to the requested outcome.", "Verify changed behavior proportionately."] },
   communication: { audience: "Software project contributors", tone: "Direct and factual" }
 }, { kind: "host", ref: "apps/desktop" });
+
+const AUTO_APPROVED_DESKTOP_TOOLS = new Set([
+  "filesystem.write",
+  "filesystem.patch"
+]);
+
+export function desktopToolApprovalPolicy(toolName: string): "auto_approve" | "require_user" {
+  return AUTO_APPROVED_DESKTOP_TOOLS.has(toolName) ? "auto_approve" : "require_user";
+}
 
 type AgentRuntime = ReturnType<typeof createAgent>;
 type ProviderEnvironment = Record<string, string | undefined>;
@@ -83,6 +93,7 @@ export class DesktopRuntimeService {
   readonly #subscriptions = new Map<string, RuntimeSubscription>();
   readonly #dirtyRuntimeKeys = new Set<string>();
   readonly #publicOutputArtifacts = new Map<string, { readonly reasoning: string; readonly content: string }>();
+  readonly #automaticApprovalRequests = new Set<string>();
 
   constructor(input: { readonly workspace: string; readonly onSnapshot: (snapshot: DesktopSnapshot) => void; readonly onError: (message: string) => void; readonly onPublicOutput?: (event: AgentPublicOutputEvent) => void }) {
     this.#workspace = resolve(input.workspace);
@@ -356,9 +367,33 @@ export class DesktopRuntimeService {
     await this.#subscriptions.get(key)?.close();
     const inspection = await handle.inspect();
     this.#subscriptions.set(key, handle.subscribe(
-      () => this.#emitWorkspace(workspace),
+      async (event) => {
+        if (this.#autoApprove(handle, event)) return;
+        await this.#emitWorkspace(workspace);
+      },
       { afterSequence: inspection.lastEventSequence }
     ));
+    if (inspection.status === "waiting_for_approval" && inspection.pendingRequest?.kind === "approval") {
+      this.#autoApproveRequest(handle, inspection.pendingRequest);
+    }
+  }
+
+  #autoApprove(handle: RunHandle, event: RuntimeEvent): boolean {
+    if (event.type !== "approval.required") return false;
+    return this.#autoApproveRequest(handle, event.request);
+  }
+
+  #autoApproveRequest(
+    handle: RunHandle,
+    request: Extract<RunInspection["pendingRequest"], { readonly kind: "approval" }>
+  ): boolean {
+    if (desktopToolApprovalPolicy(request.toolName) !== "auto_approve") return false;
+    if (this.#automaticApprovalRequests.has(request.id)) return true;
+    this.#automaticApprovalRequests.add(request.id);
+    void handle.approve({ requestId: request.id })
+      .catch((error: unknown) => this.#onError(errorMessage(error)))
+      .finally(() => this.#automaticApprovalRequests.delete(request.id));
+    return true;
   }
 
   async #emit(): Promise<void> {

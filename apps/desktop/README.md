@@ -44,7 +44,7 @@ pnpm desktop
 4. 正式结果会把成功写入或补丁产生的 Workspace 文件显示为去重后的可点击产物；HTML 使用默认浏览器，文档和其他文件使用系统默认应用。打开前由 Desktop Host 重新验证 Project 和路径边界。
 5. Tool 名称和状态默认保持单行，并显示最多 8 行的真实结果或错误预览；点击 Tool 行可展开完整参数、结果、错误、耗时、Invocation ID 和 Artifact。
 6. Runtime 存在 Structured Plan 时，Composer 上方会出现只读 Plan 摘要；点击原地展开。
-7. Runtime 等待输入或审批时，Composer 自动切换为回答或批准/拒绝入口。
+7. Desktop 会自动批准受 Workspace 路径约束的 `filesystem.write` / `filesystem.patch`，Runtime 仍持久化精确 Approval 和 Invocation；没有 OS sandbox 的 `shell.execute` 仍会让 Composer 切换为批准/拒绝入口。Input Request 和 Recovery 仍必须由用户处理。
 8. 点击 **Activity** 在同一主区域查看持久化 Trajectory；不会打开第三栏。
 9. Agent 运行时 Composer 仍可输入。发送会先安全中断当前 Run，再在同一 Session 创建下一 Run；方形按钮只停止当前 Run。
 10. Run 终态后 Composer 仍可继续输入，Conversation 和 Activity 会保留同一 Session 中的全部 Run。
@@ -96,7 +96,7 @@ $env:NEXORA_DESKTOP_UAT_CAPTURE_PATH = '.tmp/my-desktop-uat.png'
 pnpm desktop:uat
 ```
 
-真实 UAT 会产生 Provider 调用和本地持久 Run。目标应保持只读，除非验收者明确授权写操作及其审批。
+真实 UAT 会产生 Provider 调用和本地持久 Run。目标应保持只读，除非验收者明确授权 Workspace 写入；进程执行仍必须人工审批。
 
 ## 当前边界
 

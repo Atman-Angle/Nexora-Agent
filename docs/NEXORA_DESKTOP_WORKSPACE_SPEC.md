@@ -63,7 +63,7 @@ Desktop 不创建第二套 Run 状态、Plan、Tool 结果、Evidence 或完成�
 | Plan | Run-owned Structured Plan | 只读、折叠/展开 |
 | Progress | persisted step progress | 只读投影 |
 | Tool activity | Tool Invocation + Event | 只读投影 |
-| Approval | persisted Pending Request | 通过 RunHandle 批准或拒绝 |
+| Approval | persisted Pending Request | Desktop Host 可按确定性策略通过 RunHandle 批准；高风险操作由用户批准或拒绝 |
 | Input request | persisted Pending Request | 通过 RunHandle 回复 |
 | Recovery | unknown Invocation + Resume Contract | 通过 RunHandle 提交明确决定 |
 | Validation | validation Events + Evidence | 只读投影 |
@@ -159,7 +159,7 @@ Runtime 的问题作为一条 Nexora 消息进入 Conversation；底部保持普
 
 ### Waiting for approval
 
-显示 Tool / 操作概要、真实输入，以及“拒绝”“批准”。拒绝可填写原因。关闭或切换 Session 不等于拒绝。
+高风险 Tool 等待用户决定时，显示 Tool / 操作概要、真实输入，以及“拒绝”“批准”。拒绝可填写原因。关闭或切换 Session 不等于拒绝。受 Workspace 路径约束的内建 `filesystem.write` / `filesystem.patch` 由 Desktop Host 自动批准；Runtime 仍持久化精确 Approval，请求输入、Invocation、Evidence 和完成状态均不由 Renderer 维护。没有 OS sandbox 的 `shell.execute` 不得自动批准。
 
 ### Blocked / interrupted
 

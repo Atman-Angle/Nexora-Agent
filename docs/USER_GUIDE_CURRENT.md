@@ -178,6 +178,8 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 | `shell.execute` | execute | 直接执行可执行文件，必须批准；非零退出为 failure |
 | `git.status/diff/show` | read | 只读 Git 信息 |
 
+上表描述 Runtime 的默认保护边界，CLI 和第三方 Host 仍要求显式批准。官方 Desktop Host 会自动批准被 Workspace 路径约束的内建 `filesystem.write` / `filesystem.patch`，但仍通过同一个持久化 Approval、Invocation、Evidence 和 Completion 路径执行；没有 OS sandbox 的 `shell.execute` 始终需要用户批准。详细边界见 [Risk-based Tool Approval](RISK_BASED_TOOL_APPROVAL_SPEC.md)。
+
 所有路径必须是 workspace-relative，越界和符号链接逃逸会失败。`shell.execute` 不接受 `cmd`、PowerShell、Bash 等交互式 Shell 入口。
 
 每个 Tool 使用统一的 Identity→Capability→Decision→Execution→Evidence Contract。模型依据 Purpose、Non-goals、When to use、When not to use 和可产生的 Facts 选择是否调用；只有当前 active Tool 的输入示例会暴露给模型。Tool 返回 Facts 而不是最终回答，Runtime 在保存 Invocation/Evidence 前用该 Tool 的 Facts Schema 校验。
