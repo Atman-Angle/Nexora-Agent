@@ -172,7 +172,11 @@ export async function requestModel(
       inputTokensBeforeCompaction,
       tokenEvictionCount,
       compacted: tokenEvictionCount > 0,
-      compactionMode: tokenEvictionCount > 0 ? "automatic" : "none"
+      compactionMode: tokenEvictionCount > 0 ? "automatic" : "none",
+      continuationProjection: (effectiveContext.continuation ?? []).map((turn) => ({
+        sourceRunId: turn.sourceRunId,
+        payloadMode: turn.payloadMode
+      }))
     }
   }, observer);
 

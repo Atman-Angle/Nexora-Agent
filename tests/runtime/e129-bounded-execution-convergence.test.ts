@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 describe("bounded execution convergence", () => {
-  it("sets a cost-aware active Context target below a large Provider capacity window", () => {
+  it("uses the model capacity policy unless an active Context cost target is explicitly configured", () => {
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",
@@ -31,9 +31,9 @@ describe("bounded execution convergence", () => {
       fetch: async () => { throw new Error("not called"); }
     });
     expect(provider.modelProfile).toMatchObject({
-      contextWindowTokens: 1_000_000,
-      activeInputTargetTokens: 128_000
+      contextWindowTokens: 1_000_000
     });
+    expect(provider.modelProfile).not.toHaveProperty("activeInputTargetTokens");
   });
 
   it("rejects delegation before Branch creation when Parent cannot retain synthesis capacity", async () => {
@@ -147,6 +147,57 @@ describe("bounded execution convergence", () => {
     await runtime.close();
   });
 
+  it("warns the Provider about alternating reads and mutations on one resource, then allows a grounded finish", async () => {
+    const provider = new ResourceChurnProvider(true);
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readPathTool(), writePathTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await approveUntilTerminal(runtime, await runtime.start({
+      input: "Make one bounded change to target.txt and verify it once.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 20, maxModelCalls: 20, maxToolCalls: 20, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+
+    const inspection = await runtime.inspect(result.runId);
+    expect(result.status).toBe("succeeded");
+    expect(provider.sawNoProgressRepair).toBe(true);
+    expect(inspection.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "runtime.event",
+        payload: expect.objectContaining({
+          name: "execution.no_progress.warning",
+          kind: "resource_churn",
+          resources: ["target.txt"]
+        })
+      })
+    ]));
+    await runtime.close();
+  });
+
+  it("blocks alternating resource churn when the Provider ignores the persisted repair warning", async () => {
+    const provider = new ResourceChurnProvider(false);
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readPathTool(), writePathTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await approveUntilTerminal(runtime, await runtime.start({
+      input: "Do not loop while changing target.txt.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 20, maxModelCalls: 20, maxToolCalls: 20, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+
+    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(provider.sawNoProgressRepair).toBe(true);
+    await runtime.close();
+  });
+
   it("recovers a blocked Parent by explicitly discarding one blocked Worker Branch", async () => {
     const runtime = createAgent({
       workspace: workspace(),
@@ -223,6 +274,26 @@ class ProgressBetweenRepeatedReadsProvider implements RuntimeProvider {
   }
 }
 
+class ResourceChurnProvider implements RuntimeProvider {
+  #call = 0;
+  readonly #finishOnRepair: boolean;
+  sawNoProgressRepair = false;
+
+  constructor(finishOnRepair: boolean) {
+    this.#finishOnRepair = finishOnRepair;
+  }
+
+  async decide(context: ModelDecisionContext) {
+    if (context.repair?.code === "NO_PROGRESS_WARNING") {
+      this.sawNoProgressRepair = true;
+      if (this.#finishOnRepair) return responseText("The persisted state is sufficient; stopping after one verification.");
+    }
+    this.#call += 1;
+    if (this.#call % 2 === 1) return responseCall("test.read-path", { path: "target.txt" });
+    return responseCall("test.write-path", { path: "target.txt", value: `revision-${this.#call / 2}` });
+  }
+}
+
 function readKeyTool(): RuntimeTool {
   return {
     contract: {
@@ -243,6 +314,64 @@ function readKeyTool(): RuntimeTool {
       return { status: "success", subjectRef: `key:${key}`, facts: { key, value: key.toUpperCase() } };
     }
   };
+}
+
+function readPathTool(): RuntimeTool {
+  return {
+    contract: {
+      identity: { name: "test.read-path" },
+      capability: { purpose: "Read one deterministic resource.", nonGoals: ["Modify state."] },
+      decision: { useWhen: ["The resource has not been observed since its last mutation."], avoidWhen: ["The unchanged result is already visible."] },
+      execution: {
+        effect: { kind: "read", description: "Reads one deterministic resource." },
+        idempotent: true,
+        inputSchema: z.object({ path: z.string().min(1) }).strict(),
+        inputExample: { path: "target.txt" }
+      },
+      evidence: { produces: ["The current resource value."], factsSchema: z.object({ path: z.string(), value: z.string() }).strict() }
+    },
+    async execute(input) {
+      const path = (input as { path: string }).path;
+      return { status: "success", subjectRef: path, facts: { path, value: "current" } };
+    }
+  };
+}
+
+function writePathTool(): RuntimeTool {
+  return {
+    contract: {
+      identity: { name: "test.write-path" },
+      capability: { purpose: "Write one deterministic resource.", nonGoals: ["Read state."] },
+      decision: { useWhen: ["One final value is known."], avoidWhen: ["The resource was already changed as requested."] },
+      execution: {
+        effect: { kind: "write", description: "Writes one deterministic resource." },
+        idempotent: true,
+        inputSchema: z.object({ path: z.string().min(1), value: z.string().min(1) }).strict(),
+        inputExample: { path: "target.txt", value: "final" }
+      },
+      evidence: { produces: ["The written resource value."], factsSchema: z.object({ path: z.string(), value: z.string() }).strict() }
+    },
+    async execute(input) {
+      const value = input as { path: string; value: string };
+      return { status: "success", subjectRef: value.path, facts: value };
+    }
+  };
+}
+
+async function approveUntilTerminal(
+  runtime: ReturnType<typeof createAgent>,
+  initial: Awaited<ReturnType<ReturnType<typeof createAgent>["start"]>>
+) {
+  let result = initial;
+  while (result.status === "waiting") {
+    const request = (await runtime.inspect(result.runId)).snapshot.pendingRequest;
+    if (request?.kind !== "approval") throw new Error("Expected a mutation Approval request.");
+    result = await runtime.resume({
+      runId: result.runId,
+      approvalDecision: { requestId: request.id, approved: true }
+    });
+  }
+  return result;
 }
 
 function workspace(): string {

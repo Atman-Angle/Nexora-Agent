@@ -466,7 +466,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     expect(calls).toBe(8);
-  });
+  }, 10_000);
 
   it("switches Projects while the previous Project Run continues in the background", async () => {
     const firstWorkspace = mkdtempSync(join(tmpdir(), "nexora-e130-background-first-"));

@@ -8,7 +8,7 @@ Feature：`manual-context-compaction`
 
 ## Outcome
 
-用户可在 Desktop Session Composer 输入 `/压缩上下文`（兼容 `/compact`）主动压缩此前 Context；Harness 在接近 Provider Context soft/hard limit 时继续自动压缩。两种路径都保留完整 Runtime 历史，只改变后续 Model Call 的有界 Context View，并在 Conversation / Activity 中展示真实发生的压缩事实。
+用户可在 Desktop Session Composer 输入 `/压缩上下文`（兼容 `/compact`）主动压缩此前 Context；Harness 在接近 Provider Context soft/hard limit 时继续自动压缩。两种路径都保留完整 Runtime 历史，只改变后续 Model Call 的有界 Context View。手动操作显示在 Conversation 和 Activity；自动收缩属于执行细节，只进入 Activity，避免每次 Model Call 重复打断 Conversation。
 
 ## Authority and flow
 
@@ -50,7 +50,7 @@ Harness 继续以最终 Provider wire 的真实 Token Meter 和 Model Profile so
 - Running Session：先安全取消当前 Run，再记录压缩请求；
 - waiting / approval / blocked：保持现有 Composer 专用交互，不接受该命令；
 - 普通文本仍走原有 follow-up；
-- 自动压缩后显示轻量单行结果，不增加面板。
+- 自动压缩不在 Conversation 重复插入结果；完整 `model.requested` 事实仍可在 Activity 查看。
 
 ## Non-goals
 
@@ -71,7 +71,7 @@ Harness 继续以最终 Provider wire 的真实 Token Meter 和 Model Profile so
 6. sibling Session 不继承 request；
 7. 自动 Token eviction 的 persisted `model.requested` 显示真实 before/final tokens 和 eviction count；
 8. 无 eviction 时不得显示自动压缩；
-9. Desktop Conversation 和 Activity 可看到手动/自动压缩事实；
+9. Desktop Conversation 可看到手动压缩，Activity 可审计手动和自动压缩事实；
 10. Context Meter 仍对应最新实际 Model Call；
 11. Runtime/Harness Context、Recovery、Desktop 回归通过；
 12. Desktop deterministic UAT 通过并可重新启动。

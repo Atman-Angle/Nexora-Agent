@@ -3,7 +3,10 @@ import type { ContinuationTurn } from "../providers/model-client.js";
 import type { ContextSource } from "./source.js";
 
 /** Deterministic, provider-neutral history rebuilt from verified Runtime lineage. */
-export function projectContinuationTurns(store: ContextSource): readonly ContinuationTurn[] {
+export function projectContinuationTurns(
+  store: ContextSource,
+  currentRunId?: string
+): readonly ContinuationTurn[] {
   const ancestors = store.listContinuationRuns?.() ?? [];
   const turns = ancestors.map((run) => projectTurn(run, store));
   let requestedBoundary = -1;
@@ -12,11 +15,50 @@ export function projectContinuationTurns(store: ContextSource): readonly Continu
       requestedBoundary = index;
     }
   }
-  return turns.map((turn, index) => index < requestedBoundary
+  const manuallyProjected = turns.map((turn, index) => index < requestedBoundary
     ? referenceContinuationTurn(turn)
     : index === requestedBoundary
       ? compactContinuationTurn(turn)
       : turn);
+  if (currentRunId === undefined) return manuallyProjected;
+  const priorProjection = latestContinuationProjection(store, currentRunId);
+  if (priorProjection.size === 0) return manuallyProjected;
+  return manuallyProjected.map((turn) => applyPersistedMode(
+    turn,
+    priorProjection.get(turn.sourceRunId)
+  ));
+}
+
+function latestContinuationProjection(
+  store: ContextSource,
+  currentRunId: string
+): ReadonlyMap<string, ContinuationTurn["payloadMode"]> {
+  const requested = [...store.listEvents(currentRunId)].reverse().find((event) => (
+    event.type === "model.requested"
+    && Array.isArray(event.payload.continuationProjection)
+  ));
+  const modes = new Map<string, ContinuationTurn["payloadMode"]>();
+  if (requested === undefined) return modes;
+  for (const item of requested.payload.continuationProjection as readonly unknown[]) {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) continue;
+    const sourceRunId = (item as { readonly sourceRunId?: unknown }).sourceRunId;
+    const payloadMode = (item as { readonly payloadMode?: unknown }).payloadMode;
+    if (
+      typeof sourceRunId === "string"
+      && (payloadMode === "full" || payloadMode === "compact" || payloadMode === "reference")
+    ) modes.set(sourceRunId, payloadMode);
+  }
+  return modes;
+}
+
+function applyPersistedMode(
+  turn: ContinuationTurn,
+  persisted: ContinuationTurn["payloadMode"] | undefined
+): ContinuationTurn {
+  if (persisted === undefined) return turn;
+  const rank = { full: 0, compact: 1, reference: 2 } as const;
+  if (rank[persisted] <= rank[turn.payloadMode]) return turn;
+  return persisted === "reference" ? referenceContinuationTurn(turn) : compactContinuationTurn(turn);
 }
 
 function projectTurn(run: RunSnapshot, store: ContextSource): ContinuationTurn {

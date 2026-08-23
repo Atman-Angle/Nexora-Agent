@@ -183,7 +183,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
   let contextWindowTokens: number;
   let decisionOutputTokens: number;
   let softLimitRatio: number;
-  let activeInputTargetTokens: number;
+  let activeInputTargetTokens: number | undefined;
   let tokenMeter: ProviderRequestTokenMeter | undefined;
   let fetchImplementation: typeof globalThis.fetch;
   let stream: boolean;
@@ -210,9 +210,9 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     decisionOutputTokens = z.number().int().nonnegative().parse(options.reservedOutputTokens?.decision ?? 4_096);
     softLimitRatio = z.number().positive().max(1).parse(options.softLimitRatio ?? 0.8);
     const capacitySoftInputLimit = Math.floor((contextWindowTokens - decisionOutputTokens) * softLimitRatio);
-    activeInputTargetTokens = z.number().int().positive().max(capacitySoftInputLimit).parse(
-      options.activeInputTargetTokens ?? Math.min(128_000, capacitySoftInputLimit)
-    );
+    activeInputTargetTokens = options.activeInputTargetTokens === undefined
+      ? undefined
+      : z.number().int().positive().max(capacitySoftInputLimit).parse(options.activeInputTargetTokens);
     tokenMeter = options.tokenMeter ?? calibratedTokenMeter(model);
     if (decisionOutputTokens >= contextWindowTokens) {
       throw new Error("Reserved output tokens must be smaller than the context window.");
@@ -233,7 +233,7 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       contextWindowTokens,
       reservedOutputTokens: { decision: decisionOutputTokens },
       softLimitRatio,
-      activeInputTargetTokens
+      ...(activeInputTargetTokens === undefined ? {} : { activeInputTargetTokens })
     },
     ...(tokenMeter === undefined ? {} : { measureTokens: tokenMeter }),
     async complete(request, operation) {

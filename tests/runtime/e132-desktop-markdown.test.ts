@@ -94,4 +94,12 @@ describe("E132 Desktop compact process output and deliverables", () => {
     expect(source).toContain("${expanded ? `<div class=\"activity-detail\">");
     expect(source).toContain("data-workspace-entry=\"${escapeAttr(presentation.workspacePath)}\"");
   });
+
+  it("shows the real model Context window and keeps transient automatic eviction out of Conversation", () => {
+    const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
+    expect(source).toContain("<span>Context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span>");
+    expect(source).toContain("usage.inputTokens / usage.contextWindowTokens");
+    expect(source).not.toContain("已自动压缩上下文");
+    expect(source).toContain('record.type !== "context.compaction.requested"');
+  });
 });

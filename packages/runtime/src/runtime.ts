@@ -103,6 +103,7 @@ import type {
   WorkerRecoveryRequest,
   SubscribeOptions
 } from "./runtime-types.js";
+
 import {
   projectRunFinalResult,
   projectRunInspection,
@@ -118,6 +119,13 @@ import {
   cancellationReason
 } from "./runtime-error.js";
 import { LeaseManager } from "./runtime-lease.js";
+
+type NoProgressDiagnostic = {
+  readonly fingerprint: string;
+  readonly kind: string;
+  readonly repeatCount: number;
+  readonly resources?: readonly string[];
+};
 
 export type {
   ApprovalDecision,
@@ -2578,13 +2586,15 @@ export class RuntimeEngine {
     return this.#blockForNoProgress(run, diagnostic, observer);
   }
 
-  #noProgressDiagnostic(runId: string): { readonly fingerprint: string; readonly kind: string; readonly repeatCount: number } | null {
+  #noProgressDiagnostic(runId: string): NoProgressDiagnostic | null {
     const allEvents = this.#store.listRecentEvents(runId, 64);
     const lastResume = [...allEvents].reverse().find((event) => event.type === "run.resumed");
     const segmentStartedAt = lastResume?.occurredAt ?? "";
     const invocations = this.#store.listRecentToolInvocations(runId, 24)
       .filter((invocation) => invocation.startedAt >= segmentStartedAt)
       .slice(-24);
+    const resourceChurn = this.#resourceChurnDiagnostic(invocations);
+    if (resourceChurn !== null) return resourceChurn;
     const latest = invocations.at(-1);
     if (latest !== undefined && (latest.status === "succeeded" || latest.status === "failed")) {
       const outcome = latest.status === "succeeded" ? latest.resultJson : latest.errorJson;
@@ -2632,9 +2642,47 @@ export class RuntimeEngine {
     return null;
   }
 
+  #resourceChurnDiagnostic(
+    invocations: ReturnType<RunStore["listRecentToolInvocations"]>
+  ): NoProgressDiagnostic | null {
+    const resources = new Map<string, { reads: number; mutations: number; failures: number }>();
+    for (const invocation of invocations) {
+      if (invocation.status !== "succeeded" && invocation.status !== "failed") continue;
+      const input = invocation.inputJson;
+      if (input === null || typeof input !== "object" || Array.isArray(input)) continue;
+      const path = (input as { readonly path?: unknown }).path;
+      if (typeof path !== "string" || path.trim().length === 0) continue;
+      const effect = this.#tools.get(invocation.toolName)?.contract.execution.effect.kind;
+      if (effect !== "read" && effect !== "write") continue;
+      const canonicalPath = path.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+      const counts = resources.get(canonicalPath) ?? { reads: 0, mutations: 0, failures: 0 };
+      if (effect === "read") counts.reads += 1;
+      else {
+        counts.mutations += 1;
+        if (invocation.status === "failed") counts.failures += 1;
+      }
+      resources.set(canonicalPath, counts);
+    }
+    const candidate = [...resources.entries()]
+      .filter(([, counts]) => counts.reads >= 4 && counts.mutations >= 3)
+      .sort(([leftPath, left], [rightPath, right]) => (
+        right.reads + right.mutations - left.reads - left.mutations
+        || right.failures - left.failures
+        || leftPath.localeCompare(rightPath)
+      ))[0];
+    if (candidate === undefined) return null;
+    const [resource, counts] = candidate;
+    return {
+      fingerprint: digestCanonicalJson({ kind: "resource_churn", resource }),
+      kind: "resource_churn",
+      repeatCount: counts.reads + counts.mutations,
+      resources: [resource]
+    };
+  }
+
   #blockForNoProgress(
     run: RunSnapshot,
-    diagnostic: { readonly fingerprint: string; readonly kind: string; readonly repeatCount: number },
+    diagnostic: NoProgressDiagnostic,
     observer?: RuntimeObserver
   ): RunSnapshot {
     const stopReason = "NO_PROGRESS_DETECTED";

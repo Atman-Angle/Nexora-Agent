@@ -251,6 +251,8 @@ The following alone are not progress:
 - public filler such as “execute” or “let's go”;
 - budget extension.
 
+The bounded window also treats repeated read/mutation churn on the same canonical resource as one semantic loop even when each patch body or expected digest differs. Four reads plus three mutation attempts on one resource trigger the repair warning; ignoring the persisted warning and continuing the same resource cycle blocks the Run. Different resources and a materially different action remain progress.
+
 On the first bounded repetition threshold, Harness receives a compact repair fact listing the repeated fingerprints and the latest authoritative state. It must choose a materially different action, request user input, or finish from existing evidence.
 
 If the next bounded window still contains no progress, Runtime blocks the Run with proposed stop reason `NO_PROGRESS_DETECTED` and a persisted diagnostic summary. Resume requires explicit user action. A plain resume without new input may be permitted once; another identical stall blocks again without automatic extension.
@@ -291,7 +293,11 @@ Harness distinguishes:
 2. capacity soft limit: existing safety threshold for deterministic eviction/compaction;
 3. active cost target: a lower Host/Profile-provided target used to keep repeated decision calls affordable and responsive.
 
-The active cost target is optional Provider model-profile policy, bounded above by the capacity soft limit. It is not a new Context authority. When exceeded, the existing deterministic projection/compaction pipeline reduces low-value historical payloads before the Provider call.
+The active cost target is optional Provider model-profile policy, bounded above by the capacity soft limit. It is not a new Context authority and has no implicit 128K default: when the Host does not configure it, the model capacity soft limit governs automatic compaction. When an explicit target is exceeded, the existing deterministic projection/compaction pipeline reduces low-value historical payloads before the Provider call.
+
+The first automatic contraction records the resulting continuation payload modes in the existing `model.requested` audit event. Later decisions, including after Runtime reopen, rebuild from the same complete Authority but reuse those persisted projection modes and omit already-evicted low-value history candidates, Memory candidates, Session archive indexes, and helpful rehydrations. This is a derived Model View checkpoint, not a summary or second Context authority. New current-Run facts remain full and can trigger a later bounded contraction.
+
+Desktop reports latest input use against `contextWindowTokens`. The optional active target remains visible only as policy detail; transient per-call eviction stays in Activity and does not create repeated Conversation entries.
 
 Facts retained at highest priority include:
 
@@ -458,6 +464,10 @@ Exit criterion: the user can understand why execution paused and recover it from
 | BEC-21 | four repeated extensions are never automatic | control/event assertion |
 | BEC-22 | baseline-shaped task reaches terminal/recoverable state within bounds | deterministic system test |
 | BEC-23 | authorized Qwen task has no zero-call Worker and no unbounded repeated read | real-Provider report |
+| BEC-24 | default large-window profile uses capacity policy rather than an implicit 128K target | Provider profile contract test |
+| BEC-25 | automatic ancestor projection survives reopen and is not compacted again on the next call | continuation integration test |
+| BEC-26 | alternating reads and mutations on one resource repair, then block if ignored | adversarial Provider test |
+| BEC-27 | Desktop Context meter uses the model window and keeps transient eviction out of Conversation | Renderer contract test |
 
 ### 11.1 Initial quantitative bounds
 
@@ -550,8 +560,9 @@ This Feature is complete only when:
 Local Feature Core verification completed on 2026-08-23:
 
 - `pnpm typecheck`, `pnpm lint`, and `pnpm build` passed;
-- the complete test suite passed: 101 files and 492 tests;
+- the complete test suite passed: 101 files and 498 tests;
 - the Runtime/Harness release gate passed: 16 files and 91 tests;
 - the Supervisor/Coordinator gate passed: 5 files and 22 tests;
 - `pnpm desktop:uat:deterministic` passed through the public Desktop path;
+- automatic ancestor projection reuse passed across Runtime close/reopen, and alternating same-resource read/mutation churn passed warning, recovery, and bounded-block tests;
 - BEC-23 remains an external-environment acceptance item because no Provider credentials were used during this verification.

@@ -2,13 +2,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 
-import { createRuntime } from "../../packages/harness/src/index.js";
+import {
+  createRuntime,
+  type ModelDecisionContext,
+  type RuntimeProvider,
+  type RuntimeTool
+} from "../../packages/harness/src/index.js";
 import {
   evictDecisionContextOnce,
   evictDecisionContextTowardBudget
 } from "../../packages/harness/src/context/eviction.js";
-import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { responseCall, responseText, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -145,7 +151,120 @@ describe("E131 Session Context continuity", () => {
     ]));
     await runtime.close();
   });
+
+  it("reuses the persisted automatic ancestor projection instead of compacting the same history on every model call", async () => {
+    const workspace = fixture();
+    const dataDir = join(workspace, ".nexora");
+    const parentRuntime = createRuntime({
+      workspace,
+      dataDir,
+      provider: new ScriptedRuntimeProvider([
+        { type: "propose_finish", summary: "Persisted ancestor outcome." }
+      ]),
+      tools: []
+    });
+    const parent = await parentRuntime.start({ input: "Keep this exact ancestor requirement." });
+    await parentRuntime.close();
+
+    const provider = new ProjectionReuseProvider("write");
+    const childRuntime = createRuntime({
+      workspace,
+      dataDir,
+      provider,
+      tools: [continuationWriteTool()]
+    });
+    const waiting = await childRuntime.start({
+      input: "Use the ancestor once, write the current fact, then finish.",
+      continuation: { parentRunId: parent.runId },
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
+    const pending = (await childRuntime.inspect(waiting.runId)).snapshot.pendingRequest;
+    expect(waiting.status).toBe("waiting");
+    expect(pending?.kind).toBe("approval");
+    expect(provider.measurements).toEqual([70, 55]);
+    await childRuntime.close();
+
+    const resumedProvider = new ProjectionReuseProvider("finish");
+    const reopened = createRuntime({
+      workspace,
+      dataDir,
+      provider: resumedProvider,
+      tools: [continuationWriteTool()]
+    });
+    const child = await reopened.resume({
+      runId: waiting.runId,
+      approvalDecision: { requestId: pending!.id, approved: true }
+    });
+    const inspection = await reopened.inspect(child.runId);
+    const requested = inspection.events.filter((event) => event.type === "model.requested");
+
+    expect(child.status).toBe("succeeded");
+    expect(resumedProvider.measurements).toEqual([55]);
+    expect(provider.contexts[0]?.continuation?.[0]?.payloadMode).toBe("compact");
+    expect(resumedProvider.contexts[0]?.continuation?.[0]?.payloadMode).toBe("compact");
+    expect(requested.map((event) => event.payload.compacted)).toEqual([true, false]);
+    expect(requested[0]?.payload.continuationProjection).toEqual([
+      { sourceRunId: parent.runId, payloadMode: "compact" }
+    ]);
+    await reopened.close();
+  });
 });
+
+class ProjectionReuseProvider implements RuntimeProvider {
+  readonly #mode: "write" | "finish";
+  readonly contexts: ModelDecisionContext[] = [];
+  readonly measurements: number[] = [];
+  readonly modelProfile = {
+    provider: "test-provider",
+    model: "small-window",
+    contextWindowTokens: 100,
+    reservedOutputTokens: { decision: 20 },
+    softLimitRatio: 0.75
+  } as const;
+
+  constructor(mode: "write" | "finish") {
+    this.#mode = mode;
+  }
+
+  measureTokens(_phase: "decision", context: ModelDecisionContext) {
+    const needsHeadCompaction = context.continuation?.some((turn) => turn.payloadMode === "full")
+      || context.sessionArchive !== undefined
+      || context.historyCandidates.length > 0
+      || context.memoryCandidates.length > 0
+      || context.rehydratedFacts.some((fact) => fact.origin === "harness_helpful");
+    const tokens = needsHeadCompaction ? 70 : 55;
+    this.measurements.push(tokens);
+    return { inputTokens: tokens, method: "exact" as const, meter: "test:continuation-mode" };
+  }
+
+  async decide(context: ModelDecisionContext) {
+    this.contexts.push(context);
+    return this.#mode === "write"
+      ? responseCall("test.continuation-write", { path: "target.txt", value: "current" })
+      : responseText("Finished from the stable compact ancestor view.");
+  }
+}
+
+function continuationWriteTool(): RuntimeTool {
+  return {
+    contract: {
+      identity: { name: "test.continuation-write" },
+      capability: { purpose: "Write one current deterministic fact.", nonGoals: ["Read state."] },
+      decision: { useWhen: ["One current fact must be changed."], avoidWhen: ["The fact is already correct."] },
+      execution: {
+        effect: { kind: "write", description: "Writes one current fact." },
+        idempotent: true,
+        inputSchema: z.object({ path: z.string().min(1), value: z.string().min(1) }).strict(),
+        inputExample: { path: "target.txt", value: "current" }
+      },
+      evidence: { produces: ["The changed fact."], factsSchema: z.object({ path: z.string(), value: z.string() }).strict() }
+    },
+    async execute(input) {
+      const fact = input as { path: string; value: string };
+      return { status: "success", subjectRef: fact.path, facts: fact };
+    }
+  };
+}
 
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), "nexora-e131-continuity-"));

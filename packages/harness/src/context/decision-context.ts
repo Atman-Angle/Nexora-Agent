@@ -70,8 +70,11 @@ export function buildDecisionContext(args: {
   const { run, store, workspace, tools, artifacts } = args;
   const invocations = store.listToolInvocations(run.runId);
   const events = store.listEvents(run.runId);
+  const hasPriorAutomaticCompaction = events.some((event) => (
+    event.type === "model.requested" && event.payload.compacted === true
+  ));
   const observations = projectRelevantToolObservations(run, invocations);
-  const continuation = projectContinuationTurns(store);
+  const continuation = projectContinuationTurns(store, run.runId);
   const inherited = args.forkContext === undefined || args.forkContext === null
     ? undefined
     : (() => {
@@ -153,11 +156,14 @@ export function buildDecisionContext(args: {
     maxSingleFactTokens: Number.MAX_SAFE_INTEGER
   });
   const seenFacts = new Set<string>();
-  const rehydratedFacts = accepted.filter((fact) => {
+  const allRehydratedFacts = accepted.filter((fact) => {
     if (seenFacts.has(fact.ref)) return false;
     seenFacts.add(fact.ref);
     return true;
   });
+  const rehydratedFacts = hasPriorAutomaticCompaction
+    ? allRehydratedFacts.filter((fact) => fact.origin !== "harness_helpful")
+    : allRehydratedFacts;
   const injectedRehydratedRefs = rehydratedFacts
     .filter((fact) => fact.error === null)
     .map((fact) => fact.ref);
@@ -210,10 +216,10 @@ export function buildDecisionContext(args: {
       evidenceRefs: observation.evidenceRefs
     })),
     rehydratedFacts,
-    historyCandidates,
-    memoryCandidates,
-    sessionArchive: projectSessionArchive({ run, events }),
-    repair: projectRepairContext(run, invocations, store.listToolAttempts(run.runId), artifacts),
+    historyCandidates: hasPriorAutomaticCompaction ? [] : historyCandidates,
+    memoryCandidates: hasPriorAutomaticCompaction ? [] : memoryCandidates,
+    ...(hasPriorAutomaticCompaction ? {} : { sessionArchive: projectSessionArchive({ run, events }) }),
+    repair: projectRepairContext(run, invocations, store.listToolAttempts(run.runId), artifacts, events),
     ...(nativeToolContinuation === undefined ? {} : { nativeToolContinuation }),
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
@@ -246,7 +252,7 @@ export function buildDecisionContext(args: {
     rehydratedFacts: projection.rehydratedFacts,
     historyCandidates: projection.historyCandidates,
     memoryCandidates: projection.memoryCandidates,
-    sessionArchive: projection.sessionArchive,
+    ...(projection.sessionArchive === undefined ? {} : { sessionArchive: projection.sessionArchive }),
     repair: projection.repair,
     ...(projection.nativeToolContinuation === undefined
       ? {}
@@ -260,10 +266,11 @@ function projectRepairContext(
   run: RunSnapshot,
   invocations: readonly ToolInvocation[],
   attempts: readonly ToolAttempt[],
-  artifacts: ContextArtifactSource
+  artifacts: ContextArtifactSource,
+  events: ReturnType<ContextSource["listEvents"]>
 ): RepairContext | null {
   const error = run.lastError;
-  if (error === null) return null;
+  if (error === null) return projectNoProgressRepair(events);
   const failedInvocation = [...invocations].reverse().find((invocation) => (
     invocation.status === "unknown"
       ? error.code === "TOOL_RESULT_UNKNOWN"
@@ -296,6 +303,44 @@ function projectRepairContext(
       stepId: failedInvocation.stepId,
       attemptCount: relevantAttempts.length
     }
+  };
+}
+
+function projectNoProgressRepair(
+  events: ReturnType<ContextSource["listEvents"]>
+): RepairContext | null {
+  const warning = [...events].reverse().find((event) => (
+    event.type === "runtime.event"
+    && event.payload.name === "execution.no_progress.warning"
+  ));
+  if (warning === undefined) return null;
+  const hasLaterProgress = events.some((event) => (
+    event.sequence > warning.sequence
+    && (
+      event.type === "tool.succeeded"
+      || event.type === "tool.failed"
+      || event.type === "tool.recovered"
+      || event.type === "run.resumed"
+      || (event.type === "plan.set" && event.payload.noOp !== true)
+    )
+  ));
+  if (hasLaterProgress) return null;
+  const resources = Array.isArray(warning.payload.resources)
+    ? warning.payload.resources.filter((item): item is string => typeof item === "string").slice(0, 4)
+    : [];
+  const kind = typeof warning.payload.kind === "string" ? warning.payload.kind : "repeated_action";
+  const repeatCount = typeof warning.payload.repeatCount === "number" ? warning.payload.repeatCount : 3;
+  const resourceSuffix = resources.length === 0 ? "" : ` for ${resources.join(", ")}`;
+  return {
+    kind: "runtime_error",
+    code: "NO_PROGRESS_WARNING",
+    issues: [{
+      kind: "recovery_guidance",
+      message: `Execution repeated ${kind}${resourceSuffix} ${repeatCount} times. Use the current authoritative facts to finish, or choose one materially different action; do not continue the same read/mutation cycle.`
+    }],
+    failedObjective: null,
+    latestIntent: null,
+    latestFailedAttempt: null
   };
 }
 

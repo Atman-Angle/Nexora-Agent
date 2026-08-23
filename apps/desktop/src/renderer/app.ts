@@ -145,8 +145,8 @@ function header(state: DesktopSnapshot): string {
         ${session === null ? "" : `<small>${statusLabel(session.inspection.status)}</small>`}
       </div>
       <div class="header-actions">
-        ${compression === null ? "" : `<span class="compaction-chip" title="Persisted Runtime Context compaction event">${compression === "manual" ? "手动压缩" : "已自动压缩"}</span>`}
-        ${context === null ? "" : `<div class="context-usage" title="Current Session · latest Run model call: ${context.used.toLocaleString()} input tokens; active target ${context.target.toLocaleString()}, model window ${context.window.toLocaleString()}. This is not a Project total."><span>Active context ${formatTokens(context.used)} / ${formatTokens(context.target)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
+        ${compression === null ? "" : `<span class="compaction-chip" title="Persisted Runtime Context compaction event">手动压缩</span>`}
+        ${context === null ? "" : `<div class="context-usage" title="Current Session · latest Run model call: ${context.used.toLocaleString()} input tokens of the ${context.window.toLocaleString()} model window; policy target ${context.target.toLocaleString()}. This is not a Project total."><span>Context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="Session view">
           <button class="${mode === "conversation" ? "active" : ""}" data-view="conversation">Conversation</button>
@@ -253,18 +253,10 @@ function conversation(session: SessionView): string {
     ` });
     }
     for (const record of run.history.records) {
-      const payload = objectValue(record.payload);
-      const manual = record.type === "context.compaction.requested";
-      const automatic = record.type === "model.requested" && payload.compacted === true;
-      if (!manual && !automatic) continue;
-      const before = numberValue(payload.inputTokensBeforeCompaction);
-      const after = numberValue(payload.measuredInputTokens);
-      const detail = automatic && before !== null && after !== null
-        ? ` · ${formatTokens(before)} → ${formatTokens(after)}`
-        : "";
+      if (record.type !== "context.compaction.requested") continue;
       items.push({ at: record.occurredAt, order: runIndex * 1_000_000 + record.sequence, html: `
-        <article class="context-compaction ${manual ? "manual" : "automatic"}">
-          <span>⌁</span><strong>${manual ? "上下文已压缩" : "已自动压缩上下文"}</strong><small>${manual ? "将在下一条消息中使用" : `接近窗口限制${detail}`}</small>
+        <article class="context-compaction manual">
+          <span>⌁</span><strong>上下文已压缩</strong><small>将在下一条消息中使用</small>
         </article>
       ` });
     }
@@ -443,7 +435,7 @@ function settings(state: DesktopSnapshot): string {
       ${addingProvider ? `<label>Base URL<input name="baseUrl" type="url" value="" placeholder="https://provider.example/v1" required /></label>` : ""}
       <label>API Key<input name="apiKey" type="password" placeholder="${addingProvider ? "Required for new provider" : "Shared by this provider · leave blank to keep"}" ${addingProvider ? "required" : ""} /></label>
       <label>Model ID<input name="model" value="${escapeAttr(profile?.model ?? "")}" placeholder="Model identifier" required /></label>
-      <div class="settings-grid"><label>Context window<input name="contextWindowTokens" type="number" min="1" value="${profile?.contextWindowTokens ?? ""}" placeholder="Known model default" /></label><label>Active context target<input name="activeInputTargetTokens" type="number" min="1" value="${profile?.activeInputTargetTokens ?? ""}" placeholder="Default: up to 128000" /></label><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${profile?.decisionOutputTokens ?? 4096}" required /></label></div>
+      <div class="settings-grid"><label>Context window<input name="contextWindowTokens" type="number" min="1" value="${profile?.contextWindowTokens ?? ""}" placeholder="Known model default" /></label><label>Active context target<input name="activeInputTargetTokens" type="number" min="1" value="${profile?.activeInputTargetTokens ?? ""}" placeholder="Optional cost limit" /></label><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${profile?.decisionOutputTokens ?? 4096}" required /></label></div>
       <label>Tool transport<select name="transport"><option value="native_tools" ${profile?.transport !== "structured_output" ? "selected" : ""}>Native tools · streaming</option><option value="structured_output" ${profile?.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label>
       <div class="settings-grid"><label>Reasoning<select name="reasoning"><option value="dynamic" ${profile?.reasoning !== "off" && profile?.reasoning !== "on" ? "selected" : ""}>Dynamic</option><option value="off" ${profile?.reasoning === "off" ? "selected" : ""}>Off</option><option value="on" ${profile?.reasoning === "on" ? "selected" : ""}>On</option></select></label><label>Thinking parameter<input name="thinkingToggleParam" value="${escapeAttr(profile?.thinkingToggleParam ?? "")}" placeholder="DashScope: enable_thinking" /></label></div>
       <button class="primary" ${busy ? "disabled" : ""}>${profile === undefined ? "Add model" : "Save model"}</button>
@@ -784,14 +776,13 @@ function toolPresentation(name: string, input: unknown): { action: string; targe
 function contextUsage(session: SessionView): { used: number; target: number; window: number; percent: number } | null {
   const usage = session.inspection.contextUsage;
   if (usage === null) return null;
-  return { used: usage.inputTokens, target: usage.softInputLimitTokens, window: usage.contextWindowTokens, percent: Math.min(100, Math.round(usage.inputTokens / usage.softInputLimitTokens * 100)) };
+  return { used: usage.inputTokens, target: usage.softInputLimitTokens, window: usage.contextWindowTokens, percent: Math.min(100, Math.round(usage.inputTokens / usage.contextWindowTokens * 100)) };
 }
-function latestCompaction(session: SessionView): "manual" | "automatic" | null {
+function latestCompaction(session: SessionView): "manual" | null {
   const records = session.history.records;
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index]!;
     if (record.type === "context.compaction.requested") return "manual";
-    if (record.type === "model.requested" && objectValue(record.payload).compacted === true) return "automatic";
   }
   return null;
 }
@@ -822,7 +813,6 @@ function updateElapsedLabels(): void {
   });
 }
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value); }
-function numberValue(value: unknown): number | null { return typeof value === "number" && Number.isFinite(value) ? value : null; }
 function providerName(baseUrl: string): string {
   try { return new URL(baseUrl).hostname.replace(/^api\./, ""); }
   catch { return baseUrl; }

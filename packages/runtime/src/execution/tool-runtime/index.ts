@@ -155,7 +155,13 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       contract: {
         identity: { name: "filesystem.write" },
         capability: { purpose: "Replace or create one known workspace file with complete content.", nonGoals: ["Apply a minimal change to existing content.", "Discover a target path."] },
-        decision: { useWhen: ["The exact target path and complete desired content are known."], avoidWhen: ["Only a localized existing-content change is required.", "The desired content is unresolved."] },
+        decision: {
+          useWhen: [
+            "The exact target path and complete desired content are known.",
+            "Several known changes in one already-read file can be applied safely in one complete write."
+          ],
+          avoidWhen: ["Only one localized existing-content change is required.", "The desired content is unresolved."]
+        },
         execution: { effect: { kind: "write", description: "Atomically creates or replaces one workspace file." }, idempotent: true, inputSchema: z.object({ path: z.string().trim().min(1), content: z.string() }).strict(), inputExample: { path: "output.txt", content: "example" } },
         evidence: { produces: ["The written path, resulting content digest, and byte length."], factsSchema: WriteFactsSchema }
       },
@@ -177,7 +183,8 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
           avoidWhen: [
             "The current content or digest is unknown.",
             "The replacement target is missing or not unique.",
-            "A conflict requires content inspection rather than a digest-only retry."
+            "A conflict requires content inspection rather than a digest-only retry.",
+            "Several known edits to the same fully-read file would require serial patches; use one complete filesystem.write instead."
           ]
         },
         execution: { effect: { kind: "write", description: "Atomically changes one exact occurrence in one workspace file." }, idempotent: true, inputSchema: z.object({
