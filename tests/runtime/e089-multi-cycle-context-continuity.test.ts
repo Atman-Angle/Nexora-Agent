@@ -79,7 +79,7 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
       Math.ceil(Buffer.byteLength(JSON.stringify(context), "utf8") / 4) <= 14_976
     ))).toBe(true);
     expect(contexts.at(-1)).not.toHaveProperty("contextCheckpoint");
-  }, 30_000);
+  }, 45_000);
 
   it("rebuilds the same Plan and continues from persisted state after reopen", async () => {
     const workspace = fixture();

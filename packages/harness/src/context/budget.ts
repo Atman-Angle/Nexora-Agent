@@ -19,7 +19,8 @@ const ProviderModelProfileSchema = z.object({
   reservedOutputTokens: z.object({
     decision: z.number().int().nonnegative()
   }).strict(),
-  softLimitRatio: z.number().positive().max(1)
+  softLimitRatio: z.number().positive().max(1),
+  activeInputTargetTokens: z.number().int().positive().optional()
 }).strict().superRefine((profile, context) => {
   for (const phase of ["decision"] as const) {
     if (profile.reservedOutputTokens[phase] >= profile.contextWindowTokens) {
@@ -27,6 +28,16 @@ const ProviderModelProfileSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["reservedOutputTokens", phase],
         message: "Reserved output tokens must be smaller than the context window."
+      });
+    }
+    const capacitySoftLimit = Math.floor(
+      (profile.contextWindowTokens - profile.reservedOutputTokens[phase]) * profile.softLimitRatio
+    );
+    if (profile.activeInputTargetTokens !== undefined && profile.activeInputTargetTokens > capacitySoftLimit) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["activeInputTargetTokens"],
+        message: "Active input target must not exceed the capacity soft input limit."
       });
     }
   }
@@ -74,7 +85,15 @@ export type ContextBudgetAssessment = {
 };
 
 export function resolveProviderModelProfile(provider: RuntimeProvider): ProviderModelProfile {
-  return ProviderModelProfileSchema.parse(provider.modelProfile ?? DEFAULT_MODEL_PROFILE);
+  const parsed = ProviderModelProfileSchema.parse(provider.modelProfile ?? DEFAULT_MODEL_PROFILE);
+  return {
+    provider: parsed.provider,
+    model: parsed.model,
+    contextWindowTokens: parsed.contextWindowTokens,
+    reservedOutputTokens: parsed.reservedOutputTokens,
+    softLimitRatio: parsed.softLimitRatio,
+    ...(parsed.activeInputTargetTokens === undefined ? {} : { activeInputTargetTokens: parsed.activeInputTargetTokens })
+  };
 }
 
 export async function assessContextBudget(
@@ -99,8 +118,12 @@ export async function assessContextBudget(
   };
   const reservedOutputTokens = profile.reservedOutputTokens[phase];
   const hardInputLimitTokens = profile.contextWindowTokens - reservedOutputTokens;
-  const softInputLimitTokens = Math.floor(
+  const capacitySoftInputLimitTokens = Math.floor(
     hardInputLimitTokens * profile.softLimitRatio
+  );
+  const softInputLimitTokens = Math.min(
+    capacitySoftInputLimitTokens,
+    profile.activeInputTargetTokens ?? capacitySoftInputLimitTokens
   );
   const decision = measurement.inputTokens > hardInputLimitTokens
     ? "hard_limit_exceeded" as const

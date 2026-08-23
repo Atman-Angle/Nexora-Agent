@@ -304,8 +304,9 @@ function reusableReadResult(
   ))?.sequence ?? 0;
   let invalidatedAfter = -1;
   for (let index = 0; index < currentIndex; index += 1) {
-    const candidateTool = services.tools.get(invocations[index]!.toolName);
-    if (candidateTool?.contract.execution.effect.kind !== "read") invalidatedAfter = index;
+    const candidate = invocations[index]!;
+    const candidateTool = services.tools.get(candidate.toolName);
+    if (invalidatesRead(candidate, candidateTool, invocation)) invalidatedAfter = index;
   }
   const attempts = services.store.listToolAttempts(invocation.runId);
   for (let index = currentIndex - 1; index > invalidatedAfter; index -= 1) {
@@ -338,6 +339,28 @@ function reusableReadResult(
     };
   }
   return null;
+}
+
+function invalidatesRead(
+  candidate: ToolInvocation,
+  tool: RuntimeTool | undefined,
+  requestedRead: ToolInvocation
+): boolean {
+  if (tool?.contract.execution.effect.kind === "read") return false;
+  if (candidate.status === "failed") return false;
+  if (candidate.status !== "succeeded") return true;
+  if (tool?.contract.execution.effect.kind !== "write") return true;
+  const changedPath = exactFilesystemPath(candidate);
+  const readPath = exactFilesystemPath(requestedRead);
+  return changedPath === null || readPath === null || changedPath === readPath;
+}
+
+function exactFilesystemPath(invocation: ToolInvocation): string | null {
+  if (!invocation.toolName.startsWith("filesystem.")) return null;
+  const input = invocation.inputJson;
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return null;
+  const path = (input as Record<string, unknown>).path;
+  return typeof path === "string" ? path.replace(/\\/g, "/").replace(/^\.\//, "").toLocaleLowerCase() : null;
 }
 
 function finalizeReadToolBatch(

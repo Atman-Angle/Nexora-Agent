@@ -143,6 +143,7 @@ export type ModelDecisionContext = {
     readonly assignmentId: string | null;
     readonly profileRef: string | null;
     readonly status: "running" | "waiting" | "blocked" | "cancelled" | "failed" | "succeeded";
+    readonly branchStatus: "creating" | "active" | "merged" | "discarded" | "failed";
     readonly summary: string | null;
     readonly resultArtifact: string | null;
     readonly deliveryOutcome: "succeeded" | "failed" | "cancelled" | "blocked" | null;
@@ -388,6 +389,8 @@ export type ProviderModelProfile = {
   readonly contextWindowTokens: number;
   readonly reservedOutputTokens: Readonly<Record<ModelCallPhase, number>>;
   readonly softLimitRatio: number;
+  /** Optional cost/latency target; never widens the capacity soft limit. */
+  readonly activeInputTargetTokens?: number;
 };
 
 export type ProviderTokenMeasurement = {

@@ -165,6 +165,10 @@ export interface AgentRuntimePort {
     activeStartedAt: number,
     observer?: RuntimeObserver
   ): RunSnapshot | null;
+  enforceConvergence(
+    run: RunSnapshot,
+    observer?: RuntimeObserver
+  ): RunSnapshot | null;
   finalizeBudget(
     run: RunSnapshot,
     activeStartedAt: number,

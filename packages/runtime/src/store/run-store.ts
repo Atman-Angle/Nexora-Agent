@@ -261,6 +261,16 @@ export class RunStore {
     return rows.map((row) => this.#parseEventRow(row));
   }
 
+  listRecentEvents(runId: string, limit: number): RunEvent[] {
+    if (!Number.isInteger(limit) || limit <= 0 || limit > 500) throw new Error("Recent Event limit must be from 1 through 500.");
+    const rows = this.#database.prepare(`
+      SELECT * FROM (
+        SELECT * FROM run_events WHERE run_id = ? ORDER BY sequence DESC LIMIT ?
+      ) ORDER BY sequence
+    `).all(runId, limit) as EventRow[];
+    return rows.map((row) => this.#parseEventRow(row));
+  }
+
   listEventsAfter(runId: string, afterSequence: number): RunEvent[] {
     if (!Number.isInteger(afterSequence) || afterSequence < 0) {
       throw new Error("Event sequence cursor must be a non-negative integer.");
@@ -408,6 +418,16 @@ export class RunStore {
       SELECT * FROM tool_invocations WHERE run_id = ?
       ORDER BY rowid
     `).all(runId) as ToolRow[];
+    return rows.map((row) => this.#parseToolRow(row));
+  }
+
+  listRecentToolInvocations(runId: string, limit: number): ToolInvocation[] {
+    if (!Number.isInteger(limit) || limit <= 0 || limit > 500) throw new Error("Recent Invocation limit must be from 1 through 500.");
+    const rows = this.#database.prepare(`
+      SELECT * FROM (
+        SELECT rowid AS invocation_rowid, * FROM tool_invocations WHERE run_id = ? ORDER BY rowid DESC LIMIT ?
+      ) ORDER BY invocation_rowid
+    `).all(runId, limit) as ToolRow[];
     return rows.map((row) => this.#parseToolRow(row));
   }
 

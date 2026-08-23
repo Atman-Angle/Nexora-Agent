@@ -85,6 +85,7 @@ import type {
   RunHandle,
   RunHandleResumeOptions,
   RunInspection,
+  RunLineage,
   RunOptions,
   RunContinuationInput,
   RunResult,
@@ -99,6 +100,7 @@ import type {
   StartInput,
   TextArtifactView,
   WorkerObservation,
+  WorkerRecoveryRequest,
   SubscribeOptions
 } from "./runtime-types.js";
 import {
@@ -288,7 +290,7 @@ export class RuntimeEngine {
 
   async listRuns(limit = 100): Promise<readonly RunSummary[]> {
     this.#assertOpen();
-    return deepFreeze(this.#store.listRuns(limit).map(projectRunSummary));
+    return deepFreeze(this.#store.listRuns(limit).map((run) => projectRunSummary(run, this.#lineageForRun(run.runId))));
   }
 
   async readArtifactText(digest: string, maxBytes = 256_000): Promise<TextArtifactView> {
@@ -522,6 +524,17 @@ export class RuntimeEngine {
         run = this.#commit(run, resumed, "run.resumed", {
           reason: "provider_retry"
         }, observer);
+      } else if (run.status === "blocked" && run.stopReason === "WORKER_RECOVERY_REQUIRED") {
+        this.#reconcileDelegatedBranches(run.runId);
+        run = this.#requireRun(run.runId);
+        if (this.#workerRecoveryRequests(run.runId).length > 0) return toRunResult(run);
+        const now = this.#now();
+        const resumed = transitionRunStatus(run, "running", { now });
+        run = this.#commit(run, resumed, "run.resumed", { reason: "worker_recovery_resolved" }, observer);
+      } else if (run.status === "blocked" && run.stopReason === "NO_PROGRESS_DETECTED") {
+        const now = this.#now();
+        const resumed = transitionRunStatus(run, "running", { now });
+        run = this.#commit(run, resumed, "run.resumed", { reason: "explicit_no_progress_recovery" }, observer);
       } else if (run.status === "blocked") {
         return toRunResult(run);
       }
@@ -850,7 +863,11 @@ export class RuntimeEngine {
       slice.run,
       slice.invocations,
       slice.lastEventSequence,
-      this.#store.listModelCalls(runId)
+      this.#store.listModelCalls(runId),
+      this.#lineageForRun(runId),
+      this.#workerRecoveryRequests(runId),
+      this.#store.listEvents(runId).filter((event) => event.type === "plan.set").length,
+      this.#physicalToolExecutions(runId)
     );
     const subscription = this.#subscribeHandle(runId, listener, {
       afterSequence: slice.lastEventSequence
@@ -1249,7 +1266,11 @@ export class RuntimeEngine {
       slice.run,
       slice.invocations,
       slice.lastEventSequence,
-      this.#store.listModelCalls(runId)
+      this.#store.listModelCalls(runId),
+      this.#lineageForRun(runId),
+      this.#workerRecoveryRequests(runId),
+      this.#store.listEvents(runId).filter((event) => event.type === "plan.set").length,
+      this.#physicalToolExecutions(runId)
     );
   }
 
@@ -1438,6 +1459,7 @@ export class RuntimeEngine {
         const failure = this.#budgetFailure(run, activeStartedAt);
         return failure === null ? null : this.#blockForBudget(run, failure, observer);
       },
+      enforceConvergence: (run, observer) => this.#enforceConvergence(run, observer),
       finalizeBudget: (run, activeStartedAt, summary, observer) => {
         const failure = this.#budgetFailure(run, activeStartedAt);
         if (failure === null) throw new Error("Budget finalization requires an exhausted Runtime budget.");
@@ -1942,6 +1964,9 @@ export class RuntimeEngine {
         `WORKER_CONCURRENCY_EXCEEDED: ${activeWorkerCount} active plus ${newWorkerCount} new Workers exceeds ${this.#delegationPolicy.maxConcurrentWorkers}.`
       );
     }
+    if (compileChildBudgets(run, this.#delegationPolicy.childBudgets) === null) {
+      throw new ActionRejectedError("DELEGATION_BUDGET_INSUFFICIENT: Parent must retain synthesis capacity and each new Child requires an independent decision and Tool allowance.");
+    }
     let current = run;
     if (priorDelegation === undefined) {
       const acceptedAssignments = action.assignments.map((assignment, index) => ({
@@ -2056,7 +2081,10 @@ export class RuntimeEngine {
       }
     });
     this.#notify(next.runId, observer);
-    return next;
+    const blockedWorkers = this.#workerRecoveryRequests(next.runId);
+    return blockedWorkers.length === 0
+      ? next
+      : this.#blockForWorkerRecovery(next, blockedWorkers, observer);
   }
 
   /** Resume an accepted-but-not-joined batch without another Provider decision. */
@@ -2321,16 +2349,12 @@ export class RuntimeEngine {
     if (contract === null) throw new ActionRejectedError("Task Contract is missing.");
 
     const planSemantics = (steps: typeof action.orderedSteps): unknown => steps.map((step) => ({
-      objective: step.objective,
-      acceptanceChecks: step.acceptanceChecks
+      objective: normalizePlanText(step.objective),
+      acceptanceChecks: step.acceptanceChecks.map((check) => normalizePlanValue(check))
     }));
     if (
       current !== null
       && action.taskContract === undefined
-      && run.lastError === null
-      && !this.#store.listToolInvocations(run.runId).some((invocation) => (
-        invocation.planVersion === current.version
-      ))
       && digestCanonicalJson(planSemantics(action.orderedSteps))
         === digestCanonicalJson(planSemantics(current.orderedSteps))
     ) {
@@ -2498,6 +2522,139 @@ export class RuntimeEngine {
     return this.#commit(run, blocked, "run.blocked", { stopReason, resumable: true }, observer);
   }
 
+  #blockForWorkerRecovery(
+    run: RunSnapshot,
+    recoveries: readonly WorkerRecoveryRequest[],
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    const stopReason = "WORKER_RECOVERY_REQUIRED";
+    const blockedInput = RunSnapshotSchema.parse({
+      ...run,
+      lastError: {
+        code: stopReason,
+        message: `${recoveries.length} delegated Worker Run(s) require explicit recovery.`,
+        retryable: true,
+        detailsArtifact: null
+      }
+    });
+    const blocked = transitionRunStatus(blockedInput, "blocked", {
+      now: this.#now(),
+      stopReason,
+      delivery: deriveRunDelivery({
+        run: blockedInput,
+        outcome: "blocked",
+        now: this.#now(),
+        stopReason
+      })
+    });
+    return this.#commit(run, blocked, "run.blocked", {
+      stopReason,
+      workerRecoveries: recoveries.map(({ branchId, childRunId }) => ({ branchId, childRunId }))
+    }, observer);
+  }
+
+  #enforceConvergence(run: RunSnapshot, observer?: RuntimeObserver): RunSnapshot | null {
+    if (run.budgetsUsed.iterations < 3) return null;
+    const diagnostic = this.#noProgressDiagnostic(run.runId);
+    if (diagnostic === null || diagnostic.repeatCount < 3) return null;
+    const alreadyWarned = this.#store.listRecentEvents(run.runId, 64).some((event) => (
+      event.type === "runtime.event"
+      && event.payload.name === "execution.no_progress.warning"
+      && event.payload.fingerprint === diagnostic.fingerprint
+    ));
+    if (!alreadyWarned) {
+      this.#store.recordRunEvent({
+        runId: run.runId,
+        event: {
+          type: "runtime.event",
+          occurredAt: this.#now(),
+          payload: { name: "execution.no_progress.warning", ...diagnostic }
+        },
+        fencingToken: this.#leases.requireFencingToken(run.runId)
+      });
+      this.#notify(run.runId, observer);
+      return null;
+    }
+    return this.#blockForNoProgress(run, diagnostic, observer);
+  }
+
+  #noProgressDiagnostic(runId: string): { readonly fingerprint: string; readonly kind: string; readonly repeatCount: number } | null {
+    const allEvents = this.#store.listRecentEvents(runId, 64);
+    const lastResume = [...allEvents].reverse().find((event) => event.type === "run.resumed");
+    const segmentStartedAt = lastResume?.occurredAt ?? "";
+    const invocations = this.#store.listRecentToolInvocations(runId, 24)
+      .filter((invocation) => invocation.startedAt >= segmentStartedAt)
+      .slice(-24);
+    const latest = invocations.at(-1);
+    if (latest !== undefined && (latest.status === "succeeded" || latest.status === "failed")) {
+      const outcome = latest.status === "succeeded" ? latest.resultJson : latest.errorJson;
+      const actionFingerprint = digestCanonicalJson({ toolName: latest.toolName, inputDigest: latest.inputDigest, status: latest.status, outcome });
+      const completed = invocations.filter((invocation) => invocation.status === "succeeded" || invocation.status === "failed");
+      let repeatCount = 0;
+      let convergenceAnchor = `resume:${lastResume?.sequence ?? 0}`;
+      for (let index = completed.length - 1; index >= 0; index -= 1) {
+        const invocation = completed[index]!;
+        const candidateFingerprint = digestCanonicalJson({
+          toolName: invocation.toolName,
+          inputDigest: invocation.inputDigest,
+          status: invocation.status,
+          outcome: invocation.status === "succeeded" ? invocation.resultJson : invocation.errorJson
+        });
+        if (candidateFingerprint !== actionFingerprint) {
+          convergenceAnchor = invocation.id;
+          break;
+        }
+        repeatCount += 1;
+      }
+      const fingerprint = digestCanonicalJson({ actionFingerprint, convergenceAnchor });
+      if (repeatCount >= 3) return { fingerprint, kind: latest.status === "failed" ? "repeated_tool_failure" : "repeated_tool_result", repeatCount };
+    }
+    const events = allEvents.filter((event) => lastResume === undefined || event.sequence > lastResume.sequence);
+    const convergenceAnchor = events.reduce((sequence, event) => {
+      const isToolOutcome = event.type === "tool.attempt.succeeded" || event.type === "tool.attempt.failed";
+      const isAcceptedPlan = event.type === "plan.set" && event.payload.noOp !== true;
+      return isToolOutcome || isAcceptedPlan ? event.sequence : sequence;
+    }, lastResume?.sequence ?? 0);
+    const convergenceEvents = events.filter((event) => event.sequence > convergenceAnchor);
+    const noOps = convergenceEvents.filter((event) => event.type === "plan.set" && event.payload.noOp === true).slice(-4);
+    if (noOps.length >= 3) {
+      const fingerprint = digestCanonicalJson({ kind: "equivalent_plan", version: noOps.at(-1)?.payload.version, convergenceAnchor });
+      return { fingerprint, kind: "equivalent_plan", repeatCount: noOps.length };
+    }
+    const rejections = convergenceEvents.filter((event) => event.type === "response.rejected").slice(-4);
+    if (rejections.length >= 3) {
+      const latestMessage = rejections.at(-1)?.payload.message;
+      const equivalent = rejections.filter((event) => event.payload.message === latestMessage).length;
+      if (equivalent >= 3) {
+        return { fingerprint: digestCanonicalJson({ kind: "response_rejected", message: latestMessage, convergenceAnchor }), kind: "repeated_response_rejection", repeatCount: equivalent };
+      }
+    }
+    return null;
+  }
+
+  #blockForNoProgress(
+    run: RunSnapshot,
+    diagnostic: { readonly fingerprint: string; readonly kind: string; readonly repeatCount: number },
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    const stopReason = "NO_PROGRESS_DETECTED";
+    const blockedInput = RunSnapshotSchema.parse({
+      ...run,
+      lastError: {
+        code: stopReason,
+        message: `Execution repeated ${diagnostic.kind} ${diagnostic.repeatCount} times without a new authoritative fact.`,
+        retryable: true,
+        detailsArtifact: null
+      }
+    });
+    const blocked = transitionRunStatus(blockedInput, "blocked", {
+      now: this.#now(),
+      stopReason,
+      delivery: deriveRunDelivery({ run: blockedInput, outcome: "blocked", now: this.#now(), stopReason })
+    });
+    return this.#commit(run, blocked, "run.blocked", { stopReason, diagnostic }, observer);
+  }
+
   #budgetFailure(run: RunSnapshot, activeStartedAt: number): string | null {
     if (run.budgetsUsed.iterations >= run.budgets.maxIterations) return "ITERATION_BUDGET_EXCEEDED";
     if (run.budgetsUsed.modelCalls >= run.budgets.maxModelCalls) return "MODEL_CALL_BUDGET_EXCEEDED";
@@ -2626,6 +2783,39 @@ export class RuntimeEngine {
     return this.#store.listBranches(runId);
   }
 
+  #lineageForRun(runId: string): RunLineage {
+    const branch = this.#store.getBranchByChild(runId);
+    if (branch === null) return { kind: "root", parentRunId: null, branchId: null };
+    return {
+      kind: branch.lineage.at(-1)?.delegationId === undefined ? "manual_branch" : "delegated_worker",
+      parentRunId: branch.parentRunId,
+      branchId: branch.branchId
+    };
+  }
+
+  #physicalToolExecutions(runId: string): number {
+    return this.#store.listEvents(runId).filter((event) => (
+      event.type === "tool.attempt.succeeded" && event.payload.physicalExecution !== false
+    )).length;
+  }
+
+  #workerRecoveryRequests(parentRunId: string): readonly WorkerRecoveryRequest[] {
+    return this.#store.listBranches(parentRunId).flatMap((branch) => {
+      if (branch.status !== "active" && branch.status !== "creating") return [];
+      if (branch.lineage.at(-1)?.delegationId === undefined) return [];
+      const child = this.#store.getRun(branch.childRunId);
+      if (child?.status !== "blocked") return [];
+      return [{
+        parentRunId,
+        branchId: branch.branchId,
+        childRunId: child.runId,
+        status: "blocked" as const,
+        stopReason: child.stopReason,
+        actions: ["resume", "discard"] as const
+      }];
+    });
+  }
+
   /** Derived Child → Parent projection; Child Run remains the only authority. */
   listWorkerObservations(parentRunId: string): readonly WorkerObservation[] {
     this.#assertOpen();
@@ -2667,6 +2857,7 @@ export class RuntimeEngine {
         assignmentId: lineage?.assignmentId ?? null,
         profileRef: lineage?.profileRef ?? null,
         status: child.status,
+        branchStatus: branch.status,
         summary: child.result?.summary ?? null,
         resultArtifact: child.result?.resultArtifact ?? null,
         delivery: child.delivery,
@@ -2818,7 +3009,11 @@ export class RuntimeEngine {
       child,
       this.#store.listToolInvocations(child.runId),
       this.#store.getLastEvent(child.runId)?.sequence ?? 0,
-      this.#store.listModelCalls(child.runId)
+      this.#store.listModelCalls(child.runId),
+      this.#lineageForRun(child.runId),
+      [],
+      this.#store.listEvents(child.runId).filter((event) => event.type === "plan.set").length,
+      this.#physicalToolExecutions(child.runId)
     );
     return deepFreeze({ branch, forkBase, child: childInspection });
   }
@@ -2912,7 +3107,10 @@ export class RuntimeEngine {
         ];
     const childWithBranchWorkspace = RunSnapshotSchema.parse({
       ...child,
-      ...(relation === undefined ? {} : { budgets: compileChildBudgets(parent, this.#delegationPolicy.childBudgets) }),
+      ...(relation === undefined ? {} : {
+        budgets: compileChildBudgets(parent, this.#delegationPolicy.childBudgets)!,
+        budgetsUsed: { iterations: 0, modelCalls: 0, toolCalls: 0, retries: 0, startedAt: now }
+      }),
       ...(initialInput === undefined || initialInput.length === 0
         ? {}
         : {
@@ -3008,9 +3206,10 @@ export class RuntimeEngine {
       status: "active",
       parentRunId: runId,
       event: {
-        type: "branch.created",
+        type: "runtime.event",
         occurredAt: now,
         payload: {
+          name: "branch.activated",
           branchId,
           childRunId,
           forkRevision: parent.revision,
@@ -3106,13 +3305,27 @@ function isTerminalRun(run: RunSnapshot): boolean {
   return run.status === "succeeded" || run.status === "failed" || run.status === "cancelled";
 }
 
+function normalizePlanText(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, " ").trim();
+}
+
+function normalizePlanValue(value: unknown): unknown {
+  if (typeof value === "string") return normalizePlanText(value);
+  if (Array.isArray(value)) return value.map(normalizePlanValue);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, normalizePlanValue(nested)]));
+  }
+  return value;
+}
+
 function compileChildBudgets(
   parent: RunSnapshot,
   overrides: RuntimeDelegationPolicy["childBudgets"]
-): RuntimeBudgets {
-  const remainingIterations = Math.max(1, parent.budgets.maxIterations - parent.budgetsUsed.iterations - 2);
-  const remainingModelCalls = Math.max(1, parent.budgets.maxModelCalls - parent.budgetsUsed.modelCalls - 2);
-  const remainingToolCalls = Math.max(1, parent.budgets.maxToolCalls - parent.budgetsUsed.toolCalls);
+): RuntimeBudgets | null {
+  const remainingIterations = parent.budgets.maxIterations - parent.budgetsUsed.iterations - 2;
+  const remainingModelCalls = parent.budgets.maxModelCalls - parent.budgetsUsed.modelCalls - 2;
+  const remainingToolCalls = parent.budgets.maxToolCalls - parent.budgetsUsed.toolCalls;
+  if (remainingIterations < 1 || remainingModelCalls < 1 || remainingToolCalls < 1) return null;
   return RuntimeBudgetsSchema.parse({
     maxIterations: Math.min(overrides?.maxIterations ?? 12, remainingIterations),
     maxModelCalls: Math.min(overrides?.maxModelCalls ?? 12, remainingModelCalls),

@@ -78,7 +78,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.toolInvocations).toHaveLength(2);
     expect(view.events.map((event) => event.type)).toContain("execute_step.completed");
     for (const context of provider.contexts) {
-      expect(context.providerContractVersion).toBe(5);
+      expect(context.providerContractVersion).toBe(6);
       expect(context).not.toHaveProperty("allowedActions");
       expect(context).not.toHaveProperty("actionContract");
       expect(context).not.toHaveProperty("allowedIntents");

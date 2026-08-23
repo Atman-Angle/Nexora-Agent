@@ -192,6 +192,7 @@ function createLoopPort(input: {
     failForBudget: (run, activeStartedAt, observer) => {
       return runtime.enforceBudget(run, activeStartedAt, observer);
     },
+    enforceConvergence: (run, observer) => runtime.enforceConvergence(run, observer),
     finalizeBudget: (run, activeStartedAt, summary, observer) => (
       runtime.finalizeBudget(run, activeStartedAt, summary, observer)
     ),

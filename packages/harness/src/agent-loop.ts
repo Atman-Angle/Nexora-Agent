@@ -55,6 +55,7 @@ export interface AgentLoopRuntimePort {
     activeStartedAt: number,
     observer?: RuntimeObserver
   ): RunSnapshot | null;
+  enforceConvergence(run: RunSnapshot, observer?: RuntimeObserver): RunSnapshot | null;
   finalizeBudget(
     run: RunSnapshot,
     activeStartedAt: number,
@@ -107,6 +108,11 @@ export async function runAgentLoop(
     const budgetFailure = runtime.failForBudget(run, activeStartedAt, observer);
     if (budgetFailure !== null) {
       run = budgetFailure;
+      break;
+    }
+    const convergenceFailure = runtime.enforceConvergence(run, observer);
+    if (convergenceFailure !== null) {
+      run = convergenceFailure;
       break;
     }
 

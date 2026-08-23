@@ -146,7 +146,7 @@ function header(state: DesktopSnapshot): string {
       </div>
       <div class="header-actions">
         ${compression === null ? "" : `<span class="compaction-chip" title="Persisted Runtime Context compaction event">${compression === "manual" ? "手动压缩" : "已自动压缩"}</span>`}
-        ${context === null ? "" : `<div class="context-usage" title="Current Session · latest Run model call: ${context.used.toLocaleString()} of ${context.window.toLocaleString()} input-context tokens. This is not a Project total."><span>Turn context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
+        ${context === null ? "" : `<div class="context-usage" title="Current Session · latest Run model call: ${context.used.toLocaleString()} input tokens; active target ${context.target.toLocaleString()}, model window ${context.window.toLocaleString()}. This is not a Project total."><span>Active context ${formatTokens(context.used)} / ${formatTokens(context.target)}</span><i><b style="width:${context.percent}%"></b></i></div>`}
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="Session view">
           <button class="${mode === "conversation" ? "active" : ""}" data-view="conversation">Conversation</button>
@@ -377,11 +377,16 @@ function composer(session: SessionView | null): string {
     return followUpComposer(session, true);
   }
   if (run.status === "blocked") {
+    if (run.workerRecoveries.length > 0) {
+      return `<section class="composer recovery"><div><small>Worker recovery required</small><p>${run.workerRecoveries.length} delegated Worker Run(s) paused. Resume the same Worker or discard its isolated Branch.</p></div><div class="recovery-actions">${run.workerRecoveries.map((item) => `<button data-worker-action="discard" data-branch-id="${escapeAttr(item.branchId)}">Discard</button><button class="primary" data-worker-action="resume" data-child-id="${escapeAttr(item.childRunId)}">Resume Worker</button>`).join("")}</div></section>`;
+    }
     if (run.recovery !== null) {
       return `<section class="composer recovery"><div><small>Recovery required · ${escapeHtml(run.recovery.toolName)}</small><p>The Tool result is unknown. Confirm the real external outcome.</p><input id="subject-ref" placeholder="Subject reference for confirmed success" /></div><div class="recovery-actions"><button data-recovery="abandon_run">Abandon</button><button data-recovery="confirmed_failed">It failed</button><button class="primary" data-recovery="confirmed_succeeded">It succeeded</button></div></section>`;
     }
     const budget = run.stopReason?.endsWith("BUDGET_EXCEEDED") === true;
-    return `<section class="composer blocked"><div><small>Session paused</small><p>${escapeHtml(run.delivery?.summary ?? run.stopReason ?? "The Runtime requires intervention.")}</p></div><button class="primary" data-action="${budget ? "extend-budget" : "resume"}" ${busy ? "disabled" : ""}>${budget ? "Extend budget & resume" : "Resume"}</button></section>`;
+    const metrics = run.executionMetrics;
+    const quality = budget ? ` · ${metrics.modelCalls} model / ${metrics.toolCalls} tool calls · ${metrics.repeatedToolCalls} repeated` : "";
+    return `<section class="composer blocked"><div><small>Session paused${quality}</small><p>${escapeHtml(run.delivery?.summary ?? run.stopReason ?? "The Runtime requires intervention.")}</p></div><button class="${budget && metrics.repeatedToolCalls === 0 ? "primary" : ""}" data-action="${budget ? "extend-budget" : "resume"}" ${busy ? "disabled" : ""}>${budget ? "Extend budget & resume" : "Resume"}</button></section>`;
   }
   return followUpComposer(session, false);
 }
@@ -438,7 +443,7 @@ function settings(state: DesktopSnapshot): string {
       ${addingProvider ? `<label>Base URL<input name="baseUrl" type="url" value="" placeholder="https://provider.example/v1" required /></label>` : ""}
       <label>API Key<input name="apiKey" type="password" placeholder="${addingProvider ? "Required for new provider" : "Shared by this provider · leave blank to keep"}" ${addingProvider ? "required" : ""} /></label>
       <label>Model ID<input name="model" value="${escapeAttr(profile?.model ?? "")}" placeholder="Model identifier" required /></label>
-      <div class="settings-grid"><label>Context window<input name="contextWindowTokens" type="number" min="1" value="${profile?.contextWindowTokens ?? ""}" placeholder="Known model default" /></label><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${profile?.decisionOutputTokens ?? 4096}" required /></label></div>
+      <div class="settings-grid"><label>Context window<input name="contextWindowTokens" type="number" min="1" value="${profile?.contextWindowTokens ?? ""}" placeholder="Known model default" /></label><label>Active context target<input name="activeInputTargetTokens" type="number" min="1" value="${profile?.activeInputTargetTokens ?? ""}" placeholder="Default: up to 128000" /></label><label>Decision tokens<input name="decisionOutputTokens" type="number" min="1" value="${profile?.decisionOutputTokens ?? 4096}" required /></label></div>
       <label>Tool transport<select name="transport"><option value="native_tools" ${profile?.transport !== "structured_output" ? "selected" : ""}>Native tools · streaming</option><option value="structured_output" ${profile?.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label>
       <div class="settings-grid"><label>Reasoning<select name="reasoning"><option value="dynamic" ${profile?.reasoning !== "off" && profile?.reasoning !== "on" ? "selected" : ""}>Dynamic</option><option value="off" ${profile?.reasoning === "off" ? "selected" : ""}>Off</option><option value="on" ${profile?.reasoning === "on" ? "selected" : ""}>On</option></select></label><label>Thinking parameter<input name="thinkingToggleParam" value="${escapeAttr(profile?.thinkingToggleParam ?? "")}" placeholder="DashScope: enable_thinking" /></label></div>
       <button class="primary" ${busy ? "disabled" : ""}>${profile === undefined ? "Add model" : "Save model"}</button>
@@ -524,6 +529,14 @@ function bindActions(): void {
     else if (["approve", "deny", "cancel", "resume", "extend-budget"].includes(action ?? "")) void controlAction(action!);
   }));
   document.querySelectorAll<HTMLElement>("[data-recovery]").forEach((element) => element.addEventListener("click", () => void recoveryAction(element.dataset.recovery!)));
+  document.querySelectorAll<HTMLElement>("[data-worker-action]").forEach((element) => element.addEventListener("click", () => {
+    if (element.dataset.workerAction === "resume" && element.dataset.childId !== undefined) {
+      const recovery = snapshot?.session?.inspection.workerRecoveries.find((item) => item.childRunId === element.dataset.childId);
+      if (recovery !== undefined) void sendControl({ type: "worker_resume", branchId: recovery.branchId, childRunId: recovery.childRunId });
+    } else if (element.dataset.workerAction === "discard" && element.dataset.branchId !== undefined) {
+      void sendControl({ type: "worker_discard", branchId: element.dataset.branchId });
+    }
+  }));
   document.querySelector<HTMLSelectElement>("[data-profile-select]")?.addEventListener("change", (event) => {
     const id = (event.currentTarget as HTMLSelectElement).value;
     void perform(() => window.nexora.selectModelProfile(id).then(setSnapshot));
@@ -576,6 +589,7 @@ function bindActions(): void {
     const apiKey = data.get("apiKey");
     void perform(async () => {
       const contextWindowTokens = Number(data.get("contextWindowTokens"));
+      const activeInputTargetTokens = Number(data.get("activeInputTargetTokens"));
       const id = String(data.get("id") ?? "").trim();
       const providerBaseUrl = String(data.get("providerBaseUrl") ?? "new");
       const reasoning = String(data.get("reasoning") ?? "dynamic");
@@ -586,6 +600,7 @@ function bindActions(): void {
         ...(typeof apiKey === "string" && apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         model: String(data.get("model") ?? ""),
         ...(Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? { contextWindowTokens } : {}),
+        ...(Number.isInteger(activeInputTargetTokens) && activeInputTargetTokens > 0 ? { activeInputTargetTokens } : {}),
         decisionOutputTokens: Number(data.get("decisionOutputTokens")),
         transport: data.get("transport") === "structured_output" ? "structured_output" : "native_tools",
         reasoning: reasoning === "off" || reasoning === "on" ? reasoning : "dynamic",
@@ -766,10 +781,10 @@ function toolPresentation(name: string, input: unknown): { action: string; targe
     workspacePath: stringValue(value.path)
   };
 }
-function contextUsage(session: SessionView): { used: number; window: number; percent: number } | null {
+function contextUsage(session: SessionView): { used: number; target: number; window: number; percent: number } | null {
   const usage = session.inspection.contextUsage;
   if (usage === null) return null;
-  return { used: usage.inputTokens, window: usage.contextWindowTokens, percent: Math.min(100, Math.round(usage.inputTokens / usage.contextWindowTokens * 100)) };
+  return { used: usage.inputTokens, target: usage.softInputLimitTokens, window: usage.contextWindowTokens, percent: Math.min(100, Math.round(usage.inputTokens / usage.softInputLimitTokens * 100)) };
 }
 function latestCompaction(session: SessionView): "manual" | "automatic" | null {
   const records = session.history.records;

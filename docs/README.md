@@ -9,6 +9,7 @@ The repository keeps public documentation for Harness/Runtime users and applicat
 - [`BUILD_WITH_NEXORA_RUNTIME.md`](BUILD_WITH_NEXORA_RUNTIME.md): packaging, Providers, Tools, events, cancellation, and recovery
 - [`USER_GUIDE_CURRENT.md`](USER_GUIDE_CURRENT.md): Desktop, CLI, and public Agent usage
 - [`PROGRESSIVE_AGENT_EXECUTION_SPEC.md`](PROGRESSIVE_AGENT_EXECUTION_SPEC.md): draft Spec for progressive Plan/ReAct, deterministic completion, and bounded history evidence
+- [`BOUNDED_EXECUTION_CONVERGENCE_SPEC.md`](BOUNDED_EXECUTION_CONVERGENCE_SPEC.md): recovery Spec for Worker budgets, bounded no-progress handling, read/Plan convergence, Context cost governance, and Desktop recovery projection
 - [`applications/research-agent.md`](applications/research-agent.md): Research Agent application example
 - [`../PROJECT.md`](../PROJECT.md): product direction and long-term boundaries
 - [`../ARCHITECTURE.md`](../ARCHITECTURE.md): architecture and authority boundaries

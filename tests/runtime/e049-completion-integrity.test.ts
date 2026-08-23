@@ -97,8 +97,8 @@ describe("E049 deterministic completion integrity", () => {
     });
 
     expect(result.status).toBe("blocked");
-    expect(result.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
-    expect(result.lastError?.code).toBe("INVALID_MODEL_RESPONSE");
+    expect(result.stopReason).toBe("NO_PROGRESS_DETECTED");
+    expect(result.lastError?.code).toBe("NO_PROGRESS_DETECTED");
     await runtime.close();
   });
 });

@@ -28,6 +28,7 @@ export type ModelProfileView = {
   readonly apiKeyConfigured: boolean;
   readonly model: string;
   readonly contextWindowTokens: number | null;
+  readonly activeInputTargetTokens: number | null;
   readonly decisionOutputTokens: number;
   readonly transport: "native_tools" | "structured_output";
   readonly reasoning: "off" | "dynamic" | "on";
@@ -41,6 +42,7 @@ export type ModelProfileInput = {
   readonly apiKey?: string;
   readonly model: string;
   readonly contextWindowTokens?: number;
+  readonly activeInputTargetTokens?: number;
   readonly decisionOutputTokens: number;
   readonly transport: "native_tools" | "structured_output";
   readonly reasoning?: "off" | "dynamic" | "on";
@@ -95,6 +97,8 @@ export type SessionControl =
   | { readonly type: "cancel" }
   | { readonly type: "resume" }
   | { readonly type: "extend_budget" }
+  | { readonly type: "worker_resume"; readonly branchId: string; readonly childRunId: string }
+  | { readonly type: "worker_discard"; readonly branchId: string }
   | { readonly type: "recover"; readonly recovery: RecoveryDecision };
 
 export type DesktopBridge = {

@@ -203,6 +203,7 @@ export function buildDecisionContext(args: {
       assignmentId: observation.assignmentId,
       profileRef: observation.profileRef,
       status: observation.status,
+      branchStatus: observation.branchStatus,
       summary: observation.summary,
       resultArtifact: observation.resultArtifact,
       deliveryOutcome: observation.delivery?.outcome ?? null,

@@ -72,7 +72,7 @@ describe("E122 truthful objective-only Plan progress", () => {
 
     const firstPlan = provider.contexts[1]!.run.currentPlan!;
     expect(result.status).toBe("waiting");
-    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
       "Inspect workspace",
       "Write dashboard"

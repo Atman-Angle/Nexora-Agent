@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DesktopRuntimeService } from "../../apps/desktop/src/runtime-service.js";
+import { createAgent, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import { responseCall, responseText } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -12,6 +14,36 @@ afterEach(() => {
 });
 
 describe("E130 Desktop Project and continuous Session", () => {
+  it("does not project delegated Worker Runs as user Sessions", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-worker-filter-"));
+    roots.push(workspace);
+    const runtime = createAgent({
+      workspace,
+      provider: new DesktopDelegationProvider(),
+      tools: [],
+      delegationPolicy: { mode: "allowed", maxConcurrentWorkers: 2 }
+    });
+    const result = await runtime.start({
+      input: "Delegate two internal reports.",
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
+    expect(result.status).toBe("succeeded");
+    expect((await runtime.listRuns()).length).toBe(3);
+    await runtime.close();
+    writeFileSync(join(workspace, ".env"), [
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_BASE_URL=https://provider.example/v1",
+      "NEXORA_MODEL_NAME=desktop-filter-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096"
+    ].join("\n"), "utf8");
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const snapshot = await service.snapshot();
+    expect(currentProject(snapshot).sessions).toHaveLength(1);
+    expect(currentProject(snapshot).sessions[0]?.id).toBe(result.runId);
+    await service.close();
+  });
+
   it("migrates Project-scoped model profiles into one global Desktop catalog", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-global-migration-"));
     roots.push(workspace);
@@ -74,11 +106,13 @@ describe("E130 Desktop Project and continuous Session", () => {
       apiKey: "primary-secret",
       model: "custom-primary",
       contextWindowTokens: 64_000,
+      activeInputTargetTokens: 24_000,
       decisionOutputTokens: 4_096,
       transport: "native_tools"
     });
     expect(first.workspace).toMatchObject({ selectedModelProfileId: "primary", model: "custom-primary" });
     expect(JSON.stringify(first)).not.toContain("primary-secret");
+    expect(first.workspace.modelProfiles[0]?.activeInputTargetTokens).toBe(24_000);
 
     await service.saveModelProfile({
       id: "secondary",
@@ -501,6 +535,16 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(calls).toBe(1);
   });
 });
+
+class DesktopDelegationProvider implements RuntimeProvider {
+  async decide(context: ModelDecisionContext) {
+    if (context.workerRun === true) return responseText("Internal Worker result.");
+    if ((context.workerObservations?.length ?? 0) > 0) return responseText("Parent result.");
+    return responseCall("nexora_delegate_workers", { assignments: [
+      { objective: "Internal report A" }, { objective: "Internal report B" }
+    ] });
+  }
+}
 
 async function waitForStatus(service: DesktopRuntimeService, status: string) {
   const deadline = Date.now() + 10_000;

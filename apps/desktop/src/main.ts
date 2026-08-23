@@ -19,8 +19,11 @@ const ModelProfileSchema = z.object({
   apiKey: z.string().max(20_000).optional(),
   model: z.string().trim().min(1).max(256),
   contextWindowTokens: z.number().int().positive().max(10_000_000).optional(),
+  activeInputTargetTokens: z.number().int().positive().max(10_000_000).optional(),
   decisionOutputTokens: z.number().int().positive().max(1_000_000),
-  transport: z.enum(["native_tools", "structured_output"])
+  transport: z.enum(["native_tools", "structured_output"]),
+  reasoning: z.enum(["off", "dynamic", "on"]).optional(),
+  thinkingToggleParam: z.string().trim().min(1).max(128).nullable().optional()
 }).strict();
 const ControlSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("input"), text: GoalSchema, requestId: RunIdSchema }).strict(),
@@ -29,6 +32,8 @@ const ControlSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("cancel") }).strict(),
   z.object({ type: z.literal("resume") }).strict(),
   z.object({ type: z.literal("extend_budget") }).strict(),
+  z.object({ type: z.literal("worker_resume"), branchId: z.string().min(1), childRunId: z.string().min(1) }).strict(),
+  z.object({ type: z.literal("worker_discard"), branchId: z.string().min(1) }).strict(),
   z.object({
     type: z.literal("recover"),
     recovery: z.discriminatedUnion("outcome", [

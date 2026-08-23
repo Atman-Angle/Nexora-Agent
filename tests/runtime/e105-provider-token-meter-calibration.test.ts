@@ -130,7 +130,8 @@ describe("E105 Provider token meter calibration", () => {
         inputTokens: 123,
         inputTokenSource: "provider",
         contextWindowTokens: 32_000,
-        hardInputLimitTokens: 15_616
+        hardInputLimitTokens: 15_616,
+        softInputLimitTokens: 12_492
       });
     } finally {
       await runtime.close();

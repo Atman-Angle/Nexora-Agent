@@ -69,7 +69,8 @@ describe("Phase 3 Multi-Agent failure containment and restart recovery", () => {
     const parent = await runtime.start({ input: "Use workers to inspect two independent failure domains." });
     const observations = runtime.listWorkerObservations(parent.runId);
 
-    expect(parent.status).toBe("waiting");
+    expect(parent.status).toBe("blocked");
+    expect(parent.stopReason).toBe("WORKER_RECOVERY_REQUIRED");
     expect(observations).toHaveLength(2);
     expect(observations.find((item) => item.profileRef === "failing-worker")).toMatchObject({
       status: "blocked",
@@ -82,8 +83,12 @@ describe("Phase 3 Multi-Agent failure containment and restart recovery", () => {
       status: "succeeded",
       delivery: { outcome: "succeeded" }
     });
-    expect((await runtime.inspect(parent.runId)).snapshot.pendingRequest?.prompt)
-      .toContain("failed Worker");
+    const inspection = await runtime.openRun(parent.runId).inspect();
+    expect(inspection.workerRecoveries).toHaveLength(1);
+    expect(inspection.workerRecoveries[0]).toMatchObject({
+      childRunId: observations.find((item) => item.profileRef === "failing-worker")?.childRunId,
+      actions: ["resume", "discard"]
+    });
     await runtime.close();
   });
 

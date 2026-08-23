@@ -91,10 +91,22 @@ export type WorkerObservation = {
   readonly assignmentId: string | null;
   readonly profileRef: string | null;
   readonly status: RunStatus;
+  readonly branchStatus: BranchRecord["status"];
   readonly summary: string | null;
   readonly resultArtifact: string | null;
   readonly delivery: RunDelivery | null;
   readonly evidenceRefs: readonly string[];
+};
+export type RunLineage =
+  | { readonly kind: "root"; readonly parentRunId: null; readonly branchId: null }
+  | { readonly kind: "manual_branch" | "delegated_worker"; readonly parentRunId: string; readonly branchId: string };
+export type WorkerRecoveryRequest = {
+  readonly parentRunId: string;
+  readonly branchId: string;
+  readonly childRunId: string;
+  readonly status: "blocked";
+  readonly stopReason: string | null;
+  readonly actions: readonly ("resume" | "discard")[];
 };
 export type RunView = {
   readonly snapshot: RunSnapshot;
@@ -150,6 +162,7 @@ export type PublicRunStatus =
 
 export type RunSummary = {
   readonly runId: string;
+  readonly lineage: RunLineage;
   readonly status: PublicRunStatus;
   readonly stopReason: string | null;
   readonly title: string;
@@ -191,6 +204,7 @@ export type RunFinalResult =
 
 export type RunInspection = {
   readonly runId: string;
+  readonly lineage: RunLineage;
   readonly continuation: DeepReadonly<RunSnapshot["continuation"]> | null;
   readonly revision: number;
   readonly status: PublicRunStatus;
@@ -206,6 +220,7 @@ export type RunInspection = {
   readonly invocations: readonly PublicToolInvocation[];
   readonly recovery: PublicRecoveryRequest | null;
   readonly recoveries: readonly PublicRecoveryRequest[];
+  readonly workerRecoveries: readonly WorkerRecoveryRequest[];
   readonly result: RunFinalResult | null;
   readonly delivery: RunDelivery | null;
   readonly error: PublicRunError | null;
@@ -215,7 +230,21 @@ export type RunInspection = {
     readonly inputTokenSource: "provider" | "measured";
     readonly contextWindowTokens: number;
     readonly hardInputLimitTokens: number;
+    readonly softInputLimitTokens: number;
   } | null;
+  readonly executionMetrics: {
+    readonly modelCalls: number;
+    readonly toolCalls: number;
+    readonly uniqueToolFingerprints: number;
+    readonly repeatedToolCalls: number;
+    readonly physicalToolExecutions: number;
+    readonly planProposals: number;
+    readonly acceptedPlanVersions: number;
+    readonly aggregateInputTokens: number;
+    readonly aggregateOutputTokens: number;
+    readonly providerActiveMs: number;
+    readonly wallClockMs: number;
+  };
   readonly lastEventSequence: number;
 };
 

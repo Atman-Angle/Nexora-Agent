@@ -52,7 +52,7 @@ describe("E077 Tool decision efficiency", () => {
     expect(result.status).toBe("succeeded");
     expect(provider.contexts).toHaveLength(3);
     for (const context of provider.contexts) {
-      expect(context.providerContractVersion).toBe(5);
+      expect(context.providerContractVersion).toBe(6);
       expect(context).not.toHaveProperty("allowedIntents");
       expect(context).not.toHaveProperty("intentContract");
     }

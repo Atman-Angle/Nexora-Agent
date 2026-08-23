@@ -9,7 +9,9 @@ import type {
   PublicToolInvocation,
   RunFinalResult,
   RunInspection,
-  RunSummary
+  RunLineage,
+  RunSummary,
+  WorkerRecoveryRequest
 } from "./runtime-types.js";
 import { deriveFailureHandoff } from "./failure-handoff.js";
 
@@ -17,7 +19,11 @@ export function projectRunInspection(
   snapshot: RunSnapshot,
   invocations: readonly ToolInvocation[],
   lastEventSequence: number,
-  modelCalls: readonly ModelCallRecord[] = []
+  modelCalls: readonly ModelCallRecord[] = [],
+  lineage: RunLineage = ROOT_LINEAGE,
+  workerRecoveries: readonly WorkerRecoveryRequest[] = [],
+  planProposals = 0,
+  physicalToolExecutions?: number
 ): RunInspection {
   const pendingRequest: PublicPendingRequest | null = snapshot.pendingRequest === null
     ? null
@@ -78,8 +84,12 @@ export function projectRunInspection(
   }));
   const recovery = recoveries[0] ?? null;
   const latestModelCall = modelCalls.at(-1);
+  const toolFingerprints = new Set(invocations.map((invocation) => `${invocation.toolName}:${invocation.inputDigest}`));
+  const physicalExecutions = physicalToolExecutions
+    ?? invocations.filter((invocation) => invocation.status === "succeeded").length;
   return deepFreeze({
     runId: snapshot.runId,
+    lineage,
     continuation: snapshot.continuation ?? null,
     revision: snapshot.revision,
     status,
@@ -95,6 +105,7 @@ export function projectRunInspection(
     invocations: publicInvocations,
     recovery,
     recoveries,
+    workerRecoveries,
     result: projectRunFinalResult(snapshot),
     delivery: snapshot.delivery,
     error: snapshot.lastError,
@@ -103,13 +114,27 @@ export function projectRunInspection(
       inputTokens: latestModelCall.actualInputTokens ?? latestModelCall.measuredInputTokens,
       inputTokenSource: latestModelCall.actualInputTokens === null ? "measured" : "provider",
       contextWindowTokens: latestModelCall.contextWindowTokens,
-      hardInputLimitTokens: latestModelCall.hardInputLimitTokens
+      hardInputLimitTokens: latestModelCall.hardInputLimitTokens,
+      softInputLimitTokens: latestModelCall.softInputLimitTokens
+    },
+    executionMetrics: {
+      modelCalls: modelCalls.length,
+      toolCalls: invocations.length,
+      uniqueToolFingerprints: toolFingerprints.size,
+      repeatedToolCalls: Math.max(0, invocations.length - toolFingerprints.size),
+      physicalToolExecutions: physicalExecutions,
+      planProposals,
+      acceptedPlanVersions: snapshot.currentPlan?.version ?? 0,
+      aggregateInputTokens: modelCalls.reduce((total, call) => total + (call.actualInputTokens ?? call.measuredInputTokens), 0),
+      aggregateOutputTokens: modelCalls.reduce((total, call) => total + (call.actualOutputTokens ?? 0), 0),
+      providerActiveMs: modelCalls.reduce((total, call) => total + durationMs(call.startedAt, call.completedAt), 0),
+      wallClockMs: Math.max(0, Date.parse(snapshot.updatedAt) - Date.parse(snapshot.createdAt))
     },
     lastEventSequence
   });
 }
 
-export function projectRunSummary(snapshot: RunSnapshot): RunSummary {
+export function projectRunSummary(snapshot: RunSnapshot, lineage: RunLineage = ROOT_LINEAGE): RunSummary {
   const status = snapshot.status !== "waiting"
     ? snapshot.status
     : snapshot.pendingRequest?.kind === "input"
@@ -123,6 +148,7 @@ export function projectRunSummary(snapshot: RunSnapshot): RunSummary {
   const goal = snapshot.inputHistory[0]!.text;
   return deepFreeze({
     runId: snapshot.runId,
+    lineage,
     status,
     stopReason: snapshot.stopReason,
     title: boundedTitle(goal),
@@ -131,6 +157,8 @@ export function projectRunSummary(snapshot: RunSnapshot): RunSummary {
     updatedAt: snapshot.updatedAt
   });
 }
+
+const ROOT_LINEAGE: RunLineage = Object.freeze({ kind: "root", parentRunId: null, branchId: null });
 
 export function projectRunFinalResult(
   snapshot: RunSnapshot
@@ -223,4 +251,10 @@ function deepFreeze<T>(value: T): T {
 function boundedTitle(value: string): string {
   const title = value.trim().replace(/\s+/g, " ");
   return title.length <= 80 ? title : `${title.slice(0, 77)}...`;
+}
+
+function durationMs(startedAt: string, completedAt: string | null): number {
+  if (completedAt === null) return 0;
+  const value = Date.parse(completedAt) - Date.parse(startedAt);
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }

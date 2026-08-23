@@ -53,6 +53,7 @@ type StoredModelProfile = {
   baseUrl: string;
   model: string;
   contextWindowTokens: number | null;
+  activeInputTargetTokens: number | null;
   decisionOutputTokens: number;
   transport: "native_tools" | "structured_output";
   reasoning: "off" | "dynamic" | "on";
@@ -243,6 +244,7 @@ export class DesktopRuntimeService {
       baseUrl: requireText(input.baseUrl, "Provider base URL"),
       model: requireText(input.model, "Model name"),
       contextWindowTokens: input.contextWindowTokens ?? null,
+      activeInputTargetTokens: input.activeInputTargetTokens ?? existing?.activeInputTargetTokens ?? null,
       decisionOutputTokens: input.decisionOutputTokens,
       transport: input.transport,
       reasoning: input.reasoning ?? existing?.reasoning ?? "dynamic",
@@ -296,7 +298,8 @@ export class DesktopRuntimeService {
   }
 
   control(runId: string, control: SessionControl): void {
-    const handle = this.#requireRuntime().openRun(runId);
+    const runtime = this.#requireRuntime();
+    const handle = runtime.openRun(runId);
     let operation: Promise<void>;
     if (control.type === "input") operation = handle.input(control.text, { requestId: control.requestId });
     else if (control.type === "approve") operation = handle.approve({ requestId: control.requestId });
@@ -304,11 +307,26 @@ export class DesktopRuntimeService {
     else if (control.type === "cancel") operation = handle.cancel("Cancelled from Nexora Desktop.");
     else if (control.type === "resume") operation = handle.resume();
     else if (control.type === "extend_budget") operation = handle.resume({ budgetExtension: { iterations: 20, modelCalls: 10, toolCalls: 20, retries: 2 } });
+    else if (control.type === "worker_resume") operation = this.#recoverWorker(runtime, handle, control.childRunId, "resume");
+    else if (control.type === "worker_discard") operation = this.#recoverWorker(runtime, handle, control.branchId, "discard");
     else operation = handle.resume({ recovery: control.recovery });
     void operation.then(() => this.#emit()).catch((error: unknown) => this.#onError(errorMessage(error)));
   }
 
   async readArtifact(digest: string) { return await this.#requireRuntime().readArtifactText(digest); }
+
+  async #recoverWorker(runtime: AgentRuntime, parent: RunHandle, id: string, action: "resume" | "discard"): Promise<void> {
+    if (action === "discard") {
+      runtime.discardBranch(id, "Discarded from Nexora Desktop recovery.");
+    } else {
+      const child = runtime.openRun(id);
+      const inspection = await child.inspect();
+      await child.resume(inspection.stopReason?.endsWith("BUDGET_EXCEEDED") === true
+        ? { budgetExtension: { iterations: 12, modelCalls: 12, toolCalls: 24, retries: 1 } }
+        : {});
+    }
+    await parent.resume();
+  }
   async close(): Promise<void> {
     await Promise.all([...this.#subscriptions.values()].map(async (subscription) => await subscription.close()));
     this.#subscriptions.clear();
@@ -325,7 +343,8 @@ export class DesktopRuntimeService {
       provider: openAICompatibleProviderFromEnv(this.#providerEnvironment(workspace)),
       publicOutputListener: this.#onPublicOutput,
       profile: DESKTOP_PROFILE,
-      tools: createBuiltInTools({ artifactDir: join(workspace, ".nexora", "artifacts") })
+      tools: createBuiltInTools({ artifactDir: join(workspace, ".nexora", "artifacts") }),
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
     });
     this.#runtimes.set(key, runtime);
     this.#dirtyRuntimeKeys.delete(key);
@@ -356,7 +375,7 @@ export class DesktopRuntimeService {
     const hidden = new Set(project.hiddenRunIds);
     const mapped = new Set(project.sessions.flatMap(({ turns }) => turns.map(({ runId }) => runId)));
     for (const summary of summaries) {
-      if (!mapped.has(summary.runId) && !hidden.has(summary.runId)) {
+      if (summary.lineage.kind === "root" && !mapped.has(summary.runId) && !hidden.has(summary.runId)) {
         const inspection = await runtime.openRun(summary.runId).inspect();
         const originalInput = inspection.inputs[0]?.text ?? summary.title;
         project.sessions.push({
@@ -556,6 +575,7 @@ export class DesktopRuntimeService {
       NEXORA_MODEL_REASONING: selected.reasoning,
       ...(selected.thinkingToggleParam === null ? {} : { NEXORA_MODEL_THINKING_PARAM: selected.thinkingToggleParam }),
       ...(selected.contextWindowTokens === null ? {} : { NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: String(selected.contextWindowTokens) }),
+      ...(selected.activeInputTargetTokens === null ? {} : { NEXORA_MODEL_ACTIVE_INPUT_TOKENS: String(selected.activeInputTargetTokens) }),
       ...(apiKey === undefined ? {} : { NEXORA_MODEL_API_KEY: apiKey }),
       NEXORA_MODEL_STREAM: "true"
     };
@@ -582,6 +602,7 @@ export class DesktopRuntimeService {
         NEXORA_MODEL_API_KEY: null,
         NEXORA_MODEL_NAME: null,
         NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: null,
+        NEXORA_MODEL_ACTIVE_INPUT_TOKENS: null,
         NEXORA_MODEL_DECISION_OUTPUT_TOKENS: null,
         NEXORA_MODEL_TOOL_TRANSPORT: null,
         NEXORA_MODEL_REASONING: null,
@@ -595,6 +616,7 @@ export class DesktopRuntimeService {
       NEXORA_MODEL_BASE_URL: selected.baseUrl,
       NEXORA_MODEL_NAME: selected.model,
       NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: selected.contextWindowTokens === null ? null : String(selected.contextWindowTokens),
+      NEXORA_MODEL_ACTIVE_INPUT_TOKENS: selected.activeInputTargetTokens === null ? null : String(selected.activeInputTargetTokens),
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(selected.decisionOutputTokens),
       NEXORA_MODEL_TOOL_TRANSPORT: selected.transport,
       NEXORA_MODEL_REASONING: selected.reasoning,
@@ -688,12 +710,14 @@ function environmentModelProfile(workspace: string): StoredModelProfile | null {
   const decisionOutputTokens = Number(environment.NEXORA_MODEL_DECISION_OUTPUT_TOKENS);
   if (!baseUrl || !model || !Number.isInteger(decisionOutputTokens) || decisionOutputTokens <= 0) return null;
   const contextWindowTokens = Number(environment.NEXORA_MODEL_CONTEXT_WINDOW_TOKENS);
+  const activeInputTargetTokens = Number(environment.NEXORA_MODEL_ACTIVE_INPUT_TOKENS);
   return {
     id: "environment",
     name: model,
     baseUrl,
     model,
     contextWindowTokens: Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? contextWindowTokens : null,
+    activeInputTargetTokens: Number.isInteger(activeInputTargetTokens) && activeInputTargetTokens > 0 ? activeInputTargetTokens : null,
     decisionOutputTokens,
     transport: environment.NEXORA_MODEL_TOOL_TRANSPORT === "structured_output" ? "structured_output" : "native_tools",
     reasoning: environment.NEXORA_MODEL_REASONING === "off" || environment.NEXORA_MODEL_REASONING === "on"
@@ -721,6 +745,7 @@ function sameModelProfile(left: StoredModelProfile, right: StoredModelProfile): 
   return sameProvider(left.baseUrl, right.baseUrl)
     && left.model === right.model
     && left.contextWindowTokens === right.contextWindowTokens
+    && left.activeInputTargetTokens === right.activeInputTargetTokens
     && left.decisionOutputTokens === right.decisionOutputTokens
     && left.transport === right.transport
     && left.reasoning === right.reasoning
@@ -730,6 +755,7 @@ function sameModelProfile(left: StoredModelProfile, right: StoredModelProfile): 
 function normalizeModelProfile(profile: Partial<StoredModelProfile> & Pick<StoredModelProfile, "id" | "name" | "baseUrl" | "model" | "contextWindowTokens" | "decisionOutputTokens" | "transport">): StoredModelProfile {
   return {
     ...profile,
+    activeInputTargetTokens: profile.activeInputTargetTokens ?? null,
     reasoning: profile.reasoning === "off" || profile.reasoning === "on" ? profile.reasoning : "dynamic",
     thinkingToggleParam: profile.thinkingToggleParam?.trim() || null
   };

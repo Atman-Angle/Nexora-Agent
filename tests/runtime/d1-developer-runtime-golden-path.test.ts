@@ -207,8 +207,8 @@ describe("D1 developer Runtime golden path", () => {
     const inspection = await run.wait();
 
     expect(inspection.status).toBe("blocked");
-    expect(inspection.stopReason).toBe("ITERATION_BUDGET_EXCEEDED");
-    expect(inspection.error?.code).toBe("INVALID_MODEL_RESPONSE");
+    expect(inspection.stopReason).toBe("NO_PROGRESS_DETECTED");
+    expect(inspection.error?.code).toBe("NO_PROGRESS_DETECTED");
     expect(inspection.result).toBeNull();
     await expect(run.result()).rejects.toThrow("Run is not terminal");
     await runtime.close();
