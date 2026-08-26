@@ -14,7 +14,7 @@ import {
   evictDecisionContextOnce,
   evictDecisionContextTowardBudget
 } from "../../packages/harness/src/context/eviction.js";
-import { responseCall, responseText, ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { responseCall, responseDirect, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -208,6 +208,37 @@ describe("E131 Session Context continuity", () => {
     ]);
     await reopened.close();
   });
+
+  it("omits large invocation bodies from continuation while preserving their Authority refs", async () => {
+    const workspace = fixture();
+    const dataDir = join(workspace, ".nexora");
+    const secretBody = `SOURCE-BODY-${"z".repeat(8_000)}`;
+    const first = createRuntime({
+      workspace,
+      dataDir,
+      provider: new ScriptedRuntimeProvider([
+        responseCall("test.large-read", { path: "generated.ts", content: secretBody }),
+        responseDirect("Large source recorded.")
+      ]),
+      tools: [largeReadTool()]
+    });
+    const parent = await first.start({ input: "Record the generated source." });
+    await first.close();
+
+    const provider = new ScriptedRuntimeProvider([
+      { type: "propose_finish", summary: "Continuation inspected." }
+    ]);
+    const second = createRuntime({ workspace, dataDir, provider, tools: [] });
+    await second.start({ input: "Continue without replaying source bodies.", continuation: { parentRunId: parent.runId } });
+    const continuation = provider.contexts[0]!.continuation!;
+    const serialized = JSON.stringify(continuation);
+
+    expect(serialized).not.toContain(secretBody);
+    expect(serialized).not.toContain("SOURCE-BODY");
+    expect(serialized).toContain("omitted");
+    expect(continuation[0]?.toolFacts[0]?.ref).toMatch(new RegExp(`^run:${parent.runId}/invocation:`));
+    await second.close();
+  });
 });
 
 class ProjectionReuseProvider implements RuntimeProvider {
@@ -241,7 +272,7 @@ class ProjectionReuseProvider implements RuntimeProvider {
     this.contexts.push(context);
     return this.#mode === "write"
       ? responseCall("test.continuation-write", { path: "target.txt", value: "current" })
-      : responseText("Finished from the stable compact ancestor view.");
+      : responseDirect("Finished from the stable compact ancestor view.");
   }
 }
 
@@ -262,6 +293,30 @@ function continuationWriteTool(): RuntimeTool {
     async execute(input) {
       const fact = input as { path: string; value: string };
       return { status: "success", subjectRef: fact.path, facts: fact };
+    }
+  };
+}
+
+function largeReadTool(): RuntimeTool {
+  return {
+    contract: {
+      identity: { name: "test.large-read" },
+      capability: { purpose: "Record a bounded projection fixture.", nonGoals: ["Modify workspace state."] },
+      decision: { useWhen: ["A continuation projection fixture is required."], avoidWhen: ["No fixture is required."] },
+      execution: {
+        effect: { kind: "read", description: "Returns a large deterministic body." },
+        idempotent: true,
+        inputSchema: z.object({ path: z.string().min(1), content: z.string().min(1) }).strict(),
+        inputExample: { path: "generated.ts", content: "source" }
+      },
+      evidence: {
+        produces: ["A large deterministic body."],
+        factsSchema: z.object({ path: z.string(), content: z.string() }).strict()
+      }
+    },
+    async execute(input) {
+      const value = input as { path: string; content: string };
+      return { status: "success", subjectRef: value.path, facts: value };
     }
   };
 }

@@ -26,12 +26,12 @@ describe("E049 natural-language CLI", () => {
       if (calls === 1) {
         content = structuredTool("nexora_update_plan", {
             goal: "Read the requested target",
-            tasks: [{ objective: "Read target.txt" }]
+            tasks: [{ objective: "Read target.txt", checks: [{ toolName: "filesystem.read" }] }]
           });
       } else if (calls === 2) {
         content = structuredTool("filesystem.read", { path: "target.txt" });
       } else {
-        content = { text: "Read target.txt with verified evidence.", toolCalls: [], finishReason: "stop" };
+        content = structuredTool("nexora_respond", { text: "Read target.txt with verified evidence." });
       }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
@@ -103,7 +103,7 @@ describe("E049 natural-language CLI", () => {
     expect(calls).toBe(1);
   });
 
-  it("blocks Tool-enabled text-only completion unless the Host opts into a direct answer", async () => {
+  it("accepts a text-only direct answer when no workspace execution has started", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e049-cli-completion-"));
     roots.push(workspace);
     let calls = 0;
@@ -122,23 +122,9 @@ describe("E049 natural-language CLI", () => {
     if (address === null || typeof address === "string") throw new Error("Server did not bind.");
     const environment = providerEnvironment(address.port);
 
-    const blocked = await spawnCli([
-      "Describe the workspace without inspection",
-      "--cwd", workspace,
-      "--max-iterations", "2",
-      "--max-model-calls", "2"
-    ], environment);
-    expect(blocked.code).toBe(3);
-    expect(JSON.parse(blocked.stdout)).toMatchObject({
-      status: "blocked",
-      stopReason: "ITERATION_BUDGET_EXCEEDED",
-      lastError: { code: "INVALID_MODEL_RESPONSE" }
-    });
-
     const direct = await spawnCli([
       "Describe the workspace without inspection",
-      "--cwd", workspace,
-      "--direct-answer"
+      "--cwd", workspace
     ], environment);
     server.close();
 
@@ -148,7 +134,7 @@ describe("E049 natural-language CLI", () => {
       summary: "No Tool was used.",
       evidence: []
     });
-    expect(calls).toBe(3);
+    expect(calls).toBe(1);
   });
 
   it("extends a paused Tool budget and resumes the same Run without replaying the read", async () => {
@@ -161,7 +147,7 @@ describe("E049 natural-language CLI", () => {
       calls += 1;
       const content = calls === 1
         ? structuredTool("filesystem.read", { path: "target.txt" })
-        : { text: "The persisted read completed the task.", toolCalls: [], finishReason: "stop" };
+        : structuredTool("nexora_respond", { text: "The persisted read completed the task." });
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     });

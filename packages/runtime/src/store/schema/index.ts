@@ -9,3 +9,4 @@ export { v5BranchSchemaSql } from "./v5-branches.js";
 export { v6DurableToolExecutionMigrationSql } from "./v6-durable-tool-execution.js";
 export { v7DurableRunJournalMigrationSql } from "./v7-durable-run-journal.js";
 export { v8ProviderUsageMigrationSql } from "./v8-provider-usage.js";
+export { v9ProviderDiagnosticsMigrationSql } from "./v9-provider-diagnostics.js";

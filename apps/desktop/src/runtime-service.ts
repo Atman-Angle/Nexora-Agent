@@ -6,6 +6,7 @@ import {
   createAgent,
   createAgentProfileSnapshot,
   createBuiltInTools,
+  inspectManagedProcess,
   openAICompatibleProviderFromEnv,
   type AgentPublicOutputEvent,
   type RunHandle,
@@ -41,13 +42,56 @@ const AUTO_APPROVED_DESKTOP_TOOLS = new Set([
   "filesystem.patch"
 ]);
 
-export function desktopToolApprovalPolicy(toolName: string): "auto_approve" | "require_user" {
-  return AUTO_APPROVED_DESKTOP_TOOLS.has(toolName) ? "auto_approve" : "require_user";
+export function desktopToolApprovalPolicy(
+  toolName: string,
+  input: unknown = null
+): "auto_approve" | "require_user" {
+  if (AUTO_APPROVED_DESKTOP_TOOLS.has(toolName)) return "auto_approve";
+  if (toolName !== "shell.execute") return "require_user";
+  return isBoundedVerificationCommand(input) ? "auto_approve" : "require_user";
+}
+
+function isBoundedVerificationCommand(input: unknown): boolean {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return false;
+  const record = input as Record<string, unknown>;
+  if (typeof record.command !== "string" || !Array.isArray(record.args) || record.args.some((item) => typeof item !== "string")) return false;
+  const args = record.args as string[];
+  if (args.some(isHighRiskArgument)) return false;
+  const executable = basename(record.command).toLowerCase().replace(/\.exe$/u, "");
+  if (executable === "node") {
+    return args.length === 1 && ["--version", "-v"].includes(args[0]!)
+      || args[0] === "--test";
+  }
+  if (["npm", "pnpm", "yarn"].includes(executable)) {
+    const first = args[0]?.toLowerCase();
+    if (args.length === 1 && ["--version", "-v", "version"].includes(first ?? "")) return true;
+    if (first === "test") return true;
+    if (first !== "run") return false;
+    return ["test", "build", "lint", "typecheck", "check"].includes(args[1]?.toLowerCase() ?? "");
+  }
+  if (["tsc", "eslint", "vitest"].includes(executable)) return true;
+  if (executable === "git") return ["status", "diff", "log", "show"].includes(args[0]?.toLowerCase() ?? "");
+  return false;
+}
+
+function isHighRiskArgument(value: string): boolean {
+  const lower = value.toLowerCase();
+  return /^https?:\/\//u.test(lower)
+    || /^\\\\/u.test(value)
+    || /^[a-z]:[\\/]/iu.test(value)
+    || ["--global", "-g", "--force", "--unsafe-perm", "--ignore-scripts=false"].includes(lower);
 }
 
 type AgentRuntime = ReturnType<typeof createAgent>;
 type ProviderEnvironment = Record<string, string | undefined>;
 type StoredTurn = { runId: string; userInput: string };
+const DESKTOP_RUN_BUDGETS = Object.freeze({
+  maxIterations: 200,
+  maxModelCalls: 200,
+  maxToolCalls: 400,
+  maxRetries: 2,
+  maxDurationMs: 30 * 60 * 1_000
+});
 type StoredSession = {
   id: string;
   title: string;
@@ -142,7 +186,7 @@ export class DesktopRuntimeService {
     const text = requireText(goal, "Task goal");
     await this.#prepareRuntimeForNewRun();
     const runtime = this.#requireRuntime();
-    const handle = runtime.run(text);
+    const handle = runtime.run(text, { budgets: DESKTOP_RUN_BUDGETS });
     const now = new Date().toISOString();
     const session: StoredSession = {
       id: handle.id,
@@ -172,11 +216,19 @@ export class DesktopRuntimeService {
     if (inspection.status === "running") {
       await previous.cancel("Interrupted by follow-up input from Nexora Desktop.");
       inspection = await previous.inspect();
-    } else if (["waiting_for_input", "waiting_for_approval", "blocked"].includes(inspection.status)) {
+    } else if (["waiting_for_input", "waiting_for_approval"].includes(inspection.status)) {
+      throw new Error(`Resolve the current ${inspection.status} state before sending a follow-up.`);
+    } else if (
+      inspection.status === "blocked"
+      && inspection.stopReason !== "NO_PROGRESS_DETECTED"
+      && inspection.stopReason !== "PROVIDER_UNAVAILABLE"
+      && inspection.stopReason !== "CONTEXT_CAPACITY_EXCEEDED"
+    ) {
       throw new Error(`Resolve the current ${inspection.status} state before sending a follow-up.`);
     }
     const handle = runtime.run(text, {
-      continuation: { parentRunId: inspection.runId }
+      continuation: { parentRunId: inspection.runId },
+      budgets: DESKTOP_RUN_BUDGETS
     });
     session.turns.push({ runId: handle.id, userInput: text });
     session.archived = false;
@@ -349,13 +401,22 @@ export class DesktopRuntimeService {
     const key = workspaceKey(workspace);
     const existing = this.#runtimes.get(key);
     if (existing !== undefined) return existing;
+    const skillRoots = [
+      join(workspace, ".agents", "skills"),
+      join(workspace, ".nexora", "skills")
+    ].filter((root) => existsSync(root));
     const runtime = createAgent({
       workspace,
       provider: openAICompatibleProviderFromEnv(this.#providerEnvironment(workspace)),
       publicOutputListener: this.#onPublicOutput,
       profile: DESKTOP_PROFILE,
       tools: createBuiltInTools({ artifactDir: join(workspace, ".nexora", "artifacts") }),
-      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 },
+      ...(skillRoots.length === 0 ? {} : {
+        skills: {
+          roots: skillRoots.map((root) => ({ path: root, source: "workspace" as const, trust: "untrusted" as const }))
+        }
+      })
     });
     this.#runtimes.set(key, runtime);
     this.#dirtyRuntimeKeys.delete(key);
@@ -387,7 +448,7 @@ export class DesktopRuntimeService {
     handle: RunHandle,
     request: Extract<RunInspection["pendingRequest"], { readonly kind: "approval" }>
   ): boolean {
-    if (desktopToolApprovalPolicy(request.toolName) !== "auto_approve") return false;
+    if (desktopToolApprovalPolicy(request.toolName, request.input) !== "auto_approve") return false;
     if (this.#automaticApprovalRequests.has(request.id)) return true;
     this.#automaticApprovalRequests.add(request.id);
     void handle.approve({ requestId: request.id })
@@ -491,7 +552,10 @@ export class DesktopRuntimeService {
       const [inspection, history, publicOutputHistory] = await Promise.all([
         handle.inspect(),
         handle.history({ limit: 200 }),
-        handle.history({ types: ["provider.attempt.succeeded"], limit: 200 })
+        handle.history({
+          types: ["provider.attempt.succeeded", "response.rejected", "model.requested"],
+          limit: 200
+        })
       ]);
       runs.push({
         userInput: turn.userInput,
@@ -502,14 +566,39 @@ export class DesktopRuntimeService {
     }
     const latest = runs.at(-1);
     if (latest === undefined) throw new Error("Desktop Session has no Runtime Run.");
-    return { id: session.id, title: session.title, runs, inspection: latest.inspection, history: latest.history };
+    const handles = new Set<string>();
+    for (const invocation of runs.flatMap((run) => run.inspection.invocations)) {
+      if (invocation.status !== "succeeded") continue;
+      const facts = invocation.resultJson;
+      if (facts === null || typeof facts !== "object" || Array.isArray(facts)) continue;
+      const factRecord = facts as Record<string, unknown>;
+      const handle = typeof factRecord.processHandle === "string" ? factRecord.processHandle : null;
+      if (handle === null) continue;
+      if (invocation.toolName === "process.start") handles.add(handle);
+      else if (invocation.toolName === "process.stop") handles.delete(handle);
+    }
+    const managedProcesses = (await Promise.all([...handles].map(async (handle) => {
+      try { return await inspectManagedProcess(this.#workspace, handle); }
+      catch { return null; }
+    }))).filter((managedProcess): managedProcess is NonNullable<typeof managedProcess> => managedProcess !== null);
+    return { id: session.id, title: session.title, runs, inspection: latest.inspection, history: latest.history, managedProcesses };
   }
 
   async #persistedPublicOutputs(
     runtime: AgentRuntime,
     records: SessionRunView["history"]["records"]
   ): Promise<PersistedPublicOutput[]> {
-    const succeeded = records.filter((record) => record.type === "provider.attempt.succeeded");
+    const succeeded = records.filter((record) => {
+      if (record.type !== "provider.attempt.succeeded") return false;
+      const nextRequest = records.find((candidate) => (
+        candidate.sequence > record.sequence && candidate.type === "model.requested"
+      ));
+      return !records.some((candidate) => (
+        candidate.sequence > record.sequence
+        && candidate.type === "response.rejected"
+        && (nextRequest === undefined || candidate.sequence < nextRequest.sequence)
+      ));
+    });
     const outputs = await Promise.all(succeeded.map(async (record): Promise<PersistedPublicOutput | null> => {
       const payload = objectValue(record.payload);
       const modelCallId = stringValue(payload.callId);
@@ -614,12 +703,18 @@ export class DesktopRuntimeService {
 
   #providerEnvironment(workspace = this.#workspace): ProviderEnvironment {
     const environment = { ...readEnv(join(workspace, ".env")), ...process.env };
+    const boundedProviderEnvironment = {
+      ...environment,
+      NEXORA_MODEL_CONNECT_TIMEOUT_MS: environment.NEXORA_MODEL_CONNECT_TIMEOUT_MS ?? "30000",
+      NEXORA_MODEL_TIMEOUT_MS: environment.NEXORA_MODEL_TIMEOUT_MS ?? "60000",
+      NEXORA_MODEL_MAX_DURATION_MS: environment.NEXORA_MODEL_MAX_DURATION_MS ?? "180000"
+    };
     const project = this.#ensureProject(workspace);
     const selected = this.#hostConfig.modelProfiles.find((profile) => profile.id === project.selectedModelProfileId);
-    if (selected === undefined) return { NEXORA_MODEL_PROVIDER: "openai-compatible", ...environment, NEXORA_MODEL_STREAM: "true" };
-    const apiKey = this.#profileApiKey(selected, environment);
+    if (selected === undefined) return { NEXORA_MODEL_PROVIDER: "openai-compatible", ...boundedProviderEnvironment, NEXORA_MODEL_STREAM: "true" };
+    const apiKey = this.#profileApiKey(selected, boundedProviderEnvironment);
     return {
-      ...environment,
+      ...boundedProviderEnvironment,
       NEXORA_MODEL_PROVIDER: "openai-compatible",
       NEXORA_MODEL_BASE_URL: selected.baseUrl,
       NEXORA_MODEL_NAME: selected.model,
@@ -757,7 +852,7 @@ function readEnv(path: string): ProviderEnvironment {
 }
 
 function environmentModelProfile(workspace: string): StoredModelProfile | null {
-  const environment = readEnv(join(workspace, ".env"));
+  const environment = { ...readEnv(join(workspace, ".env")), ...process.env };
   const baseUrl = environment.NEXORA_MODEL_BASE_URL?.trim();
   const model = environment.NEXORA_MODEL_NAME?.trim();
   const decisionOutputTokens = Number(environment.NEXORA_MODEL_DECISION_OUTPUT_TOKENS);

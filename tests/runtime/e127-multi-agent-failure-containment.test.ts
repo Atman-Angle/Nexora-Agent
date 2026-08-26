@@ -17,7 +17,7 @@ import {
 import {
   responseCall,
   responseInput,
-  responseText,
+  responseDirect,
   ScriptedRuntimeProvider
 } from "./runtime-testkit.js";
 
@@ -112,7 +112,7 @@ describe("Phase 3 Multi-Agent failure containment and restart recovery", () => {
     const reopened = createAgent({
       workspace,
       dataDir,
-      provider: new ScriptedRuntimeProvider([responseText("Recovered Child completed.")]),
+      provider: new ScriptedRuntimeProvider([responseDirect("Recovered Child completed.")]),
       tools: []
     });
     const childHandle = reopened.openRun(beforeRestart.branch.childRunId);
@@ -206,7 +206,7 @@ class RoutedDelegationProvider implements RuntimeProvider {
       throw new Error("injected Child Provider outage");
     }
     if (latestInput === "Complete inside Child Provider.") {
-      return responseText("Successful Worker completed.");
+      return responseDirect("Successful Worker completed.");
     }
     if ((context.workerObservations?.length ?? 0) === 2) {
       return responseInput(
@@ -226,9 +226,9 @@ class RoutedDelegationProvider implements RuntimeProvider {
 class RecoveryWithoutRedelegationProvider implements RuntimeProvider {
   parentDelegationDecisions = 0;
   async decide(context: ModelDecisionContext) {
-    if (context.workerRun === true) return responseText("Recovered Worker completed.");
+    if (context.workerRun === true) return responseDirect("Recovered Worker completed.");
     if ((context.workerObservations?.length ?? 0) === 2) {
-      return responseText("Parent synthesized both deterministically recovered Workers.");
+      return responseDirect("Parent synthesized both deterministically recovered Workers.");
     }
     this.parentDelegationDecisions += 1;
     return responseCall("nexora_delegate_workers", { assignments: [
@@ -239,7 +239,7 @@ class RecoveryWithoutRedelegationProvider implements RuntimeProvider {
 
 class PostJoinFailureProvider implements RuntimeProvider {
   async decide(context: ModelDecisionContext) {
-    if (context.workerRun === true) return responseText("Worker joined successfully.");
+    if (context.workerRun === true) return responseDirect("Worker joined successfully.");
     if ((context.workerObservations?.length ?? 0) === 2) throw new Error("injected post-join Provider outage");
     return responseCall("nexora_delegate_workers", { assignments: [
       { objective: "Complete joined assignment A" }, { objective: "Complete joined assignment B" }

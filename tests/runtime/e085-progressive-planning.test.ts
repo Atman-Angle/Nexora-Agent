@@ -42,7 +42,8 @@ describe("E085 progressive planning", () => {
       //    discovery Step is preserved byte-identical.
       responsePlan({
           tasks: [{
-            objective: "Read every discovered source"
+            objective: "Read every discovered source",
+            checks: [{ toolName: "filesystem.read" }, { toolName: "filesystem.read" }]
           }]
         }),
       // 4. Batch both reads, one action per check.
@@ -64,6 +65,7 @@ describe("E085 progressive planning", () => {
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
     expect(view.snapshot.currentPlan?.version).toBe(2);
     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
+      "Discover available source files",
       "Read every discovered source"
     ]);
     expect(view.snapshot.stepProgress.every((item) => item.status === "completed")).toBe(true);

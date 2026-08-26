@@ -7,6 +7,7 @@ import {
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
   DIRECT_RESPONSE_CONTROL,
+  SKILL_SELECTION_CONTROL,
   isControlCall,
   type ModelResponse
 } from "./providers/model-response.js";
@@ -15,6 +16,7 @@ import { RuntimeError, cancellationReason, digestJson } from "@nexora/runtime/in
 import { ActionRejectedError, toRunResult } from "@nexora/runtime/internal";
 import type { RuntimeObserver, RunResult } from "@nexora/runtime/internal";
 import type { RequestModelResult } from "./provider-gateway.js";
+import { planRevisionAllowed } from "./prompt.js";
 import {
   compileModelFinish,
   compileModelPlan,
@@ -25,9 +27,11 @@ import {
   parseModelResponse,
   parsePlanControl
 } from "./planning.js";
+import { SkillSelectionInputSchema } from "./providers/model-response.js";
 
 const PREMATURE_INPUT_REPAIR = "AUTONOMOUS_INPUT_REPAIR_REQUIRED";
 const DELEGATION_ACTION_MUST_BE_EXCLUSIVE = "DELEGATION_ACTION_MUST_BE_EXCLUSIVE";
+const FINAL_CONTROL_REQUIRED = "FINAL_CONTROL_REQUIRED";
 
 /** Runtime mechanics consumed by the sole Harness-owned Agent Loop. */
 export interface AgentLoopRuntimePort {
@@ -73,6 +77,7 @@ export interface AgentLoopRuntimePort {
     compiledActionTypes: readonly string[],
     observer?: RuntimeObserver
   ): void;
+  validateSkillSelection(selection: unknown): unknown;
   dispatch(
     run: RunSnapshot,
     action: RuntimeAction,
@@ -175,6 +180,7 @@ export async function runAgentLoop(
         }
       } catch (error) {
         if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
+        modelCall.discardPublicOutput();
         run = runtime.snapshot(run.runId);
         run = runtime.rejectResponse(run, error, rawResponse, observer);
       }
@@ -191,6 +197,7 @@ export async function runAgentLoop(
       const inputCalls = response.toolCalls.filter((call) => call.name === REQUEST_INPUT_CONTROL);
       const delegationCalls = response.toolCalls.filter((call) => call.name === DELEGATE_WORKERS_CONTROL);
       const directResponseCalls = response.toolCalls.filter((call) => call.name === DIRECT_RESPONSE_CONTROL);
+      const skillCalls = response.toolCalls.filter((call) => call.name === SKILL_SELECTION_CONTROL);
       const runtimeCalls = response.toolCalls.filter((call) => !isControlCall(call));
       if (planCalls.length > 1) {
         throw new ActionRejectedError(`A Provider response may contain at most one ${UPDATE_PLAN_CONTROL} call.`);
@@ -206,6 +213,9 @@ export async function runAgentLoop(
       if (directResponseCalls.length > 1 || (directResponseCalls.length === 1 && response.toolCalls.length !== 1)) {
         throw new ActionRejectedError(`${DIRECT_RESPONSE_CONTROL} must be the only call in a Provider response.`);
       }
+      if (skillCalls.length > 1 || (skillCalls.length === 1 && response.toolCalls.length !== 1)) {
+        throw new ActionRejectedError(`${SKILL_SELECTION_CONTROL} must be the only call in a Provider response.`);
+      }
       if (decisionContext.delegationMode === "required"
         && decisionContext.delegationAllowed !== false
         && decisionContext.delegationSatisfied !== true
@@ -219,6 +229,13 @@ export async function runAgentLoop(
       const directResponse = directResponseCalls.length === 1
         ? parseDirectResponseControl(directResponseCalls[0]!)
         : null;
+      const skillSelection = skillCalls.length === 1
+        ? SkillSelectionInputSchema.parse(skillCalls[0]!.arguments)
+        : null;
+      if (skillSelection !== null) runtime.validateSkillSelection(skillSelection);
+      if (skillSelection !== null && planCalls.length > 0) {
+        throw new ActionRejectedError(`${SKILL_SELECTION_CONTROL} must not be combined with ${UPDATE_PLAN_CONTROL}.`);
+      }
       const actionTypes = [
         ...(planUpdate === null ? [] : ["set_plan"]),
         ...(inputRequest !== null
@@ -231,12 +248,24 @@ export async function runAgentLoop(
             ? [runtimeCalls.length === 1 ? "call_tool" : "execute_step"]
             : response.toolCalls.length === 0
               ? ["propose_finish"]
-              : [])
+              : skillSelection !== null
+                ? ["select_skills"]
+                : [])
       ];
       runtime.recordModelResponse(run, response, actionTypes, observer);
       responseRecorded = true;
       if (planCalls.length === 1) {
-        const planAction = compileModelPlan(run, planUpdate!, () => runtime.createId());
+        if (!planRevisionAllowed(decisionContext)) {
+          throw new ActionRejectedError(
+            "PLAN_REVISION_NOT_REQUIRED: execute or verify the current active Step; revise the Plan only after new user input or an authoritative failure invalidates it."
+          );
+        }
+        const planAction = compileModelPlan(
+          run,
+          planUpdate!,
+          () => runtime.createId(),
+          decisionContext.tools.map((tool) => tool.identity.name)
+        );
         run = await runtime.dispatch(run, planAction, signal, observer);
         if (decisionResult.context.rehydratedFacts.length > 0) {
           run = runtime.recordContextRefEvidence(
@@ -246,7 +275,11 @@ export async function runAgentLoop(
           );
         }
       }
-      if (directResponse !== null) {
+      if (skillSelection !== null) {
+        // Skill activation is Harness-local. The accepted control is persisted
+        // by recordModelResponse so the next turn and reopen can recover it.
+        continue;
+      } else if (directResponse !== null) {
         run = await runtime.dispatch(
           run,
           compileModelFinish(run, directResponse.text, directControlCompletionMode(run)),
@@ -275,6 +308,15 @@ export async function runAgentLoop(
         const toolAction = compileProviderToolCalls(run, runtimeCalls);
         run = await runtime.dispatch(run, toolAction, signal, observer);
       } else if (response.toolCalls.length === 0) {
+        if (
+          run.currentPlan !== null
+          || run.taskContract !== null
+          || run.budgetsUsed.toolCalls > 0
+        ) {
+          throw new ActionRejectedError(
+            `${FINAL_CONTROL_REQUIRED}: after workspace execution, return the final answer through ${DIRECT_RESPONSE_CONTROL}; bare model content is not a completion proposal.`
+          );
+        }
         const finishAction = compileModelFinish(
           run,
           response.text!,
@@ -296,6 +338,7 @@ export async function runAgentLoop(
         break;
       }
       if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
+      modelCall.discardPublicOutput();
       if (normalizedResponse !== undefined && !responseRecorded) {
         runtime.recordModelResponse(run, normalizedResponse, [], observer);
       }
@@ -311,13 +354,12 @@ export async function runAgentLoop(
 
 function bareTextCompletionMode(
   run: RunSnapshot,
-  context: DecisionContextResult["context"]
+  _context: DecisionContextResult["context"]
 ): "task_result" | "direct_response" {
   const executionStarted = run.currentPlan !== null
     || run.taskContract !== null
     || run.budgetsUsed.toolCalls > 0;
   return !executionStarted
-    && (context.tools.length === 0 || run.completionRequirements.evidence === "optional")
     ? "direct_response"
     : "task_result";
 }

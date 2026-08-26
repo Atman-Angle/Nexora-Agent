@@ -22,7 +22,8 @@ export function validateCompletion(
   run: RunSnapshot,
   invocations: readonly ToolInvocation[],
   artifactExists: (digest: string) => boolean = () => true,
-  completionMode: "task_result" | "direct_response" = "task_result"
+  completionMode: "task_result" | "direct_response" = "task_result",
+  toolEffect: (toolName: string) => "read" | "write" | "execute" | undefined = () => undefined
 ): CompletionValidation {
   const issues: string[] = [];
   const plan = run.currentPlan;
@@ -86,10 +87,40 @@ export function validateCompletion(
   }
 
   if (plan !== null) {
+    const finalStep = plan.orderedSteps.at(-1);
+    const latestMutationCompletedAt = invocations
+      .filter((invocation) => (
+        invocation.status === "succeeded"
+        && invocation.completedAt !== null
+        && toolEffect(invocation.toolName) === "write"
+      ))
+      .reduce<string | null>((latest, invocation) => (
+        latest === null || invocation.completedAt! > latest ? invocation.completedAt : latest
+      ), null);
     for (const step of plan.orderedSteps) {
       const requiredChecks = step.acceptanceChecks.filter(
         (item) => item.required && item.kind !== "semantic_review"
       );
+      if (completionMode === "task_result" && requiredChecks.length === 0) {
+        issues.push(`STEP_UNVERIFIABLE:${step.id}`);
+      }
+      const progress = run.stepProgress.find((item) => item.stepId === step.id);
+      if (completionMode === "task_result" && progress?.status !== "completed") {
+        issues.push(`STEP_INCOMPLETE:${step.id}`);
+      }
+      const hasExplicitRole = requiredChecks.some((check) => (
+        check.kind === "tool_result" && check.role !== undefined
+      ));
+      if (
+        completionMode === "task_result"
+        && step.id === finalStep?.id
+        && hasExplicitRole
+        && !requiredChecks.some((check) => (
+          check.kind === "tool_result" && check.role === "verification"
+        ))
+      ) {
+        issues.push(`STEP_VERIFICATION_REQUIRED:${step.id}`);
+      }
       for (const check of requiredChecks) {
         const persisted = findApplicableEvidence(
           eligibleEvidence,
@@ -99,6 +130,14 @@ export function validateCompletion(
         );
         if (persisted === undefined) {
           issues.push(`CHECK_UNSATISFIED:${step.id}:${check.id}`);
+        } else if (
+          step.id === finalStep?.id
+          && check.kind === "tool_result"
+          && check.role === "verification"
+          && latestMutationCompletedAt !== null
+          && persisted.producedAt < latestMutationCompletedAt
+        ) {
+          issues.push(`CHECK_EVIDENCE_STALE:${step.id}:${check.id}`);
         }
       }
     }

@@ -89,7 +89,7 @@ export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
 }
 
 export function finishFromEvidence(summary: string): (context: ModelDecisionContext) => ModelResponse {
-  return (_context) => responseText(summary);
+  return (_context) => responseDirect(summary);
 }
 
 /** Adapts internal Runtime-command test descriptors into the production Provider response contract. */
@@ -127,7 +127,7 @@ export function materializeTestResponse(value: unknown, context: ModelDecisionCo
     return responseCall("nexora_delegate_workers", { assignments: command.assignments });
   }
   if (command.type === "propose_finish") {
-    return responseText(String(command.summary));
+    return responseDirect(String(command.summary));
   }
   if (command.type === "call_tool") {
     return responseCall(String(command.toolName), command.input);
@@ -152,7 +152,17 @@ export function materializeTestResponse(value: unknown, context: ModelDecisionCo
       ...(typeof taskContractValue?.goal === "string" ? { goal: taskContractValue.goal } : {}),
       tasks: sourceSteps.map((item) => {
         const step = item as Record<string, unknown>;
-        return { objective: step.objective };
+        const acceptanceChecks = Array.isArray(step.acceptanceChecks)
+          ? step.acceptanceChecks as Array<Record<string, unknown>>
+          : [];
+        return {
+          objective: step.objective,
+          checks: acceptanceChecks.flatMap((check) => (
+            check.kind === "tool_result" && typeof check.toolName === "string"
+              ? [{ toolName: check.toolName }]
+              : []
+          ))
+        };
       })
   });
 }

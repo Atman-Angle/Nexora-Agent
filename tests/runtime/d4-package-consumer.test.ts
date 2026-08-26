@@ -199,7 +199,8 @@ const provider = createScriptedProvider({
     modelResponses.plan({
       goal: "Lookup external value",
       steps: [{
-        objective: "Lookup value"
+        objective: "Lookup value",
+        checks: [{ toolName: "external.lookup" }]
       }]
     }),
     modelResponses.tool({

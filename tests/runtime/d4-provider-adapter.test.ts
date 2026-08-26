@@ -65,7 +65,7 @@ describe("D4 Provider Adapter", () => {
     expect(disposed).toBe(1);
   });
 
-  it("fails malformed normalized Adapter content as a Provider protocol error", async () => {
+  it("routes malformed normalized Adapter content through bounded model-response repair", async () => {
     const workspace = temporaryWorkspace();
     let calls = 0;
     const provider = defineProviderAdapter({
@@ -86,10 +86,12 @@ describe("D4 Provider Adapter", () => {
 
     const inspection = await run.wait();
 
-    expect(inspection.status).toBe("blocked");
-    expect(inspection.error?.code).toBe("PROVIDER_UNAVAILABLE");
-    await until(() => events.some((event) => event.type === "run.blocked"));
-    expect(events.some((event) => event.type === "model.response_rejected")).toBe(false);
+    expect(inspection.status).toBe("waiting_for_input");
+    expect(inspection.error?.code).toBe("INVALID_MODEL_RESPONSE");
+    expect(calls).toBe(2);
+    await until(() => events.some((event) => event.type === "input.required"));
+    expect(events.some((event) => event.type === "model.response_rejected")).toBe(true);
+    expect(events.some((event) => event.type === "run.blocked")).toBe(false);
     await subscription.close();
     await runtime.close();
   });

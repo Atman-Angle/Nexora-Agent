@@ -178,7 +178,7 @@ describe("E120 general Agent Prompt and Host Profile", () => {
       call += 1;
       const content = call === 1
         ? { text: null, toolCalls: [{ name: "records.lookup", arguments: { key: "alpha" } }], finishReason: "tool_calls" }
-        : { text: "Alpha is active.", toolCalls: [], finishReason: "stop" };
+        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Alpha is active." } }], finishReason: "tool_calls" };
       return response(content, {
         prompt_tokens: 200,
         completion_tokens: 20,

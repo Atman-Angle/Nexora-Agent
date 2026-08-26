@@ -81,7 +81,7 @@ export function createAcceptanceProvider() {
       if (completedTools.length === 2) {
         return modelResponses.tool({ name: "filesystem.read", arguments: { path: file } });
       }
-      return modelResponses.text(`Changed and verified ${file}.`);
+      return modelResponses.direct({ text: `Changed and verified ${file}.` });
     }
   });
 }
@@ -91,13 +91,16 @@ function plan(file: string) {
       goal: `Change ${file} from before to after and verify it`,
       tasks: [
         {
-          objective: `Read ${file} before mutation`
+          objective: `Read ${file} before mutation`,
+          checks: [{ toolName: "filesystem.read" }]
         },
         {
-          objective: `Patch ${file}`
+          objective: `Patch ${file}`,
+          checks: [{ toolName: "filesystem.patch" }]
         },
         {
-          objective: `Read ${file} after mutation`
+          objective: `Read ${file} after mutation`,
+          checks: [{ toolName: "filesystem.read" }]
         }
       ]
     });

@@ -68,7 +68,7 @@ describe("E117 general Agent continuity", () => {
     await runtime.close();
   });
 
-  it("accepts an objective-only Plan without inventing a completion check", async () => {
+  it("rejects completion of an objective-only Plan that has no verifiable check", async () => {
     const workspace = tempRoot();
     const runtime = createRuntime({
       workspace,
@@ -76,7 +76,7 @@ describe("E117 general Agent continuity", () => {
       provider: queuedProvider([
         modelResponses.plan({ goal: "Read customer-42.", tasks: [{ objective: "Read the current record." }] }),
         modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
-        modelResponses.text("Customer 42 is active.")
+        modelResponses.direct({ text: "Customer 42 is active." })
       ]),
       tools: [recordLookupTool()]
     });
@@ -84,9 +84,10 @@ describe("E117 general Agent continuity", () => {
     const result = await runtime.start({ input: "Read customer-42." });
     const view = await runtime.inspect(result.runId);
 
-    expect(result.status).toBe("succeeded");
+    expect(result.status).toBe("blocked");
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([]);
-    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
+    expect(JSON.stringify(view.events.filter((event) => event.type === "response.rejected")))
+      .toContain("STEP_UNVERIFIABLE");
     await runtime.close();
   });
 
@@ -132,7 +133,7 @@ describe("E117 general Agent continuity", () => {
       modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
       modelResponses.tool({ name: "records.update", arguments: { recordId: "customer-42", tier: "gold" } }),
       modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
-      modelResponses.text("Customer 42 is now gold.")
+      modelResponses.direct({ text: "Customer 42 is now gold." })
     ]);
     const runtime = createRuntime({
       workspace,

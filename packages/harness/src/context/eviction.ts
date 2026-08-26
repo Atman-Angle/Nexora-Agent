@@ -201,6 +201,25 @@ export function evictDecisionContextTowardBudget(
     }, true);
   }
 
+  // Capability prose is deterministic and rebuildable. Under real capacity
+  // pressure, compact those verbose hints before contracting authoritative
+  // Tool observations—especially the current file/resource working set. Keep
+  // identity, purpose, effect, schemas, examples and evidence contracts so the
+  // Provider can still make a valid Tool call.
+  if (context.tools.some((tool) => (
+    tool.capability.nonGoals.length > 0
+    || tool.decision.useWhen.length > 0
+    || tool.decision.avoidWhen.length > 0
+  ))) {
+    return rebuildDecisionContext(context, {
+      tools: context.tools.map((tool) => ({
+        ...tool,
+        capability: { ...tool.capability, nonGoals: [] },
+        decision: { useWhen: [], avoidWhen: [] }
+      }))
+    });
+  }
+
   let estimatedBytes = jsonBytes(context);
   const targetBytes = Math.max(1, Math.floor(
     estimatedBytes * targetInputTokens / measuredInputTokens

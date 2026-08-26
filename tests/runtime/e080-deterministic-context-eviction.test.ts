@@ -208,7 +208,7 @@ describe("E080 deterministic Context Eviction", () => {
     expect(finalContext.toolObservations[0]).toEqual(expect.objectContaining({
       payloadMode: "reference",
       facts: null,
-      retention: expect.objectContaining({ class: "active_step", critical: false })
+      retention: expect.objectContaining({ class: "predecessor_evidence", critical: false })
     }));
     expect(finalContext.run.taskContract?.constraints).toEqual([]);
     expect(view.modelCalls.at(-1)).toEqual(expect.objectContaining({
@@ -310,7 +310,7 @@ describe("E080 deterministic Context Eviction", () => {
     expect(view.snapshot.evidence).toHaveLength(1);
     expect(view.snapshot.evidence[0]).toEqual(expect.objectContaining({
       stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
-      checkId: `invocation:${invocation.id}`,
+      checkId: view.snapshot.currentPlan!.orderedSteps[0]!.acceptanceChecks[0]!.id,
       invocationId: invocation.id,
       artifactRef: invocation.payloadArtifactRef
     }));
@@ -320,7 +320,7 @@ describe("E080 deterministic Context Eviction", () => {
       payloadMode: "full",
       facts: invocation.resultJson,
       payloadFragment: null,
-      retention: expect.objectContaining({ class: "active_step", critical: false }),
+      retention: expect.objectContaining({ class: "active_check", critical: true }),
       sourceRefs: expect.arrayContaining([
         `invocation:${invocation.id}`,
         `evidence:${view.snapshot.evidence[0]!.id}`,
@@ -591,7 +591,7 @@ describe("E080 deterministic Context Eviction", () => {
       ORDER BY name
     `).all() as Array<{ name: string }>;
     migrated.close();
-    expect(version).toBe(8);
+    expect(version).toBe(9);
     expect(tables.map((row) => row.name)).toContain("context_checkpoints");
     expect(tables.map((row) => row.name)).toContain("branches");
     expect(toolColumns.filter((row) => row.name === "payload_digest")).toHaveLength(1);

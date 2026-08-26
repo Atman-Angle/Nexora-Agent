@@ -195,6 +195,10 @@ Agent Loop、Provider Contract 或 Completion Gate 改动必须固定验证：�
 
 Prompt、Profile、Tool Schema、ModelResponse 或 Provider Transport 改动必须固定验证：Kernel/Host/Profile/Project/Tool 语义优先级；Profile 不能改变 Tool、权限、Approval、Evidence 或 Completion；canonical stable prefix 和 Tool ordering；真实 Zod JSON Schema；`native_tools`/`structured_output` 单 Transport wire；Provider call ID 保留；Plan/HITL controls 的确定性路由；普通 native content 不执行 Tool；reopen strategy continuity；逐 Attempt cache usage 持久化；Bench provenance 与六种 cache status 口径。`unsupported/disabled/unknown` 不进入 zero-hit 分母。L3 还必须保留真实 Provider capability 与任务结果，并把缓存门槛、Provider 不返回指标、协议不兼容和外部模型失败如实区分。
 
+### 4.5 Agent Skill 自动选择验收
+
+Skill 改动必须固定验证：Agent Skills `SKILL.md` frontmatter/name 约束；显式本地根目录、重复 ID、目录/文件链接、路径逃逸和 package/file/指令预算；目录只包含元数据与 digest，未选择前 Prompt 不含正文；`nexora_select_skills` 必须独占响应并校验 catalog/id/version/package digest；选择后下一轮才出现正文；拒绝 stale/unknown/duplicate/compound selection 时不创建 Runtime Tool Invocation；恶意 Skill 文本不能改变 Tool、Approval、Evidence、Plan、Run Status 或 Completion；model.turn 审计可在 reopen 重建 active Skill；package/instruction drift 失败关闭；context eviction 不得静默丢弃 active instructions。远程下载、MCP、市场和脚本自动执行不属于本 Feature 验收。
+
 ## 5. 完成证据
 
 证据要求与风险匹配。

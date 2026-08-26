@@ -31,6 +31,7 @@ import {
   type PromptHostConfiguration
 } from "./profile.js";
 import { DEFAULT_DELEGATION_POLICY, DelegationPolicySchema, type DelegationPolicy } from "./multi-agent.js";
+import { SkillCatalog } from "./skills.js";
 
 export type {
   AgentPublicOutputEvent,
@@ -52,7 +53,8 @@ export function createAgent(options: CreateAgentOptions): RuntimeEngine {
     }
     resolveProviderModelProfile(provider);
     const delegationPolicy = DelegationPolicySchema.parse(options.delegationPolicy ?? DEFAULT_DELEGATION_POLICY);
-    const driver = createAgentDriver(provider, memory, capturePolicy, promptHost, delegationPolicy, options.publicOutputListener);
+    const skillCatalog = options.skills === undefined ? null : SkillCatalog.load(options.skills);
+    const driver = createAgentDriver(provider, memory, capturePolicy, promptHost, delegationPolicy, skillCatalog, options.publicOutputListener);
     return new RuntimeEngine({
       workspace: options.workspace,
       tools: options.tools,
@@ -99,7 +101,7 @@ function validateProvider(provider: RuntimeProvider): RuntimeProvider {
 }
 
 function validateReservedToolNames(tools: CreateAgentOptions["tools"]): void {
-  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL, DELEGATE_WORKERS_CONTROL, DIRECT_RESPONSE_CONTROL]);
+  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL, DELEGATE_WORKERS_CONTROL, DIRECT_RESPONSE_CONTROL, "nexora_select_skills"]);
   const conflict = tools.find((tool) => reserved.has(tool.contract.identity.name));
   if (conflict !== undefined) {
     throw new Error(`Runtime Tool name is reserved for a Harness control: ${conflict.contract.identity.name}`);
@@ -129,12 +131,13 @@ function createAgentDriver(
   capturePolicy: "metadata" | "redacted",
   promptHost: PromptHostConfiguration,
   delegationPolicy: DelegationPolicy,
+  skillCatalog: SkillCatalog | null,
   publicOutputListener: AgentPublicOutputListener | undefined
 ): AgentDriver {
   return {
     async run(runtime, initial, signal, observer): Promise<RunResult> {
       return await runAgentLoop(
-        createLoopPort({ runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, publicOutputListener }),
+        createLoopPort({ runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, skillCatalog, publicOutputListener }),
         initial,
         signal,
         observer
@@ -153,9 +156,10 @@ function createLoopPort(input: {
   readonly capturePolicy: "metadata" | "redacted";
   readonly promptHost: PromptHostConfiguration;
   readonly delegationPolicy: DelegationPolicy;
+  readonly skillCatalog: SkillCatalog | null;
   readonly publicOutputListener: AgentPublicOutputListener | undefined;
 }): AgentLoopRuntimePort {
-  const { runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, publicOutputListener } = input;
+  const { runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, skillCatalog, publicOutputListener } = input;
   return {
     now: () => runtime.now(),
     createId: () => runtime.createId(),
@@ -173,7 +177,8 @@ function createLoopPort(input: {
           has: (digest) => runtime.artifactExists(digest)
         },
         ...(memory === undefined ? {} : { memory, now: runtime.now() }),
-        ...(state.forkContext === null ? {} : { forkContext: state.forkContext })
+        ...(state.forkContext === null ? {} : { forkContext: state.forkContext }),
+        ...(skillCatalog === null ? {} : { skills: skillCatalog.project(state.events) })
       });
     },
     recordContextRefEvidence: (run, facts, observer) => (
@@ -215,6 +220,14 @@ function createLoopPort(input: {
           }))
         }
       }, observer);
+    },
+    validateSkillSelection: (selection) => {
+      if (skillCatalog === null) throw new ActionRejectedError("SKILL_SELECTION_UNAVAILABLE: No Skill catalog is configured for this Agent.");
+      try {
+        return skillCatalog.validateSelection(selection);
+      } catch (error) {
+        throw new ActionRejectedError(errorMessage(error));
+      }
     },
     dispatch: async (run, action, signal, observer) => (
       dispatchAgentAction(runtime, run, action, signal, observer)

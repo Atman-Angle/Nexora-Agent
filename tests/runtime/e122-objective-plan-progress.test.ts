@@ -9,6 +9,7 @@ import { createAgent } from "../../packages/harness/src/index.js";
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import {
   ScriptedRuntimeProvider,
+  responseCall,
   responseInput,
   responsePlan,
   responsePlanAndTools
@@ -80,23 +81,19 @@ describe("E122 truthful objective-only Plan progress", () => {
     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.id)).toEqual(
       firstPlan.orderedSteps.map((step) => step.id)
     );
-    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ message: expect.stringContaining("PLAN_UNCHANGED") }) })
+    ]);
   });
 
-  it("advances by replacing the remaining-work snapshot without claiming Tool Evidence", async () => {
+  it("does not silently drop objective-only unfinished work from later snapshots", async () => {
     const provider = new ScriptedRuntimeProvider([
       responsePlanAndTools(plan("Create HTML", "Create CSS", "Create JavaScript", "Run verifier"), [
         { name: "stage.record", arguments: { name: "index.html" } }
       ]),
-      responsePlanAndTools(plan("Create CSS", "Create JavaScript", "Run verifier"), [
-        { name: "stage.record", arguments: { name: "styles.css" } }
-      ]),
-      responsePlanAndTools(plan("Create JavaScript", "Run verifier"), [
-        { name: "stage.record", arguments: { name: "app.js" } }
-      ]),
-      responsePlanAndTools(plan("Run verifier"), [
-        { name: "stage.record", arguments: { name: "verify.mjs" } }
-      ]),
+      responseCall("stage.record", { name: "styles.css" }),
+      responseCall("stage.record", { name: "app.js" }),
+      responseCall("stage.record", { name: "verify.mjs" }),
       responseInput("Pause before final delivery.", "Inspect the last active objective.")
     ]);
     const runtime = createAgent({ workspace: tempRoot(), provider, tools: [stageTool()] });
@@ -106,20 +103,28 @@ describe("E122 truthful objective-only Plan progress", () => {
     await runtime.close();
 
     expect(result.status).toBe("waiting");
-    expect(view.snapshot.currentPlan?.version).toBe(4);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
+      "Create HTML",
+      "Create CSS",
+      "Create JavaScript",
       "Run verifier"
     ]);
-    expect(view.snapshot.stepProgress).toEqual([expect.objectContaining({ status: "active" })]);
+    expect(view.snapshot.stepProgress.map((progress) => progress.status)).toEqual([
+      "active",
+      "pending",
+      "pending",
+      "pending"
+    ]);
     expect(view.snapshot.evidence).toHaveLength(4);
     expect(view.snapshot.evidence.every((evidence) => (
       evidence.checkId === `invocation:${evidence.invocationId}`
     ))).toBe(true);
     expect(view.toolInvocations.map((invocation) => invocation.stepId)).toEqual([
       provider.contexts[1]!.run.currentPlan!.orderedSteps[0]!.id,
-      provider.contexts[2]!.run.currentPlan!.orderedSteps[0]!.id,
-      provider.contexts[3]!.run.currentPlan!.orderedSteps[0]!.id,
-      provider.contexts[4]!.run.currentPlan!.orderedSteps[0]!.id
+      provider.contexts[1]!.run.currentPlan!.orderedSteps[0]!.id,
+      provider.contexts[1]!.run.currentPlan!.orderedSteps[0]!.id,
+      provider.contexts[1]!.run.currentPlan!.orderedSteps[0]!.id
     ]);
   });
 
@@ -154,6 +159,7 @@ describe("E122 truthful objective-only Plan progress", () => {
     expect(after.snapshot.currentPlan).toEqual(before.snapshot.currentPlan);
     expect(after.snapshot.stepProgress).toEqual(before.snapshot.stepProgress);
     expect(after.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
+      "Inspect workspace",
       "Write dashboard"
     ]);
     expect(after.snapshot.stepProgress[0]?.status).toBe("active");

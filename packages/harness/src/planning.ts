@@ -11,6 +11,8 @@ import {
   ModelInputRequestSchema,
   ModelDirectResponseSchema,
   DIRECT_RESPONSE_CONTROL,
+  MAX_MODEL_PLAN_TASKS,
+  MAX_RECOMMENDED_UNFINISHED_PLAN_STEPS,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
@@ -95,13 +97,16 @@ export function parseDirectResponseControl(call: ProviderToolCall): ModelDirectR
 export function compileModelPlan(
   run: RunSnapshot,
   update: ModelPlanUpdate,
-  createId: () => string
+  createId: () => string,
+  availableToolNames?: readonly string[]
 ): Extract<RuntimeAction, { type: "set_plan" }> {
   return compilePlanTasks({
     run,
     createId,
     goal: update.goal,
-    tasks: update.tasks
+    tasks: update.tasks,
+    removeSteps: update.removeSteps ?? [],
+    availableToolNames
   });
 }
 
@@ -151,6 +156,8 @@ function compilePlanTasks(input: {
   readonly createId: () => string;
   readonly goal: string | undefined;
   readonly tasks: readonly ModelPlanTask[];
+  readonly removeSteps: readonly { readonly stepId: string; readonly reason: string }[];
+  readonly availableToolNames: readonly string[] | undefined;
 }): Extract<RuntimeAction, { type: "set_plan" }> {
   const { run } = input;
   const hasNewInput = run.taskContract !== null
@@ -165,23 +172,57 @@ function compilePlanTasks(input: {
   const completedIds = new Set(completedSteps.map((step) => step.id));
   const existingByObjective = new Map<string, StructuredPlan["orderedSteps"][number][]>();
   for (const step of run.currentPlan?.orderedSteps ?? []) {
-    const matches = existingByObjective.get(step.objective) ?? [];
+    const objectiveKey = normalizeObjective(step.objective);
+    const matches = existingByObjective.get(objectiveKey) ?? [];
     matches.push(step);
-    existingByObjective.set(step.objective, matches);
+    existingByObjective.set(objectiveKey, matches);
+  }
+  const removable = new Set((run.currentPlan?.orderedSteps ?? [])
+    .filter((step) => !completedIds.has(step.id))
+    .map((step) => step.id));
+  const removedIds = new Set<string>();
+  for (const removal of input.removeSteps) {
+    if (!removable.has(removal.stepId)) {
+      throw new ActionRejectedError(`PLAN_REMOVE_INVALID: only an existing unfinished Step may be removed: ${removal.stepId}`);
+    }
+    if (removedIds.has(removal.stepId)) {
+      throw new ActionRejectedError(`PLAN_REMOVE_DUPLICATE: ${removal.stepId}`);
+    }
+    removedIds.add(removal.stepId);
   }
   const usedStepIds = new Set<string>();
   const seenObjectives = new Set<string>();
   const compiledSteps = input.tasks.flatMap((task) => {
-    if (seenObjectives.has(task.objective)) return [];
-    seenObjectives.add(task.objective);
-    const existing = existingByObjective.get(task.objective)?.find((step) => !usedStepIds.has(step.id));
+    const objectiveKey = normalizeObjective(task.objective);
+    if (seenObjectives.has(objectiveKey)) return [];
+    seenObjectives.add(objectiveKey);
+    const existing = existingByObjective.get(objectiveKey)?.find((step) => (
+      !usedStepIds.has(step.id) && !removedIds.has(step.id)
+    ));
     if (existing !== undefined) {
       usedStepIds.add(existing.id);
       return completedIds.has(existing.id) ? [] : [existing];
     }
-    return [compileTask(task, input.createId)];
+    return [compileTask(task, input.createId, input.availableToolNames)];
   });
-  const remainingObjectives = [...seenObjectives];
+  const remainingObjectives = input.tasks.map((task) => task.objective);
+  const preservedIncompleteSteps = (run.currentPlan?.orderedSteps ?? []).filter((step) => (
+    !completedIds.has(step.id)
+    && !usedStepIds.has(step.id)
+    && !removedIds.has(step.id)
+  ));
+  const nextIncompleteSteps = [...preservedIncompleteSteps, ...compiledSteps];
+  const currentIncompleteCount = (run.currentPlan?.orderedSteps.length ?? 0) - completedSteps.length;
+  const unfinishedStepLimit = run.currentPlan === null
+    ? MAX_MODEL_PLAN_TASKS
+    : Math.max(MAX_RECOMMENDED_UNFINISHED_PLAN_STEPS, currentIncompleteCount);
+  if (nextIncompleteSteps.length > unfinishedStepLimit) {
+    const removableStepIds = [...removable].filter((stepId) => !removedIds.has(stepId));
+    throw new ActionRejectedError(
+      `PLAN_STEP_LIMIT: this revision may contain at most ${unfinishedStepLimit} unfinished Steps; `
+      + `remove superseded unfinished Steps with removeSteps using these visible stepIds: ${removableStepIds.join(", ")}`
+    );
+  }
 
   const taskContract = requiresTaskContract
     ? {
@@ -194,17 +235,47 @@ function compilePlanTasks(input: {
     type: "set_plan",
     basedOnVersion: run.currentPlan?.version ?? null,
     ...(taskContract === undefined ? {} : { taskContract }),
-    orderedSteps: [...completedSteps, ...compiledSteps]
+    orderedSteps: [...completedSteps, ...nextIncompleteSteps]
   };
 }
 
 function compileTask(
   task: ModelPlanTask,
-  createId: () => string
+  createId: () => string,
+  availableToolNames: readonly string[] | undefined
 ): StructuredPlan["orderedSteps"][number] {
   return {
     id: `step-${createId()}`,
     objective: task.objective,
-    acceptanceChecks: []
+    acceptanceChecks: (task.checks ?? []).map((check) => {
+      const toolName = canonicalToolName(check.toolName, availableToolNames);
+      return {
+        id: `check-${createId()}`,
+        kind: "tool_result" as const,
+        required: true,
+        toolName,
+        expectedStatus: "success" as const,
+        ...(check.role === undefined ? {} : { role: check.role })
+      };
+    })
   };
+}
+
+function canonicalToolName(
+  proposed: string,
+  availableToolNames: readonly string[] | undefined
+): string {
+  if (availableToolNames === undefined) return proposed;
+  if (availableToolNames.includes(proposed)) return proposed;
+  const candidates = availableToolNames.filter((name) => providerSafeToolName(name) === proposed);
+  if (candidates.length === 1) return candidates[0]!;
+  throw new ActionRejectedError(`PLAN_CHECK_TOOL_UNKNOWN: ${proposed}`);
+}
+
+function providerSafeToolName(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/gu, "_").slice(0, 64) || "tool";
+}
+
+function normalizeObjective(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, " ").trim();
 }

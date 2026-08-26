@@ -21,7 +21,7 @@ import {
 import {
   ScriptedRuntimeProvider,
   responsePlan,
-  responseText,
+  responseDirect,
   responseTools
 } from "./runtime-testkit.js";
 
@@ -34,8 +34,8 @@ describe("E097 real Provider continuity canary contract", () => {
           name: "filesystem.read",
           arguments: { path }
         }))),
-      responsePlan({ tasks: [{ objective: "Confirm all eight restored shard outcomes." }] }),
-      responseText("Verified all eight ORCHID shard codes from exact file Evidence.")
+      responsePlan({ tasks: [{ objective: "Read every fixed shard and report the ordered preferred-stream codes from persisted facts.", checks: [{ toolName: "filesystem.read" }] }] }),
+      responseDirect("Verified all eight ORCHID shard codes from exact file Evidence.")
     ]);
     const provider: RuntimeProvider = {
       modelProfile: {
@@ -257,7 +257,8 @@ function canaryPlan() {
   return responsePlan({
       goal: "Use cross-run Memory to identify the preferred stream and read all eight exact shards.",
       tasks: [{
-        objective: "Read every fixed shard and report the ordered preferred-stream codes from persisted facts."
+        objective: "Read every fixed shard and report the ordered preferred-stream codes from persisted facts.",
+        checks: [{ toolName: "filesystem.read" }]
       }]
     });
 }

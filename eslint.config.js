@@ -12,6 +12,7 @@ export default [
       "packages/harness/dist/**",
       "node_modules/**",
       "tmp/**",
+      ".tmp/**",
       "tests/fixtures/**",
       "harness/**/reports/**",
       "harness/**/datasets/**/fixture/**",

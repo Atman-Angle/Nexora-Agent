@@ -6,6 +6,22 @@ export {
   type AgentPublicOutputEvent,
   type AgentPublicOutputListener
 } from "./agent.js";
+export {
+  SkillCatalog,
+  SkillConfigurationSchema,
+  SkillLimitsSchema,
+  SkillRootSchema,
+  SkillSourceSchema,
+  SkillTrustSchema,
+  type ActiveSkill,
+  type SkillConfiguration,
+  type SkillDecisionContext,
+  type SkillDescriptor,
+  type SkillLimits,
+  type SkillRoot,
+  type SkillSource,
+  type SkillTrust
+} from "./skills.js";
 export type { CreateRuntimeOptions } from "./types.js";
 
 export {
@@ -14,6 +30,7 @@ export {
   RunControlError,
   RuntimeError,
   createBuiltInTools,
+  inspectManagedProcess,
   defineTool,
   type ApprovalDecision,
   type AuditHistoryPage,
@@ -27,6 +44,7 @@ export {
   type PublicRecoveryRequest,
   type PublicStepProgress,
   type PublicToolInvocation,
+  type ManagedProcessInspectFacts,
   type ResumeInput,
   type RunFinalResult,
   type RunHandle,
@@ -144,13 +162,17 @@ export {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
+  SKILL_SELECTION_CONTROL,
   modelResponses,
   type ModelResponse,
   type ModelPlanUpdate,
   type ModelPlanTask,
   type ProviderToolCall,
   type ModelInputRequest,
-  type ModelDirectResponse
+  type ModelDirectResponse,
+  SkillSelectionInputSchema,
+  type SkillSelectionInput,
+  isControlCall
 } from "./providers/model-response.js";
 
 export {

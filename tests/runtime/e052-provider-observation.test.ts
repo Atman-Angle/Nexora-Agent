@@ -359,9 +359,10 @@ function observationDecision(_workspace: string, context: ObservationContext, in
 }
 
 function structuredPlan(goal: string, objectives: readonly string[]): unknown {
+  const tools = ["filesystem.read", "filesystem.patch", "shell.execute"];
   return structuredTool("nexora_update_plan", {
     goal,
-    tasks: objectives.map((objective) => ({ objective }))
+    tasks: objectives.map((objective, index) => ({ objective, checks: [{ toolName: tools[index] }] }))
   });
 }
 
@@ -374,7 +375,7 @@ function structuredInput(question: string, reason: string): unknown {
 }
 
 function structuredText(text: string): unknown {
-  return { text, toolCalls: [], finishReason: "stop" };
+  return structuredTool("nexora_respond", { text });
 }
 
 function closeServer(server: Server): Promise<void> {

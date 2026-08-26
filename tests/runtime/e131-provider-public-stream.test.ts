@@ -37,7 +37,7 @@ describe("E131 Provider public output stream", () => {
         transport: { kind: "native_tools", promptCache: { mode: "disabled" } },
         async decide(_context, operation) {
           operation.reportPublicTextDelta?.("Visible progress.");
-          return modelResponses.text("Completed despite the UI listener.");
+          return modelResponses.direct({ text: "Completed despite the UI listener." });
         }
       },
       tools: [],
@@ -155,6 +155,41 @@ describe("E131 Provider public output stream", () => {
     expect(trace.attempts.every((attempt) => attempt.responseArtifactRef === null)).toBe(true);
   });
 
+  it("discards provisional public text when Harness rejects the completed model response", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e131-rejected-response-"));
+    roots.push(workspace);
+    const output: AgentPublicOutputEvent[] = [];
+    const oversized = {
+      text: null,
+      toolCalls: Array.from({ length: 9 }, (_, index) => ({
+        callId: `call-${index}`,
+        name: "missing.read",
+        arguments: { index }
+      })),
+      finishReason: "tool_calls"
+    };
+    const runtime = createAgent({
+      workspace,
+      provider: {
+        async decide(_context, operation) {
+          operation.reportPublicTextDelta?.("Provisional rejected output.");
+          return oversized;
+        }
+      },
+      tools: [],
+      publicOutputListener: (event) => output.push(event)
+    });
+
+    const result = await runtime.start({ input: "Reject oversized output without leaving it visible." });
+    await runtime.close();
+
+    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(output.map((event) => event.type)).toEqual([
+      "text.delta", "text.completed", "text.discarded",
+      "text.delta", "text.completed", "text.discarded"
+    ]);
+  });
+
   it("does not persist provider-exposed process text when the Run is cancelled", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e131-cancel-"));
     roots.push(workspace);
@@ -236,6 +271,9 @@ describe("E131 Provider public output stream", () => {
     expect(requests).toBe(3);
     expect(trace.attempts).toHaveLength(3);
     expect(trace.attempts.every((attempt) => attempt.status === "failed")).toBe(true);
+    expect(trace.attempts.every((attempt) => attempt.errorCategory === "PROVIDER_IDLE_TIMEOUT")).toBe(true);
+    expect(trace.attempts.every((attempt) => attempt.retryable)).toBe(true);
+    expect(trace.attempts.every((attempt) => attempt.partialResponse)).toBe(true);
     expect(trace.attempts.every((attempt) => attempt.responseArtifactRef === null)).toBe(true);
     expect(output.map((event) => event.type)).toEqual([
       "text.delta", "text.discarded",

@@ -379,7 +379,7 @@ describe("E084 Model / Provider configuration", () => {
       decisions += 1;
       if (decisions === 1) return providerResponse(setPlan());
       if (decisions === 2) return providerResponse(callTool());
-      return providerResponse({ text: "Read the target file.", toolCalls: [], finishReason: "stop" });
+      return providerResponse({ text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Read the target file." } }], finishReason: "tool_calls" });
     };
     const runtime = createRuntime({
       workspace,
@@ -469,7 +469,7 @@ function setPlan(): unknown {
       name: "nexora_update_plan",
       arguments: {
         goal: "Read the target file",
-        tasks: [{ objective: "Read the target file" }]
+        tasks: [{ objective: "Read the target file", checks: [{ toolName: "test.read" }] }]
       }
     }],
     finishReason: "tool_calls"

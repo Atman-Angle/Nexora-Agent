@@ -167,6 +167,89 @@ describe("E065 Provider transient failure recovery", () => {
     }
   });
 
+  it("allows one bounded Provider recovery segment and rejects repeated generic Resume without another request", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e065-bounded-resume-"));
+    const fetch = vi.fn().mockImplementation(async () => new Response("unavailable", { status: 503 }));
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: "https://provider.example",
+        apiKey: "test",
+        model: "test",
+        fetch
+      }),
+      tools: []
+    });
+
+    try {
+      const handle = runtime.run("Remain bounded while the Provider is unavailable.");
+      expect((await handle.wait()).stopReason).toBe("PROVIDER_UNAVAILABLE");
+      expect(fetch).toHaveBeenCalledTimes(3);
+
+      await handle.resume();
+      expect((await handle.inspect()).stopReason).toBe("PROVIDER_UNAVAILABLE");
+      expect(fetch).toHaveBeenCalledTimes(6);
+
+      await expect(handle.resume()).rejects.toThrow(/Provider recovery is exhausted/);
+      expect(fetch).toHaveBeenCalledTimes(6);
+      const publicInspection = await handle.inspect();
+      const inspection = await runtime.inspect(handle.id);
+      expect(publicInspection.status).toBe("blocked");
+      expect(publicInspection.error?.retryable).toBe(false);
+      expect(publicInspection.delivery?.nextAction).toContain("continuation Run");
+      expect(publicInspection.executionMetrics.modelCalls).toBe(2);
+      expect(inspection.events.filter((event) => (
+        event.type === "run.resumed" && event.payload.reason === "provider_retry"
+      ))).toHaveLength(1);
+    } finally {
+      await runtime.close();
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an oversized OpenAI-compatible structured response in model repair instead of Provider recovery", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e065-oversized-structured-"));
+    const effect = { calls: 0 };
+    const oversized = {
+      text: null,
+      toolCalls: Array.from({ length: 9 }, (_, index) => ({
+        name: "counter.read",
+        arguments: { key: `item-${index}` }
+      })),
+      finishReason: "tool_calls"
+    };
+    const fetch = vi.fn().mockImplementation(async () => providerResponse(oversized));
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: "https://provider.example",
+        apiKey: "test",
+        model: "test",
+        transport: "structured_output",
+        fetch
+      }),
+      tools: [counterTool(effect)]
+    });
+
+    try {
+      const result = await runtime.start({ input: "Keep the structured Tool batch bounded." });
+      const inspection = await runtime.inspect(result.runId);
+      expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(effect.calls).toBe(0);
+      expect(inspection.events.filter((event) => event.type === "provider.attempt.succeeded")).toHaveLength(2);
+      expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(2);
+      expect(inspection.events.some((event) => (
+        event.type === "run.blocked" && event.payload.stopReason === "PROVIDER_UNAVAILABLE"
+      ))).toBe(false);
+    } finally {
+      await runtime.close();
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it("resumes after exhausted decision retries without repeating a successful Tool Effect", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e071-"));
     const effect = { calls: 0 };
@@ -185,7 +268,7 @@ describe("E065 Provider transient failure recovery", () => {
             name: "nexora_update_plan",
             arguments: {
               goal: "Read the item once.",
-              tasks: [{ objective: "Read the item once." }]
+              tasks: [{ objective: "Read the item once.", checks: [{ toolName: "counter.read" }] }]
             }
           }],
           finishReason: "tool_calls"
@@ -204,7 +287,7 @@ describe("E065 Provider transient failure recovery", () => {
         return new Response("unavailable", { status: 503 });
       }
       decisions += 1;
-      return providerResponse({ text: "The persisted item was read once.", toolCalls: [], finishReason: "stop" });
+      return providerResponse({ text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "The persisted item was read once." } }], finishReason: "tool_calls" });
     });
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example",
@@ -226,11 +309,11 @@ describe("E065 Provider transient failure recovery", () => {
       expect(blocked).toEqual(expect.objectContaining({
         status: "blocked",
         stopReason: "PROVIDER_UNAVAILABLE",
-        summary: "Completed 0 planned item(s) and preserved 1 confirmed fact(s) before PROVIDER_UNAVAILABLE.",
+        summary: "Completed 1 planned item(s) and preserved 1 confirmed fact(s) before PROVIDER_UNAVAILABLE.",
         delivery: expect.objectContaining({
           outcome: "blocked",
           generatedBy: "deterministic",
-          unfinishedWork: ["Read the item once."]
+          unfinishedWork: []
         })
       }));
       expect(effect.calls).toBe(1);

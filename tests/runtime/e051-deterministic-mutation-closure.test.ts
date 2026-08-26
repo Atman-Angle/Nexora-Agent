@@ -288,9 +288,9 @@ function mutationPlan(_fixture: MutationFixture) {
   return structuredTool("nexora_update_plan", {
       goal: "Change note.txt from before to after and validate it",
       tasks: [
-        { objective: "Read note.txt before mutation" },
-        { objective: "Patch note.txt" },
-        { objective: "Run the validation command" }
+        { objective: "Read note.txt before mutation", checks: [{ toolName: "filesystem.read" }] },
+        { objective: "Patch note.txt", checks: [{ toolName: "filesystem.patch" }] },
+        { objective: "Run the validation command", checks: [{ toolName: "shell.execute" }] }
       ]
     });
 }
@@ -329,7 +329,7 @@ function structuredInput(question: string, reason: string): unknown {
 }
 
 function structuredText(text: string): unknown {
-  return { text, toolCalls: [], finishReason: "stop" };
+  return structuredTool("nexora_respond", { text });
 }
 
 async function providerStub(

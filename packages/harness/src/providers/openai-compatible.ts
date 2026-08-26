@@ -6,6 +6,7 @@ import { RuntimeError } from "@nexora/runtime/internal";
 import { estimateTextTokens } from "../context/budget.js";
 import type { ProviderPromptCachePolicy, ProviderTransportProfile } from "../prompt.js";
 import { decisionHasSemanticPressure } from "../provider-policy.js";
+import type { JsonSchema } from "../tool-schema.js";
 import {
   defineProviderAdapter,
   type ProviderCompletionOperation,
@@ -17,7 +18,7 @@ import type {
   ReasoningPolicy,
   RuntimeProvider
 } from "./model-client.js";
-import type { ModelResponse, ProviderToolCall } from "./model-response.js";
+import { UPDATE_PLAN_CONTROL, type ModelResponse, type ProviderToolCall } from "./model-response.js";
 
 export type OpenAICompatibleProviderOptions = {
   readonly baseUrl: string;
@@ -517,9 +518,48 @@ function normalizeAssistantMessage(
         `Provider returned invalid JSON arguments for ${binding.tool.name}.`
       );
     }
-    return { callId: call.id, name: binding.tool.name, arguments: args };
+    return {
+      callId: call.id,
+      name: binding.tool.name,
+      arguments: normalizePlanToolReferences(
+        binding.tool.name,
+        normalizeJsonEncodedComposites(args, binding.tool.inputSchema) as Record<string, unknown>,
+        bindings
+      )
+    };
   });
   return { text: content, toolCalls, finishReason: finishReason ?? null };
+}
+
+function normalizePlanToolReferences(
+  controlName: string,
+  args: Record<string, unknown>,
+  bindings: ReturnType<typeof providerToolBindings>
+): Record<string, unknown> {
+  if (controlName !== UPDATE_PLAN_CONTROL || !Array.isArray(args.tasks)) return args;
+  const runtimeBindings = bindings.filter((binding) => binding.tool.kind === "runtime");
+  return {
+    ...args,
+    tasks: args.tasks.map((task) => {
+      if (task === null || typeof task !== "object" || Array.isArray(task)) return task;
+      const record = task as Record<string, unknown>;
+      if (!Array.isArray(record.checks)) return record;
+      return {
+        ...record,
+        checks: record.checks.map((check) => {
+          if (check === null || typeof check !== "object" || Array.isArray(check)) return check;
+          const checkRecord = check as Record<string, unknown>;
+          if (typeof checkRecord.toolName !== "string") return checkRecord;
+          const matches = runtimeBindings.filter((binding) => (
+            binding.providerName === checkRecord.toolName || binding.tool.name === checkRecord.toolName
+          ));
+          return matches.length === 1
+            ? { ...checkRecord, toolName: matches[0]!.tool.name }
+            : checkRecord;
+        })
+      };
+    })
+  };
 }
 
 function providerMessages(request: ProviderCompletionRequest): readonly Record<string, unknown>[] {
@@ -636,6 +676,89 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Some OpenAI-compatible Providers double-encode nested object/array Tool
+ * arguments even though the outer function arguments are valid JSON. Repair
+ * only fields whose advertised JSON Schema requires a composite value; the
+ * Runtime's Zod Schema remains the final authority and rejects everything
+ * else. JSON-looking values declared as strings are deliberately untouched.
+ */
+function normalizeJsonEncodedComposites(value: unknown, schema: JsonSchema): unknown {
+  let normalized = value;
+  const allowedTypes = schemaTypes(schema);
+  if (
+    typeof normalized === "string"
+    && !allowedTypes.has("string")
+    && (allowedTypes.has("object") || allowedTypes.has("array"))
+  ) {
+    try {
+      const parsed = JSON.parse(normalized) as unknown;
+      if (
+        (allowedTypes.has("object") && isJsonObject(parsed))
+        || (allowedTypes.has("array") && Array.isArray(parsed))
+      ) normalized = parsed;
+    } catch {
+      // Preserve the raw value so the authoritative Runtime Schema reports it.
+    }
+  }
+
+  const schemas = schemaBranches(schema);
+  if (Array.isArray(normalized)) {
+    const itemSchemas = schemas
+      .map((candidate) => candidate.items)
+      .filter(isJsonSchema);
+    if (itemSchemas.length === 0) return normalized;
+    return normalized.map((item) => itemSchemas.reduce(
+      (current, itemSchema) => normalizeJsonEncodedComposites(current, itemSchema),
+      item
+    ));
+  }
+  if (!isJsonObject(normalized)) return normalized;
+
+  const result: Record<string, unknown> = { ...normalized };
+  for (const [key, current] of Object.entries(result)) {
+    const propertySchemas = schemas
+      .map((candidate) => isJsonObject(candidate.properties) ? candidate.properties[key] : undefined)
+      .filter(isJsonSchema);
+    result[key] = propertySchemas.reduce(
+      (propertyValue, propertySchema) => normalizeJsonEncodedComposites(propertyValue, propertySchema),
+      current
+    );
+  }
+  return result;
+}
+
+function schemaTypes(schema: JsonSchema): Set<string> {
+  const types = new Set<string>();
+  for (const candidate of schemaBranches(schema)) {
+    if (typeof candidate.type === "string") types.add(candidate.type);
+    else if (Array.isArray(candidate.type)) {
+      for (const type of candidate.type) if (typeof type === "string") types.add(type);
+    }
+  }
+  return types;
+}
+
+function schemaBranches(schema: JsonSchema): readonly JsonSchema[] {
+  const branches: JsonSchema[] = [schema];
+  for (const key of ["anyOf", "oneOf", "allOf"] as const) {
+    const candidates = schema[key];
+    if (!Array.isArray(candidates)) continue;
+    for (const candidate of candidates) {
+      if (isJsonSchema(candidate)) branches.push(...schemaBranches(candidate));
+    }
+  }
+  return branches;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isJsonSchema(value: unknown): value is JsonSchema {
+  return isJsonObject(value);
+}
+
 function nonEmptyText(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? null : trimmed;
@@ -646,7 +769,7 @@ const StructuredResponseSchema = z.object({
   toolCalls: z.array(z.object({
     name: z.string().trim().min(1),
     arguments: z.record(z.unknown())
-  }).strict()).max(8),
+  }).strict()),
   finishReason: z.string().trim().min(1).nullable()
 }).strict();
 

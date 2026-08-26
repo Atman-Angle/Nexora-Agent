@@ -58,9 +58,9 @@ describe("Automated Daily Research Agent", () => {
         modelResponses.plan({
           goal: "Generate the configured daily media outputs.",
           steps: [
-            { objective: "Discover daily candidates." },
-            { objective: "Analyze source agreement and conflict." },
-            { objective: "Validate configured outputs." }
+            { objective: "Discover daily candidates.", checks: [{ toolName: "news.discover" }] },
+            { objective: "Analyze source agreement and conflict.", checks: [{ toolName: "news.analyze_selection" }] },
+            { objective: "Validate configured outputs.", checks: [{ toolName: "news.validate_output" }] }
           ]
         }),
         modelResponses.tool({
@@ -117,7 +117,7 @@ describe("Automated Daily Research Agent", () => {
       modelResponses: [
         modelResponses.plan({
           goal: "Validate one generated article.",
-          steps: [{ objective: "Validate citations." }]
+          steps: [{ objective: "Validate citations.", checks: [{ toolName: "news.validate_output" }] }]
         }),
         modelResponses.tool({
           toolName: "news.validate_output",

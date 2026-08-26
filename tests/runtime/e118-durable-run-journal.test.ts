@@ -188,6 +188,10 @@ describe("E118 Durable Run Journal", () => {
     const trace = await handle.modelCallTrace(String(requested.payload.callId));
     expect(trace.audit?.manifest.sources.some((source) => source.ref === "input:1")).toBe(true);
     expect(trace.attempts).toHaveLength(3);
+    expect(trace.attempts.slice(0, 2)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ errorCategory: "PROVIDER_ERROR", retryable: true, partialResponse: false })
+    ]));
+    expect(trace.attempts.at(-1)).toMatchObject({ errorCategory: null, retryable: false, partialResponse: false });
     expect(trace.completeness).toBe("complete");
     expect(await handle.historyRecord(requested.sequence)).toEqual(requested);
     expect(await handle.verifyHistory()).toMatchObject({ valid: true, completeness: "complete" });

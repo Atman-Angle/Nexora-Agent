@@ -27,8 +27,7 @@ if (deterministic) {
     if (calls % 2 === 1) {
       response.write(`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "Inspect the requested workspace file before reporting the verified result.", content: "Reading **target.txt**.", tool_calls: [{ index: 0, id: `read-${calls}`, function: { name: "filesystem_read", arguments: "{\"path\":\"target.txt\"}" } }] }, finish_reason: "tool_calls" }] })}\n\n`);
     } else {
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "**Desktop turn " } }] })}\n\n`);
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: `${calls / 2} completed.**` }, finish_reason: "stop" }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: `respond-${calls}`, function: { name: "nexora_respond", arguments: JSON.stringify({ text: `**Desktop turn ${calls / 2} completed.**` }) } }] }, finish_reason: "tool_calls" }] })}\n\n`);
     }
     response.end("data: [DONE]\n\n");
   });

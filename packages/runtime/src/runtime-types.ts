@@ -251,6 +251,8 @@ export type RunInspection = {
 export type RequestOptions = { readonly requestId?: string };
 export type DenialOptions = RequestOptions & { readonly reason?: string };
 export type RunHandleResumeOptions = {
+  /** Corrective input is required when recovering a NO_PROGRESS_DETECTED Run. */
+  readonly input?: string;
   readonly recovery?: RecoveryDecision;
   readonly budgetExtension?: RuntimeBudgetExtension;
 };

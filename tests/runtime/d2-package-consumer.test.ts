@@ -79,7 +79,7 @@ describe("D2 packed interactive consumer", () => {
 
     expect(JSON.parse(output)).toEqual({
       status: "succeeded",
-      invocations: 1,
+      invocations: 2,
       approvals: 1,
       conflict: "RUN_STATE_CONFLICT",
       firstEvent: "run.created",
@@ -108,14 +108,22 @@ const provider: RuntimeProvider = {
     if (call === 1) return modelResponses.plan({
         goal: "Write D2 output",
         tasks: [{
-          objective: "Write output"
+          objective: "Write output",
+          checks: [
+            { toolName: "filesystem.write", role: "mutation" },
+            { toolName: "filesystem.read", role: "verification" }
+          ]
         }]
       });
     if (call === 2) return modelResponses.tool({
       name: "filesystem.write",
       arguments: { path: "d2-output.txt", content: "trusted D2 output" }
     });
-    return modelResponses.text("D2 write verified");
+    if (call === 3) return modelResponses.tool({
+      name: "filesystem.read",
+      arguments: { path: "d2-output.txt" }
+    });
+    return modelResponses.direct({ text: "D2 write verified" });
   }
 };
 

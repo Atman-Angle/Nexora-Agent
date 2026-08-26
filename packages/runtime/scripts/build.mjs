@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -26,4 +26,10 @@ const result = spawnSync(
   { stdio: "inherit" }
 );
 if (result.error !== undefined) throw result.error;
+if (result.status === 0) {
+  const supervisorSource = join(packageRoot, "src", "execution", "tool-runtime", "managed-process-supervisor.mjs");
+  const supervisorTarget = join(dist, "execution", "tool-runtime", "managed-process-supervisor.mjs");
+  mkdirSync(dirname(supervisorTarget), { recursive: true });
+  copyFileSync(supervisorSource, supervisorTarget);
+}
 process.exitCode = result.status ?? 1;

@@ -9,6 +9,7 @@ import type {
   StrategyRevision
 } from "./profile.js";
 import type { DelegationPolicy } from "./multi-agent.js";
+import type { SkillConfiguration } from "./skills.js";
 
 export type RuntimeMemoryOptions = {
   readonly store: MemoryStore;
@@ -45,6 +46,7 @@ export type CreateAgentOptions = {
   readonly createId?: () => string;
   readonly leaseTtlMs?: number;
   readonly delegationPolicy?: DelegationPolicy;
+  readonly skills?: SkillConfiguration;
   readonly publicOutputListener?: AgentPublicOutputListener;
 };
 

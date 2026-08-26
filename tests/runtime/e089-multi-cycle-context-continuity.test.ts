@@ -47,13 +47,13 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
         if (turn === 1) {
           return modelResponses.plan({
             goal: "Read a long deterministic sequence.",
-            tasks: [{ objective: "Read sequence facts." }]
+            tasks: [{ objective: "Read sequence facts.", checks: [{ toolName: "test.sequence.read" }] }]
           });
         }
         if (turn <= 102) {
           return modelResponses.tool({ name: "test.sequence.read", arguments: { index: turn - 1 } });
         }
-        return modelResponses.text("Completed the bounded 101-read sequence.");
+        return modelResponses.direct({ text: "Completed the bounded 101-read sequence." });
       }
     };
     const agent = createAgent({ workspace, provider, tools: [sequenceTool()] });
@@ -105,7 +105,7 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
           captured.value ??= structuredClone(context);
           return context.run.evidence.length === 0
             ? modelResponses.tool({ name: "test.sequence.read", arguments: { index: 1 } })
-            : modelResponses.text("Read sequence fact 1 after reopen.");
+            : modelResponses.direct({ text: "Read sequence fact 1 after reopen." });
         }
       },
       tools: [sequenceTool()]
@@ -160,7 +160,8 @@ function planTurn(): ModelResponse {
   return modelResponses.plan({
       goal: "Read one sequence fact.",
       tasks: [{
-        objective: "Read one sequence fact."
+        objective: "Read one sequence fact.",
+        checks: [{ toolName: "test.sequence.read" }]
       }]
   });
 }

@@ -8,6 +8,7 @@ import type {
 import type { CompiledPrompt, ProviderTransportProfile } from "../prompt.js";
 import type { JsonSchema } from "../tool-schema.js";
 import type { ModelResponse } from "./model-response.js";
+import type { SkillDecisionContext } from "../skills.js";
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
@@ -67,7 +68,7 @@ export type ProjectedRunContext = {
 
 export type ContinuationTurn = {
   readonly sourceRunId: string;
-  readonly status: "succeeded" | "failed" | "cancelled";
+  readonly status: "succeeded" | "failed" | "cancelled" | "blocked";
   readonly inputs: readonly {
     readonly ref: string;
     readonly sequence: number;
@@ -173,6 +174,7 @@ export type ModelDecisionContext = {
    * with existing custom adapters; production wire projections may omit it.
    */
   readonly repair?: RepairContext | null;
+  readonly skills?: SkillDecisionContext;
   readonly tools: readonly {
     readonly identity: { readonly name: string };
     readonly capability: {
@@ -281,6 +283,16 @@ export type RepairContext = {
     readonly planVersion: number;
     readonly stepId: string;
     readonly attemptCount: number;
+  };
+  readonly recovery?: {
+    readonly sideEffect: "none" | "unknown" | "possible";
+    readonly doNotRepeat: boolean;
+    readonly nextAction: string;
+    readonly fields?: readonly {
+      readonly path: string;
+      readonly code: string;
+      readonly expectedFormat?: string;
+    }[];
   };
 };
 

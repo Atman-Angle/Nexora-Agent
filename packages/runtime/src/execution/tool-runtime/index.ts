@@ -11,6 +11,24 @@ import { z } from "zod";
 import { ArtifactStore } from "../../store/artifacts.js";
 import type { RuntimeTool } from "../../runtime.js";
 import { attachToolFailureDiagnostics } from "../tool-diagnostics.js";
+import {
+  commandRejectionReason,
+  normalizePackageManagerCommandInput,
+  resolveExecutableCommand
+} from "./command-resolution.js";
+import {
+  inspectManagedProcess,
+  ManagedProcessInspectFactsSchema,
+  ManagedProcessLogsFactsSchema,
+  ManagedProcessStartFactsSchema,
+  ManagedProcessStopFactsSchema,
+  ProcessHandleInputSchema,
+  ProcessLogsInputSchema,
+  readManagedProcessLogs,
+  StartManagedProcessInputSchema,
+  startManagedProcess,
+  stopManagedProcess
+} from "./managed-process.js";
 import { ToolFailure, workspacePath, writableWorkspacePath } from "./workspace.js";
 
 const ReadInput = z.object({
@@ -66,8 +84,16 @@ const ProcessFactsSchema = z.object({
   stderrArtifactRef: DigestSchema.nullable(),
   artifactRefs: z.array(DigestSchema),
   truncated: z.boolean(),
-  timedOut: z.boolean()
+  timedOut: z.boolean(),
+  processDisposition: z.enum(["exited", "terminated"]),
+  processStillRunning: z.literal(false)
 }).strict();
+const ShellExecuteInputSchema = z.preprocess(normalizePackageManagerCommandInput, z.object({
+  command: z.string().trim().min(1),
+  args: z.array(z.string()).default([]),
+  cwd: z.string().default("."),
+  timeoutMs: z.number().int().positive().max(300_000).default(60_000)
+}).strict());
 
 export function createBuiltInTools(options: { readonly artifactDir?: string } = {}): readonly RuntimeTool[] {
   return [
@@ -240,26 +266,81 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     }),
     defineTool({
       contract: {
+        identity: { name: "process.start" },
+        capability: { purpose: "Start one persistent non-interactive workspace process and return after a declared readiness condition passes.", nonGoals: ["Run commands that naturally exit.", "Execute shell command strings.", "Start a service without a readiness condition."] },
+        decision: { useWhen: ["A development server, preview server, watcher, worker, or other persistent local service must remain available after this Tool call."], avoidWhen: ["The command is expected to exit after build, test, lint, or migration work.", "The executable or readiness condition is unresolved."] },
+        execution: { effect: { kind: "execute", description: "Starts or reuses the exact generation-bound persistent process identified by serviceKey and command digest." }, idempotent: true, inputSchema: StartManagedProcessInputSchema, inputExample: { command: "npm", args: ["run", "dev"], cwd: ".", serviceKey: "dev-server", readiness: { type: "tcp", host: "127.0.0.1", port: 4173 }, startupTimeoutMs: 30_000 } },
+        evidence: { produces: ["A generation-bound process handle, command digest, PID, readiness time, endpoint, and replay fact."], factsSchema: ManagedProcessStartFactsSchema }
+      },
+      async execute(input, context) {
+        const facts = await startManagedProcess(StartManagedProcessInputSchema.parse(input), { workspace: context.workspace, invocationId: context.invocationId, signal: context.signal });
+        return { subjectRef: facts.processHandle, facts };
+      }
+    }),
+    defineTool({
+      contract: {
+        identity: { name: "process.inspect" },
+        capability: { purpose: "Inspect the current liveness and terminal facts of one exact managed process generation.", nonGoals: ["Discover an unknown service.", "Change process state."] },
+        decision: { useWhen: ["A known process handle must be checked before claiming the service is running or stopped."], avoidWhen: ["No exact process handle is available."] },
+        execution: { effect: { kind: "read", description: "Reads a managed process descriptor and verifies its supervisor heartbeat." }, idempotent: true, inputSchema: ProcessHandleInputSchema, inputExample: { processHandle: "process_00000000-0000-4000-8000-000000000000" } },
+        evidence: { produces: ["Current process state, verified heartbeat freshness, endpoint, PID and exit facts."], factsSchema: ManagedProcessInspectFactsSchema }
+      },
+      async execute(input, context) {
+        const facts = await inspectManagedProcess(context.workspace, input.processHandle);
+        return { subjectRef: input.processHandle, facts };
+      }
+    }),
+    defineTool({
+      contract: {
+        identity: { name: "process.logs" },
+        capability: { purpose: "Read a bounded redacted tail from one exact managed process log.", nonGoals: ["Stream logs indefinitely.", "Change process state."] },
+        decision: { useWhen: ["A known managed process requires startup or failure diagnostics."], avoidWhen: ["The process handle is unknown.", "Current process facts already answer the question."] },
+        execution: { effect: { kind: "read", description: "Reads bounded workspace-local managed process logs." }, idempotent: true, inputSchema: ProcessLogsInputSchema, inputExample: { processHandle: "process_00000000-0000-4000-8000-000000000000", stream: "combined", tailBytes: 16_384 } },
+        evidence: { produces: ["A bounded redacted log tail and an Artifact reference when the complete log is large."], factsSchema: ManagedProcessLogsFactsSchema }
+      },
+      async execute(input, context) {
+        const parsed = ProcessLogsInputSchema.parse(input);
+        const facts = await readManagedProcessLogs(context.workspace, parsed.processHandle, parsed.stream, parsed.tailBytes, options.artifactDir);
+        return { subjectRef: input.processHandle, facts };
+      }
+    }),
+    defineTool({
+      contract: {
+        identity: { name: "process.stop" },
+        capability: { purpose: "Stop one exact managed process generation and its descendants, then confirm terminal state.", nonGoals: ["Stop arbitrary operating-system PIDs.", "Discover an unknown service."] },
+        decision: { useWhen: ["A known managed process is no longer required or must be restarted with different configuration."], avoidWhen: ["No exact process handle is available."] },
+        execution: { effect: { kind: "execute", description: "Terminates a previously managed process tree." }, idempotent: true, inputSchema: ProcessHandleInputSchema, inputExample: { processHandle: "process_00000000-0000-4000-8000-000000000000" } },
+        evidence: { produces: ["Confirmed terminal state, stop time, exit code, and whether the process was already stopped."], factsSchema: ManagedProcessStopFactsSchema }
+      },
+      async execute(input, context) {
+        const facts = await stopManagedProcess(context.workspace, input.processHandle, context.signal);
+        return { subjectRef: input.processHandle, facts };
+      }
+    }),
+    defineTool({
+      contract: {
         identity: { name: "shell.execute" },
-        capability: { purpose: "Run one known non-interactive executable with explicit arguments in the workspace.", nonGoals: ["Execute shell command strings.", "Discover which command should be run."] },
-        decision: { useWhen: ["The exact executable, arguments, working directory, and expected purpose are known."], avoidWhen: ["A dedicated capability can produce the required facts.", "The command or its necessity is unresolved."] },
-        execution: { effect: { kind: "execute", description: "Starts a process that may read, modify, or otherwise affect the workspace or external systems." }, idempotent: false, inputSchema: z.object({ command: z.string().trim().min(1), args: z.array(z.string()).default([]), cwd: z.string().default("."), timeoutMs: z.number().int().positive().max(300_000).default(60_000) }).strict(), inputExample: { command: "node", args: ["--test", "test/example.test.js"], cwd: ".", timeoutMs: 60_000 } },
+        capability: { purpose: "Run one known non-interactive executable that is expected to exit, with explicit arguments in the workspace.", nonGoals: ["Execute shell command strings.", "Discover which command should be run.", "Start a persistent server, watcher, listener, or background service."] },
+        decision: { useWhen: ["The exact executable, arguments, working directory, and expected purpose are known and the command will naturally exit."], avoidWhen: ["A dedicated capability can produce the required facts.", "The command or its necessity is unresolved.", "The requested outcome requires the process to remain running after the Tool call; use process.start."] },
+        execution: { effect: { kind: "execute", description: "Starts a process that may read, modify, or otherwise affect the workspace or external systems." }, idempotent: false, inputSchema: ShellExecuteInputSchema, inputExample: { command: "node", args: ["--test", "test/example.test.js"], cwd: ".", timeoutMs: 60_000 } },
         evidence: { produces: ["The process exit code, bounded stdout/stderr, timeout status, and truncation status."], factsSchema: ProcessFactsSchema }
       },
       async execute(input, context) {
-        if (["cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe", "sh", "bash"].includes(basename(input.command).toLowerCase())) throw new ToolFailure("COMMAND_REJECTED", "Interactive shell entrypoints are not allowed.");
-        const cwd = await workspacePath(context.workspace, input.cwd ?? ".", "directory");
+        const parsed = ShellExecuteInputSchema.parse(input);
+        const rejection = commandRejectionReason(parsed.command);
+        if (rejection !== null) throw new ToolFailure("COMMAND_REJECTED", rejection);
+        const cwd = await workspacePath(context.workspace, parsed.cwd, "directory");
         const result = await runProcess(
-          input.command,
-          input.args ?? [],
+          parsed.command,
+          parsed.args,
           cwd,
-          input.timeoutMs ?? 60_000,
+          parsed.timeoutMs,
           context.signal,
-          input.cwd ?? ".",
+          parsed.cwd,
           options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")
         );
-        const details = processFailureDetails(input.command, input.args ?? [], input.cwd ?? ".", result);
-        if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Process timed out and was terminated.", true, details);
+        const details = processFailureDetails(parsed.command, parsed.args, parsed.cwd, result);
+        if (result.timedOut) throw new ToolFailure("TOOL_TIMEOUT", "Process exceeded the synchronous execution timeout and its process tree was terminated. No background process remains. Use process.start for a persistent service.", true, details);
         if (result.exitCode !== 0) {
           throw new ToolFailure(
             "PROCESS_EXIT_NONZERO",
@@ -268,7 +349,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
             details
           );
         }
-        return { subjectRef: `command:${input.command}`, facts: result };
+        return { subjectRef: `command:${parsed.command}`, facts: result };
       }
     }),
     ...gitTools(options)
@@ -594,10 +675,19 @@ function runProcess(
   artifactRefs: string[];
   truncated: boolean;
   timedOut: boolean;
+  processDisposition: "exited" | "terminated";
+  processStillRunning: false;
 }> {
   return new Promise((resolvePromise, rejectPromise) => {
     throwIfAborted(signal);
-    const child = spawn(command, args, {
+    let resolved;
+    try {
+      resolved = resolveExecutableCommand(command, args, cwd);
+    } catch (error) {
+      rejectPromise(new ToolFailure("COMMAND_UNAVAILABLE", error instanceof Error ? error.message : String(error)));
+      return;
+    }
+    const child = spawn(resolved.command, [...resolved.args], {
       cwd,
       detached: process.platform !== "win32",
       windowsHide: true,
@@ -685,12 +775,17 @@ function runProcess(
       cleanup();
       discardSpools();
       const identity = boundedProcessIdentity(command, args, reportedCwd);
+      const resolution = resolved.strategy === null ? {} : {
+        resolvedCommand: resolved.command,
+        resolution: resolved.strategy
+      };
       rejectPromise(new ToolFailure(
         "PROCESS_START_FAILED",
-        `Process could not be started: ${error.message}`,
+        `Process could not be started: ${error.message}. The executable did not run; change the executable or its platform-specific form before retrying.`,
         false,
         {
           ...identity,
+          ...resolution,
           causeCode: "code" in error && typeof error.code === "string" ? error.code : null
         }
       ));
@@ -723,7 +818,9 @@ function runProcess(
           stderrArtifactRef: stderrArtifact?.digest ?? null,
           artifactRefs,
           truncated: artifactRefs.length > 0,
-          timedOut
+          timedOut,
+          processDisposition: timedOut ? "terminated" : "exited",
+          processStillRunning: false
         });
       } catch (error) {
         discardSpools();
@@ -737,7 +834,7 @@ function processFailureDetails(
   command: string,
   args: readonly string[],
   cwd: string,
-  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly stdoutBytes: number; readonly stderrBytes: number; readonly stdoutArtifactRef: string | null; readonly stderrArtifactRef: string | null; readonly artifactRefs: readonly string[]; readonly truncated: boolean; readonly timedOut: boolean }
+  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string; readonly stdoutBytes: number; readonly stderrBytes: number; readonly stdoutArtifactRef: string | null; readonly stderrArtifactRef: string | null; readonly artifactRefs: readonly string[]; readonly truncated: boolean; readonly timedOut: boolean; readonly processDisposition: "exited" | "terminated"; readonly processStillRunning: false }
 ): Record<string, unknown> {
   const identity = boundedProcessIdentity(command, args, cwd);
   return {
@@ -751,7 +848,9 @@ function processFailureDetails(
     stderrArtifactRef: result.stderrArtifactRef,
     artifactRefs: result.artifactRefs,
     truncated: result.truncated || identity.identityTruncated,
-    timedOut: result.timedOut
+    timedOut: result.timedOut,
+    processDisposition: result.processDisposition,
+    processStillRunning: result.processStillRunning
   };
 }
 

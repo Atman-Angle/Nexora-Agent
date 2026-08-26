@@ -9,7 +9,7 @@ import {
   type RuntimeOperationContext,
   type RuntimeProvider
 } from "../../packages/harness/src/index.js";
-import { responseCall, responseText, ScriptedRuntimeProvider, successfulReadTool } from "./runtime-testkit.js";
+import { responseCall, responseDirect, ScriptedRuntimeProvider, successfulReadTool } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -24,7 +24,7 @@ describe("Multi-Agent completion bounds", () => {
         responseCall("nexora_delegate_workers", { assignments: [
           { objective: "Independent A" }, { objective: "Independent B" }, { objective: "Independent C" }
         ] }),
-        responseText("Capacity violation repaired without side effects.")
+        responseDirect("Capacity violation repaired without side effects.")
       ]),
       tools: [],
       delegationPolicy: { mode: "allowed", maxConcurrentWorkers: 2 }
@@ -124,8 +124,8 @@ describe("Multi-Agent completion bounds", () => {
 
 class LargeResultProvider implements RuntimeProvider {
   async decide(context: ModelDecisionContext) {
-    if (context.workerRun === true) return responseText("x".repeat(5_000));
-    if ((context.workerObservations?.length ?? 0) > 0) return responseText("Parent synthesized Artifact-backed results.");
+    if (context.workerRun === true) return responseDirect("x".repeat(5_000));
+    if ((context.workerObservations?.length ?? 0) > 0) return responseDirect("Parent synthesized Artifact-backed results.");
     return responseCall("nexora_delegate_workers", { assignments: [
       { objective: "Create large report A" }, { objective: "Create large report B" }
     ] });
@@ -136,7 +136,7 @@ class TwoBatchProvider implements RuntimeProvider {
   readonly parentBatches: string[][] = [];
   #parentCalls = 0;
   async decide(context: ModelDecisionContext) {
-    if (context.workerRun === true) return responseText(context.run.inputHistory[0]!.text.at(-1)!);
+    if (context.workerRun === true) return responseDirect(context.run.inputHistory[0]!.text.at(-1)!);
     this.#parentCalls += 1;
     if ((context.workerObservations?.length ?? 0) > 0) {
       this.parentBatches.push(context.workerObservations!.map((item) => item.summary!));
@@ -147,7 +147,7 @@ class TwoBatchProvider implements RuntimeProvider {
     if (this.#parentCalls === 2) return responseCall("nexora_delegate_workers", { assignments: [
       { objective: "C" }, { objective: "D" }
     ] });
-    return responseText("Latest batch synthesized.");
+    return responseDirect("Latest batch synthesized.");
   }
 }
 
@@ -159,14 +159,14 @@ class CancellationProvider implements RuntimeProvider {
     await new Promise<void>((_resolve, reject) => {
       operation.signal.addEventListener("abort", () => reject(new Error("cancelled worker model call")), { once: true });
     });
-    return responseText("unreachable");
+    return responseDirect("unreachable");
   }
 }
 
 class RequiredOneBatchProvider implements RuntimeProvider {
   postBatchPrompt = "";
   async decide(context: ModelDecisionContext, operation: RuntimeOperationContext) {
-    if (context.workerRun === true) return responseText("Worker completed.");
+    if (context.workerRun === true) return responseDirect("Worker completed.");
     if (context.delegationSatisfied !== true) return responseCall("nexora_delegate_workers", { assignments: [
       { objective: "Inspect independent A" }, { objective: "Inspect independent B" }
     ] });
@@ -174,7 +174,7 @@ class RequiredOneBatchProvider implements RuntimeProvider {
       return responseCall("filesystem.read", { path: "README.md" });
     }
     this.postBatchPrompt = operation.compiledPrompt?.input ?? "";
-    return responseText("One required batch was consumed and Parent synthesis completed.");
+    return responseDirect("One required batch was consumed and Parent synthesis completed.");
   }
 }
 

@@ -49,7 +49,8 @@ import {
   v5BranchSchemaSql,
   v6DurableToolExecutionMigrationSql,
   v7DurableRunJournalMigrationSql,
-  v8ProviderUsageMigrationSql
+  v8ProviderUsageMigrationSql,
+  v9ProviderDiagnosticsMigrationSql
 } from "./schema/index.js";
 
 type RunRow = {
@@ -154,6 +155,7 @@ type ProviderAttemptRow = {
   attempt_id: string; run_id: string; call_id: string; attempt_number: number;
   provider: string; model: string; config_fingerprint: string; status: string;
   started_at: string; completed_at: string | null; error_code: string | null;
+  error_category: string | null; retryable: number; partial_response: number;
   response_digest: string | null; response_artifact_ref: string | null;
   actual_input_tokens: number | null; actual_output_tokens: number | null;
   actual_total_tokens: number | null;
@@ -1058,7 +1060,7 @@ export class RunStore {
     return rows.map((row) => this.#parseProviderAttemptRow(row));
   }
 
-  beginProviderAttempt(input: Omit<ProviderAttempt, "status" | "completedAt" | "errorCode" | "responseDigest" | "responseArtifactRef" | "actualInputTokens" | "actualOutputTokens" | "actualTotalTokens" | "providerUsage"> & { readonly fencingToken: number }): ProviderAttempt {
+  beginProviderAttempt(input: Omit<ProviderAttempt, "status" | "completedAt" | "errorCode" | "errorCategory" | "retryable" | "partialResponse" | "responseDigest" | "responseArtifactRef" | "actualInputTokens" | "actualOutputTokens" | "actualTotalTokens" | "providerUsage"> & { readonly fencingToken: number }): ProviderAttempt {
     const transaction = this.#database.transaction(() => {
       const call = this.#requireModelCall(input.callId);
       if (call.runId !== input.runId || call.status !== "started") throw new Error(`Model call is not active: ${input.callId}`);
@@ -1068,8 +1070,8 @@ export class RunStore {
       this.#database.prepare(`
         INSERT INTO provider_attempts (
           attempt_id, run_id, call_id, attempt_number, provider, model,
-          config_fingerprint, status, started_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'started', ?)
+          config_fingerprint, status, started_at, error_category, retryable, partial_response
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'started', ?, NULL, 0, 0)
       `).run(input.id, input.runId, input.callId, input.attemptNumber, input.provider, input.model, input.configFingerprint, input.startedAt);
       this.#insertEvent(input.runId, this.#nextSequence(input.runId), {
         type: "provider.attempt.started",
@@ -1091,6 +1093,9 @@ export class RunStore {
     readonly status: "succeeded" | "failed" | "cancelled";
     readonly completedAt: string;
     readonly errorCode?: string;
+    readonly errorCategory?: ProviderAttempt["errorCategory"];
+    readonly retryable?: boolean;
+    readonly partialResponse?: boolean;
     readonly responseDigest?: string;
     readonly responseArtifactRef?: string;
     readonly actualInputTokens?: number;
@@ -1105,11 +1110,11 @@ export class RunStore {
       }
       this.#assertFencing(this.#requireRunRow(attempt.runId), input.fencingToken, input.completedAt);
       const update = this.#database.prepare(`
-        UPDATE provider_attempts SET status = ?, completed_at = ?, error_code = ?,
+        UPDATE provider_attempts SET status = ?, completed_at = ?, error_code = ?, error_category = ?, retryable = ?, partial_response = ?,
           response_digest = ?, response_artifact_ref = ?, actual_input_tokens = ?,
           actual_output_tokens = ?, actual_total_tokens = ?, provider_usage_json = ?
         WHERE attempt_id = ? AND status = 'started'
-      `).run(input.status, input.completedAt, input.errorCode ?? null, input.responseDigest ?? null,
+      `).run(input.status, input.completedAt, input.errorCode ?? null, input.errorCategory ?? null, input.retryable === true ? 1 : 0, input.partialResponse === true ? 1 : 0, input.responseDigest ?? null,
         input.responseArtifactRef ?? null, input.actualInputTokens ?? null,
         input.actualOutputTokens ?? null, input.actualTotalTokens ?? null,
         input.providerUsage === undefined ? null : JSON.stringify(JsonValueSchema.parse(input.providerUsage)),
@@ -1125,6 +1130,9 @@ export class RunStore {
           callId: attempt.callId, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
           status: input.status,
           ...(input.errorCode === undefined ? {} : { errorCode: input.errorCode }),
+          ...(input.errorCategory === undefined ? {} : { errorCategory: input.errorCategory }),
+          ...(input.retryable === undefined ? {} : { retryable: input.retryable }),
+          ...(input.partialResponse === undefined ? {} : { partialResponse: input.partialResponse }),
           ...(input.responseDigest === undefined ? {} : { responseDigest: input.responseDigest }),
           ...(input.responseArtifactRef === undefined ? {} : { responseArtifactRef: input.responseArtifactRef })
         }
@@ -1314,7 +1322,8 @@ export class RunStore {
       `).run(input.now, input.runId);
       this.#database.prepare(`
         UPDATE provider_attempts
-        SET status = 'interrupted', completed_at = ?, error_code = 'PROCESS_INTERRUPTED'
+        SET status = 'interrupted', completed_at = ?, error_code = 'PROCESS_INTERRUPTED',
+            error_category = 'PROVIDER_UNAVAILABLE', retryable = 1
         WHERE run_id = ? AND status = 'started'
       `).run(input.now, input.runId);
       this.#database.prepare(`
@@ -1337,7 +1346,15 @@ export class RunStore {
           actorType: "runtime",
           causationRef: `model-call:${attempt.call_id}`,
           correlationRef: `provider-attempt:${attempt.attempt_id}`,
-          payload: { callId: attempt.call_id, attemptId: attempt.attempt_id, attemptNumber: attempt.attempt_number, errorCode: "PROCESS_INTERRUPTED" }
+          payload: {
+            callId: attempt.call_id,
+            attemptId: attempt.attempt_id,
+            attemptNumber: attempt.attempt_number,
+            errorCode: "PROCESS_INTERRUPTED",
+            errorCategory: "PROVIDER_UNAVAILABLE",
+            retryable: true,
+            partialResponse: false
+          }
         });
       }
       for (const call of interruptedCalls) {
@@ -1603,6 +1620,9 @@ export class RunStore {
       startedAt: row.started_at,
       completedAt: row.completed_at,
       errorCode: row.error_code,
+      errorCategory: row.error_category as ProviderAttempt["errorCategory"],
+      retryable: row.retryable === 1,
+      partialResponse: row.partial_response === 1,
       responseDigest: row.response_digest,
       responseArtifactRef: row.response_artifact_ref,
       actualInputTokens: row.actual_input_tokens,
@@ -1747,8 +1767,8 @@ export class RunStore {
 
   #migrate(): void {
     const version = this.#database.pragma("user_version", { simple: true }) as number;
-    if (version > 8) {
-      throw new Error(`Runtime database schema ${version} is newer than supported schema 8.`);
+    if (version > 9) {
+      throw new Error(`Runtime database schema ${version} is newer than supported schema 9.`);
     }
     const migrate = this.#database.transaction(() => {
       if (version < 1) {
@@ -1825,6 +1845,10 @@ export class RunStore {
       if (version < 8) {
         this.#database.exec(v8ProviderUsageMigrationSql);
         this.#database.pragma("user_version = 8");
+      }
+      if (version < 9) {
+        this.#database.exec(v9ProviderDiagnosticsMigrationSql);
+        this.#database.pragma("user_version = 9");
       }
     });
     migrate();

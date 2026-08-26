@@ -87,13 +87,100 @@ export function responseRejectionDiagnostic(error: z.ZodError | ActionRejectedEr
     : Array.isArray(rawResponse)
       ? "array"
       : typeof rawResponse;
-  if (error instanceof z.ZodError) {
-    return { kind: "schema" as const, responseType, issues: error.issues.slice(0, 4).map(responseRepairIssue) };
+  // Consumers may load Zod through a second package instance (for example a
+  // workspace-linked harness). Prefer the stable `.issues` contract as well
+  // as instanceof so schema rejections cannot be misclassified as state
+  // errors across package boundaries.
+  if (error instanceof z.ZodError || isZodErrorLike(error)) {
+    const issues = error.issues.slice(0, 4).map(responseRepairIssue);
+    return {
+      kind: "schema" as const,
+      responseType,
+      issues,
+      recovery: schemaRejectionRecovery(issues)
+    };
   }
   return {
     kind: "state" as const,
     responseType,
-    issues: [{ path: "$", code: "response_rejected", message: error.message.slice(0, 500) }]
+    issues: [{ path: "$", code: "response_rejected", message: error.message.slice(0, 500) }],
+    recovery: stateRejectionRecovery(error.message)
+  };
+}
+
+function isZodErrorLike(error: unknown): error is z.ZodError {
+  return error !== null
+    && typeof error === "object"
+    && Array.isArray((error as { readonly issues?: unknown }).issues);
+}
+
+function stateRejectionRecovery(message: string): {
+  readonly sideEffect: "none";
+  readonly doNotRepeat: true;
+  readonly nextAction: string;
+} {
+  if (message.includes("duplicates an existing persisted Invocation with status succeeded")) {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The Tool effect already succeeded. Use its persisted result and do not resend the same Tool name and arguments."
+    };
+  }
+  if (message.includes("PROTECTED_MUTATION_BATCH_REQUIRES_ONE_AT_A_TIME")) {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The protected mutation batch was rejected as a whole; no mutation was executed. Submit exactly one protected mutation or one complete write, and do not resend the rejected batch."
+    };
+  }
+  if (message.includes("FINAL_CONTROL_REQUIRED")) {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The text was not accepted as a task result. Preserve completed Tool effects and submit the user-facing answer once through nexora_respond."
+    };
+  }
+  return {
+    sideEffect: "none",
+    doNotRepeat: true,
+    nextAction: "The Runtime rejected this action before execution. Correct the request using the rejection details and do not resend it unchanged."
+  };
+}
+
+
+function schemaRejectionRecovery(
+  issues: readonly { readonly path: string; readonly code: string; readonly message: string }[]
+): {
+  readonly sideEffect: "none";
+  readonly doNotRepeat: true;
+  readonly nextAction: string;
+  readonly fields: readonly { readonly path: string; readonly code: string; readonly expectedFormat?: string }[];
+} {
+  const toolCallLimit = issues.find((issue) => (
+    issue.path === "toolCalls" && issue.code === "too_big"
+  ));
+  if (toolCallLimit !== undefined) {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The response contained more than 8 Tool calls and no Tool was executed. Split the work across multiple Provider turns with at most 8 Tool calls in each response.",
+      fields: [{ path: toolCallLimit.path, code: toolCallLimit.code, expectedFormat: "array with at most 8 Tool calls" }]
+    };
+  }
+  const digestIssue = issues.find((issue) => issue.path === "expectedDigest");
+  if (digestIssue !== undefined) {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "Use the complete digest from the latest authoritative filesystem.read observation, or reread the file before retrying filesystem.patch.",
+      fields: [{ path: digestIssue.path, code: digestIssue.code, expectedFormat: "sha256:<64 hexadecimal characters>" }]
+    };
+  }
+  return {
+    sideEffect: "none",
+    doNotRepeat: true,
+    nextAction: "Correct the invalid field(s) using authoritative facts and do not resend the rejected response unchanged.",
+    fields: issues.map(({ path, code }) => ({ path, code }))
   };
 }
 

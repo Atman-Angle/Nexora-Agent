@@ -25,6 +25,12 @@ let editingProviderBaseUrl: string | "new" | null = null;
 let busy = false;
 let error: string | null = null;
 let draft = "";
+let sidebarQuery = "";
+let sidebarStatus: "all" | "running" | "waiting" | "succeeded" | "failed" = "all";
+let skillNotice: { readonly names: readonly string[]; readonly key: string } | null = null;
+let skillNoticeTimer: number | null = null;
+let snapshotInitialized = false;
+const seenSkillSelections = new Set<string>();
 const expandedTools = new Set<string>();
 const expandedPublicOutputs = new Set<string>();
 const collapsedProjects = new Set<string>();
@@ -46,7 +52,9 @@ const publicOutputBatcher = createPublicOutputBatcher(
 window.setInterval(() => updateElapsedLabels(), 1_000);
 
 window.nexora.onSnapshot((next) => {
+  detectSkillSelection(next, snapshotInitialized);
   snapshot = next;
+  snapshotInitialized = true;
   busy = false;
   render();
 });
@@ -83,6 +91,7 @@ function render(): void {
       </section>
     </div>
     ${settingsOpen ? settings(snapshot) : ""}
+    ${skillNotice === null ? "" : `<div class="skill-toast" role="status"><span class="skill-toast-icon">✦</span><span>已自动加载 Skill：${escapeHtml(skillNotice.names.join("、"))}</span><button data-action="dismiss-skill-notice" aria-label="关闭 Skill 提示">×</button></div>`}
     ${error === null ? "" : `<div class="toast" role="alert"><span>${escapeHtml(error)}</span><button data-action="dismiss-error">×</button></div>`}
   `;
   bindActions();
@@ -98,12 +107,17 @@ function render(): void {
 }
 
 function sidebar(state: DesktopSnapshot): string {
+  const allSessions = state.workspace.projects.flatMap((project) => project.sessions);
+  const visibleSessionCount = allSessions.filter((session) => !session.archived).length;
+  const activeCount = allSessions.filter((session) => !session.archived && session.status === "running").length;
+  const waitingCount = allSessions.filter((session) => !session.archived && (session.status === "waiting_for_input" || session.status === "waiting_for_approval")).length;
+  const doneCount = allSessions.filter((session) => !session.archived && session.status === "succeeded").length;
   const projects = state.workspace.projects.map((project) => {
     const current = project.path.toLowerCase() === state.workspace.path.toLowerCase();
     const collapsed = collapsedProjects.has(project.path.toLowerCase());
     const active = project.sessions.filter((session) => !session.archived);
     const archived = project.sessions.filter((session) => session.archived);
-    const rows = (sessions: typeof project.sessions, archivedGroup: boolean) => sessions.map((session) => `
+    const rows = (sessions: typeof project.sessions, archivedGroup: boolean) => sessions.filter((session) => archivedGroup || matchesSidebarFilter(session)).map((session) => `
       <div class="session-row ${state.session?.id === session.id ? "selected" : ""}">
         <button class="session-open" data-session="${escapeAttr(session.id)}" data-project-path="${escapeAttr(project.path)}">
           <span class="session-copy"><strong>${escapeHtml(session.title)}</strong><small>${statusLabel(session.status)}</small></span>
@@ -116,8 +130,8 @@ function sidebar(state: DesktopSnapshot): string {
       </div>
     `).join("");
     return `<section class="project-group ${current ? "current" : ""}">
-      <div class="project-heading"><button class="project-disclosure" data-project-toggle="${escapeAttr(project.path)}" title="${collapsed ? "Expand" : "Collapse"}">${collapsed ? "›" : "⌄"}</button><button class="project-select" data-project-switch="${escapeAttr(project.path)}"><strong>${escapeHtml(project.name)}</strong></button></div>
-      ${collapsed ? "" : `<div class="project-sessions">${rows(active, false) || `<p class="sidebar-empty">No sessions yet</p>`}${archived.length === 0 ? "" : `<details class="archived"><summary>Archived · ${archived.length}</summary>${rows(archived, true)}</details>`}</div>`}
+      <div class="project-heading"><button class="project-disclosure" data-project-toggle="${escapeAttr(project.path)}" title="${collapsed ? "Expand" : "Collapse"}">${collapsed ? "›" : "⌄"}</button><button class="project-select" data-project-switch="${escapeAttr(project.path)}"><strong>${escapeHtml(project.name)}</strong><small>${active.length} active · ${archived.length} archived</small></button></div>
+      ${collapsed ? "" : `<div class="project-sessions">${rows(active, false) || `<p class="sidebar-empty">No matching sessions</p>`}${archived.length === 0 ? "" : `<details class="archived"><summary>Archived · ${archived.length}</summary>${rows(archived, true)}</details>`}</div>`}
     </section>`;
   }).join("");
   return `
@@ -128,6 +142,15 @@ function sidebar(state: DesktopSnapshot): string {
         <button class="add-project" data-action="workspace" title="Add project">＋</button>
       </div>
       <button class="new-task" data-action="new-task"><span>＋</span> New Task</button>
+      <section class="workspace-overview" aria-label="Workspace overview">
+        <div class="overview-heading"><span>Workspace overview</span><span class="overview-live"><i></i> Live</span></div>
+        <div class="overview-stats"><span><strong>${visibleSessionCount}</strong><small>Sessions</small></span><span><strong>${activeCount}</strong><small>Running</small></span><span><strong>${doneCount}</strong><small>Done</small></span></div>
+        <div class="overview-progress"><span><b style="width:${visibleSessionCount === 0 ? 0 : Math.round(doneCount / visibleSessionCount * 100)}%"></b></span><small>${waitingCount > 0 ? `${waitingCount} need attention` : "All clear"}</small></div>
+      </section>
+      <div class="sidebar-tools">
+        <label class="session-search"><span>⌕</span><input value="${escapeAttr(sidebarQuery)}" data-session-search placeholder="Search sessions" aria-label="Search sessions" /></label>
+        <select class="status-filter" data-status-filter aria-label="Filter sessions"><option value="all" ${sidebarStatus === "all" ? "selected" : ""}>All statuses</option><option value="running" ${sidebarStatus === "running" ? "selected" : ""}>Running</option><option value="waiting" ${sidebarStatus === "waiting" ? "selected" : ""}>Needs attention</option><option value="succeeded" ${sidebarStatus === "succeeded" ? "selected" : ""}>Completed</option><option value="failed" ${sidebarStatus === "failed" ? "selected" : ""}>Failed</option></select>
+      </div>
       <div class="session-list" aria-label="Projects and Sessions">${projects}</div>
       <button class="settings-button" data-action="settings">⚙ <span>Settings</span></button>
     </aside>
@@ -316,16 +339,45 @@ function conversation(session: SessionView): string {
     ` });
     }
   }
+  const processInvocations = session.runs.flatMap((run) => run.inspection.invocations);
+  const processCards = managedProcessCards(session.managedProcesses);
+  if (processCards !== "") items.push({
+    at: processInvocations.at(-1)?.completedAt ?? new Date().toISOString(),
+    order: Number.MAX_SAFE_INTEGER - 1,
+    html: processCards
+  });
   items.sort((a, b) => a.at.localeCompare(b.at) || a.order - b.order);
   return `<section class="conversation">${items.map((item) => item.html).join("")}</section>`;
 }
 
+function managedProcessCards(services: SessionView["managedProcesses"]): string {
+  return services.map((service) => `
+    <article class="managed-process-card">
+      <span class="process-live ${service.status}"><i></i> ${escapeHtml(managedProcessStatusLabel(service.status))}</span>
+      <div class="process-copy"><strong>${escapeHtml(service.serviceKey)}</strong><small>${service.pid === null ? "Managed service" : `PID ${service.pid}`} · ${formatTime(service.readyAt ?? service.startedAt)}</small></div>
+      ${service.status === "ready" && service.endpoint?.startsWith("http") === true ? `<a class="process-action primary" href="${escapeAttr(service.endpoint)}" target="_blank" rel="noreferrer">Open</a>` : ""}
+      <button class="process-action" data-process-logs="${escapeAttr(service.processHandle)}">Logs</button>
+      ${service.status === "ready" || service.status === "starting" || service.status === "stopping" ? `<button class="process-action danger" data-process-stop="${escapeAttr(service.processHandle)}">Stop</button>` : ""}
+    </article>
+  `).join("");
+}
+
+function managedProcessStatusLabel(status: SessionView["managedProcesses"][number]["status"]): string {
+  if (status === "ready") return "Running";
+  if (status === "starting") return "Starting";
+  if (status === "stopping") return "Stopping";
+  if (status === "lost") return "Supervisor lost";
+  if (status === "failed") return "Failed";
+  return "Exited";
+}
+
 function activity(session: SessionView): string {
+  const timeline = activityTimeline(session);
   const runs = session.runs.map((run, index) => {
     const records = run.history.records.map((record) => `
-    <article class="trajectory-row">
+    <article class="trajectory-row" id="activity-event-${index}-${record.sequence}" data-activity-stage="${activityStage(record.type)}">
       <span class="sequence">${record.sequence}</span>
-      <div><strong>${escapeHtml(record.type)}</strong><small>${formatTime(record.occurredAt)}</small>
+      <div class="trajectory-main"><strong>${escapeHtml(record.type)}</strong><small>${formatTime(record.occurredAt)}</small>
         <details><summary>Details</summary><pre>${escapeHtml(pretty(record.payload))}</pre>
           <dl><dt>ID</dt><dd>${escapeHtml(record.runId)}:${record.sequence}</dd><dt>Actor</dt><dd>${escapeHtml(record.actorType ?? "unknown")}</dd></dl>
         </details>
@@ -333,11 +385,45 @@ function activity(session: SessionView): string {
     </article>
     `).join("");
     const evidence = run.inspection.evidence.map((item) => `
-    <article class="trajectory-row evidence-row"><span class="sequence">E</span><div><strong>${escapeHtml(item.kind)}</strong><small>${formatTime(item.producedAt)}</small><details><summary>Evidence</summary><pre>${escapeHtml(pretty(item))}</pre></details></div></article>
+    <article class="trajectory-row evidence-row" data-activity-stage="verify"><span class="sequence">E</span><div class="trajectory-main"><strong>${escapeHtml(item.kind)}</strong><small>${formatTime(item.producedAt)}</small><details><summary>Evidence</summary><pre>${escapeHtml(pretty(item))}</pre></details></div></article>
     `).join("");
     return `<section class="run-trajectory"><h3>Turn ${index + 1} · ${escapeHtml(run.inspection.runId)}</h3>${records}${evidence}</section>`;
   }).join("");
-  return `<section class="trajectory"><div class="trajectory-heading"><h2>Activity</h2><p>Persisted Runtime trajectory across every Run in this Session.</p></div>${runs}</section>`;
+  return `<section class="trajectory"><div class="trajectory-heading"><div><span class="eyebrow">SESSION TRACE</span><h2>Activity</h2><p>Follow the execution path from request to verified result.</p></div><div class="trajectory-summary"><strong>${timeline.total}</strong><span>events</span><i></i><strong>${timeline.runs}</strong><span>turns</span></div></div>${timeline.html}${runs}</section>`;
+}
+
+function matchesSidebarFilter(session: DesktopSnapshot["workspace"]["projects"][number]["sessions"][number]): boolean {
+  const query = sidebarQuery.trim().toLowerCase();
+  if (query !== "" && !session.title.toLowerCase().includes(query)) return false;
+  if (sidebarStatus === "all") return true;
+  if (sidebarStatus === "waiting") return session.status === "waiting_for_input" || session.status === "waiting_for_approval";
+  return session.status === sidebarStatus;
+}
+
+function activityStage(type: string): "start" | "think" | "tools" | "verify" | "done" {
+  const lower = type.toLowerCase();
+  if (lower.startsWith("input") || lower.startsWith("run.created") || lower.startsWith("session")) return "start";
+  if (lower.includes("model") || lower.includes("provider") || lower.includes("context")) return "think";
+  if (lower.startsWith("tool") || lower.includes("invocation") || lower.includes("approval")) return "tools";
+  if (lower.includes("validation") || lower.includes("evidence") || lower.includes("artifact")) return "verify";
+  return "done";
+}
+
+function activityTimeline(session: SessionView): { html: string; total: number; runs: number } {
+  const stages = [
+    ["start", "Start", "Input received"],
+    ["think", "Think", "Model and context"],
+    ["tools", "Tools", "Tool execution"],
+    ["verify", "Verify", "Evidence checks"],
+    ["done", "Done", "Run delivered"]
+  ] as const;
+  const records = session.runs.flatMap((run, runIndex) => run.history.records.map((record) => ({ runIndex, record })));
+  const html = `<nav class="activity-timeline" aria-label="Activity timeline">${stages.map(([key, label, hint]) => {
+    const first = records.find(({ record }) => activityStage(record.type) === key);
+    const count = records.filter(({ record }) => activityStage(record.type) === key).length;
+    return `<button class="timeline-step ${count > 0 ? "has-events" : "muted"}" data-timeline-target="${first === undefined ? "" : `activity-event-${first.runIndex}-${first.record.sequence}`}" title="${hint}"><span class="timeline-dot"></span><strong>${label}</strong><small>${count} ${count === 1 ? "event" : "events"}</small></button>`;
+  }).join('<span class="timeline-connector"></span>')}</nav>`;
+  return { html, total: records.length, runs: session.runs.length };
 }
 
 function plan(session: SessionView | null): string {
@@ -375,12 +461,46 @@ function composer(session: SessionView | null): string {
     if (run.recovery !== null) {
       return `<section class="composer recovery"><div><small>Recovery required · ${escapeHtml(run.recovery.toolName)}</small><p>The Tool result is unknown. Confirm the real external outcome.</p><input id="subject-ref" placeholder="Subject reference for confirmed success" /></div><div class="recovery-actions"><button data-recovery="abandon_run">Abandon</button><button data-recovery="confirmed_failed">It failed</button><button class="primary" data-recovery="confirmed_succeeded">It succeeded</button></div></section>`;
     }
+    if (run.stopReason === "NO_PROGRESS_DETECTED") {
+      return `<section class="composer recovery"><div><small>Recovery required · no progress</small><p>${escapeHtml(run.delivery?.summary ?? "The same strategy produced no new authoritative facts.")}</p></div><form data-form="follow-up"><textarea name="text" placeholder="Describe a materially different next step..." required>${escapeHtml(draft)}</textarea><div class="composer-toolbar"><small>New input creates a bounded recovery Run</small><div class="composer-controls"><button class="send-button" aria-label="Replan and continue" ${busy ? "disabled" : ""}>↑</button></div></div></form><button data-action="cancel" ${busy ? "disabled" : ""}>End task</button></section>`;
+    }
+    if (
+      (run.stopReason === "PROVIDER_UNAVAILABLE" || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
+      && providerRecoveryExhausted(session)
+    ) {
+      return `<section class="composer recovery"><div><small>Recovery required · Provider retry exhausted</small><p>${escapeHtml(run.delivery?.summary ?? "The bounded Provider retry did not restore execution.")}</p></div><form data-form="follow-up"><textarea name="text" placeholder="Provide a corrective instruction after Provider connectivity is restored..." required>${escapeHtml(draft)}</textarea><div class="composer-toolbar"><small>New input creates a bounded continuation Run</small><div class="composer-controls"><button class="send-button" aria-label="Continue in a new recovery turn" ${busy ? "disabled" : ""}>↑</button></div></div></form><button data-action="cancel" ${busy ? "disabled" : ""}>End task</button></section>`;
+    }
+    const durationWithoutProgress = run.stopReason === "DURATION_BUDGET_EXCEEDED" && run.executionMetrics.repeatedToolCalls > 0;
+    if (durationWithoutProgress) {
+      return `<section class="composer recovery"><div><small>Recovery required · no recent progress</small><p>${escapeHtml(run.delivery?.summary ?? "The time budget ended while execution was repeating work.")}</p></div><form data-form="follow-up"><textarea name="text" placeholder="Provide a new constraint or next step..." required>${escapeHtml(draft)}</textarea><div class="composer-toolbar"><small>Continue with new input or start a new task</small><div class="composer-controls"><button class="send-button" aria-label="Continue with new input" ${busy ? "disabled" : ""}>↑</button></div></div></form><button data-action="cancel" ${busy ? "disabled" : ""}>End task</button></section>`;
+    }
     const budget = run.stopReason?.endsWith("BUDGET_EXCEEDED") === true;
     const metrics = run.executionMetrics;
     const quality = budget ? ` · ${metrics.modelCalls} model / ${metrics.toolCalls} tool calls · ${metrics.repeatedToolCalls} repeated` : "";
     return `<section class="composer blocked"><div><small>Session paused${quality}</small><p>${escapeHtml(run.delivery?.summary ?? run.stopReason ?? "The Runtime requires intervention.")}</p></div><button class="${budget && metrics.repeatedToolCalls === 0 ? "primary" : ""}" data-action="${budget ? "extend-budget" : "resume"}" ${busy ? "disabled" : ""}>${budget ? "Extend budget & resume" : "Resume"}</button></section>`;
   }
   return followUpComposer(session, false);
+}
+
+function providerRecoveryExhausted(session: SessionView): boolean {
+  let progressSequence = 0;
+  for (const record of session.history.records) {
+    const payload = record.payload as Record<string, unknown>;
+    const progress = (record.type === "run.resumed" && typeof payload.inputSequence === "number")
+      || (record.type === "plan.set" && payload.noOp !== true)
+      || record.type === "tool.attempt.succeeded"
+      || record.type === "context.evidence_recorded"
+      || record.type === "validation.passed"
+      || record.type === "recovery.confirmed_succeeded"
+      || record.type === "recovery.confirmed_failed"
+      || record.type === "branch.merged";
+    if (progress) progressSequence = record.sequence;
+  }
+  return session.history.records.some((record) => (
+    record.sequence > progressSequence
+    && record.type === "run.resumed"
+    && (record.payload as Record<string, unknown>).reason === "provider_retry"
+  ));
 }
 
 function inputReplyComposer(): string {
@@ -484,6 +604,35 @@ function bindActions(): void {
     mode = element.dataset.view === "activity" ? "activity" : "conversation";
     render();
   }));
+  document.querySelector<HTMLInputElement>("[data-session-search]")?.addEventListener("input", (event) => {
+    sidebarQuery = (event.currentTarget as HTMLInputElement).value;
+    render();
+    const input = document.querySelector<HTMLInputElement>("[data-session-search]");
+    input?.focus();
+    input?.setSelectionRange(sidebarQuery.length, sidebarQuery.length);
+  });
+  document.querySelector<HTMLSelectElement>("[data-status-filter]")?.addEventListener("change", (event) => {
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    sidebarStatus = value === "running" || value === "waiting" || value === "succeeded" || value === "failed" ? value : "all";
+    render();
+  });
+  document.querySelectorAll<HTMLElement>("[data-timeline-target]").forEach((element) => element.addEventListener("click", () => {
+    const target = element.dataset.timelineTarget;
+    if (target === undefined || target === "") return;
+    document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }));
+  document.querySelectorAll<HTMLElement>("[data-process-logs]").forEach((element) => element.addEventListener("click", () => {
+    const handle = element.dataset.processLogs;
+    const sessionId = snapshot?.session?.id;
+    if (handle === undefined || sessionId === undefined) return;
+    void perform(async () => setSnapshot(await window.nexora.continueSession(sessionId, `查看受管理进程 ${handle} 的最新日志并报告当前状态。`)));
+  }));
+  document.querySelectorAll<HTMLElement>("[data-process-stop]").forEach((element) => element.addEventListener("click", () => {
+    const handle = element.dataset.processStop;
+    const sessionId = snapshot?.session?.id;
+    if (handle === undefined || sessionId === undefined || !window.confirm("Stop this managed process and its descendants?")) return;
+    void perform(async () => setSnapshot(await window.nexora.continueSession(sessionId, `停止受管理进程 ${handle}，确认完整进程树已经退出。`)));
+  }));
   document.querySelectorAll<HTMLElement>("[data-tool]").forEach((element) => element.addEventListener("click", () => {
     const id = element.dataset.tool!;
     if (expandedTools.has(id)) expandedTools.delete(id); else expandedTools.add(id);
@@ -517,6 +666,7 @@ function bindActions(): void {
     else if (action === "settings") { settingsOpen = true; editingProfileId = null; render(); }
     else if (action === "close-settings") { if (event.target === element || element.tagName === "BUTTON") { settingsOpen = false; render(); } }
     else if (action === "dismiss-error") { error = null; render(); }
+    else if (action === "dismiss-skill-notice") { skillNotice = null; render(); }
     else if (action === "plan") { planOpen = !planOpen; render(); }
     else if (["approve", "deny", "cancel", "resume", "extend-budget"].includes(action ?? "")) void controlAction(action!);
   }));
@@ -751,7 +901,41 @@ async function perform(operation: () => Promise<void>): Promise<void> {
   } catch (cause) { error = messageOf(cause); busy = false; render(); }
 }
 
-function setSnapshot(next: DesktopSnapshot): void { snapshot = next; busy = false; error = null; render(); }
+function setSnapshot(next: DesktopSnapshot): void {
+  detectSkillSelection(next, snapshotInitialized);
+  snapshot = next;
+  snapshotInitialized = true;
+  busy = false;
+  error = null;
+  render();
+}
+
+function detectSkillSelection(next: DesktopSnapshot, allowNotice: boolean): void {
+  for (const run of next.session?.runs ?? []) {
+    for (const record of run.history.records) {
+      if (record.type !== "model.turn") continue;
+      const payload = objectValue(record.payload);
+      if (!arrayValue(payload.compiledActionTypes).includes("select_skills")) continue;
+      const call = arrayValue(payload.toolCalls).find((item) => objectValue(item).name === "nexora_select_skills");
+      const args = call === undefined ? {} : objectValue(objectValue(call).arguments);
+      const names = arrayValue(args.skills).flatMap((item) => {
+        const id = stringValue(objectValue(item).id);
+        return id === null ? [] : [id];
+      });
+      if (names.length === 0) continue;
+      const key = `${record.runId}:${record.sequence}`;
+      if (seenSkillSelections.has(key)) continue;
+      seenSkillSelections.add(key);
+      if (!allowNotice) continue;
+      skillNotice = { names, key };
+      if (skillNoticeTimer !== null) window.clearTimeout(skillNoticeTimer);
+      skillNoticeTimer = window.setTimeout(() => { skillNotice = null; render(); }, 5_000);
+    }
+  }
+}
+
+function arrayValue(value: unknown): unknown[] { return Array.isArray(value) ? value : []; }
+
 function showArtifact(text: string, truncated: boolean): void {
   const dialog = document.createElement("dialog");
   dialog.className = "artifact-dialog";

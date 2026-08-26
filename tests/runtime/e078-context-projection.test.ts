@@ -191,7 +191,7 @@ describe("E078 bounded decision context projection", () => {
       // The completion decision sees every persisted observation while
       // objective-only navigation remains non-authoritative.
       const completion = provider.contexts[4]!;
-      expect(completion.run.stepProgress.map((item) => item.status)).toEqual(["active", "pending", "pending"]);
+      expect(completion.run.stepProgress.map((item) => item.status)).toEqual(["completed", "completed", "completed"]);
       expect(completion.toolObservations.map((item) => item.toolName)).toEqual(["test.one", "test.two", "test.three"]);
     } finally {
       await runtime.close();

@@ -58,7 +58,8 @@ const CheckBaseSchema = z.object({
 const ToolResultCheckSchema = CheckBaseSchema.extend({
   kind: z.literal("tool_result"),
   toolName: NonEmptyString,
-  expectedStatus: z.literal("success")
+  expectedStatus: z.literal("success"),
+  role: z.enum(["mutation", "verification"]).optional()
 }).strict();
 
 const StateAssertionCheckSchema = CheckBaseSchema.extend({
@@ -574,6 +575,17 @@ export const ProviderAttemptSchema = z.object({
   startedAt: IsoDateTime,
   completedAt: IsoDateTime.nullable(),
   errorCode: NonEmptyString.nullable(),
+  errorCategory: z.enum([
+    "PROVIDER_CONNECT_TIMEOUT",
+    "PROVIDER_IDLE_TIMEOUT",
+    "PROVIDER_HTTP_ERROR",
+    "PROVIDER_RESPONSE_INVALID",
+    "PROVIDER_UNAVAILABLE",
+    "PROVIDER_CANCELLED",
+    "PROVIDER_ERROR"
+  ]).nullable(),
+  retryable: z.boolean(),
+  partialResponse: z.boolean(),
   responseDigest: NonEmptyString.nullable(),
   responseArtifactRef: NonEmptyString.nullable(),
   actualInputTokens: z.number().int().nonnegative().nullable(),

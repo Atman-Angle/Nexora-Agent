@@ -13,6 +13,7 @@ import type {
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import {
   responseCall,
+  responseDirect,
   responsePlan,
   responsePlanAndTools,
   responseText
@@ -34,7 +35,7 @@ describe("E119 progressive Agent execution", () => {
       },
       (context) => {
         contexts.push(structuredClone(context));
-        return responseText("Customer 42 is active.");
+        return responseDirect("Customer 42 is active.");
       }
     ]);
     const runtime = createAgent({
@@ -72,12 +73,12 @@ describe("E119 progressive Agent execution", () => {
           contexts.push(structuredClone(context));
           return responsePlanAndTools({
               goal: "Read customer-42.",
-              tasks: [{ objective: "Read the current customer record." }]
+              tasks: [{ objective: "Read the current customer record.", checks: [{ toolName: "records.lookup" }] }]
             }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]);
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return responseText("Customer 42 is active.");
+          return responseDirect("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -87,7 +88,9 @@ describe("E119 progressive Agent execution", () => {
     const view = await runtime.inspect(result.runId);
 
     expect(result.status).toBe("succeeded");
-    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([]);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([
+      expect.objectContaining({ toolName: "records.lookup", required: true })
+    ]);
     expect(contexts[1]!.run.currentPlan?.version).toBe(1);
     expect(contexts[1]!.toolObservations).toHaveLength(1);
     expect(view.modelCalls.map((call) => call.phase)).toEqual(["decision", "decision"]);
@@ -102,7 +105,7 @@ describe("E119 progressive Agent execution", () => {
       provider: decisionProvider([
         () => responsePlanAndTools({
           goal: "Read customer-42.",
-          tasks: [{ objective: "Read the current customer record." }]
+          tasks: [{ objective: "Read the current customer record.", checks: [{ toolName: "records.lookup" }] }]
         }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]),
         () => responseCall("nexora_respond", { text: "Customer 42 is active." })
       ]),
@@ -132,12 +135,16 @@ describe("E119 progressive Agent execution", () => {
           contexts.push(structuredClone(context));
           return responsePlan({
               goal: "Deliver the discovered customer status.",
-              tasks: [{ objective: "Report the current status from the lookup." }]
+              tasks: [{ objective: "Report the current status from the lookup.", checks: [{ toolName: "records.lookup" }] }]
             });
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return responseText("Customer 42 is active.");
+          return responseCall("records.lookup", { recordId: "customer-42" });
+        },
+        (context) => {
+          contexts.push(structuredClone(context));
+          return responseDirect("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -151,9 +158,11 @@ describe("E119 progressive Agent execution", () => {
     expect(contexts[1]!.run.currentPlan).toBeNull();
     expect(contexts[1]!.toolObservations).toHaveLength(1);
     expect(contexts[2]!.run.currentPlan?.version).toBe(1);
-    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([]);
-    expect(view.toolInvocations).toHaveLength(1);
-    expect(view.modelCalls).toHaveLength(3);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([
+      expect.objectContaining({ toolName: "records.lookup", required: true })
+    ]);
+    expect(view.toolInvocations).toHaveLength(2);
+    expect(view.modelCalls).toHaveLength(4);
     await runtime.close();
   });
 
@@ -182,7 +191,7 @@ describe("E119 progressive Agent execution", () => {
       provider: decisionProvider([
         (context) => {
           resumedContexts.push(structuredClone(context));
-          return responseText("Customer 42 is active.");
+          return responseDirect("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -207,10 +216,10 @@ describe("E119 progressive Agent execution", () => {
       provider: decisionProvider([
         () => responsePlanAndTools({
             goal: "Read customer-42.",
-            tasks: [{ objective: "Read the current customer record." }]
+            tasks: [{ objective: "Read the current customer record.", checks: [{ toolName: "records.lookup" }] }]
           }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]),
         () => responseText(""),
-        () => responseText("Customer 42 is active.")
+        () => responseDirect("Customer 42 is active.")
       ]),
       tools: [recordLookupTool(toolCalls)]
     });
@@ -225,6 +234,70 @@ describe("E119 progressive Agent execution", () => {
     expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(1);
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
     expect(view.modelCalls.map((call) => call.phase)).toEqual(["decision", "decision", "decision"]);
+    await runtime.close();
+  });
+
+  it("rejects nonempty bare draft text after execution and finishes through explicit control without replaying effects", async () => {
+    const toolCalls = { count: 0 };
+    const runtime = createAgent({
+      workspace: tempRoot(),
+      provider: decisionProvider([
+        () => responseCall("records.lookup", { recordId: "customer-42" }),
+        () => responseText("Working draft: the lookup succeeded, so I should now prepare the answer."),
+        () => responseDirect("Customer 42 is active.")
+      ]),
+      tools: [recordLookupTool(toolCalls)]
+    });
+
+    const result = await runtime.start({ input: "Report whether customer-42 is active." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "succeeded", summary: "Customer 42 is active." });
+    expect(toolCalls.count).toBe(1);
+    expect(view.toolInvocations).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
+    expect(view.events.find((event) => event.type === "response.rejected")?.payload.message)
+      .toContain("FINAL_CONTROL_REQUIRED");
+    await runtime.close();
+  });
+
+  it("answers directly with a Tool catalog present when no execution has started", async () => {
+    const provider = decisionProvider([
+      () => responseText("Run the project with pnpm dev.")
+    ]);
+    const runtime = createAgent({
+      workspace: tempRoot(),
+      provider,
+      tools: [recordLookupTool()]
+    });
+
+    const result = await runtime.start({ input: "How do I run this project?" });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "succeeded", summary: "Run the project with pnpm dev." });
+    expect(view.snapshot.evidence).toEqual([]);
+    expect(view.toolInvocations).toEqual([]);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
+    await runtime.close();
+  });
+
+  it("rejects overlong Provider draft content and never publishes it as the Result", async () => {
+    const overlongDraft = `WORKING-DRAFT-${"x".repeat(16_001)}`;
+    const runtime = createAgent({
+      workspace: tempRoot(),
+      provider: decisionProvider([
+        () => responseText(overlongDraft),
+        () => responseText("Concise final answer.")
+      ]),
+      tools: [recordLookupTool()]
+    });
+
+    const result = await runtime.start({ input: "Give a concise answer." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "succeeded", summary: "Concise final answer." });
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
+    expect(view.snapshot.result?.summary).not.toContain("WORKING-DRAFT");
     await runtime.close();
   });
 
@@ -250,7 +323,7 @@ describe("E119 progressive Agent execution", () => {
           ],
           finishReason: "tool_calls"
         }),
-        () => responseText("Customer 42 is active and audited.")
+        () => responseDirect("Customer 42 is active and audited.")
       ]),
       tools: [recordLookupTool(lookupCalls), recordAuditTool(auditCalls)]
     });

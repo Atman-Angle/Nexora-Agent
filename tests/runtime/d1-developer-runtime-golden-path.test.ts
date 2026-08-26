@@ -662,14 +662,15 @@ const provider: RuntimeProvider = {
     if (call === 1) return modelResponses.plan({
         goal: "Search target",
         tasks: [{
-          objective: "Search target"
+          objective: "Search target",
+          checks: [{ toolName: "filesystem.search" }]
         }]
       });
     if (call === 2) return modelResponses.tool({
       name: "filesystem.search",
       arguments: { query: "external D1 consumer", path: "." }
     });
-    return modelResponses.text("Verified external package");
+    return modelResponses.direct({ text: "Verified external package" });
   }
 };
 

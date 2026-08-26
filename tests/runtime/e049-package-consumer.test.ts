@@ -26,9 +26,9 @@ const workspace = ${JSON.stringify(root)};
 const provider = {
   async decide() {
     call += 1;
-    if (call === 1) return modelResponses.plan({ goal: "Search target", tasks: [{ objective: "Search" }] });
+    if (call === 1) return modelResponses.plan({ goal: "Search target", tasks: [{ objective: "Search", checks: [{ toolName: "filesystem.search" }] }] });
     if (call === 2) return modelResponses.tool({ name: "filesystem.search", arguments: { query: "external consumer", path: "." } });
-    return modelResponses.text("Verified");
+    return modelResponses.direct({ text: "Verified" });
   }
 };
 const runtime = createRuntime({ workspace, provider, tools: createBuiltInTools() });

@@ -8,12 +8,14 @@ import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
-  DIRECT_RESPONSE_CONTROL
+  DIRECT_RESPONSE_CONTROL,
+  SKILL_SELECTION_CONTROL,
+  MAX_MODEL_PLAN_TASKS
 } from "./providers/model-response.js";
 import type { JsonSchema } from "./tool-schema.js";
 
-export const PROMPT_COMPILER_VERSION = "1.1.0";
-export const SYSTEM_KERNEL_VERSION = "nexora-general-agent-v2";
+export const PROMPT_COMPILER_VERSION = "1.2.0";
+export const SYSTEM_KERNEL_VERSION = "nexora-general-agent-v3";
 export const CACHE_LAYOUT_VERSION = 1 as const;
 
 export type ProviderPromptCachePolicy =
@@ -41,7 +43,7 @@ export type ProviderToolContract = {
 
 export type RuntimeDirective =
   | { readonly kind: "normal" }
-  | { readonly kind: "invalid_response_repair"; readonly issues: readonly unknown[] }
+  | { readonly kind: "invalid_response_repair"; readonly issues: readonly unknown[]; readonly recovery?: unknown }
   | { readonly kind: "tool_failure_repair"; readonly failure: unknown }
   | { readonly kind: "approval_denied"; readonly decisionRef: string }
   | { readonly kind: "completion_blocked"; readonly missing: readonly unknown[] }
@@ -55,7 +57,7 @@ export type PromptCacheLayout = {
   readonly measurementMethod: "exact" | "estimated";
   readonly meter: string;
   readonly stableSegmentDigests: readonly {
-    readonly kind: "kernel" | "transport" | "host_policy" | "profile" | "project_policy" | "tools";
+    readonly kind: "kernel" | "transport" | "host_policy" | "profile" | "project_policy" | "tools" | "skills";
     readonly digest: string;
   }[];
 };
@@ -74,6 +76,7 @@ export type PromptStrategyManifest = {
   readonly projectInstructions: readonly { readonly sourceRef: string; readonly digest: string }[];
   readonly runtimeDirectiveKind: RuntimeDirective["kind"];
   readonly toolContractDigest: string;
+  readonly skills: { readonly catalogDigest: string; readonly activeDigest: string; readonly active: readonly string[] };
   readonly transport: ProviderTransportProfile;
   readonly authorityContextDigest: string;
   readonly payloadDigests: {
@@ -91,6 +94,9 @@ export type CompiledPrompt = {
   readonly stablePrefix: string;
   readonly digest: string;
   readonly runtimeDirective: RuntimeDirective;
+  /** Complete stable catalog used to decode stale Provider-native names. */
+  readonly toolCatalog: readonly ProviderToolContract[];
+  /** Controls and Runtime Tools available for this exact decision. */
   readonly tools: readonly ProviderToolContract[];
   readonly transport: ProviderTransportProfile;
   readonly strategy: PromptStrategyManifest;
@@ -117,7 +123,7 @@ Follow this protocol, Host Policy, host-authorized Project Policy and current us
 6. After changing state, verify the resulting state proportionately.
 7. Finish only when every requirement is satisfied, explicitly unresolved, or impossible for a stated evidence-backed reason.
 
-A Plan is optional navigation, not permission or a Tool whitelist. Create one before the first mutation when known work spans multiple files or components, has multiple dependent outcomes plus verification, or is likely to need more than three Tool calls. If scope is unknown, obtain only the smallest useful read-only observation first, then plan before mutation. Start with two to seven independently verifiable remaining outcomes, not a transcript of Tool calls; a later snapshot may contain one final outcome. Plan tasks are the current ordered remaining work: omit an outcome as soon as it is complete, and revise promptly when a conflict or new fact changes the remaining work. Skip a Plan for a direct answer, one observation, or one obvious local change.
+A Plan is optional navigation, not permission or a Tool whitelist. Create one before the first mutation when known work spans multiple files or components, has multiple dependent outcomes plus verification, or is likely to need more than three Tool calls. If scope is unknown, obtain only the smallest useful read-only observation first, then plan before mutation. Plan tasks are the current ordered remaining work. Keep two to seven independently verifiable remaining outcomes, not Tool calls; a later Plan may have one. Omitted unfinished Steps persist on revision. Replace, consolidate or delete one via its currentPlanAndChecks.removableSteps stepId in removeSteps; never leave a rewritten duplicate active. Skip a Plan for a direct answer, one observation, or one obvious local change.
 
 ## Action discipline
 Use visible authoritative facts first. Use the smallest applicable Tool when more facts or effects are required. Respect each Tool Schema and decision guidance. Request user input only for a user-exclusive fact, irreversible preference or business choice after safe autonomous paths are exhausted. Approval is a separate Runtime boundary and must not be requested as ordinary input.
@@ -125,7 +131,7 @@ Use visible authoritative facts first. Use the smallest applicable Tool when mor
 Repair locally. Correct invalid fields without repeating successful siblings. A duplicate rejection that references a persisted succeeded Invocation means that exact effect is already satisfied: adopt it, advance the remaining Plan, and never resend or re-verify the same unchanged input. Inspect a complete Tool failure and current state before a bounded retry; do not repeat an unchanged action without a transient failure or changed conditions. Respect denied Approval and never route around it. Never replay an unknown non-idempotent effect.
 
 ## Truthful completion
-Tool execution proves only its returned facts. Produced, observed and verified are distinct. Never invent Tool results, Evidence, Approval, permissions, external state or completion. Finish is only a proposal to the deterministic Completion Gate. Do not output hidden reasoning or Runtime-owned identifiers.
+Tool execution proves only its returned facts. Produced, observed and verified are distinct. Never invent Tool results, Evidence, Approval, permissions, external state or completion. Finish is only a proposal to the deterministic Completion Gate. Runtime IDs are not user-facing; a visible removable stepId is allowed only in update_plan.removeSteps.
 
 ## Supervisor / Coordinator delegation
 The Parent Agent may use a Supervisor / Coordinator policy when the user explicitly requests
@@ -156,6 +162,7 @@ export function compilePrompt(input: {
   readonly strategyConfigurationDigest?: string;
 }): CompiledPrompt {
   const transport = normalizeTransport(input.transport, input.host);
+  const skills = input.context.skills ?? { catalogDigest: digestCanonicalJson([]), catalog: [], active: [], activeDigest: digestCanonicalJson([]) };
   const delegationAllowed = input.context.delegationAllowed !== false;
   const runtimeTools = [...input.context.tools]
     .map((tool): ProviderToolContract => ({
@@ -172,20 +179,24 @@ export function compilePrompt(input: {
       produces: tool.evidence.produces
     }))
     .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
-  const tools = [
-    ...controlToolContracts(delegationAllowed),
+  const toolCatalog = [
+    ...controlToolContracts(delegationAllowed, skills.catalog.length > 0),
     ...runtimeTools
   ];
+  const tools = toolCatalog.filter((tool) => (
+    tool.name !== UPDATE_PLAN_CONTROL || planRevisionAllowed(input.context)
+  ));
   const directive = runtimeDirective(input.context);
   const segments = [
     segment("kernel", { version: SYSTEM_KERNEL_VERSION, content: GENERAL_AGENT_SYSTEM_KERNEL }),
-    segment("transport", transportInstructions(transport, delegationAllowed)),
+    segment("transport", transportInstructions(transport, delegationAllowed, skills.catalog.length > 0)),
     segment("host_policy", input.host.hostPolicy ?? { kind: "neutral_host_policy" }),
     segment("profile", input.host.profile === null
       ? { kind: "neutral_general_agent", strategyOnly: true }
       : { strategyOnly: true, ...input.host.profile }),
     segment("project_policy", input.host.projectInstructions),
-    segment("tools", tools)
+    segment("tools", toolCatalog),
+    segment("skills", skills.catalog)
   ] as const;
   const stablePrefix = segments.map((item) => item.text).join("\n");
   const authority = authorityContext(input.context);
@@ -199,6 +210,7 @@ export function compilePrompt(input: {
     currentPlanAndChecks: {
       plan: input.context.run.currentPlan,
       progress: input.context.run.stepProgress,
+      removableSteps: removablePlanSteps(input.context),
       activeInvocations: input.context.activeInvocations,
       evidence: input.context.run.evidence
     },
@@ -210,6 +222,18 @@ export function compilePrompt(input: {
       memoryCandidates: input.context.memoryCandidates,
       repair: input.context.repair ?? null
     },
+    skills: {
+      catalogDigest: skills.catalogDigest,
+      active: skills.active.map((skill) => ({
+        id: skill.id,
+        version: skill.version,
+        packageDigest: skill.packageDigest,
+        instructionDigest: skill.instructionDigest,
+        instructions: skill.instructions
+      })),
+      activeDigest: skills.activeDigest
+    },
+    availableControls: tools.filter((tool) => tool.kind === "control").map((tool) => tool.name),
     latestUserInput: input.context.run.inputHistory.at(-1) ?? null
   };
   const system = stablePrefix;
@@ -237,6 +261,7 @@ export function compilePrompt(input: {
       profile: segments[3].digest,
       projectPolicy: segments[4].digest,
       tools: segments[5].digest,
+      skills: segments[6].digest,
       compilerVersion: PROMPT_COMPILER_VERSION
     }),
     kernel: { version: SYSTEM_KERNEL_VERSION, digest: segments[0].digest },
@@ -254,6 +279,11 @@ export function compilePrompt(input: {
     })),
     runtimeDirectiveKind: directive.kind,
     toolContractDigest: segments[5].digest,
+    skills: {
+      catalogDigest: skills.catalogDigest,
+      activeDigest: skills.activeDigest,
+      active: skills.active.map((skill) => skill.id)
+    },
     transport,
     authorityContextDigest: digestCanonicalJson(authority),
     payloadDigests,
@@ -266,6 +296,7 @@ export function compilePrompt(input: {
     stablePrefix,
     digest: payloadDigests.final,
     runtimeDirective: directive,
+    toolCatalog: Object.freeze(toolCatalog),
     tools: Object.freeze(tools),
     transport,
     strategy: Object.freeze(strategy)
@@ -274,13 +305,38 @@ export function compilePrompt(input: {
 
 export const PromptCompiler = Object.freeze({ compile: compilePrompt });
 
+function removablePlanSteps(context: ModelDecisionContext): readonly {
+  readonly stepId: string;
+  readonly objective: string;
+  readonly status: "pending" | "active";
+}[] {
+  if (context.run.currentPlan === null || !planRevisionAllowed(context)) return [];
+  const statusByStepId = new Map(context.run.stepProgress.map((progress) => [progress.stepId, progress.status]));
+  return (context.run.currentPlan.orderedSteps ?? []).flatMap((step) => {
+    const status = statusByStepId.get(step.id) ?? "pending";
+    return status === "completed" ? [] : [{ stepId: step.id, objective: step.objective, status }];
+  });
+}
+
+export function planRevisionAllowed(context: ModelDecisionContext): boolean {
+  if (context.run.currentPlan === null || context.run.taskContract === null) return true;
+  if (context.run.taskContract.inputVersion < context.run.inputHistory.length) return true;
+  const repairText = JSON.stringify(context.repair ?? null);
+  return !repairText.includes("PLAN_UNCHANGED")
+    && !repairText.includes("NO_PROGRESS_WARNING");
+}
+
 export function runtimeDirective(context: ModelDecisionContext): RuntimeDirective {
   if (context.finalization !== undefined) {
     return { kind: "delivery_only", reason: context.finalization.reason };
   }
   const repair = context.repair;
   if (repair === undefined || repair === null) return { kind: "normal" };
-  if (repair.kind === "invalid_response") return { kind: "invalid_response_repair", issues: repair.issues };
+  if (repair.kind === "invalid_response") return {
+    kind: "invalid_response_repair",
+    issues: repair.issues,
+    ...(repair.recovery === undefined ? {} : { recovery: repair.recovery })
+  };
   if (repair.kind === "tool_failure") {
     return {
       kind: "tool_failure_repair",
@@ -289,7 +345,8 @@ export function runtimeDirective(context: ModelDecisionContext): RuntimeDirectiv
         issues: repair.issues,
         failedObjective: repair.failedObjective,
         latestIntent: repair.latestIntent,
-        latestFailedAttempt: repair.latestFailedAttempt
+        latestFailedAttempt: repair.latestFailedAttempt,
+        recovery: repair.recovery
       }
     };
   }
@@ -316,13 +373,15 @@ function segment(
 
 function transportInstructions(
   transport: ProviderTransportProfile,
-  delegationAllowed: boolean
+  delegationAllowed: boolean,
+  skillsAvailable: boolean
 ): unknown {
   const controls = [
     DIRECT_RESPONSE_CONTROL,
     UPDATE_PLAN_CONTROL,
     REQUEST_INPUT_CONTROL,
-    ...(delegationAllowed ? [DELEGATE_WORKERS_CONTROL] : [])
+    ...(delegationAllowed ? [DELEGATE_WORKERS_CONTROL] : []),
+    ...(skillsAvailable ? [SKILL_SELECTION_CONTROL] : [])
   ];
   return transport.kind === "native_tools"
     ? {
@@ -339,8 +398,43 @@ function transportInstructions(
       };
 }
 
-function controlToolContracts(includeDelegation = true): readonly ProviderToolContract[] {
+function controlToolContracts(includeDelegation = true, includeSkills = false): readonly ProviderToolContract[] {
   const controls: ProviderToolContract[] = [
+    {
+      kind: "control",
+      name: SKILL_SELECTION_CONTROL,
+      description: "Select one to four Skills from the immutable catalog. Selection is strategy-only and must be the only call in this response; it never grants Tool permission or executes package scripts.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          catalogDigest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" },
+          skills: {
+            type: "array",
+            minItems: 1,
+            maxItems: 4,
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", minLength: 1, maxLength: 64 },
+                version: { type: "string", minLength: 1, maxLength: 64 },
+                packageDigest: { type: "string", pattern: "^sha256:[a-f0-9]{64}$" }
+              },
+              required: ["id", "version", "packageDigest"],
+              additionalProperties: false
+            }
+          }
+        },
+        required: ["catalogDigest", "skills"],
+        additionalProperties: false
+      },
+      decision: {
+        useWhen: ["The current task materially benefits from one of the cataloged specialized strategies."],
+        avoidWhen: ["No cataloged Skill is relevant.", "The response also needs a Runtime Tool, Plan, input request or completion proposal."],
+        nonGoals: ["Grant Tool permission.", "Execute scripts or resources.", "Declare completion."]
+      },
+      effect: "control",
+      produces: ["Harness-local active Skill strategy for the next model turn."]
+    },
     {
       kind: "control",
       name: DIRECT_RESPONSE_CONTROL,
@@ -370,10 +464,40 @@ function controlToolContracts(includeDelegation = true): readonly ProviderToolCo
           tasks: {
             type: "array",
             minItems: 1,
+            maxItems: MAX_MODEL_PLAN_TASKS,
             items: {
               type: "object",
-              properties: { objective: { type: "string", minLength: 1 } },
-              required: ["objective"],
+              properties: {
+                objective: { type: "string", minLength: 1 },
+                checks: {
+                  type: "array",
+                  minItems: 1,
+                  maxItems: 8,
+                  items: {
+                    type: "object",
+                    properties: {
+                      toolName: { type: "string", minLength: 1 },
+                      role: { type: "string", enum: ["mutation", "verification"] }
+                    },
+                    required: ["toolName", "role"],
+                    additionalProperties: false
+                  }
+                }
+              },
+              required: ["objective", "checks"],
+              additionalProperties: false
+            }
+          },
+          removeSteps: {
+            type: "array",
+            maxItems: 32,
+            items: {
+              type: "object",
+              properties: {
+                stepId: { type: "string", minLength: 1 },
+                reason: { type: "string", minLength: 1, maxLength: 1_000 }
+              },
+              required: ["stepId", "reason"],
               additionalProperties: false
             }
           }
@@ -391,7 +515,7 @@ function controlToolContracts(includeDelegation = true): readonly ProviderToolCo
         nonGoals: ["Grant permission.", "Declare completion."]
       },
       effect: "control",
-      produces: ["A Run-owned objective-only remaining-work Plan."]
+      produces: ["A Run-owned remaining-work Plan whose outcomes are bound to required Tool evidence."]
     },
     {
       kind: "control",
@@ -450,7 +574,10 @@ function controlToolContracts(includeDelegation = true): readonly ProviderToolCo
       produces: ["Runtime-owned Child Branch identities and bounded Worker objectives."]
     }
   ];
-  return includeDelegation ? controls : controls.filter((tool) => tool.name !== DELEGATE_WORKERS_CONTROL);
+  return controls.filter((tool) => (
+    (includeDelegation || tool.name !== DELEGATE_WORKERS_CONTROL)
+      && (includeSkills || tool.name !== SKILL_SELECTION_CONTROL)
+  ));
 }
 
 function authorityContext(context: ModelDecisionContext): unknown {

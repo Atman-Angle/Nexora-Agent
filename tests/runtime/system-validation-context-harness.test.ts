@@ -16,7 +16,7 @@ import {
   responseCall,
   responseInput,
   responsePlan,
-  responseText
+  responseDirect
 } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -67,7 +67,7 @@ describe("Context Harness system validation", () => {
         planTurn("test.success"),
         responseCall("test.fail", { key: "first" }),
         responseCall("test.success", { key: "second" }),
-        responseText("Recovered through a different Tool and confirmed second.")
+        responseDirect("Recovered through a different Tool and confirmed second.")
       ]),
       tools: [failingTool(), readTool("test.success")]
     });
@@ -93,7 +93,7 @@ describe("Context Harness system validation", () => {
         planTurn("test.read"),
         responseCall("test.read", { key: "work" }),
         responseCall("test.verify", { key: "verify" }),
-        responseText("Completed work and then verified it.")
+        responseDirect("Completed work and then verified it.")
       ]),
       tools: [readTool("test.read"), readTool("test.verify")]
     });
@@ -162,10 +162,10 @@ describe("Context Harness system validation", () => {
     const view = await agent.inspect(result.runId);
     await agent.close();
 
-    expect(decisions).toBe(4);
-    expect(result).toMatchObject({ status: "blocked", stopReason: "ITERATION_BUDGET_EXCEEDED" });
+    expect(decisions).toBe(2);
+    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
     expect(result.delivery).toMatchObject({ outcome: "blocked" });
-    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(4);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(2);
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
   });
 });
@@ -187,11 +187,12 @@ function queuedProvider(responses: readonly ModelResponse[]): RuntimeProvider {
   };
 }
 
-function planTurn(_capability: string): ModelResponse {
+function planTurn(capability: string): ModelResponse {
   return responsePlan({
       goal: "Produce a confirmed fact.",
       tasks: [{
-        objective: "Produce a confirmed fact."
+        objective: "Produce a confirmed fact.",
+        checks: [{ toolName: capability }]
       }]
     });
 }

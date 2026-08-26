@@ -11,6 +11,7 @@ import {
 } from "@nexora/runtime/internal";
 import type {
   JsonValue,
+  ContinuationTurn,
   ModelDecisionContext,
   RepairContext,
   RehydratedFact
@@ -36,6 +37,7 @@ import {
   projectSessionArchive,
   resolveRehydratedFact
 } from "./rehydration.js";
+import type { SkillDecisionContext } from "../skills.js";
 
 export type DecisionContextResult = {
   readonly context: ModelDecisionContext;
@@ -66,6 +68,7 @@ export function buildDecisionContext(args: {
   readonly now?: string;
   readonly workerObservations?: readonly WorkerObservation[];
   readonly delegationPolicyMode?: "forbidden" | "allowed" | "required";
+  readonly skills?: SkillDecisionContext;
 }): DecisionContextResult {
   const { run, store, workspace, tools, artifacts } = args;
   const invocations = store.listToolInvocations(run.runId);
@@ -219,7 +222,8 @@ export function buildDecisionContext(args: {
     historyCandidates: hasPriorAutomaticCompaction ? [] : historyCandidates,
     memoryCandidates: hasPriorAutomaticCompaction ? [] : memoryCandidates,
     ...(hasPriorAutomaticCompaction ? {} : { sessionArchive: projectSessionArchive({ run, events }) }),
-    repair: projectRepairContext(run, invocations, store.listToolAttempts(run.runId), artifacts, events),
+    repair: projectRepairContext(run, invocations, store.listToolAttempts(run.runId), artifacts, events)
+      ?? projectContinuationRecoveryRepair(continuation),
     ...(nativeToolContinuation === undefined ? {} : { nativeToolContinuation }),
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
@@ -231,7 +235,13 @@ export function buildDecisionContext(args: {
         inputExample: tool.contract.execution.inputExample
       },
       evidence: { produces: tool.contract.evidence.produces }
-    }))
+    })),
+    skills: args.skills ?? {
+      catalogDigest: digestJson([]),
+      catalog: [],
+      active: [],
+      activeDigest: digestJson([])
+    }
   }));
   const context = deepFreeze({
     providerContractVersion: projection.providerContractVersion,
@@ -257,7 +267,8 @@ export function buildDecisionContext(args: {
     ...(projection.nativeToolContinuation === undefined
       ? {}
       : { nativeToolContinuation: projection.nativeToolContinuation }),
-    tools: projection.tools
+    tools: projection.tools,
+    skills: projection.skills
   });
   return { context, injectedRehydratedRefs };
 }
@@ -282,6 +293,8 @@ function projectRepairContext(
   const relevantAttempts = failedInvocation === null
     ? []
     : attempts.filter((attempt) => attempt.invocationId === failedInvocation.id);
+  const rejectionRecovery = parseRejectionRecovery(error.code, error.message)
+    ?? toolFailureRecovery(failedInvocation);
   return {
     kind: repairKind(error.code, failedInvocation),
     code: error.code,
@@ -302,7 +315,83 @@ function projectRepairContext(
       planVersion: failedInvocation.planVersion,
       stepId: failedInvocation.stepId,
       attemptCount: relevantAttempts.length
-    }
+    },
+    ...(rejectionRecovery === undefined ? {} : { recovery: rejectionRecovery })
+  };
+}
+
+function parseRejectionRecovery(
+  code: string,
+  message: string
+): RepairContext["recovery"] | undefined {
+  if (code !== "INVALID_MODEL_RESPONSE") return undefined;
+  try {
+    const parsed = JSON.parse(message) as { readonly recovery?: unknown };
+    const recovery = parsed.recovery;
+    if (recovery === null || typeof recovery !== "object" || Array.isArray(recovery)) return undefined;
+    const value = recovery as {
+      readonly sideEffect?: unknown;
+      readonly doNotRepeat?: unknown;
+      readonly nextAction?: unknown;
+      readonly fields?: unknown;
+    };
+    if (
+      (value.sideEffect !== "none" && value.sideEffect !== "unknown" && value.sideEffect !== "possible")
+      || typeof value.doNotRepeat !== "boolean"
+      || typeof value.nextAction !== "string"
+    ) return undefined;
+    const fields = Array.isArray(value.fields)
+      ? value.fields.flatMap((field) => {
+          if (field === null || typeof field !== "object" || Array.isArray(field)) return [];
+          const item = field as { readonly path?: unknown; readonly code?: unknown; readonly expectedFormat?: unknown };
+          if (typeof item.path !== "string" || typeof item.code !== "string") return [];
+          return [{
+            path: item.path,
+            code: item.code,
+            ...(typeof item.expectedFormat === "string" ? { expectedFormat: item.expectedFormat } : {})
+          }];
+        })
+      : undefined;
+    return {
+      sideEffect: value.sideEffect,
+      doNotRepeat: value.doNotRepeat,
+      nextAction: value.nextAction,
+      ...(fields === undefined ? {} : { fields })
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function toolFailureRecovery(invocation: ToolInvocation | null): RepairContext["recovery"] | undefined {
+  if (invocation === null) return undefined;
+  const code = invocationErrorCode(invocation);
+  if (code === null) return undefined;
+  if (invocation.status === "unknown") {
+    return {
+      sideEffect: "unknown",
+      doNotRepeat: true,
+      nextAction: "The Tool effect is unknown; do not replay it. Request confirmation or use a safe read-only path."
+    };
+  }
+  if (code === "PROCESS_START_FAILED") {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The process did not start. Use the returned executable facts, such as the platform-specific command form (for example npm.cmd), and retry only with a changed executable or arguments."
+    };
+  }
+  if (code === "PROTECTED_MUTATION_BATCH_REQUIRES_ONE_AT_A_TIME") {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The protected mutation batch was rejected as a whole; no mutation was executed. Submit exactly one protected mutation or one complete write, and do not resend the rejected batch."
+    };
+  }
+  return {
+    sideEffect: "possible",
+    doNotRepeat: false,
+    nextAction: "Use the Tool failure facts and change the input or choose another Tool; do not repeat unchanged input without changed conditions."
   };
 }
 
@@ -330,13 +419,37 @@ function projectNoProgressRepair(
     : [];
   const kind = typeof warning.payload.kind === "string" ? warning.payload.kind : "repeated_action";
   const repeatCount = typeof warning.payload.repeatCount === "number" ? warning.payload.repeatCount : 3;
+  const reads = typeof warning.payload.reads === "number" ? warning.payload.reads : null;
+  const mutations = typeof warning.payload.mutations === "number" ? warning.payload.mutations : null;
+  const failures = typeof warning.payload.failures === "number" ? warning.payload.failures : null;
   const resourceSuffix = resources.length === 0 ? "" : ` for ${resources.join(", ")}`;
+  const countSuffix = reads === null || mutations === null
+    ? ""
+    : ` (${reads} reads, ${mutations} mutations${failures === null ? "" : `, ${failures} failed`})`;
   return {
     kind: "runtime_error",
     code: "NO_PROGRESS_WARNING",
     issues: [{
       kind: "recovery_guidance",
-      message: `Execution repeated ${kind}${resourceSuffix} ${repeatCount} times. Use the current authoritative facts to finish, or choose one materially different action; do not continue the same read/mutation cycle.`
+      message: `Execution repeated ${kind}${resourceSuffix}${countSuffix} ${repeatCount} times. The latest resource facts are authoritative; verify the current result or finish, and do not continue the same read/mutation cycle without a new failure or digest.`
+    }],
+    failedObjective: null,
+    latestIntent: null,
+    latestFailedAttempt: null
+  };
+}
+
+function projectContinuationRecoveryRepair(
+  continuation: readonly ContinuationTurn[]
+): RepairContext | null {
+  const blocked = [...continuation].reverse().find((turn) => turn.status === "blocked");
+  if (blocked?.outcome?.exactCause?.code !== "NO_PROGRESS_DETECTED") return null;
+  return {
+    kind: "runtime_error",
+    code: "NO_PROGRESS_RECOVERY",
+    issues: [{
+      kind: "recovery_guidance",
+      message: "The previous Run was blocked after repeating a strategy without new authoritative facts. Use its confirmed facts and choose a materially different action; do not replay the previous read/mutation cycle."
     }],
     failedObjective: null,
     latestIntent: null,
@@ -395,13 +508,35 @@ function repairIssues(
   message: string,
   failedInvocation: ToolInvocation | null
 ): RepairContext["issues"] {
+  if (code === "INVALID_MODEL_RESPONSE") {
+    try {
+      const parsed = JSON.parse(message) as { readonly issues?: unknown; readonly recovery?: { readonly nextAction?: unknown } };
+      if (Array.isArray(parsed.issues)) {
+        const issues = parsed.issues.flatMap((item) => (
+          item !== null
+          && typeof item === "object"
+          && typeof (item as { readonly message?: unknown }).message === "string"
+            ? [{
+                kind: parsedRepairIssueKind((item as { readonly code?: unknown }).code, "unresolved_failure"),
+                message: (item as { readonly message: string }).message
+              }]
+            : []
+        ));
+        const nextAction = parsed.recovery?.nextAction;
+        if (typeof nextAction === "string") issues.push({ kind: "recovery_guidance", message: nextAction });
+        if (issues.length > 0) return issues;
+      }
+    } catch {
+      // Fall through to the bounded persisted-message projection.
+    }
+  }
   const addRecoveryGuidance = (issues: RepairContext["issues"]): RepairContext["issues"] => {
     if (failedInvocation === null || issues.some((issue) => issue.kind === "recovery_guidance")) {
       return issues;
     }
-    const guidance = failedInvocation.status === "unknown"
-      ? "The Tool effect is unknown; do not replay it. Request confirmation or use a safe read-only path."
-      : "Treat this as a recoverable Tool failure. Use the returned facts and capability catalog to change the input or choose another Tool; do not repeat unchanged input without changed conditions.";
+    const recovery = toolFailureRecovery(failedInvocation);
+    const guidance = recovery?.nextAction
+      ?? "Treat this as a recoverable Tool failure. Use the returned facts and capability catalog to change the input or choose another Tool; do not repeat unchanged input without changed conditions.";
     return [...issues, { kind: "recovery_guidance", message: guidance }];
   };
   try {

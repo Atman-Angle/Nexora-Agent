@@ -58,7 +58,7 @@ describe("E077 Tool decision efficiency", () => {
     }
   });
 
-  it("accepts a duplicate unfinished Plan as an audited no-op", async () => {
+  it("rejects a duplicate unfinished Plan once and removes Plan control for the repair turn", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
@@ -78,8 +78,11 @@ describe("E077 Tool decision efficiency", () => {
     expect(result.status).toBe("waiting");
     expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.toolInvocations).toHaveLength(0);
-    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
-    expect(view.events.filter((event) => event.type === "plan.set").at(-1)?.payload.noOp).toBe(true);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ message: expect.stringContaining("PLAN_UNCHANGED") }) })
+    ]);
+    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(1);
+    expect(provider.contexts[2]?.tools.map((tool) => tool.identity.name)).not.toContain("nexora_update_plan");
     expect(provider.contexts[2]?.tools.map((tool) => tool.identity.name)).toContain("filesystem.read");
   });
 

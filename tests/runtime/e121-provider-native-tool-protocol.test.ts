@@ -255,6 +255,66 @@ describe("E050 Provider response contract convergence", () => {
     });
   });
 
+  it("repairs only schema-declared composite fields double-encoded by a native Provider", async () => {
+    const workspace = tempRoot("nexora-e050-native-nested-json-");
+    let decisions = 0;
+    const server = await providerMessageServer(async () => {
+      decisions += 1;
+      if (decisions === 1) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-nested-json",
+            type: "function" as const,
+            function: {
+              name: "example_nested",
+              arguments: JSON.stringify({
+                readiness: JSON.stringify({ type: "http", url: "http://127.0.0.1:4174" }),
+                literal: JSON.stringify({ keep: "as text" })
+              })
+            }
+          }]
+        };
+      }
+      return {
+        content: null,
+        tool_calls: [{
+          id: "native-input",
+          type: "function" as const,
+          function: {
+            name: REQUEST_INPUT_CONTROL,
+            arguments: JSON.stringify({ question: "Continue?", reason: "Nested repair proved." })
+          }
+        }]
+      };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model"
+      }),
+      tools: [nestedExampleTool()]
+    });
+
+    const result = await runtime.start({ input: "Inspect the nested example." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.toolInvocations[0]).toMatchObject({
+      toolName: "example.nested",
+      status: "succeeded",
+      inputJson: {
+        readiness: { type: "http", url: "http://127.0.0.1:4174" },
+        literal: '{"keep":"as text"}'
+      }
+    });
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+  });
+
   it("continues native Plan controls with an accepted Tool result", async () => {
     const workspace = tempRoot("nexora-e050-native-plan-");
     const requests: ProviderRequest[] = [];
@@ -270,7 +330,26 @@ describe("E050 Provider response contract convergence", () => {
             type: "function" as const,
             function: {
               name: UPDATE_PLAN_CONTROL,
-              arguments: JSON.stringify({ goal: "Inspect", tasks: [{ objective: "Inspect target" }] })
+              arguments: JSON.stringify({
+                goal: "Inspect",
+                tasks: JSON.stringify([{
+                  objective: "Inspect target",
+                  checks: [{ toolName: "shell_execute", role: "verification" }]
+                }])
+              })
+            }
+          }]
+        };
+      }
+      if (decisions === 2) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-canonical-tool",
+            type: "function" as const,
+            function: {
+              name: "shell_execute",
+              arguments: JSON.stringify({ path: "target.txt" })
             }
           }]
         };
@@ -295,10 +374,11 @@ describe("E050 Provider response contract convergence", () => {
         apiKey: "test-key",
         model: "test-model"
       }),
-      tools: []
+      tools: [exampleTool({ path: "target.txt" }, "shell.execute")]
     });
 
     const result = await runtime.start({ input: "Inspect the target." });
+    const view = await runtime.inspect(result.runId);
     runtime.close();
 
     expect(result.status).toBe("waiting");
@@ -310,6 +390,23 @@ describe("E050 Provider response contract convergence", () => {
       ok: true,
       status: "accepted",
       planVersion: 1
+    });
+    const secondDecision = JSON.parse(requests[1]!.messages.at(-1)!.content!) as DecisionPayload & {
+      currentPlanAndChecks: {
+        plan: Record<string, unknown> | null;
+        removableSteps: readonly { readonly stepId: string; readonly objective: string; readonly status: string }[];
+      };
+    };
+    expect(secondDecision.currentPlanAndChecks.removableSteps).toEqual([{
+      stepId: view.snapshot.currentPlan!.orderedSteps[0]!.id,
+      objective: "Inspect target",
+      status: "active"
+    }]);
+    expect(requests[1]!.messages[0]!.content).toContain("currentPlanAndChecks.removableSteps");
+    expect(requests[1]!.messages[0]!.content).toContain("update_plan.removeSteps");
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks[0]).toMatchObject({
+      toolName: "shell.execute",
+      role: "verification"
     });
   });
 
@@ -886,7 +983,7 @@ describe("E050 Provider response contract convergence", () => {
       workspace,
       dataDir: join(workspace, ".nexora"),
       provider,
-      tools: [exampleTool({ path: "target.txt" })]
+      tools: [exampleTool({ path: "target.txt" }, "filesystem.read")]
     });
 
     const first = await runtime.start({ input: "Inspect the target." });
@@ -1002,6 +1099,43 @@ function protectedExampleTool(): RuntimeTool {
     },
     async execute() {
       return { status: "success", subjectRef: "target.txt", facts: { written: true } };
+    }
+  };
+}
+
+function nestedExampleTool(): RuntimeTool {
+  const inputSchema = z.object({
+    readiness: z.object({
+      type: z.literal("http"),
+      url: z.string().url()
+    }).strict(),
+    literal: z.string()
+  }).strict();
+  return {
+    contract: {
+      identity: { name: "example.nested" },
+      capability: { purpose: "Read a nested example.", nonGoals: ["Mutate the example."] },
+      decision: { useWhen: ["Nested input is required."], avoidWhen: ["Nested input is already known."] },
+      execution: {
+        effect: { kind: "read", description: "Reads nested input without mutation." },
+        idempotent: true,
+        inputSchema,
+        inputExample: {
+          readiness: { type: "http", url: "http://127.0.0.1:4174" },
+          literal: "text"
+        }
+      },
+      evidence: {
+        produces: ["Normalized nested input."],
+        factsSchema: z.object({ content: z.string() }).strict()
+      }
+    },
+    async execute(input) {
+      return {
+        status: "success",
+        subjectRef: "nested",
+        facts: { content: JSON.stringify(inputSchema.parse(input)) }
+      };
     }
   };
 }

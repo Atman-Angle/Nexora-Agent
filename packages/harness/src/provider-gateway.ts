@@ -34,7 +34,13 @@ export type RequestModelServices = {
 };
 
 export type RequestModelResult =
-  | { readonly outcome: "succeeded"; readonly run: RunSnapshot; readonly output: unknown }
+  | {
+      readonly outcome: "succeeded";
+      readonly run: RunSnapshot;
+      readonly output: unknown;
+      /** Removes provisional UI output when Harness rejects this response. */
+      readonly discardPublicOutput: () => void;
+    }
   | { readonly outcome: "failed"; readonly run: RunSnapshot; readonly error: unknown }
   | { readonly outcome: "budget_exceeded"; readonly run: RunSnapshot };
 
@@ -181,6 +187,10 @@ export async function requestModel(
   }, observer);
 
   let reportedUsage: ProviderTokenUsage | undefined;
+  let successfulPublicAttempt: {
+    readonly attemptId: string;
+    readonly sequence: number;
+  } | null = null;
   function reportUsage(usage: ProviderTokenUsage): void {
     if (reportedUsage !== undefined) {
       throw new Error("Provider reported token usage more than once for one logical model call.");
@@ -244,12 +254,16 @@ export async function requestModel(
               sequence: publicSequence + 1,
               occurredAt: services.runtime.now()
             });
+            successfulPublicAttempt = { attemptId, sequence: publicSequence + 2 };
           }
           if (attemptUsage !== undefined) reportUsage(attemptUsage);
           services.runtime.completeProviderAttempt(requested.runId, {
             attemptId,
             callId: intent.id,
             status: "succeeded",
+            errorCategory: null,
+            retryable: false,
+            partialResponse: publicSequence > 0,
             responsePayload: publicSequence === 0
               ? redactAuditPayload(value)
               : {
@@ -287,6 +301,9 @@ export async function requestModel(
             callId: intent.id,
             status: cancelled ? "cancelled" : "failed",
             errorCode: cancelled ? "CANCELLED" : providerErrorCode(error),
+            errorCategory: cancelled ? "PROVIDER_CANCELLED" : providerErrorCategory(error),
+            retryable: !cancelled && isRetryableProviderError(error),
+            partialResponse: publicSequence > 0,
             ...(attemptUsage === undefined ? {} : {
               actualInputTokens: attemptUsage.inputTokens,
               actualOutputTokens: attemptUsage.outputTokens,
@@ -312,7 +329,23 @@ export async function requestModel(
           }),
       outputPayload: redactAuditPayload(output)
     });
-    return { outcome: "succeeded", run: requested, output };
+    return {
+      outcome: "succeeded",
+      run: requested,
+      output,
+      discardPublicOutput: () => {
+        if (successfulPublicAttempt === null) return;
+        emitPublicOutput(services.publicOutputListener, {
+          type: "text.discarded",
+          runId: requested.runId,
+          modelCallId: intent.id,
+          attemptId: successfulPublicAttempt.attemptId,
+          sequence: successfulPublicAttempt.sequence,
+          occurredAt: services.runtime.now()
+        });
+        successfulPublicAttempt = null;
+      }
+    };
   } catch (error) {
     const cancelled = signal.aborted;
     try {
@@ -346,6 +379,7 @@ function assertStrategyContinuity(
   const previousConfigurationDigest = (previous as { readonly configurationDigest?: unknown }).configurationDigest;
   if (typeof previousConfigurationDigest === "string") {
     if (previousConfigurationDigest === current.strategy.configurationDigest) return;
+    if (skillTransitionAllowed(previous, current)) return;
   } else {
     const cache = (previous as { readonly cache?: unknown }).cache;
     if (cache === null || typeof cache !== "object" || Array.isArray(cache)) return;
@@ -358,6 +392,29 @@ function assertStrategyContinuity(
   ) as Error & { code: string };
   error.code = "STRATEGY_SNAPSHOT_UNAVAILABLE";
   throw error;
+}
+
+function skillTransitionAllowed(previous: object, current: CompiledPrompt): boolean {
+  const prior = previous as {
+    readonly kernel?: unknown;
+    readonly compilerVersion?: unknown;
+    readonly hostPolicyDigest?: unknown;
+    readonly profile?: unknown;
+    readonly projectInstructions?: unknown;
+    readonly toolContractDigest?: unknown;
+    readonly transport?: unknown;
+    readonly skills?: { readonly catalogDigest?: unknown; readonly activeDigest?: unknown };
+  };
+  const next = current.strategy;
+  if (prior.skills?.catalogDigest !== next.skills.catalogDigest) return false;
+  if (prior.kernel === undefined || JSON.stringify(prior.kernel) !== JSON.stringify(next.kernel)) return false;
+  if (prior.compilerVersion !== next.compilerVersion
+    || prior.hostPolicyDigest !== next.hostPolicyDigest
+    || JSON.stringify(prior.profile) !== JSON.stringify(next.profile)
+    || JSON.stringify(prior.projectInstructions) !== JSON.stringify(next.projectInstructions)
+    || prior.toolContractDigest !== next.toolContractDigest
+    || JSON.stringify(prior.transport) !== JSON.stringify(next.transport)) return false;
+  return prior.skills?.activeDigest !== next.skills.activeDigest;
 }
 
 function buildContextManifest(
@@ -397,6 +454,13 @@ function buildContextManifest(
         : "untrusted_external"
   ));
   context.memoryCandidates.forEach((candidate) => addDigest(candidate.ref, candidate.digest, "untrusted_memory_data"));
+  if (context.skills !== undefined) {
+    addDigest("skills:catalog", context.skills.catalogDigest, "untrusted_external");
+    context.skills.active.forEach((skill) => {
+      addDigest(`skill:${skill.id}:package`, skill.packageDigest, skill.trust === "trusted" ? "authority" : "untrusted_external");
+      addDigest(`skill:${skill.id}:instructions`, skill.instructionDigest, skill.trust === "trusted" ? "authority" : "untrusted_external");
+    });
+  }
   return {
     schemaVersion: 1 as const,
     projectionDigest: context.projection.digest,
@@ -433,6 +497,18 @@ function providerErrorCode(error: unknown): string {
   if (error !== null && typeof error === "object" && typeof (error as { code?: unknown }).code === "string") {
     return (error as { code: string }).code.slice(0, 100);
   }
+  return "PROVIDER_ERROR";
+}
+
+function providerErrorCategory(error: unknown): "PROVIDER_CONNECT_TIMEOUT" | "PROVIDER_IDLE_TIMEOUT" | "PROVIDER_HTTP_ERROR" | "PROVIDER_RESPONSE_INVALID" | "PROVIDER_UNAVAILABLE" | "PROVIDER_CANCELLED" | "PROVIDER_ERROR" {
+  const code = providerErrorCode(error).toUpperCase();
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (code === "PROVIDER_CANCELLED" || code === "CANCELLED") return "PROVIDER_CANCELLED";
+  if (message.includes("response headers") || message.includes("connect timeout")) return "PROVIDER_CONNECT_TIMEOUT";
+  if (message.includes("no response data") || message.includes("idle timeout")) return "PROVIDER_IDLE_TIMEOUT";
+  if (message.includes("provider http") || code.startsWith("HTTP_")) return "PROVIDER_HTTP_ERROR";
+  if (message.includes("invalid") || message.includes("unknown structured tool") || message.includes("invalid json")) return "PROVIDER_RESPONSE_INVALID";
+  if (code === "PROVIDER_UNAVAILABLE" || message.includes("unavailable") || message.includes("network")) return "PROVIDER_UNAVAILABLE";
   return "PROVIDER_ERROR";
 }
 

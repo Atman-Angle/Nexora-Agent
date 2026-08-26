@@ -14,7 +14,7 @@ import {
   ScriptedRuntimeProvider,
   responseCall,
   responsePlan,
-  responseText,
+  responseDirect,
   successfulReadTool
 } from "./runtime-testkit.js";
 
@@ -36,7 +36,7 @@ describe("E103 explicit Memory restoration with objective-only Plans", () => {
           toolName: "filesystem.read",
           status: "succeeded"
         }));
-        return responseText("Verified the restored Memory context and proof file.");
+        return responseDirect("Verified the restored Memory context and proof file.");
       }
     ]);
     const runtime = createRuntime({
@@ -80,7 +80,7 @@ describe("E103 explicit Memory restoration with objective-only Plans", () => {
 function plan() {
   return responsePlan({
       goal: "Restore the required Memory and verify the proof file.",
-      tasks: [{ objective: "Use the restored Memory context and read the proof file." }]
+      tasks: [{ objective: "Use the restored Memory context and read the proof file.", checks: [{ toolName: "filesystem.read" }] }]
     });
 }
 

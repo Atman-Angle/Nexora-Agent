@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -167,6 +168,17 @@ describe("E049 built-in Tool Runtime", () => {
         retryable: false
       }
     });
+    if (process.platform === "win32") {
+      await expect(execute(tool(tools, "shell.execute"), root, {
+        command: "npm",
+        args: ["--version"],
+        cwd: ".",
+        timeoutMs: 10_000
+      })).resolves.toEqual(expect.objectContaining({
+        status: "success",
+        facts: expect.objectContaining({ exitCode: 0, stdout: expect.stringMatching(/\d+/) })
+      }));
+    }
     await expect(execute(tool(tools, "git.status"), root, {}))
       .resolves.toEqual(expect.objectContaining({ status: "success", facts: expect.objectContaining({ stdout: expect.stringContaining("tracked.txt") }) }));
     expect(tool(tools, "git.status").contract.execution.effect.kind).toBe("read");
@@ -186,6 +198,19 @@ describe("E049 built-in Tool Runtime", () => {
       status: "failure",
       error: expect.objectContaining({ code: "COMMAND_REJECTED" })
     }));
+    if (process.platform === "win32") {
+      await expect(execute(tool(tools, "process.start"), root, {
+        command: "vite.cmd",
+        args: [],
+        cwd: ".",
+        serviceKey: "unsafe-wrapper",
+        readiness: { type: "output_contains", value: "READY" },
+        startupTimeoutMs: 1_000
+      })).resolves.toEqual(expect.objectContaining({
+        status: "failure",
+        error: expect.objectContaining({ code: "COMMAND_REJECTED" })
+      }));
+    }
 
     const descendant = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "leaked"), 1200)`;
     const parent = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {stdio:"ignore",detached:${process.platform === "win32"}}).unref(); setTimeout(() => {}, 5000)`;
@@ -202,4 +227,239 @@ describe("E049 built-in Tool Runtime", () => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     expect(existsSync(marker)).toBe(false);
   });
+
+  it("starts, reuses, inspects, reads, and stops one managed persistent process", async () => {
+    const root = workspace();
+    const tools = createBuiltInTools();
+    const start = tool(tools, "process.start");
+    const inspect = tool(createBuiltInTools(), "process.inspect");
+    const logs = tool(createBuiltInTools(), "process.logs");
+    const stop = tool(createBuiltInTools(), "process.stop");
+    const input = {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('READY token=secret-value\\n'); setInterval(() => {}, 1000)"],
+      cwd: ".",
+      serviceKey: "test-server",
+      readiness: { type: "output_contains", value: "READY" },
+      startupTimeoutMs: 10_000
+    };
+
+    const first = await execute(start, root, input);
+    expect(first).toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "ready", replayed: false, processHandle: expect.stringMatching(/^process_/) })
+    }));
+    if (first.status !== "success") throw new Error("Managed process did not start.");
+    const processHandle = (first.facts as { processHandle: string }).processHandle;
+
+    const replay = await execute(start, root, input);
+    expect(replay).toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ processHandle, replayed: true })
+    }));
+    await expect(execute(inspect, root, { processHandle })).resolves.toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "ready", heartbeatFresh: true })
+    }));
+    await expect(execute(logs, root, { processHandle, stream: "combined", tailBytes: 4_096 })).resolves.toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ content: expect.stringContaining("READY token=[REDACTED]") })
+    }));
+    await expect(execute(stop, root, { processHandle })).resolves.toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "exited", alreadyStopped: false })
+    }));
+    await expect(execute(stop, root, { processHandle })).resolves.toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "exited", alreadyStopped: true })
+    }));
+  }, 30_000);
+
+  it("fails closed when a managed process exits or times out before readiness", async () => {
+    const root = workspace();
+    const start = tool(createBuiltInTools(), "process.start");
+    await expect(execute(start, root, {
+      command: process.execPath,
+      args: ["-e", "process.stderr.write('port already in use'); process.exit(7)"],
+      serviceKey: "early-exit",
+      readiness: { type: "output_contains", value: "READY" },
+      startupTimeoutMs: 5_000
+    })).resolves.toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({ code: "PROCESS_EXIT_BEFORE_READY" })
+    }));
+    const replacement = await execute(start, root, {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('READY\\u001b[0m replacement Local: http://localhost:4321/\\n'); setInterval(() => {}, 1000)"],
+      serviceKey: "early-exit",
+      readiness: { type: "output_contains", value: "READY replacement" },
+      startupTimeoutMs: 5_000
+    });
+    expect(replacement).toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "ready", replayed: false, endpoint: "http://localhost:4321/" })
+    }));
+    if (replacement.status !== "success") throw new Error("Replacement managed process did not start.");
+    await execute(tool(createBuiltInTools(), "process.stop"), root, {
+      processHandle: (replacement.facts as { processHandle: string }).processHandle
+    });
+    await expect(execute(start, root, {
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 1000)"],
+      serviceKey: "never-ready",
+      readiness: { type: "output_contains", value: "READY" },
+      startupTimeoutMs: 300
+    })).resolves.toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({ code: "PROCESS_STARTUP_TIMEOUT" })
+    }));
+  }, 15_000);
+
+  it("rejects an HTTP readiness endpoint that was already served by an unrelated process", async () => {
+    const root = workspace();
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/plain" });
+      response.end("unrelated service");
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Occupied endpoint fixture did not bind.");
+    try {
+      await expect(execute(tool(createBuiltInTools(), "process.start"), root, {
+        command: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1000)"],
+        serviceKey: "occupied-http-endpoint",
+        readiness: { type: "http", url: `http://127.0.0.1:${address.port}`, expectedStatus: [200] },
+        startupTimeoutMs: 5_000
+      })).resolves.toEqual(expect.objectContaining({
+        status: "failure",
+        error: expect.objectContaining({
+          code: "READINESS_ENDPOINT_OCCUPIED"
+        })
+      }));
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
+  });
+
+  it.runIf(process.platform === "win32")("runs npm package scripts through the JavaScript CLI without a cmd supervisor child", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "service.cjs"), "process.stdout.write('READY npm\\n'); setInterval(() => {}, 1000);\n", "utf8");
+    writeFileSync(join(root, "package.json"), JSON.stringify({ scripts: { service: "node service.cjs" } }), "utf8");
+    const tools = createBuiltInTools();
+    const started = await execute(tool(tools, "process.start"), root, {
+      command: "npm run service",
+      args: [],
+      serviceKey: "npm-service",
+      readiness: { type: "output_contains", value: "READY npm" },
+      startupTimeoutMs: 10_000
+    });
+    expect(started).toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "ready", replayed: false })
+    }));
+    if (started.status !== "success") throw new Error("npm managed process did not start.");
+    await expect(execute(tool(tools, "process.stop"), root, {
+      processHandle: (started.facts as { processHandle: string }).processHandle
+    })).resolves.toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "exited" })
+    }));
+  }, 20_000);
+
+  it("rejects tampered managed process descriptor paths", async () => {
+    const root = workspace();
+    const tools = createBuiltInTools();
+    const start = tool(tools, "process.start");
+    const started = await execute(start, root, {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('READY\\n'); setInterval(() => {}, 1000)"],
+      serviceKey: "tamper-check",
+      readiness: { type: "output_contains", value: "READY" },
+      startupTimeoutMs: 10_000
+    });
+    if (started.status !== "success") throw new Error("Managed process did not start.");
+    const processHandle = (started.facts as { processHandle: string }).processHandle;
+    const stateDir = join(root, ".nexora", "processes");
+    const descriptorPath = join(stateDir, readdirSync(stateDir).find((name) => /^[a-f0-9]{64}\.json$/.test(name))!);
+    const descriptorText = readFileSync(descriptorPath, "utf8");
+    const descriptor = JSON.parse(descriptorText) as Record<string, unknown>;
+    writeFileSync(descriptorPath, JSON.stringify({ ...descriptor, stdoutPath: join(root, "outside.log") }), "utf8");
+    await expect(execute(tool(tools, "process.inspect"), root, { processHandle })).resolves.toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({ code: "PROCESS_DESCRIPTOR_INVALID" })
+    }));
+    writeFileSync(descriptorPath, descriptorText, "utf8");
+    await execute(tool(tools, "process.stop"), root, { processHandle });
+  }, 20_000);
+
+  it("uses the detached watchdog to contain a supervisor crash", async () => {
+    const root = workspace();
+    const tools = createBuiltInTools();
+    const started = await execute(tool(tools, "process.start"), root, {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('READY\\n'); setInterval(() => {}, 1000)"],
+      serviceKey: "watchdog-crash",
+      readiness: { type: "output_contains", value: "READY" },
+      startupTimeoutMs: 10_000
+    });
+    if (started.status !== "success") throw new Error("Managed process did not start.");
+    const processHandle = (started.facts as { processHandle: string }).processHandle;
+    const stateDir = join(root, ".nexora", "processes");
+    const descriptorPath = join(stateDir, readdirSync(stateDir).find((name) => /^[a-f0-9]{64}\.json$/.test(name))!);
+    const descriptor = JSON.parse(readFileSync(descriptorPath, "utf8")) as { supervisorPid: number; childPid: number };
+    process.kill(descriptor.supervisorPid, "SIGKILL");
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline && processExists(descriptor.childPid)) await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(processExists(descriptor.childPid)).toBe(false);
+    await expect(execute(tool(tools, "process.inspect"), root, { processHandle })).resolves.toEqual(expect.objectContaining({
+      status: "success",
+      facts: expect.objectContaining({ status: "lost", heartbeatFresh: false, errorCode: "PROCESS_SUPERVISOR_LOST" })
+    }));
+  }, 20_000);
+
+  it("rejects a conflicting live service generation and reports shell timeout termination facts", async () => {
+    const root = workspace();
+    const tools = createBuiltInTools();
+    const start = tool(tools, "process.start");
+    const stop = tool(tools, "process.stop");
+    const first = await execute(start, root, {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('READY\\n'); setInterval(() => {}, 1000)"],
+      serviceKey: "conflict-server",
+      readiness: { type: "output_contains", value: "READY" },
+      startupTimeoutMs: 10_000
+    });
+    if (first.status !== "success") throw new Error("Managed process did not start.");
+    const processHandle = (first.facts as { processHandle: string }).processHandle;
+    await expect(execute(start, root, {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write('OTHER\\n'); setInterval(() => {}, 1000)"],
+      serviceKey: "conflict-server",
+      readiness: { type: "output_contains", value: "OTHER" },
+      startupTimeoutMs: 10_000
+    })).resolves.toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({ code: "PROCESS_SERVICE_CONFLICT" })
+    }));
+    await execute(stop, root, { processHandle });
+
+    const timedOut = await execute(tool(tools, "shell.execute"), root, {
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 200)"],
+      timeoutMs: 30
+    });
+    expect(timedOut).toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({
+        code: "TOOL_TIMEOUT",
+        message: expect.stringContaining("No background process remains")
+      })
+    }));
+  }, 30_000);
 });
+
+function processExists(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}

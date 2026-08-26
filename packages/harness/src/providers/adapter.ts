@@ -19,7 +19,6 @@ import type {
 } from "./model-client.js";
 import type { NativeToolContinuation } from "./model-client.js";
 import {
-  ModelResponseSchema,
   type ModelResponse
 } from "./model-response.js";
 import type { JsonSchema } from "../tool-schema.js";
@@ -116,7 +115,7 @@ export function defineProviderAdapter(
       stablePrefix: prompt.stablePrefix,
       responseFormat,
       transport: prompt.transport,
-      toolCatalog: prompt.tools,
+      toolCatalog: prompt.toolCatalog,
       ...(prompt.transport.kind === "native_tools" && context.nativeToolContinuation !== undefined
         ? { continuation: context.nativeToolContinuation }
         : {}),
@@ -164,7 +163,12 @@ export function defineProviderAdapter(
         }
       );
       signal.throwIfAborted();
-      return ModelResponseSchema.parse(content);
+      // Adapter completion is a transport boundary, not the authority that
+      // accepts a model decision. Return the normalized payload to the
+      // Harness Agent Loop so every transport uses the same response-repair
+      // and convergence path. Parsing here used to turn an invalid model
+      // response into PROVIDER_UNAVAILABLE and made Resume replay it forever.
+      return content;
     },
     ...(definition.dispose === undefined
       ? {}

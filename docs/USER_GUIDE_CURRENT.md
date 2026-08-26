@@ -19,6 +19,14 @@ NEXORA_MODEL_TOOL_TRANSPORT=native_tools
 
 CLI 的 start/resume 自动读取启动命令所在目录（`process.cwd()`）的 `.env`。显式 PowerShell/CI/系统环境变量优先于文件值；`--cwd` 指向的目标项目 `.env` 不会被读取，避免目标仓库注入 Provider 配置。`.env` 不存在时仍可使用显式环境变量；两者都没有时返回 `MODEL_CONFIG_ERROR`。`inspect` 不加载 `.env`。可选的 `NEXORA_MODEL_TIMEOUT_MS` 必须是正整数毫秒。
 
+Desktop 对未显式配置的 OpenAI-compatible Provider 使用 30 秒 response-header、60 秒 stream-idle 和 180 秒单 Attempt 总时长上限。用户或部署可以通过 `NEXORA_MODEL_CONNECT_TIMEOUT_MS`、`NEXORA_MODEL_TIMEOUT_MS` 和 `NEXORA_MODEL_MAX_DURATION_MS` 显式覆盖。超时结束当前 Provider Attempt、丢弃临时流式输出并进入既有有限重试/恢复路径，不会重放已经成功的 Tool Invocation。
+
+## 1.1 本地 Agent Skills
+
+Harness 支持 Host 显式配置的本地 Agent Skills。每个 Skill 是一个目录，包含 Agent Skills 兼容的 `SKILL.md`；目录名必须与小写 `name` frontmatter 一致。Nexora 在 Agent 创建时只读取有界元数据并计算 package/instruction digest，模型通过 `nexora_select_skills` 选择精确条目后，下一轮才加载 Markdown 指令。Skill 只能提供策略建议，不能注册或执行 Tool、授予权限、创建 Evidence、修改 Runtime 状态或宣布完成。链接、路径逃逸、重复 ID、包漂移和预算超限都会失败关闭；远程下载、MCP、市场和 Skill 脚本自动执行不在本 Feature 范围内。
+
+Desktop 不显示常驻 Skill 管理面板。任务提交后，如果模型自动选择了 Skill，对话右下角会短暂显示“已自动加载 Skill”，同时选择记录会保留在会话审计中；用户无需手动勾选或确认，Skill 仍受 Harness 校验和 Runtime 权限边界约束。Desktop 会自动扫描项目下的 `.agents/skills` 与 `.nexora/skills` 目录。
+
 ## 2. Desktop Agent Workspace
 
 ```powershell
@@ -175,10 +183,14 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 | `filesystem.search` | read | 以 offset/limit/nextOffset 稳定分页搜索全部匹配 |
 | `filesystem.write` | write | 原子创建/覆盖，必须批准 |
 | `filesystem.patch` | write | 带 expected digest 的单点替换，必须批准 |
-| `shell.execute` | execute | 直接执行可执行文件，必须批准；非零退出为 failure |
+| `shell.execute` | execute | 执行预期会退出的可执行文件，必须批准；超时会终止完整进程树，非零退出为 failure |
+| `process.start` | execute | 按 `serviceKey` 幂等启动持久服务，通过输出/TCP/HTTP readiness 后返回，必须批准 |
+| `process.inspect` | read | 用 generation-bound handle 校验服务状态与 supervisor heartbeat |
+| `process.logs` | read | 读取持久服务的有界脱敏日志；大日志进入 Artifact |
+| `process.stop` | execute | 停止 exact managed process generation 及其子进程并确认退出，必须批准 |
 | `git.status/diff/show` | read | 只读 Git 信息 |
 
-上表描述 Runtime 的默认保护边界，CLI 和第三方 Host 仍要求显式批准。官方 Desktop Host 会自动批准被 Workspace 路径约束的内建 `filesystem.write` / `filesystem.patch`，但仍通过同一个持久化 Approval、Invocation、Evidence 和 Completion 路径执行；没有 OS sandbox 的 `shell.execute` 始终需要用户批准。详细边界见 [Risk-based Tool Approval](RISK_BASED_TOOL_APPROVAL_SPEC.md)。
+上表描述 Runtime 的默认保护边界，CLI 和第三方 Host 仍要求显式批准。官方 Desktop Host 会自动批准被 Workspace 路径约束的内建 `filesystem.write` / `filesystem.patch`，但仍通过同一个持久化 Approval、Invocation、Evidence 和 Completion 路径执行；没有 OS sandbox 的 `shell.execute`、`process.start` 和 `process.stop` 始终需要用户批准。长期服务不得通过扩大 `shell.execute` timeout 实现；它必须使用 generation-bound managed process，并在 readiness 通过后才可声称可用。详细边界见 [Managed Process Execution](MANAGED_PROCESS_EXECUTION_SPEC.md) 与 [Risk-based Tool Approval](RISK_BASED_TOOL_APPROVAL_SPEC.md)。
 
 所有路径必须是 workspace-relative，越界和符号链接逃逸会失败。`shell.execute` 不接受 `cmd`、PowerShell、Bash 等交互式 Shell 入口。
 

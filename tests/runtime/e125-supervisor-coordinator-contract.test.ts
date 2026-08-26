@@ -12,7 +12,7 @@ import {
   type RuntimeProvider
 } from "../../packages/harness/src/index.js";
 import { parseDelegationControl } from "../../packages/harness/src/planning.js";
-import { responseCall, responseInput, responseText } from "./runtime-testkit.js";
+import { responseCall, responseDirect, responseInput } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -102,7 +102,7 @@ class ForbiddenProbeProvider implements RuntimeProvider {
     this.#calls += 1;
     return this.#calls === 1
       ? responseCall("nexora_delegate_workers", { assignments: [{ objective: "A" }, { objective: "B" }] })
-      : responseText("Completed locally.");
+      : responseDirect("Completed locally.");
   }
 }
 
@@ -111,7 +111,7 @@ class RequiredFallbackProvider implements RuntimeProvider {
   async decide() {
     this.#calls += 1;
     return this.#calls === 1
-      ? responseText("Unsafe Parent-only completion.")
+      ? responseDirect("Unsafe Parent-only completion.")
       : responseInput("Which two independent targets should be inspected?", "Safe delegation needs user-exclusive scope.");
   }
 }

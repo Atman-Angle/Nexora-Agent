@@ -1,6 +1,6 @@
 # ARCHITECTURE.md — Nexora 核心架构
 
-本文件同时描述长期产品边界和当前 1.1 Runtime 实现。第 1–8 节定义必须长期保持的架构方向与 Authority；第 9 节记录当前真实仓库结构。尚未出现真实调用方的 Context Provider、MCP、Skill 等能力不是当前已实现模块；官方 Desktop 是 Host Application，只能通过公开 Contract 使用 Harness / Runtime，不能进入 Core 或建立第二套 Authority。
+本文件同时描述长期产品边界和当前 1.1 Runtime 实现。第 1–8 节定义必须长期保持的架构方向与 Authority；第 9 节记录当前真实仓库结构。MCP、远程扩展和市场仍不是当前实现模块；本 Feature 已实现 Harness-only 的本地 Agent Skill 目录与选择边界。官方 Desktop 是 Host Application，只能通过公开 Contract 使用 Harness / Runtime，不能进入 Core 或建立第二套 Authority。
 
 ## 1. 总体结构
 
@@ -119,6 +119,8 @@ Action
 → Timeout / Cancel
 → Normalize Result
 ```
+
+长期本地进程仍走同一 Action/Approval/Invocation 管线，但执行 Worker 是 workspace-local managed process supervisor。Supervisor descriptor 只拥有 OS 进程 generation、heartbeat、readiness、日志与退出事实；它不能修改 Run、Plan、Evidence 或 Completion。`process.start` 以 `serviceKey + commandDigest` 保证 Invocation crash-replay 幂等；`process.inspect/logs/stop` 必须绑定 exact generation handle。同步 `shell.execute` 超时后终止完整进程树，不能被投影为后台仍在运行。
 
 ### Evidence & Verification
 
@@ -248,6 +250,7 @@ Approval 不是 Provider Tool Calling 权限，而是 Runtime 对受保护内部
 - Child Process Cleanup；
 - Host Boundary Isolation；
 - Skill/MCP 不得绕过权限。
+- 本地 Skill 只由 Host 显式配置根目录发现；`SKILL.md` 元数据先进入目录，完整正文仅在精确选择且 package/instruction digest 复核后进入下一轮 Prompt；Skill 不能注册/执行 Tool、授权副作用、写 Run、创建 Evidence 或声明完成。
 
 
 ## 9. Repository Structure
@@ -283,6 +286,7 @@ nexora/
 | --- | --- | --- |
 | `harness/agent.ts` | `createAgent()` 组合入口和 deprecated `createRuntime()` 单路径 façade | Store、State Machine、Tool Effect |
 | `harness/agent-loop.ts` | 唯一 Agent Loop、Provider Decision 校验与调度 | 直接修改 Runtime/Memory Authority |
+| `harness/skills.ts` | 本地 `SKILL.md` catalog、digest、选择校验与渐进激活 | Tool 注册/执行、权限、Evidence、Completion 或 Run Status |
 | `harness/prompt.ts`、`profile.ts` | 通用 Kernel、Profile/Policy snapshot、canonical Prompt 与 cache-stable manifest | 权限、Evidence、Completion 或 Run Status |
 | `harness/context/`、`memory/`、`providers/` | Context 收缩/Rehydration、Memory Store/Policy、单一 Provider Transport | Run Status、Invocation、Effect |
 | `harness/planning.ts` | Plan/input control 参数校验与 Runtime Action 编译 | 生成 Runtime-owned ID、证明或状态 |

@@ -175,6 +175,9 @@ describe("E083 context branching", () => {
     // Restart with the same data dir: the branch, child run, and snapshot survive.
     const provider2 = new ScriptedRuntimeProvider([
       plan(workspace, [step(3)]),
+      // The child does not own the parent's Evidence. Complete the preserved
+      // unfinished Step before advancing to the newly added work.
+      call(step(1), 1),
       call(step(3), 3),
       finishFromEvidence("Branch completed after restart.")
     ]);

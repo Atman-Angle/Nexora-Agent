@@ -43,7 +43,10 @@ describe("E053 Tool capability and Approval input convergence", () => {
       const active = tools(provider.contexts[1]!);
       const shell = active.find((tool) => tool.identity.name === "shell.execute");
 
-      expect(initial).toHaveLength(9);
+      expect(initial).toHaveLength(13);
+      expect(initial.map((tool) => tool.identity.name)).toEqual(expect.arrayContaining([
+        "process.start", "process.inspect", "process.logs", "process.stop", "shell.execute"
+      ]));
       expect(initial.every((tool) => tool.capability.purpose.length > 0 && tool.decision.useWhen.length > 0 && tool.evidence.produces.length > 0)).toBe(true);
       expect(initial.every((tool) => tool.execution.inputExample !== undefined)).toBe(true);
       expect(shell).toEqual(expect.objectContaining({
@@ -234,7 +237,7 @@ function plan(
 ) {
   return responsePlan({
         goal: "Complete the Tool-backed task",
-        tasks: steps.map((step) => ({ objective: step.objective }))
+        tasks: steps.map((step) => ({ objective: step.objective, checks: [{ toolName: step.toolName }] }))
       });
 }
 
@@ -295,7 +298,9 @@ function capabilityDecision(
 ): { readonly response: unknown; readonly selected: boolean } {
   if (index === 0) {
     const list = context.capabilities.find((tool) => tool.description.includes("file names and paths"));
-    const read = context.capabilities.find((tool) => tool.description.includes("content from one known"));
+    const read = context.capabilities.find((tool) => (
+      tool.name === "filesystem.read" && tool.description.includes("UTF-8 content")
+    ));
     const patch = context.capabilities.find((tool) => tool.description.includes("exact occurrence"));
     const execute = context.capabilities.find((tool) => tool.description.includes("executable"));
     if (list === undefined || read === undefined || patch === undefined || execute === undefined) {
@@ -320,7 +325,7 @@ function capabilityDecision(
     .map((item) => item.toolName));
   if (completedTools.has("shell.execute")) {
     return {
-      response: { text: "Discovered, read, patched, and validated the file.", toolCalls: [], finishReason: "stop" },
+      response: { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Discovered, read, patched, and validated the file." } }], finishReason: "tool_calls" },
       selected: false
     };
   }

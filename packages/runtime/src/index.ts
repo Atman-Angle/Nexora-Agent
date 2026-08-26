@@ -96,6 +96,10 @@ export { DEFAULT_RUNTIME_BUDGETS } from "./contracts.js";
 
 export { createBuiltInTools } from "./execution/tool-runtime/index.js";
 export {
+  inspectManagedProcess,
+  type ManagedProcessInspectFacts
+} from "./execution/tool-runtime/managed-process.js";
+export {
   defineTool,
   type ToolBuilderContext,
   type ToolBuilderDefinition

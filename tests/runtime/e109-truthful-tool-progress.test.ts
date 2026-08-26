@@ -15,9 +15,9 @@ import { ToolResultSchema } from "../../packages/runtime/src/runtime-types.js";
 import {
   materializeTestResponse,
   responseCall,
+  responseDirect,
   responseInput,
-  responsePlan,
-  responseText
+  responsePlan
 } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -100,7 +100,7 @@ describe("E109 truthful Tool progress", () => {
       responseCall("filesystem.read", { path: "missing/target.txt" }),
       responseCall("filesystem.search", { query: "RECOVERED", path: "." }),
       responseCall("filesystem.read", { path: "target.txt" }),
-      responseText("Recovered by searching for and reading target.txt.")
+      responseDirect("Recovered by searching for and reading target.txt.")
     ], contexts);
     const runtime = createRuntime({
       workspace: root,
@@ -164,6 +164,43 @@ describe("E109 truthful Tool progress", () => {
     expect(view.events.some((item) => item.type === "approval.requested")).toBe(false);
     expect(JSON.stringify(view.events.find((item) => item.type === "response.rejected")?.payload))
       .toContain("must differ");
+  });
+
+  it("turns an invalid patch digest into one bounded, actionable recovery", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "target.txt"), "VALUE\n", "utf8");
+    const contexts: ModelDecisionContext[] = [];
+    const invalidPatch = responseCall("filesystem.patch", {
+      path: "target.txt",
+      expectedDigest: "sha256:short",
+      find: "VALUE",
+      replace: "UPDATED"
+    });
+    const provider = scriptedProvider([
+      invalidPatch,
+      invalidPatch,
+      responseDirect("The patch input was invalid and no write was executed.")
+    ], contexts);
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Update target.txt." });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(view.events.filter((item) => item.type === "response.rejected")).toHaveLength(2);
+    expect(view.snapshot.budgetsUsed.modelCalls).toBe(2);
+    expect(contexts[1]?.repair?.recovery).toEqual(expect.objectContaining({
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: expect.stringContaining("authoritative filesystem.read")
+    }));
+    expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("VALUE\n");
   });
 
   it("persists non-zero process diagnostics and projects them as a Tool failure", async () => {

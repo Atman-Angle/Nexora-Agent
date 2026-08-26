@@ -17,7 +17,7 @@ import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import {
   responseCall,
   responsePlan,
-  responseText
+  responseDirect
 } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -41,7 +41,7 @@ describe("E122 context working set and read reuse", () => {
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return responseText("Read the stylesheet.");
+          return responseDirect("Read the stylesheet.");
         }
       ]),
       tools: createBuiltInTools()
@@ -65,7 +65,7 @@ describe("E122 context working set and read reuse", () => {
         contexts.push(structuredClone(context));
         return index < 9
           ? responseCall("records.read", { key: `item-${index}` })
-          : responseText("Read all records.");
+          : responseDirect("Read all records.");
       }
     ));
     const runtime = createAgent({
@@ -109,7 +109,7 @@ describe("E122 context working set and read reuse", () => {
           turn += 1;
           if (turn === 1) return responseCall("filesystem.read", { path: "styles.css" });
           if (turn <= 13) return responseCall("noise.read", { key: `noise-${turn}` });
-          return responseText("Kept the current stylesheet.");
+          return responseDirect("Kept the current stylesheet.");
         }
       },
       tools: [...createBuiltInTools(), noiseReadTool()]
@@ -131,7 +131,7 @@ describe("E122 context working set and read reuse", () => {
       provider: provider([
         () => responseCall("records.read", { key: "alpha" }),
         () => responseCall("records.read", { key: "alpha" }),
-        () => responseText("Alpha is current.")
+        () => responseDirect("Alpha is current.")
       ]),
       tools: [recordReadTool(executions)]
     });
@@ -157,7 +157,7 @@ describe("E122 context working set and read reuse", () => {
         () => responseCall("cached.read", { key: "alpha" }),
         () => responseCall("cached.write", { key: "alpha", value: "after" }),
         () => responseCall("cached.read", { key: "alpha" }),
-        () => responseText("Alpha was refreshed after mutation.")
+        () => responseDirect("Alpha was refreshed after mutation.")
       ]),
       tools: [cachedReadTool(state), cachedWriteTool(state)]
     });
@@ -208,7 +208,7 @@ describe("E122 context working set and read reuse", () => {
       dataDir,
       provider: provider([
         () => responseCall("cached.read", { key: "alpha" }),
-        () => responseText("Alpha was refreshed after reopen.")
+        () => responseDirect("Alpha was refreshed after reopen.")
       ]),
       tools: [cachedReadTool(state)]
     });
@@ -232,7 +232,7 @@ describe("E122 context working set and read reuse", () => {
         () => responseCall("filesystem.read", { path: "large.ts" }),
         (context) => {
           contexts.push(structuredClone(context));
-          return responseText("Read the large file.");
+          return responseDirect("Read the large file.");
         }
       ]),
       tools: createBuiltInTools()
@@ -249,17 +249,18 @@ describe("E122 context working set and read reuse", () => {
     await runtime.close();
   });
 
-  it("accepts an equivalent Plan snapshot without creating a new version", async () => {
+  it("rejects an equivalent Plan snapshot without creating a new version", async () => {
     const plan = {
       goal: "Inspect alpha.",
-      tasks: [{ objective: "Read the alpha record." }]
+      tasks: [{ objective: "Read the alpha record.", checks: [{ toolName: "records.read" }] }]
     };
     const runtime = createAgent({
       workspace: tempRoot(),
       provider: provider([
         () => responsePlan(plan),
         () => responsePlan(plan),
-        () => responseText("Plan retained.")
+        () => responseCall("records.read", { key: "alpha" }),
+        () => responseDirect("Plan retained.")
       ]),
       tools: [recordReadTool()]
     });
@@ -272,11 +273,10 @@ describe("E122 context working set and read reuse", () => {
 
     expect(result.status).toBe("succeeded");
     expect(view.snapshot.currentPlan?.version).toBe(1);
-    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
-    expect(view.events.filter((event) => event.type === "plan.set").at(-1)?.payload).toMatchObject({
-      noOp: true,
-      version: 1
-    });
+    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ message: expect.stringContaining("PLAN_UNCHANGED") }) })
+    ]);
     await runtime.close();
   });
 });
@@ -289,7 +289,7 @@ function provider(decisions: readonly Decision[]): RuntimeProvider {
     async decide(context) {
       const decision = queue.shift();
       if (decision === undefined) throw new Error("Decision queue exhausted.");
-      return decision(context) as ReturnType<typeof responseText>;
+      return decision(context) as ReturnType<typeof responseDirect>;
     }
   };
 }

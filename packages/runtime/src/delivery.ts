@@ -11,6 +11,7 @@ export function deriveRunDelivery(input: {
   readonly summary?: string;
   readonly generatedBy?: RunDelivery["generatedBy"];
   readonly stopReason?: string | null;
+  readonly nextAction?: string;
 }): RunDelivery {
   const run = input.run;
   const completedStepIds = new Set(run.stepProgress
@@ -64,7 +65,7 @@ export function deriveRunDelivery(input: {
       message: bound(message, 4_000),
       stopReason: stopReason ?? null
     },
-    nextAction: nextAction(input.outcome, code),
+    nextAction: input.nextAction ?? nextAction(input.outcome, code),
     generatedBy: input.generatedBy ?? "deterministic",
     createdAt: input.now
   };

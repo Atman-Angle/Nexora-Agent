@@ -14,6 +14,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { resolveExecutableCommand } from "../../packages/runtime/src/execution/tool-runtime/command-resolution.js";
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) {
@@ -25,15 +27,15 @@ describe("D3 packed cancellation consumer", () => {
   it("installs, typechecks, cancels and disposes through the package root", () => {
     const root = mkdtempSync(join(tmpdir(), "nexora-d3-consumer-"));
     roots.push(root);
-    execFileSync(
+    execPackageManager(
       "pnpm",
       ["--filter", "@nexora/runtime", "pack", "--pack-destination", root],
-      windowsCommand({ cwd: process.cwd(), stdio: "pipe", encoding: "utf8" })
+      { cwd: process.cwd(), stdio: "pipe", encoding: "utf8" }
     );
-    execFileSync(
+    execPackageManager(
       "pnpm",
       ["--filter", "@nexora/harness", "pack", "--pack-destination", root],
-      windowsCommand({ cwd: process.cwd(), stdio: "pipe", encoding: "utf8" })
+      { cwd: process.cwd(), stdio: "pipe", encoding: "utf8" }
     );
     const tarballs = readdirSync(root)
       .filter((name) => name.endsWith(".tgz"))
@@ -47,10 +49,10 @@ describe("D3 packed cancellation consumer", () => {
       }),
       "utf8"
     );
-    execFileSync(
+    execPackageManager(
       "npm",
       ["install", "--offline", ...tarballs],
-      windowsCommand({ cwd: root, stdio: "pipe", encoding: "utf8" })
+      { cwd: root, stdio: "pipe", encoding: "utf8" }
     );
     writeFileSync(
       join(root, "tsconfig.json"),
@@ -169,11 +171,11 @@ console.log(JSON.stringify({
 `;
 }
 
-function windowsCommand(
+function execPackageManager(
+  command: string,
+  args: readonly string[],
   options: ExecFileSyncOptionsWithStringEncoding
-): ExecFileSyncOptionsWithStringEncoding {
-  return {
-    ...options,
-    ...(process.platform === "win32" ? { shell: true } : {})
-  };
+): string {
+  const resolved = resolveExecutableCommand(command, args, options.cwd?.toString() ?? process.cwd());
+  return execFileSync(resolved.command, [...resolved.args], options);
 }

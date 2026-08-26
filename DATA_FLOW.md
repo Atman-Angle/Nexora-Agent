@@ -24,7 +24,9 @@ flowchart TD
     BUDGET -- "否" --> FAIL["State Machine → failed"]
     BUDGET -- "是" --> AUTOREF["Harness 自动选择 ref<br/>最新 Input 明确 ref + 最高相关 Memory<br/>+ active context_ref Check"]
     AUTOREF --> REHYDRATE["校验 published refs<br/>恢复/去重/Context Evidence"]
-    REHYDRATE --> CONTEXT["Harness AgentWorkingContext<br/>task + plan + workingSet + recentOutcome<br/>memory + capabilities"]
+    REHYDRATE --> CONTEXT["Harness AgentWorkingContext<br/>task + plan + workingSet + recentOutcome<br/>memory + capabilities + Skill catalog"]
+    CONTEXT --> SKILLS["Skill metadata catalog<br/>explicit local roots / package digest"]
+    SKILLS --> MODEL
     INVOBS["tool_invocations<br/>completed result/error authority"] --> OBS["价值排序 + 普通候选默认 8 项<br/>full / deterministic fragment / Authority refs"]
     INVOBS --> HISTCAND["确定性历史关系候选<br/>最多 8 条 / 4 KiB / refs only"]
     HISTCAND --> CONTEXT
@@ -39,6 +41,8 @@ flowchart TD
     REJECT --> LOOP
     TURNPARSE -- "合法" --> COMPILE["Harness 按 response shape/control name<br/>确定性生成 Runtime command"]
     COMPILE -- "nexora_update_plan → set_plan" --> PLAN["Runtime 生成 identity + goalDigest<br/>version/CAS 保存唯一当前 Plan"]
+    COMPILE -- "nexora_select_skills（独占）" --> ACTIVATE["Harness 校验 catalog/id/version/package digest<br/>下一轮渐进加载 SKILL.md；无 Runtime Effect"]
+    ACTIVATE --> LOOP
     PLAN --> LOOP
     COMPILE -- "nexora_request_input" --> INPUTCHECK{"无 Plan + 零 Tool + 有可用 Tool<br/>且尚未纠错？"}
     INPUTCHECK -- "是" --> REJECT
@@ -107,6 +111,7 @@ Desktop Session 只保存有序 Run 引用用于导航；它不拼接历史 goal
 | 被拒绝 Provider 输出 | Provider 返回 | 不修改 | 下一轮有限分类修复、逆向审计 | 原始 JSON 进 Artifact；诊断/引用进 Event 与 lastError |
 | Run Status | 初始 snapshot | 仅 State Machine | CLI、Resume、验收 | `runs.status` + snapshot |
 | Tool Invocation | Runtime 生成 ID/digest/key/token | result/unknown/recovery 原子更新 | 恢复、Observation、完成门 | `tool_invocations` |
+| Managed Process | `process.start` Invocation + workspace supervisor | generation handle/readiness/heartbeat/exit 校验 | 持久服务 inspect/log/stop | `.nexora/processes` operational projection；不拥有 Run/Plan/Evidence |
 | Tool Observation | Harness 从 Runtime 提供的全部 completed Invocation 投影 | 等价事实折叠；active Check/未解决错误/安全约束/当前文件链优先；Token Meter 驱动收缩 | 下一轮 Provider 决策 | full/fragment/reference 都是可重建派生投影；无固定条数或单条正文上限 |
 | Evidence | 成功 Tool、用户恢复确认或 required `context_ref` 的精确恢复 | Plan 修订仅保留有效 Check 证据；大型 facts 绑定内容寻址 Artifact；计划外 Tool 结果生成绑定 Invocation 的 `run-unplanned` Evidence，不伪造 Plan Check | Step、Completion Gate、Result、Observation ref | Run snapshot，绑定 provenance/可选 Invocation/Artifact；历史 validator Evidence 只读且不参与新完成判断 |
 | Finish provenance | Harness 仅在 `ModelResponse.toolCalls=[]` 且 text 非空时编译只含 summary 的 finish proposal；Runtime 从当前 Evidence、Invocation、Artifact 确定性派生 | Provider 不提供 Runtime ID；缺失、跨 Run、digest 漂移或未决 Effect 拒绝 | Runtime Completion Gate、Result、成功 Event | Gate 通过后与 Result 原子持久化；无第二次 Provider 调用 |

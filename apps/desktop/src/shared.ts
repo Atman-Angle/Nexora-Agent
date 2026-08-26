@@ -83,6 +83,21 @@ export type SessionView = {
   readonly runs: readonly SessionRunView[];
   readonly inspection: RunInspection;
   readonly history: AuditHistoryPage;
+  readonly managedProcesses: readonly ManagedProcessView[];
+};
+
+export type ManagedProcessView = {
+  readonly processHandle: string;
+  readonly serviceKey: string;
+  readonly status: "starting" | "ready" | "stopping" | "exited" | "failed" | "lost";
+  readonly pid: number | null;
+  readonly startedAt: string;
+  readonly readyAt: string | null;
+  readonly stoppedAt: string | null;
+  readonly endpoint: string | null;
+  readonly exitCode: number | null;
+  readonly errorCode: string | null;
+  readonly heartbeatFresh: boolean;
 };
 
 export type DesktopSnapshot = {

@@ -44,7 +44,8 @@ describe("D4 Runtime Testing Kit", () => {
         modelResponses.plan({
           goal: "Read fixture",
           steps: [{
-            objective: "Read fixture"
+            objective: "Read fixture",
+            checks: [{ toolName: "fixture.read" }]
           }]
         }),
         modelResponses.tool({

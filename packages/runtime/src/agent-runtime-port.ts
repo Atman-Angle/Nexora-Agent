@@ -114,6 +114,9 @@ export type ProviderAttemptCompletion = {
   readonly callId: string;
   readonly status: "succeeded" | "failed" | "cancelled";
   readonly errorCode?: string;
+  readonly errorCategory?: ProviderAttempt["errorCategory"];
+  readonly retryable?: boolean;
+  readonly partialResponse?: boolean;
   readonly responsePayload?: unknown;
   readonly captureResponsePayload?: boolean;
   readonly actualInputTokens?: number;

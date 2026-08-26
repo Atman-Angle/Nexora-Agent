@@ -13,7 +13,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "../../packages/harness/src/index.js";
-import { responseCall, responseText } from "./runtime-testkit.js";
+import { responseCall, responseDirect, responseInput, responsePlan, responseText, responseTools } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -21,6 +21,46 @@ afterEach(() => {
 });
 
 describe("bounded execution convergence", () => {
+  it("repairs an oversized Tool-call response once, executes nothing, then blocks the identical response", async () => {
+    let decisions = 0;
+    const oversized = {
+      text: null,
+      toolCalls: Array.from({ length: 9 }, (_, index) => ({
+        callId: `oversized-${index}`,
+        name: "missing.read",
+        arguments: { index }
+      })),
+      finishReason: "tool_calls"
+    };
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider: {
+        async decide() {
+          decisions += 1;
+          return oversized;
+        }
+      },
+      tools: []
+    });
+
+    const result = await runtime.start({
+      input: "Keep an oversized Tool batch bounded.",
+      budgets: { maxIterations: 20, maxModelCalls: 20, maxToolCalls: 20, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(decisions).toBe(2);
+    expect(inspection.toolInvocations).toHaveLength(0);
+    expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(2);
+    expect(inspection.events.some((event) => (
+      event.type === "response.rejected"
+      && String(event.payload.message).includes("at most 8 Tool calls")
+    ))).toBe(true);
+    expect(inspection.events.some((event) => event.type === "run.resumed")).toBe(false);
+    await runtime.close();
+  });
+
   it("uses the model capacity policy unless an active Context cost target is explicitly configured", () => {
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example/v1",
@@ -195,7 +235,214 @@ describe("bounded execution convergence", () => {
 
     expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
     expect(provider.sawNoProgressRepair).toBe(true);
+    expect(provider.repairMessage).toContain("reads");
+    expect(provider.repairMessage).toContain("mutations");
     await runtime.close();
+  });
+
+  it("opens a new bounded progress window when a different verifier returns a new actionable failure", async () => {
+    const provider = new FailedVerificationRepairProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readPathTool(), writePathTool(), failingVerificationTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await approveUntilTerminal(runtime, await runtime.start({
+      input: "Change target.txt, run a distinct verifier, and use its failure as a bounded repair fact.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 24, maxModelCalls: 24, maxToolCalls: 24, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(result.status).toBe("succeeded");
+    expect(provider.sawVerificationFailure).toBe(true);
+    expect(inspection.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "runtime.event",
+        payload: expect.objectContaining({
+          name: "execution.no_progress.probation_resolved",
+          outcome: "failed",
+          payloadDigest: expect.stringMatching(/^sha256:/)
+        })
+      })
+    ]));
+    expect(inspection.events.map((event) => event.type)).not.toContain("run.blocked");
+    await runtime.close();
+  });
+
+  it("grants one persisted repair turn when a different protected strategy is correctably rejected", async () => {
+    const provider = new CorrectableStrategyProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readPathTool(), writePathTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await approveUntilTerminal(runtime, await runtime.start({
+      input: "Converge on one verified target change without repeating a rejected mutation batch.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 24, maxModelCalls: 24, maxToolCalls: 24, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(result.status).toBe("succeeded");
+    expect(provider.sawCorrectableRejection).toBe(true);
+    expect(inspection.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "runtime.event",
+        payload: expect.objectContaining({
+          name: "execution.no_progress.warning",
+          forbiddenStrategy: expect.stringMatching(/^sha256:/),
+          allowedRepairAttempts: 1
+        })
+      }),
+      expect.objectContaining({
+        type: "runtime.event",
+        payload: expect.objectContaining({
+          name: "execution.no_progress.repair_allowed",
+          allowedRepairAttempts: 1
+        })
+      }),
+      expect.objectContaining({
+        type: "runtime.event",
+        payload: expect.objectContaining({ name: "execution.no_progress.probation_resolved" })
+      })
+    ]));
+    await runtime.close();
+  });
+
+  it("projects a process-start failure as a no-side-effect recovery fact", async () => {
+    const provider = new ProcessStartFailureProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: createBuiltInTools(),
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await approveUntilTerminal(runtime, await runtime.start({
+      input: "Run the verification command and recover if the executable cannot start.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 8, maxModelCalls: 8, maxToolCalls: 4, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+
+    expect(result.status).toBe("succeeded");
+    expect(provider.repairCode).toBe("PROCESS_START_FAILED");
+    expect(provider.repairMessage).toContain("did not start");
+    expect(provider.repairMessage).toContain("npm.cmd");
+    await runtime.close();
+  });
+
+  it("does not reopen a no-progress Run through generic Resume", async () => {
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider: new ResourceChurnProvider(false),
+      tools: [readPathTool(), writePathTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+    const result = await approveUntilTerminal(runtime, await runtime.start({
+      input: "Bound the repeated target.txt strategy.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 20, maxModelCalls: 20, maxToolCalls: 20, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+    expect(result.stopReason).toBe("NO_PROGRESS_DETECTED");
+    const before = await runtime.inspect(result.runId);
+    await expect(runtime.openRun(result.runId).resume()).rejects.toThrow(/NO_PROGRESS_DETECTED/);
+    const after = await runtime.inspect(result.runId);
+    expect(after.snapshot.status).toBe("blocked");
+    expect(after.snapshot.inputHistory).toHaveLength(before.snapshot.inputHistory.length);
+    expect(after.events.filter((event) => event.type === "run.resumed")).toHaveLength(
+      before.events.filter((event) => event.type === "run.resumed").length
+    );
+    await runtime.close();
+  });
+
+  it("allows a bounded continuation from a blocked no-progress Parent and preserves recovery Context", async () => {
+    const root = workspace();
+    const dataDir = join(root, ".nexora");
+    const parentRuntime = createAgent({
+      workspace: root,
+      dataDir,
+      provider: new ResourceChurnProvider(false),
+      tools: [readPathTool(), writePathTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+    const parent = await approveUntilTerminal(parentRuntime, await parentRuntime.start({
+      input: "Bound the repeated target.txt strategy.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 20, maxModelCalls: 20, maxToolCalls: 20, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+    expect(parent.stopReason).toBe("NO_PROGRESS_DETECTED");
+    await parentRuntime.close();
+
+    const recoveryProvider = new RecoveryContinuationProvider();
+    const recoveryRuntime = createAgent({
+      workspace: root,
+      dataDir,
+      provider: recoveryProvider,
+      tools: []
+    });
+    const child = await recoveryRuntime.start({
+      input: "Use the persisted facts and finish from a materially different step.",
+      continuation: { parentRunId: parent.runId },
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
+    expect(child.status).toBe("succeeded");
+    expect(recoveryProvider.repairCodes).toContain("NO_PROGRESS_RECOVERY");
+    await recoveryRuntime.close();
+  });
+
+  it("carries a blocked Parent's unfinished Plan into its bounded continuation", async () => {
+    const root = workspace();
+    const dataDir = join(root, ".nexora");
+    const parentRuntime = createAgent({
+      workspace: root,
+      dataDir,
+      provider: new PlannedResourceChurnProvider(),
+      tools: [readPathTool(), writePathTool(), failingVerificationTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+    const parent = await approveUntilTerminal(parentRuntime, await parentRuntime.start({
+      input: "Complete the verified target outcome without looping.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 24, maxModelCalls: 24, maxToolCalls: 20, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+    expect(parent.stopReason).toBe("NO_PROGRESS_DETECTED");
+    const parentInspection = await parentRuntime.inspect(parent.runId);
+    const unfinished = parentInspection.snapshot.currentPlan?.orderedSteps.filter((step) => (
+      parentInspection.snapshot.stepProgress.find((progress) => progress.stepId === step.id)?.status !== "completed"
+    )) ?? [];
+    expect(unfinished).toHaveLength(1);
+    await parentRuntime.close();
+
+    const recoveryProvider = new InspectCarriedPlanProvider();
+    const recoveryRuntime = createAgent({
+      workspace: root,
+      dataDir,
+      provider: recoveryProvider,
+      tools: [readPathTool(), writePathTool(), failingVerificationTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+    const child = await recoveryRuntime.start({
+      input: "Continue the unfinished outcome using a different strategy.",
+      continuation: { parentRunId: parent.runId },
+      completion: { evidence: "optional", requiredToolNames: [] }
+    });
+    const childInspection = await recoveryRuntime.inspect(child.runId);
+
+    expect(child.status).toBe("waiting");
+    expect(recoveryProvider.objectives).toEqual(unfinished.map((step) => step.objective));
+    expect(childInspection.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual(
+      unfinished.map((step) => step.objective)
+    );
+    expect(childInspection.snapshot.currentPlan).toMatchObject({ version: 1, basedOnVersion: null });
+    expect(childInspection.snapshot.stepProgress).toEqual([
+      expect.objectContaining({ stepId: unfinished[0]!.id, status: "active" })
+    ]);
+    await recoveryRuntime.close();
   });
 
   it("recovers a blocked Parent by explicitly discarding one blocked Worker Branch", async () => {
@@ -225,7 +472,7 @@ class LateDelegationProvider implements RuntimeProvider {
   #parentCalls = 0;
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) return responseText("Bounded Worker summary.");
-    if ((context.workerObservations?.length ?? 0) > 0) return responseText("Parent joined bounded Worker summaries.");
+    if ((context.workerObservations?.length ?? 0) > 0) return responseDirect("Parent joined bounded Worker summaries.");
     this.#parentCalls += 1;
     if (this.#parentCalls <= 6) return responseCall("test.read-key", { key: `key-${this.#parentCalls}` });
     return responseCall("nexora_delegate_workers", { assignments: [
@@ -242,7 +489,7 @@ class ReadAcrossMutationProvider implements RuntimeProvider {
     if (this.#call === 1) return responseCall("filesystem.read", { path: "b.txt" });
     if (this.#call === 2) return responseCall("filesystem.write", { path: "a.txt", content: "after" });
     if (this.#call === 3) return responseCall("filesystem.read", { path: "b.txt" });
-    return responseText("B remained stable after changing A.");
+    return responseDirect("B remained stable after changing A.");
   }
 }
 
@@ -254,7 +501,7 @@ class RecoverableWorkerProvider implements RuntimeProvider {
       return responseText("Successful partial Worker report.");
     }
     if (context.workerObservations?.some((item) => item.branchStatus === "discarded")) {
-      return responseText("Parent completed from the preserved successful Worker report.");
+      return responseDirect("Parent completed from the preserved successful Worker report.");
     }
     return responseCall("nexora_delegate_workers", { assignments: [
       { objective: "failing Worker report" }, { objective: "successful Worker report" }
@@ -269,8 +516,29 @@ class ProgressBetweenRepeatedReadsProvider implements RuntimeProvider {
     const keys = ["same", "same", "same", "different", "same"];
     const key = keys[this.#call - 1];
     return key === undefined
-      ? responseText("The different observation reset the convergence window.")
+      ? responseDirect("The different observation reset the convergence window.")
       : responseCall("test.read-key", { key });
+  }
+}
+
+class FailedVerificationRepairProvider implements RuntimeProvider {
+  #call = 0;
+  #verificationAttempted = false;
+  sawVerificationFailure = false;
+
+  async decide(context: ModelDecisionContext) {
+    if (context.repair?.code === "NO_PROGRESS_WARNING" && !this.#verificationAttempted) {
+      this.#verificationAttempted = true;
+      return responseCall("test.verify", {});
+    }
+    if (context.repair?.code === "TEST_ASSERTION_FAILED") {
+      this.sawVerificationFailure = true;
+      return responseDirect("The distinct verifier exposed a new actionable failure and the repair boundary is preserved.");
+    }
+    this.#call += 1;
+    return this.#call % 2 === 1
+      ? responseCall("test.read-path", { path: "target.txt" })
+      : responseCall("test.write-path", { path: "target.txt", value: `revision-${this.#call / 2}` });
   }
 }
 
@@ -278,6 +546,7 @@ class ResourceChurnProvider implements RuntimeProvider {
   #call = 0;
   readonly #finishOnRepair: boolean;
   sawNoProgressRepair = false;
+  repairMessage = "";
 
   constructor(finishOnRepair: boolean) {
     this.#finishOnRepair = finishOnRepair;
@@ -286,11 +555,101 @@ class ResourceChurnProvider implements RuntimeProvider {
   async decide(context: ModelDecisionContext) {
     if (context.repair?.code === "NO_PROGRESS_WARNING") {
       this.sawNoProgressRepair = true;
-      if (this.#finishOnRepair) return responseText("The persisted state is sufficient; stopping after one verification.");
+      this.repairMessage = context.repair.issues.map((issue) => issue.message).join(" ");
+      if (this.#finishOnRepair) return responseDirect("The persisted state is sufficient; stopping after one verification.");
     }
     this.#call += 1;
     if (this.#call % 2 === 1) return responseCall("test.read-path", { path: "target.txt" });
     return responseCall("test.write-path", { path: "target.txt", value: `revision-${this.#call / 2}` });
+  }
+}
+
+class PlannedResourceChurnProvider implements RuntimeProvider {
+  #call = 0;
+
+  async decide() {
+    this.#call += 1;
+    if (this.#call === 1) {
+      return responsePlan({
+        goal: "Complete the verified target outcome.",
+        tasks: [{
+          objective: "Verify the final target behavior.",
+          checks: [{ toolName: "test.verify", role: "verification" }]
+        }]
+      });
+    }
+    return this.#call % 2 === 0
+      ? responseCall("test.read-path", { path: "target.txt" })
+      : responseCall("test.write-path", { path: "target.txt", value: `planned-${this.#call}` });
+  }
+}
+
+class InspectCarriedPlanProvider implements RuntimeProvider {
+  objectives: string[] = [];
+
+  async decide(context: ModelDecisionContext) {
+    this.objectives = context.run.currentPlan?.orderedSteps.map((step) => step.objective) ?? [];
+    return responseInput("Continue?", "Persisted unfinished Plan inspected.");
+  }
+}
+
+class CorrectableStrategyProvider implements RuntimeProvider {
+  #call = 0;
+  #submittedRejectedBatch = false;
+  #submittedRepair = false;
+  sawCorrectableRejection = false;
+
+  async decide(context: ModelDecisionContext) {
+    if (context.repair?.code === "NO_PROGRESS_WARNING" && !this.#submittedRejectedBatch) {
+      this.#submittedRejectedBatch = true;
+      return responseTools([
+        { name: "test.write-path", arguments: { path: "target.txt", value: "bounded-a" } },
+        { name: "test.write-path", arguments: { path: "target.txt", value: "bounded-b" } }
+      ]);
+    }
+    if (context.repair?.code === "INVALID_MODEL_RESPONSE" && !this.#submittedRepair) {
+      this.sawCorrectableRejection = context.repair.recovery?.sideEffect === "none";
+      this.#submittedRepair = true;
+      return responseCall("test.write-path", { path: "target.txt", value: "bounded-repair" });
+    }
+    if (this.#submittedRepair) return responseDirect("The one-at-a-time repair succeeded.");
+    this.#call += 1;
+    return this.#call % 2 === 1
+      ? responseCall("test.read-path", { path: "target.txt" })
+      : responseCall("test.write-path", { path: "target.txt", value: `churn-${this.#call / 2}` });
+  }
+}
+
+class ProcessStartFailureProvider implements RuntimeProvider {
+  repairCode: string | null = null;
+  repairMessage = "";
+  #attempted = false;
+
+  async decide(context: ModelDecisionContext) {
+    if (context.repair?.code !== undefined) {
+      this.repairCode = context.repair.code;
+      this.repairMessage = context.repair.issues.map((issue) => issue.message).join(" ");
+      return responseDirect("The executable did not start; the verification boundary is understood.");
+    }
+    if (!this.#attempted) {
+      this.#attempted = true;
+      return responseCall("shell.execute", {
+        command: "nexora-missing-executable-for-recovery-test",
+        args: [],
+        cwd: ".",
+        timeoutMs: 10_000
+      });
+    }
+    return responseDirect("The executable did not start.");
+  }
+}
+
+class RecoveryContinuationProvider implements RuntimeProvider {
+  readonly repairCodes: string[] = [];
+
+  async decide(context: ModelDecisionContext) {
+    if (context.repair?.code !== undefined) this.repairCodes.push(context.repair.code);
+    return responseText("Recovered from the bounded no-progress Parent using persisted facts.");
   }
 }
 
@@ -354,6 +713,33 @@ function writePathTool(): RuntimeTool {
     async execute(input) {
       const value = input as { path: string; value: string };
       return { status: "success", subjectRef: value.path, facts: value };
+    }
+  };
+}
+
+function failingVerificationTool(): RuntimeTool {
+  return {
+    contract: {
+      identity: { name: "test.verify" },
+      capability: { purpose: "Run an independent deterministic verification.", nonGoals: ["Modify the target."] },
+      decision: { useWhen: ["A changed target requires verification."], avoidWhen: ["No state changed."] },
+      execution: {
+        effect: { kind: "read", description: "Verifies without mutation." },
+        idempotent: true,
+        inputSchema: z.object({}).strict(),
+        inputExample: {}
+      },
+      evidence: {
+        produces: ["A deterministic verification result."],
+        factsSchema: z.object({ ok: z.boolean() }).strict()
+      }
+    },
+    async execute() {
+      return {
+        status: "failure",
+        subjectRef: "verification:test",
+        error: { code: "TEST_ASSERTION_FAILED", message: "A module import is missing.", retryable: false }
+      };
     }
   };
 }

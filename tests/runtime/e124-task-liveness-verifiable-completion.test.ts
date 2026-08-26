@@ -46,12 +46,12 @@ describe("E124 task liveness and verifiable completion", () => {
     });
   });
 
-  it("rejects text-only completion until the default Tool-enabled Run has real Evidence", async () => {
+  it("rejects bare draft text after Tool execution until explicit completion supplies the final answer", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
-      responseText("The workspace task is complete."),
       responseCall("filesystem.read", { path: "target.txt" }),
-      responseText("The target was inspected with persisted Evidence.")
+      responseText("Working draft: the target was inspected."),
+      responseDirect("The target was inspected with persisted Evidence.")
     ]);
     const runtime = createAgent({ workspace, provider, tools: [successfulReadTool()] });
 
@@ -71,7 +71,7 @@ describe("E124 task liveness and verifiable completion", () => {
     const provider = new ScriptedRuntimeProvider([
       responseDirect("No inspection is necessary."),
       responseCall("filesystem.read", { path: "target.txt" }),
-      responseText("The target was inspected with persisted Evidence.")
+      responseDirect("The target was inspected with persisted Evidence.")
     ]);
     const runtime = createAgent({ workspace, provider, tools: [successfulReadTool()] });
 
@@ -119,7 +119,7 @@ describe("E124 task liveness and verifiable completion", () => {
     const calls = { calls: 0 };
     const provider = new ScriptedRuntimeProvider([
       responseCall("filesystem.read", { path: "target.txt" }),
-      responseText("The persisted read is complete.")
+      responseDirect("The persisted read is complete.")
     ]);
     const runtime = createAgent({ workspace, provider, tools: [successfulReadTool(calls)] });
 

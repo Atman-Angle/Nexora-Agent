@@ -14,9 +14,9 @@ import { createBuiltInTools } from "../../packages/runtime/src/execution/tool-ru
 import {
   materializeTestResponse,
   responseCall,
+  responseDirect,
   responseInput,
   responsePlan,
-  responseText,
   responseTools
 } from "./runtime-testkit.js";
 
@@ -27,13 +27,79 @@ afterEach(() => {
 });
 
 describe("E108 Runtime-owned Intent Compilation", () => {
+  it("persists canonical Tool names from unambiguous Provider-safe Plan aliases", async () => {
+    const root = fixtureRoot();
+    const provider = queuedProvider([
+      responsePlan({
+        goal: "Verify the project.",
+        tasks: [{ objective: "Run the test command.", checks: [{ toolName: "shell_execute", role: "verification" }] }]
+      }),
+      responseInput("Continue?", "Canonical Plan captured.")
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
+
+    const result = await runtime.start({ input: "Verify the project." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result.status).toBe("waiting");
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks[0]).toMatchObject({
+      toolName: "shell.execute",
+      role: "verification"
+    });
+    await runtime.close();
+  });
+
+  it("rejects an unavailable Plan Tool reference before Plan persistence", async () => {
+    const root = fixtureRoot();
+    const provider = queuedProvider([
+      responsePlan({
+        goal: "Verify the project.",
+        tasks: [{ objective: "Use a missing verifier.", checks: [{ toolName: "missing_verify", role: "verification" }] }]
+      }),
+      responseDirect("The unavailable verifier was not persisted or executed.")
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
+
+    const result = await runtime.start({ input: "Verify the project." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result.status).toBe("succeeded");
+    expect(view.snapshot.currentPlan).toBeNull();
+    expect(view.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "response.rejected",
+        payload: expect.objectContaining({ message: expect.stringContaining("PLAN_CHECK_TOOL_UNKNOWN") })
+      })
+    ]));
+    await runtime.close();
+  });
+
+  it("normalizes punctuation-only objective differences instead of growing duplicate Steps", async () => {
+    const root = fixtureRoot();
+    const provider = queuedProvider([
+      responsePlan({ goal: "Verify.", tasks: [{ objective: "Run tests.", checks: [{ toolName: "shell.execute", role: "verification" }] }] }),
+      responsePlan({ goal: "Verify.", tasks: [{ objective: "Run tests!!!", checks: [{ toolName: "shell.execute", role: "verification" }] }] }),
+      responseInput("Continue?", "Equivalent revision rejected.")
+    ]);
+    const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
+
+    const result = await runtime.start({ input: "Verify." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result.status).toBe("waiting");
+    expect(view.snapshot.currentPlan?.orderedSteps).toHaveLength(1);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
+    expect(view.events.filter((event) => event.type === "response.rejected").at(-1)?.payload.message).toContain("PLAN_UNCHANGED");
+    await runtime.close();
+  });
+
   it("rejects misplaced Plan Tasks and continues after a corrected Model Turn", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "target.txt"), "VALUE", "utf8");
     const provider = queuedProvider([responsePlan({ goal: "Read target.txt.", tasks: "invalid" }),
     planDecision(["filesystem.read"]),
     responseCall("filesystem.read", { path: "target.txt" }),
-    responseText("Verified VALUE.")
+    responseDirect("Verified VALUE.")
     ]);
     const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
     const result = await runtime.start({ input: "Read target.txt." });
@@ -54,7 +120,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
           { name: "filesystem.read", arguments: { path: "a.txt" } },
           { name: "filesystem.read", arguments: { path: "b.txt" } }
         ]),
-      responseText("Verified A and B.")
+      responseDirect("Verified A and B.")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -72,7 +138,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.snapshot.currentPlan?.orderedSteps).toEqual([
       expect.objectContaining({
         id: expect.stringMatching(/^step-/),
-        acceptanceChecks: []
+        acceptanceChecks: [expect.objectContaining({ toolName: "filesystem.read", required: true })]
       })
     ]);
     expect(view.toolInvocations).toHaveLength(2);
@@ -95,7 +161,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
           { name: "filesystem.list", arguments: { path: "." } },
           { name: "filesystem.read", arguments: { path: "target.txt" } }
         ]),
-      responseText("Listed the workspace and verified VALUE.")
+      responseDirect("Listed the workspace and verified VALUE.")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -151,7 +217,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
       planDecision(["filesystem.read", "filesystem.read"]),
       responseCall("filesystem.read", { path: "a.txt" }),
       responseCall("filesystem.read", { path: "b.txt" }),
-      responseText("Verified A and B.")
+      responseDirect("Verified A and B.")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -181,7 +247,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
       responseInput("State the final goal.", "fixture"),
       planDecision(["filesystem.read"]),
       responseCall("filesystem.read", { path: "history.txt" }),
-      responseText("HISTORY-MARKER")
+      responseDirect("HISTORY-MARKER")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -200,7 +266,9 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     await runtime.close();
 
     expect(result.status).toBe("succeeded");
-    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([]);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([
+      expect.objectContaining({ toolName: "filesystem.read", required: true })
+    ]);
     expect(view.snapshot.evidence.map((item) => item.kind)).toEqual(["tool_result"]);
     expect(provider.contexts[3]?.rehydratedFacts).toContainEqual(expect.objectContaining({
       ref: "input:2",
@@ -218,7 +286,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const provider = queuedProvider([
       planDecision(["filesystem.read"]),
       responseCall("filesystem.read", { path: "target.txt" }),
-      responseText("Verified VALUE-7 from target.txt.")
+      responseDirect("Verified VALUE-7 from target.txt.")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -236,17 +304,26 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.snapshot.result?.evidenceIds).toEqual(view.snapshot.evidence.map((item) => item.id));
   });
 
-  it("replans unfinished work after a Tool failure while preserving completed Steps and Evidence", async () => {
+  it("reuses unfinished planned work after a Tool failure while preserving completed Steps and Evidence", async () => {
     const root = fixtureRoot();
     writeFileSync(join(root, "first.txt"), "FIRST", "utf8");
     writeFileSync(join(root, "second.txt"), "SECOND", "utf8");
     const provider = queuedProvider([
-      responsePlan({ goal: "Read both files.", tasks: [{ objective: "Read first." }, { objective: "Read second." }] }),
+      responsePlan({
+        goal: "Read both files.",
+        tasks: [
+          { objective: "Read first.", checks: [{ toolName: "filesystem.read" }] },
+          { objective: "Read second.", checks: [{ toolName: "filesystem.read" }] }
+        ]
+      }),
       responseCall("filesystem.read", { path: "first.txt" }),
       responseCall("filesystem.read", { path: "missing.txt" }),
-      responsePlan({ goal: "Complete the requested work.", tasks: [{ objective: "Read the corrected second path." }] }),
+      responsePlan({
+        goal: "Complete the requested work.",
+        tasks: [{ objective: "Read second.", checks: [{ toolName: "filesystem.read" }] }]
+      }),
       responseCall("filesystem.read", { path: "second.txt" }),
-      responseText("Verified FIRST and SECOND.")
+      responseDirect("Verified FIRST and SECOND.")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -262,7 +339,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(result.status).toBe("succeeded");
     expect(provider.contexts[3]?.repair?.kind).toBe("tool_failure");
     expect(provider.contexts[3]?.tools.length).toBeGreaterThan(0);
-    expect(view.snapshot.currentPlan?.version).toBe(2);
+    expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.snapshot.stepProgress.every((item) => item.status === "completed")).toBe(true);
     expect(view.snapshot.evidence).toHaveLength(2);
     expect(view.toolInvocations.map((item) => item.status)).toEqual(["succeeded", "failed", "succeeded"]);
@@ -274,7 +351,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const provider = queuedProvider([
       planDecision(["filesystem.read"]),
       responseCall("filesystem.read", { path: "target.txt" }),
-      responseText("VALUE-7")
+      responseDirect("VALUE-7")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -361,7 +438,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const provider = queuedProvider([
       planDecision(["filesystem.read"]),
       responseCall("filesystem.read", { path: "target.txt" }),
-      responseText("Verified VALUE.")
+      responseDirect("Verified VALUE.")
     ]);
     const runtime = createRuntime({ workspace: root, dataDir, provider, tools: createBuiltInTools() });
     const result = await runtime.start({ input: "Read target.txt." });
@@ -415,11 +492,11 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const provider = queuedProvider([
       planDecision(["shell.execute"]),
       responseCall("shell.execute", { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }),
-      responsePlan({ goal: "Complete the requested work.", tasks: [{ objective: "Correct target.txt." }] }),
+      responsePlan({ goal: "Complete the requested work.", tasks: [{ objective: "Correct target.txt.", checks: [{ toolName: "filesystem.write" }] }] }),
       responseCall("filesystem.write", { path: "target.txt", content: "GOOD\n" }),
-      responsePlan({ goal: "Complete the requested work.", tasks: [{ objective: "Run the verifier again." }] }),
+      responsePlan({ goal: "Complete the requested work.", tasks: [{ objective: "Run the verifier again.", checks: [{ toolName: "shell.execute" }] }] }),
       responseCall("shell.execute", { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }),
-      responseText("Corrected target.txt and verified it successfully.")
+      responseDirect("Corrected target.txt and verified it successfully.")
     ]);
     const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
     const first = await runtime.start({ input: "Make target.txt pass verify.mjs." });
@@ -447,7 +524,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(successfulWrite?.status).toBe("succeeded");
     expect(view.events.some((event) => event.type === "tool.succeeded")).toBe(true);
     expect(view.snapshot.currentPlan?.orderedSteps.every((step) => (
-      step.acceptanceChecks.length === 0
+      step.acceptanceChecks.length > 0
     ))).toBe(true);
   });
 
@@ -458,11 +535,11 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     const provider = queuedProvider([
       planDecision(["shell.execute"]),
       responseCall("shell.execute", { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }),
-      responsePlan({ tasks: [{ objective: "Update target.txt." }] }),
+      responsePlan({ tasks: [{ objective: "Update target.txt.", checks: [{ toolName: "filesystem.write" }] }] }),
       responseCall("filesystem.write", { path: "target.txt", content: "BETTER\n" }),
-      responsePlan({ tasks: [{ objective: "Verify the updated workspace." }] }),
+      responsePlan({ tasks: [{ objective: "Verify the updated workspace.", checks: [{ toolName: "shell.execute" }] }] }),
       responseCall("shell.execute", { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }),
-      responseText("Updated and verified target.txt.")
+      responseDirect("Updated and verified target.txt.")
     ]);
     const runtime = createRuntime({ workspace: root, dataDir: join(root, ".nexora"), provider, tools: createBuiltInTools() });
     let result = await runtime.start({ input: "Update target.txt and verify the result." });
@@ -616,8 +693,8 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     ]);
     expect(view.snapshot.currentPlan?.orderedSteps).toHaveLength(1);
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.objective).toBe("Complete the requested work.");
-    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toHaveLength(0);
-    expect(view.snapshot.stepProgress).toEqual([expect.objectContaining({ status: "active" })]);
+    expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toHaveLength(1);
+    expect(view.snapshot.stepProgress).toEqual([expect.objectContaining({ status: "completed" })]);
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
   });
 
@@ -716,7 +793,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
     expect(view.snapshot.currentPlan?.version).toBe(1);
     expect(view.snapshot.currentPlan?.orderedSteps[0]).toEqual(expect.objectContaining({
       objective: "Complete the requested work.",
-      acceptanceChecks: []
+      acceptanceChecks: [expect.objectContaining({ toolName: "filesystem.read", required: true })]
     }));
     expect(view.snapshot.pendingRequest?.kind).toBe("approval");
     expect(view.events.some((event) => event.type === "approval.requested")).toBe(true);
@@ -788,10 +865,13 @@ function fixtureRoot(): string {
   return root;
 }
 
-function planDecision(_requiredTools: readonly string[]): unknown {
+function planDecision(requiredTools: readonly string[]): unknown {
   return responsePlan({
       goal: "Complete the requested work and report verified facts.",
-      tasks: [{ objective: "Complete the requested work." }]
+      tasks: [{
+        objective: "Complete the requested work.",
+        checks: [...new Set(requiredTools)].map((toolName) => ({ toolName }))
+      }]
     });
 }
 

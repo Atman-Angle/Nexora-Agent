@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DesktopRuntimeService, desktopToolApprovalPolicy } from "../../apps/desktop/src/runtime-service.js";
-import { createAgent, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import { createAgent, createBuiltInTools, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import { responseCall, responseText } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -336,6 +336,52 @@ describe("E130 Desktop Project and continuous Session", () => {
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   });
 
+  it("does not restore streamed output from a response that Harness rejected", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-rejected-stream-"));
+    roots.push(workspace);
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      const toolCalls = Array.from({ length: 9 }, (_, index) => ({
+        index,
+        id: `oversized-${index}`,
+        type: "function",
+        function: {
+          name: "filesystem_read",
+          arguments: JSON.stringify({ path: `file-${index}.txt` })
+        }
+      }));
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "Rejected provisional output." } }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: toolCalls }, finish_reason: "tool_calls" }], usage: null })}\n\n`);
+      response.end("data: [DONE]\n\n");
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=qwen3.7-flash",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=native_tools"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const started = await service.startSession("Reject and hide an oversized streamed response.");
+    const sessionId = started.session!.id;
+    const blocked = await waitForStatus(service, "blocked");
+    expect(blocked.session?.inspection.stopReason).toBe("NO_PROGRESS_DETECTED");
+    expect(blocked.session?.runs[0]?.publicOutputs).toEqual([]);
+    await service.close();
+
+    const reopened = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const restored = await reopened.openSession(workspace, sessionId);
+    expect(restored.session?.runs[0]?.publicOutputs).toEqual([]);
+    await reopened.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  });
+
   it("continues terminal Runs in one Session and persists archive/remove navigation without exposing the API key", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-desktop-"));
     roots.push(workspace);
@@ -349,7 +395,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       calls += 1;
       const content = calls % 2 === 1
         ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }], finishReason: "tool_calls" }
-        : { text: "Verified target.txt.", toolCalls: [], finishReason: "stop" };
+        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Verified target.txt." } }], finishReason: "tool_calls" };
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     });
@@ -537,6 +583,26 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(desktopToolApprovalPolicy("filesystem.write")).toBe("auto_approve");
     expect(desktopToolApprovalPolicy("filesystem.patch")).toBe("auto_approve");
     expect(desktopToolApprovalPolicy("shell.execute")).toBe("require_user");
+    expect(desktopToolApprovalPolicy("shell.execute", {
+      command: process.execPath,
+      args: ["--test"],
+      cwd: ".",
+      timeoutMs: 60_000
+    })).toBe("auto_approve");
+    expect(desktopToolApprovalPolicy("shell.execute", {
+      command: "pnpm",
+      args: ["install"],
+      cwd: ".",
+      timeoutMs: 60_000
+    })).toBe("require_user");
+    expect(desktopToolApprovalPolicy("shell.execute", {
+      command: "pnpm",
+      args: ["run", "build"],
+      cwd: ".",
+      timeoutMs: 60_000
+    })).toBe("auto_approve");
+    expect(desktopToolApprovalPolicy("process.start")).toBe("require_user");
+    expect(desktopToolApprovalPolicy("process.stop")).toBe("require_user");
 
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-auto-approval-"));
     roots.push(workspace);
@@ -546,7 +612,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       calls += 1;
       const content = calls === 1
         ? { text: null, toolCalls: [{ name: "filesystem.write", arguments: { path: "result.txt", content: "approved by Desktop policy\n" } }], finishReason: "tool_calls" }
-        : { text: "Created result.txt.", toolCalls: [], finishReason: "stop" };
+        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Created result.txt." } }], finishReason: "tool_calls" };
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     });
@@ -620,6 +686,116 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(calls).toBe(1);
   });
 
+  it("auto-approves a bounded shell verification command and records the approval audit", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-bounded-shell-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const content = calls === 1
+        ? {
+            text: null,
+            toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["--version"], cwd: ".", timeoutMs: 60_000 } }],
+            finishReason: "tool_calls"
+          }
+        : {
+            text: null,
+            toolCalls: [{ name: "nexora_respond", arguments: { text: "Node version verified." } }],
+            finishReason: "tool_calls"
+          };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=desktop-bounded-shell-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    await service.startSession("Verify the installed Node version.");
+    const completed = await waitForStatus(service, "succeeded");
+
+    expect(completed.session?.inspection.invocations).toEqual([
+      expect.objectContaining({ toolName: "shell.execute", status: "succeeded" })
+    ]);
+    expect(completed.session?.history.records.filter(({ type }) => type === "approval.requested")).toHaveLength(1);
+    expect(completed.session?.history.records.filter(({ type }) => type === "approval.granted")).toHaveLength(1);
+    expect(calls).toBe(2);
+    await service.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  });
+
+  it("projects a live managed service across Desktop Runtime reopen without replaying start", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-managed-process-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const content = calls === 1
+        ? { text: null, toolCalls: [{ name: "process.start", arguments: {
+            command: process.execPath,
+            args: ["-e", "process.stdout.write('READY\\n'); setInterval(() => {}, 1000)"],
+            cwd: ".",
+            serviceKey: "desktop-test-service",
+            readiness: { type: "output_contains", value: "READY" },
+            startupTimeoutMs: 10_000,
+            maxLifetimeMs: 60_000
+          } }], finishReason: "tool_calls" }
+        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Managed service is ready." } }], finishReason: "tool_calls" };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=desktop-managed-process-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const started = await service.startSession("Start one persistent local service.");
+    const sessionId = started.session!.id;
+    const waiting = await waitForStatus(service, "waiting_for_approval");
+    const request = waiting.session!.inspection.pendingRequest!;
+    expect(request).toMatchObject({ kind: "approval", toolName: "process.start" });
+    expect(waiting.session?.inspection.invocations).toHaveLength(0);
+    await service.control(waiting.session!.inspection.runId, { type: "approve", requestId: request.id });
+    const completed = await waitForStatus(service, "succeeded");
+    expect(completed.session?.managedProcesses).toEqual([
+      expect.objectContaining({ serviceKey: "desktop-test-service", status: "ready", heartbeatFresh: true })
+    ]);
+    const processHandle = completed.session!.managedProcesses[0]!.processHandle;
+    await service.close();
+
+    const reopened = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const restored = await reopened.openSession(workspace, sessionId);
+    expect(restored.session?.managedProcesses).toEqual([
+      expect.objectContaining({ processHandle, status: "ready", heartbeatFresh: true })
+    ]);
+    expect(calls).toBe(2);
+    await reopened.close();
+
+    const stop = createBuiltInTools().find((tool) => tool.contract.identity.name === "process.stop")!;
+    await stop.execute({ processHandle }, { workspace, runId: "desktop-process-cleanup", invocationId: "desktop-process-cleanup", signal: new AbortController().signal });
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  }, 20_000);
+
   it("interrupts a running Run before sending the next turn in the same Session", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-interrupt-"));
     roots.push(workspace);
@@ -631,7 +807,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       if (calls === 1) return;
       const content = calls === 2
         ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }], finishReason: "tool_calls" }
-        : { text: "Continued after interruption.", toolCalls: [], finishReason: "stop" };
+        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Continued after interruption." } }], finishReason: "tool_calls" };
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     });
@@ -663,6 +839,69 @@ describe("E130 Desktop Project and continuous Session", () => {
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     expect(calls).toBe(3);
   });
+
+  it("continues an exhausted Provider recovery as a new bounded Run instead of replaying the blocked Run", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-provider-continuation-"));
+    roots.push(workspace);
+    let failedDecisions = 0;
+    const seeded = createAgent({
+      workspace,
+      provider: {
+        async decide() {
+          failedDecisions += 1;
+          throw new Error("seeded Provider outage");
+        }
+      },
+      tools: []
+    });
+    const parent = await seeded.start({ input: "Preserve this task across a Provider outage." });
+    expect(parent.stopReason).toBe("PROVIDER_UNAVAILABLE");
+    await seeded.openRun(parent.runId).resume();
+    expect(failedDecisions).toBe(2);
+    await expect(seeded.openRun(parent.runId).resume()).rejects.toThrow(/Provider recovery is exhausted/);
+    await seeded.close();
+
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      const content = {
+        text: null,
+        toolCalls: [{ name: "nexora_respond", arguments: { text: "Recovered in a continuation Run." } }],
+        finishReason: "tool_calls"
+      };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=desktop-provider-recovery-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    await service.snapshot();
+    const before = await service.openSession(workspace, parent.runId);
+    const sessionId = before.session!.id;
+    expect(before.session?.inspection.error?.retryable).toBe(false);
+    await service.continueSession(sessionId, "Continue after connectivity was restored.");
+    const completed = await waitForStatus(service, "succeeded");
+    expect(completed.session?.runs).toHaveLength(2);
+    expect(completed.session?.runs[0]?.inspection).toMatchObject({
+      runId: parent.runId,
+      status: "blocked",
+      stopReason: "PROVIDER_UNAVAILABLE"
+    });
+    expect(completed.session?.runs[1]?.inspection.result?.summary).toBe("Recovered in a continuation Run.");
+
+    await service.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  }, 15_000);
 
   it("interrupts a running Run before recording manual Context compaction without creating a Turn", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-compact-running-"));

@@ -59,9 +59,9 @@ describe("E049 lease and fencing", () => {
       now: () => new Date(startedAt + elapsedMs).toISOString()
     });
     const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 40, maxModelCalls: 40, maxToolCalls: 1, maxRetries: 40, maxDurationMs: 10_000 } });
-    expect(result.status).toBe("waiting");
-    expect(calls).toBe(4);
-    expect(elapsedMs).toBeGreaterThan(300);
+    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(calls).toBe(2);
+    expect(elapsedMs).toBeGreaterThanOrEqual(300);
     runtime.close();
   }, 15_000);
 

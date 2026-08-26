@@ -17,10 +17,12 @@ import {
   type CompletionRequirements,
   type Evidence,
   type PlanTaskContract,
+  type RunEvent,
   type RunSnapshot,
   type RuntimeAction,
   type RuntimeBudgets,
-  type TaskContract
+  type TaskContract,
+  type ToolInvocation
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
 import {
@@ -125,7 +127,12 @@ type NoProgressDiagnostic = {
   readonly kind: string;
   readonly repeatCount: number;
   readonly resources?: readonly string[];
+  readonly reads?: number;
+  readonly mutations?: number;
+  readonly failures?: number;
 };
+
+const MAX_PROVIDER_RECOVERY_RESUMES_PER_PROGRESS_WINDOW = 1;
 
 export type {
   ApprovalDecision,
@@ -375,6 +382,40 @@ export class RuntimeEngine {
         ...(continuation === undefined ? {} : { continuation }),
         ...(budgets === undefined ? {} : { budgets })
       });
+      if (continuation !== undefined) {
+        const parent = this.#requireRun(continuation.parentRunId);
+        const unfinishedSteps = parent.currentPlan?.orderedSteps.filter((step) => (
+          parent.stepProgress.find((progress) => progress.stepId === step.id)?.status !== "completed"
+        )) ?? [];
+        if (
+          this.#isRecoverableContinuationParent(parent)
+          && parent.taskContract !== null
+          && parent.currentPlan !== null
+          && unfinishedSteps.length > 0
+        ) {
+          const carriedContract = TaskContractSchema.parse({
+            ...parent.taskContract,
+            version: 1,
+            inputVersion: 1,
+            workspace: this.#workspace
+          });
+          snapshot = RunSnapshotSchema.parse({
+            ...snapshot,
+            taskContract: carriedContract,
+            currentPlan: {
+              version: 1,
+              basedOnVersion: null,
+              goalDigest: digestTaskContract(carriedContract),
+              orderedSteps: unfinishedSteps
+            },
+            stepProgress: unfinishedSteps.map((step, index) => ({
+              stepId: step.id,
+              status: index === 0 ? "active" as const : "pending" as const,
+              evidenceIds: []
+            }))
+          });
+        }
+      }
     } catch (error) {
       throw new RuntimeError({
         code: "INVALID_INPUT",
@@ -527,6 +568,7 @@ export class RuntimeEngine {
         && (run.lastError?.code === "PROVIDER_UNAVAILABLE" || run.lastError?.code === "CONTEXT_CAPACITY_EXCEEDED")
         && input.recoveryDecision === undefined
       ) {
+        if (!this.#providerRecoveryAllowed(run.runId)) return toRunResult(run);
         const now = this.#now();
         const resumed = transitionRunStatus(run, "running", { now });
         run = this.#commit(run, resumed, "run.resumed", {
@@ -540,9 +582,24 @@ export class RuntimeEngine {
         const resumed = transitionRunStatus(run, "running", { now });
         run = this.#commit(run, resumed, "run.resumed", { reason: "worker_recovery_resolved" }, observer);
       } else if (run.status === "blocked" && run.stopReason === "NO_PROGRESS_DETECTED") {
+        const text = input.input?.trim();
+        if (text === undefined || text.length === 0) {
+          return toRunResult(run);
+        }
         const now = this.#now();
-        const resumed = transitionRunStatus(run, "running", { now });
-        run = this.#commit(run, resumed, "run.resumed", { reason: "explicit_no_progress_recovery" }, observer);
+        const resumed = transitionRunStatus({
+          ...run,
+          inputHistory: [...run.inputHistory, {
+            id: this.#createId(),
+            sequence: run.inputHistory.length + 1,
+            text,
+            receivedAt: now
+          }]
+        }, "running", { now });
+        run = this.#commit(run, resumed, "run.resumed", {
+          reason: "no_progress_corrective_input",
+          inputSequence: resumed.inputHistory.length
+        }, observer);
       } else if (run.status === "blocked") {
         return toRunResult(run);
       }
@@ -944,6 +1001,29 @@ export class RuntimeEngine {
         `Run is ${run.status}; resume requires a blocked or interrupted running Run.`
       );
     }
+    if (run.status === "blocked" && run.stopReason === "NO_PROGRESS_DETECTED") {
+      if (options.input?.trim() === undefined || options.input.trim().length === 0) {
+        throw this.#controlConflict(
+          runId,
+          "NO_PROGRESS_DETECTED requires corrective input or a new continuation Run; generic Resume is not allowed."
+        );
+      }
+    } else if (options.input !== undefined) {
+      throw this.#controlConflict(
+        runId,
+        "Corrective input is only valid for a NO_PROGRESS_DETECTED Run."
+      );
+    }
+    if (
+      run.status === "blocked"
+      && (run.stopReason === "PROVIDER_UNAVAILABLE" || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
+      && !this.#providerRecoveryAllowed(runId)
+    ) {
+      throw this.#controlConflict(
+        runId,
+        "Provider recovery is exhausted for the current progress window. Provide new input in a continuation Run after connectivity is restored; generic Resume is not allowed."
+      );
+    }
     const unresolved = this.#store.listToolInvocations(runId)
       .filter(
         (invocation) => invocation.status === "prepared"
@@ -997,6 +1077,7 @@ export class RuntimeEngine {
     await this.#performControl(runId, async () => {
       await this.resume({
         runId,
+        ...(options.input === undefined ? {} : { input: options.input }),
         ...(options.budgetExtension === undefined
           ? {}
           : { budgetExtension: options.budgetExtension }),
@@ -1336,7 +1417,7 @@ export class RuntimeEngine {
         throw new RuntimeError({
           code: "PROVIDER_UNAVAILABLE",
           message: snapshot.lastError.message,
-          retryable: true,
+          retryable: snapshot.lastError.retryable,
           runId
         });
       }
@@ -1530,11 +1611,12 @@ export class RuntimeEngine {
         message: "Continuation parent is unavailable in this Runtime Store."
       });
     }
-    if (!isTerminalRun(parent)) {
+    const recoverableBlockedParent = this.#isRecoverableContinuationParent(parent);
+    if (!isTerminalRun(parent) && !recoverableBlockedParent) {
       throw new RuntimeError({
         code: "INVALID_CONTINUATION",
         runId: parentRunId,
-        message: "Continuation parent must be terminal."
+        message: "Continuation parent must be terminal or at an exhausted bounded-recovery boundary."
       });
     }
     if (this.#store.listToolInvocations(parentRunId).some((invocation) => (
@@ -1581,11 +1663,13 @@ export class RuntimeEngine {
       const parent = this.#store.getRun(edge.parentRunId);
       const allEvents = parent === null ? [] : this.#store.listEvents(parent.runId);
       const boundaryExists = allEvents.some((event) => event.sequence === edge.parentLastEventSequence);
+      const recoverableBlockedParent = parent !== null
+        && this.#isRecoverableContinuationParent(parent);
       if (
         parent === null
         || parent.revision !== edge.parentRevision
         || !boundaryExists
-        || !isTerminalRun(parent)
+        || (!isTerminalRun(parent) && !recoverableBlockedParent)
       ) {
         throw new RuntimeError({
           code: "INVALID_CONTINUATION",
@@ -1782,7 +1866,8 @@ export class RuntimeEngine {
       run,
       this.#store.listToolInvocations(run.runId),
       (digest) => new ArtifactStore(this.#artifactDir).verify(digest),
-      input.completionMode
+      input.completionMode,
+      (toolName) => this.#tools.get(toolName)?.contract.execution.effect.kind
     );
     if (!validation.passed) {
       throw new ActionRejectedError(`Completion is not valid: ${validation.issues.join(", ")}`);
@@ -1790,13 +1875,6 @@ export class RuntimeEngine {
     const evidenceIds = validation.evidenceIds;
     const completedNavigation = RunSnapshotSchema.parse({
       ...run,
-      stepProgress: run.stepProgress.map((progress) => ({
-        ...progress,
-        status: "completed" as const,
-        evidenceIds: run.evidence
-          .filter((evidence) => evidence.stepId === progress.stepId)
-          .map((evidence) => evidence.id)
-      })),
       lastError: null,
       updatedAt: this.#now()
     });
@@ -2268,6 +2346,15 @@ export class RuntimeEngine {
       );
     }
 
+    const protectedMutations = preparedCalls.filter(({ tool }) => (
+      tool.contract.execution.effect.kind !== "read"
+    ));
+    if (protectedMutations.length > 1) {
+      throw new ActionRejectedError(
+        "PROTECTED_MUTATION_BATCH_REQUIRES_ONE_AT_A_TIME: submit one protected mutation per Provider turn, or combine edits into one complete write. No mutation was admitted."
+      );
+    }
+
     if (preparedCalls.every(({ tool }) => tool.contract.execution.effect.kind === "read")) {
       const current = await executeReadToolBatch(services, run, preparedCalls, observer);
       this.#store.recordRunEvent({
@@ -2366,25 +2453,9 @@ export class RuntimeEngine {
       && digestCanonicalJson(planSemantics(action.orderedSteps))
         === digestCanonicalJson(planSemantics(current.orderedSteps))
     ) {
-      this.#store.recordRunEvent({
-        runId: run.runId,
-        event: {
-          type: "plan.set",
-          occurredAt: this.#now(),
-          payload: {
-            version: current.version,
-            basedOnVersion: action.basedOnVersion,
-            inputVersion: contract.inputVersion,
-            goalDigest: current.goalDigest,
-            taskContract: contract,
-            plan: current,
-            noOp: true
-          }
-        },
-        fencingToken: this.#leases.requireFencingToken(run.runId)
-      });
-      this.#notify(run.runId, observer);
-      return run;
+      throw new ActionRejectedError(
+        "PLAN_UNCHANGED: the proposed Plan has no semantic difference. Execute or verify the current active Step instead of submitting the same Plan again."
+      );
     }
 
     const version = current === null ? 1 : current.version + 1;
@@ -2484,9 +2555,10 @@ export class RuntimeEngine {
 
   #blockForProvider(run: RunSnapshot, error: unknown, observer?: RuntimeObserver): RunSnapshot {
     const errorCode = providerBoundaryErrorCode(error);
+    const retryable = this.#providerRecoveryAllowed(run.runId);
     const blockedInput = RunSnapshotSchema.parse({
       ...run,
-      lastError: { code: errorCode, message: errorMessage(error), retryable: true, detailsArtifact: null }
+      lastError: { code: errorCode, message: errorMessage(error), retryable, detailsArtifact: null }
     });
     const blocked = transitionRunStatus(blockedInput, "blocked", {
       now: this.#now(),
@@ -2495,7 +2567,10 @@ export class RuntimeEngine {
         run: blockedInput,
         outcome: "blocked",
         now: this.#now(),
-        stopReason: errorCode
+        stopReason: errorCode,
+        ...(retryable ? {} : {
+          nextAction: "Provider recovery is exhausted for the current progress window. Restore connectivity, then continue with new corrective input in a continuation Run."
+        })
       })
     });
     return this.#commit(run, blocked, "run.blocked", { stopReason: errorCode }, observer);
@@ -2562,34 +2637,180 @@ export class RuntimeEngine {
   }
 
   #enforceConvergence(run: RunSnapshot, observer?: RuntimeObserver): RunSnapshot | null {
-    if (run.budgetsUsed.iterations < 3) return null;
     const diagnostic = this.#noProgressDiagnostic(run.runId);
-    if (diagnostic === null || diagnostic.repeatCount < 3) return null;
-    const alreadyWarned = this.#store.listRecentEvents(run.runId, 64).some((event) => (
+    if (diagnostic === null) return null;
+    if (run.budgetsUsed.iterations < (diagnostic.kind === "repeated_invalid_response" ? 2 : 3)) return null;
+    const minimumRepeats = diagnostic.kind === "repeated_invalid_response" ? 2 : 3;
+    if (diagnostic.repeatCount < minimumRepeats) return null;
+    // An identical schema rejection is already an authoritative fact: the
+    // response was never executable and replaying it cannot produce progress.
+    // Bound it on the second occurrence instead of spending another Provider
+    // turn on a warning-only cycle.
+    if (diagnostic.kind === "repeated_invalid_response") {
+      return this.#blockForNoProgress(run, diagnostic, observer);
+    }
+    const recentEvents = this.#store.listRecentEvents(run.runId, 64);
+    const warning = [...recentEvents].reverse().find((event) => (
       event.type === "runtime.event"
       && event.payload.name === "execution.no_progress.warning"
       && event.payload.fingerprint === diagnostic.fingerprint
     ));
-    if (!alreadyWarned) {
+    if (warning === undefined) {
+      const warningSequence = (recentEvents.at(-1)?.sequence ?? 0) + 1;
+      const latestRejection = [...recentEvents].reverse().find((event) => event.type === "response.rejected");
+      const forbiddenStrategy = diagnostic.kind === "repeated_response_rejection" && latestRejection !== undefined
+        ? rejectionStrategyFingerprint(latestRejection)
+        : diagnostic.fingerprint;
       this.#store.recordRunEvent({
         runId: run.runId,
         event: {
           type: "runtime.event",
           occurredAt: this.#now(),
-          payload: { name: "execution.no_progress.warning", ...diagnostic }
+          payload: {
+            name: "execution.no_progress.warning",
+            ...diagnostic,
+            warningSequence,
+            forbiddenStrategy,
+            allowedRepairAttempts: 1
+          }
         },
         fencingToken: this.#leases.requireFencingToken(run.runId)
       });
       this.#notify(run.runId, observer);
       return null;
     }
+
+    const afterWarning = recentEvents.filter((event) => event.sequence > warning.sequence);
+    const repairAllowed = afterWarning.find((event) => (
+      event.type === "runtime.event"
+      && event.payload.name === "execution.no_progress.repair_allowed"
+      && event.payload.warningSequence === warning.sequence
+    ));
+    if (repairAllowed !== undefined) {
+      const authoritativeAttempt = afterWarning.find((event) => (
+        event.sequence > repairAllowed.sequence
+        && (event.type === "tool.succeeded" || event.type === "tool.failed" || event.type === "tool.recovered")
+      ));
+      if (authoritativeAttempt !== undefined) {
+        this.#store.recordRunEvent({
+          runId: run.runId,
+          event: {
+            type: "runtime.event",
+            occurredAt: this.#now(),
+            payload: {
+              name: "execution.no_progress.probation_resolved",
+              warningSequence: warning.sequence,
+              progressSequence: authoritativeAttempt.sequence
+            }
+          },
+          fencingToken: this.#leases.requireFencingToken(run.runId)
+        });
+        this.#notify(run.runId, observer);
+        return null;
+      }
+    } else {
+      const authoritativeAttempt = afterWarning.find((event) => (
+        event.type === "tool.succeeded" || event.type === "tool.failed" || event.type === "tool.recovered"
+      ));
+      if (authoritativeAttempt !== undefined) {
+        const invocationId = authoritativeAttempt.payload.invocationId;
+        const invocation = typeof invocationId === "string"
+          ? this.#store.listRecentToolInvocations(run.runId, 24).find((item) => item.id === invocationId)
+          : undefined;
+        if (invocation !== undefined && this.#isMateriallyDifferentProbationAttempt(invocation, warning.payload)) {
+          this.#recordProbationResolved(run, warning.sequence, authoritativeAttempt, observer);
+          return null;
+        }
+      }
+      const rejection = [...afterWarning].reverse().find((event) => event.type === "response.rejected");
+      if (rejection !== undefined && correctableRejection(rejection)) {
+        const strategyFingerprint = rejectionStrategyFingerprint(rejection);
+        if (strategyFingerprint !== warning.payload.forbiddenStrategy) {
+          this.#store.recordRunEvent({
+            runId: run.runId,
+            event: {
+              type: "runtime.event",
+              occurredAt: this.#now(),
+              payload: {
+                name: "execution.no_progress.repair_allowed",
+                fingerprint: diagnostic.fingerprint,
+                warningSequence: warning.sequence,
+                forbiddenStrategy: warning.payload.forbiddenStrategy,
+                attemptedStrategy: strategyFingerprint,
+                allowedRepairAttempts: 1
+              }
+            },
+            fencingToken: this.#leases.requireFencingToken(run.runId)
+          });
+          this.#notify(run.runId, observer);
+          return null;
+        }
+      }
+    }
     return this.#blockForNoProgress(run, diagnostic, observer);
+  }
+
+  #recordProbationResolved(
+    run: RunSnapshot,
+    warningSequence: number,
+    attempt: RunEvent,
+    observer?: RuntimeObserver
+  ): void {
+    this.#store.recordRunEvent({
+      runId: run.runId,
+      event: {
+        type: "runtime.event",
+        occurredAt: this.#now(),
+        payload: {
+          name: "execution.no_progress.probation_resolved",
+          warningSequence,
+          progressSequence: attempt.sequence,
+          outcome: attempt.type === "tool.failed" ? "failed" : "succeeded",
+          ...(typeof attempt.payload.payloadDigest === "string"
+            ? { payloadDigest: attempt.payload.payloadDigest }
+            : {})
+        }
+      },
+      fencingToken: this.#leases.requireFencingToken(run.runId)
+    });
+    this.#notify(run.runId, observer);
+  }
+
+  #isMateriallyDifferentProbationAttempt(
+    invocation: ToolInvocation,
+    warning: Readonly<Record<string, unknown>>
+  ): boolean {
+    if (warning.kind !== "resource_churn") return false;
+    const input = invocation.inputJson;
+    const path = input !== null && typeof input === "object" && !Array.isArray(input)
+      ? (input as { readonly path?: unknown }).path
+      : undefined;
+    const warnedResources = Array.isArray(warning.resources)
+      ? warning.resources.filter((resource): resource is string => typeof resource === "string")
+      : [];
+    if (typeof path !== "string") return true;
+    const canonicalPath = path.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+    return !warnedResources.includes(canonicalPath);
   }
 
   #noProgressDiagnostic(runId: string): NoProgressDiagnostic | null {
     const allEvents = this.#store.listRecentEvents(runId, 64);
-    const lastResume = [...allEvents].reverse().find((event) => event.type === "run.resumed");
-    const segmentStartedAt = lastResume?.occurredAt ?? "";
+    // A plain recovery Resume is not a new convergence window. Only a
+    // persisted user input creates new facts; preserving the older window
+    // prevents the same strategy being reopened indefinitely.
+    const lastInputResume = [...allEvents].reverse().find((event) => (
+      event.type === "run.resumed"
+      && typeof event.payload.inputSequence === "number"
+    ));
+    const probationResolved = [...allEvents].reverse().find((event) => (
+      event.type === "runtime.event"
+      && event.payload.name === "execution.no_progress.probation_resolved"
+    ));
+    const segmentBoundary = probationResolved !== undefined
+      && (lastInputResume === undefined || probationResolved.sequence > lastInputResume.sequence)
+      ? probationResolved
+      : lastInputResume;
+    const segmentStartedAt = segmentBoundary?.occurredAt ?? "";
     const invocations = this.#store.listRecentToolInvocations(runId, 24)
       .filter((invocation) => invocation.startedAt >= segmentStartedAt)
       .slice(-24);
@@ -2601,7 +2822,7 @@ export class RuntimeEngine {
       const actionFingerprint = digestCanonicalJson({ toolName: latest.toolName, inputDigest: latest.inputDigest, status: latest.status, outcome });
       const completed = invocations.filter((invocation) => invocation.status === "succeeded" || invocation.status === "failed");
       let repeatCount = 0;
-      let convergenceAnchor = `resume:${lastResume?.sequence ?? 0}`;
+      let convergenceAnchor = `boundary:${segmentBoundary?.sequence ?? 0}`;
       for (let index = completed.length - 1; index >= 0; index -= 1) {
         const invocation = completed[index]!;
         const candidateFingerprint = digestCanonicalJson({
@@ -2619,12 +2840,12 @@ export class RuntimeEngine {
       const fingerprint = digestCanonicalJson({ actionFingerprint, convergenceAnchor });
       if (repeatCount >= 3) return { fingerprint, kind: latest.status === "failed" ? "repeated_tool_failure" : "repeated_tool_result", repeatCount };
     }
-    const events = allEvents.filter((event) => lastResume === undefined || event.sequence > lastResume.sequence);
+    const events = allEvents.filter((event) => segmentBoundary === undefined || event.sequence > segmentBoundary.sequence);
     const convergenceAnchor = events.reduce((sequence, event) => {
       const isToolOutcome = event.type === "tool.attempt.succeeded" || event.type === "tool.attempt.failed";
       const isAcceptedPlan = event.type === "plan.set" && event.payload.noOp !== true;
       return isToolOutcome || isAcceptedPlan ? event.sequence : sequence;
-    }, lastResume?.sequence ?? 0);
+    }, segmentBoundary?.sequence ?? 0);
     const convergenceEvents = events.filter((event) => event.sequence > convergenceAnchor);
     const noOps = convergenceEvents.filter((event) => event.type === "plan.set" && event.payload.noOp === true).slice(-4);
     if (noOps.length >= 3) {
@@ -2632,11 +2853,22 @@ export class RuntimeEngine {
       return { fingerprint, kind: "equivalent_plan", repeatCount: noOps.length };
     }
     const rejections = convergenceEvents.filter((event) => event.type === "response.rejected").slice(-4);
-    if (rejections.length >= 3) {
+    if (rejections.length >= 2) {
       const latestMessage = rejections.at(-1)?.payload.message;
       const equivalent = rejections.filter((event) => event.payload.message === latestMessage).length;
       if (equivalent >= 3) {
         return { fingerprint: digestCanonicalJson({ kind: "response_rejected", message: latestMessage, convergenceAnchor }), kind: "repeated_response_rejection", repeatCount: equivalent };
+      }
+      if (equivalent >= 2) {
+        let schema = false;
+        try {
+          schema = (JSON.parse(String(latestMessage)) as { readonly kind?: unknown }).kind === "schema";
+        } catch {
+          schema = false;
+        }
+        if (schema) {
+          return { fingerprint: digestCanonicalJson({ kind: "invalid_response", message: latestMessage, convergenceAnchor }), kind: "repeated_invalid_response", repeatCount: equivalent };
+        }
       }
     }
     return null;
@@ -2676,7 +2908,10 @@ export class RuntimeEngine {
       fingerprint: digestCanonicalJson({ kind: "resource_churn", resource }),
       kind: "resource_churn",
       repeatCount: counts.reads + counts.mutations,
-      resources: [resource]
+      resources: [resource],
+      reads: counts.reads,
+      mutations: counts.mutations,
+      failures: counts.failures
     };
   }
 
@@ -2862,6 +3097,32 @@ export class RuntimeEngine {
         actions: ["resume", "discard"] as const
       }];
     });
+  }
+
+  #providerRecoveryAllowed(runId: string): boolean {
+    return this.#providerRecoveryResumeCount(runId)
+      < MAX_PROVIDER_RECOVERY_RESUMES_PER_PROGRESS_WINDOW;
+  }
+
+  #providerRecoveryResumeCount(runId: string): number {
+    const events = this.#store.listEvents(runId);
+    const lastProgressSequence = events.reduce((latest, event) => (
+      isProviderRecoveryProgressEvent(event) ? event.sequence : latest
+    ), 0);
+    return events.filter((event) => (
+      event.sequence > lastProgressSequence
+      && event.type === "run.resumed"
+      && event.payload.reason === "provider_retry"
+    )).length;
+  }
+
+  #isRecoverableContinuationParent(run: RunSnapshot): boolean {
+    if (run.status !== "blocked") return false;
+    if (run.stopReason === "NO_PROGRESS_DETECTED") return true;
+    return (
+      run.stopReason === "PROVIDER_UNAVAILABLE"
+      || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED"
+    ) && !this.#providerRecoveryAllowed(run.runId);
   }
 
   /** Derived Child → Parent projection; Child Run remains the only authority. */
@@ -3424,6 +3685,41 @@ function isBudgetStopReason(value: string | null): boolean {
     || value === "MODEL_CALL_BUDGET_EXCEEDED"
     || value === "TOOL_CALL_BUDGET_EXCEEDED"
     || value === "DURATION_BUDGET_EXCEEDED";
+}
+
+function isProviderRecoveryProgressEvent(event: RunEvent): boolean {
+  if (event.type === "run.resumed" && typeof event.payload.inputSequence === "number") return true;
+  if (event.type === "plan.set" && event.payload.noOp !== true) return true;
+  return event.type === "tool.attempt.succeeded"
+    || event.type === "context.evidence_recorded"
+    || event.type === "validation.passed"
+    || event.type === "recovery.confirmed_succeeded"
+    || event.type === "recovery.confirmed_failed"
+    || event.type === "branch.merged";
+}
+
+function correctableRejection(event: RunEvent): boolean {
+  if (event.type !== "response.rejected") return false;
+  const diagnostic = event.payload.diagnostic;
+  if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return false;
+  const recovery = (diagnostic as { readonly recovery?: unknown }).recovery;
+  if (recovery === null || typeof recovery !== "object" || Array.isArray(recovery)) return false;
+  const value = recovery as {
+    readonly sideEffect?: unknown;
+    readonly doNotRepeat?: unknown;
+    readonly nextAction?: unknown;
+  };
+  return value.sideEffect === "none"
+    && value.doNotRepeat === true
+    && typeof value.nextAction === "string"
+    && value.nextAction.trim().length > 0;
+}
+
+function rejectionStrategyFingerprint(event: RunEvent): string {
+  if (event.type !== "response.rejected") return digestCanonicalJson({ event: event.type });
+  return digestCanonicalJson({
+    diagnostic: event.payload.diagnostic
+  });
 }
 
 function addQuota(current: number, additional: number | undefined): number {

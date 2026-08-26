@@ -20,10 +20,16 @@ export function projectContinuationTurns(
     : index === requestedBoundary
       ? compactContinuationTurn(turn)
       : turn);
-  if (currentRunId === undefined) return manuallyProjected;
+  const ageBounded = manuallyProjected.map((turn, index) => {
+    const distanceFromLatest = manuallyProjected.length - 1 - index;
+    if (distanceFromLatest >= 2) return referenceContinuationTurn(turn);
+    if (distanceFromLatest === 1) return compactContinuationTurn(turn);
+    return turn;
+  });
+  if (currentRunId === undefined) return ageBounded;
   const priorProjection = latestContinuationProjection(store, currentRunId);
-  if (priorProjection.size === 0) return manuallyProjected;
-  return manuallyProjected.map((turn) => applyPersistedMode(
+  if (priorProjection.size === 0) return ageBounded;
+  return ageBounded.map((turn) => applyPersistedMode(
     turn,
     priorProjection.get(turn.sourceRunId)
   ));
@@ -100,14 +106,32 @@ function projectTurn(run: RunSnapshot, store: ContextSource): ContinuationTurn {
         ref: namespaced(run.runId, `invocation:${invocation.id}`),
         toolName: invocation.toolName,
         status: invocation.status as "succeeded" | "failed",
-        input: nullableJson(invocation.inputJson),
-        facts: nullableJson(invocation.resultJson),
-        error: nullableJson(invocation.errorJson)
+        input: boundedInvocationValue(invocation.inputJson),
+        facts: boundedInvocationValue(invocation.resultJson),
+        error: boundedInvocationValue(invocation.errorJson)
       })),
     evidenceRefs: run.evidence.map((evidence) => namespaced(run.runId, `evidence:${evidence.id}`)),
     occurredAt: run.updatedAt,
     payloadMode: "full"
   };
+}
+
+function boundedInvocationValue(value: unknown, key = ""): ContinuationTurn["toolFacts"][number]["input"] {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    if (["content", "replacement", "stdout", "stderr", "preview", "data"].includes(key)) {
+      return `[omitted ${Buffer.byteLength(value, "utf8")} bytes; restore the invocation ref for exact content]`;
+    }
+    return value.length <= 1_024 ? value : `${value.slice(0, 1_024)}…[truncated]`;
+  }
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value.slice(0, 32).map((item) => boundedInvocationValue(item));
+  }
+  if (typeof value !== "object") return null;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .slice(0, 64)
+    .map(([nestedKey, nested]) => [nestedKey, boundedInvocationValue(nested, nestedKey)]));
 }
 
 function isContinuationEvent(type: string): boolean {
@@ -183,7 +207,7 @@ export function namespaced(runId: string, ref: string): string {
 }
 
 function terminalStatus(run: RunSnapshot): ContinuationTurn["status"] {
-  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") return run.status;
+  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled" || run.status === "blocked") return run.status;
   throw new Error(`Continuation ancestor is not terminal: ${run.runId}`);
 }
 

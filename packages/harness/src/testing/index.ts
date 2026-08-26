@@ -27,6 +27,7 @@ import {
   type RuntimeTool
 } from "../index.js";
 import {
+  DIRECT_RESPONSE_CONTROL,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   type ModelResponse
@@ -40,6 +41,7 @@ type ScriptedPlanTurn = {
   readonly goal: string;
   readonly steps: readonly {
     readonly objective: string;
+    readonly checks?: readonly { readonly toolName: string }[];
   }[];
 };
 
@@ -81,6 +83,7 @@ export const modelResponses = Object.freeze({
     readonly goal: string;
     readonly steps: readonly {
       readonly objective: string;
+      readonly checks?: readonly { readonly toolName: string }[];
     }[];
   }): ScriptedModelResponse {
     return Object.freeze({
@@ -293,9 +296,13 @@ function materializeModelResponse(
   }
   if (descriptor.kind === "finish") {
     return {
-      text: descriptor.summary,
-      toolCalls: [],
-      finishReason: "stop"
+      text: null,
+      toolCalls: [{
+        callId: `scripted-${decisionIndex}-0`,
+        name: DIRECT_RESPONSE_CONTROL,
+        arguments: { text: descriptor.summary }
+      }],
+      finishReason: "tool_calls"
     };
   }
 
@@ -306,7 +313,10 @@ function materializeModelResponse(
       name: UPDATE_PLAN_CONTROL,
       arguments: {
         goal: descriptor.goal,
-        tasks: descriptor.steps.map((step) => ({ objective: step.objective }))
+        tasks: descriptor.steps.map((step) => ({
+          objective: step.objective,
+          checks: step.checks ?? []
+        }))
       }
     }],
     finishReason: "tool_calls"

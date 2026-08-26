@@ -113,44 +113,55 @@ async function runDesktopUat(reportPath: string): Promise<void> {
   const capturePath = process.env.NEXORA_DESKTOP_UAT_CAPTURE_PATH?.trim()
     || resolve(dirname(reportPath), "desktop-uat.png");
   const timeoutMs = Number(process.env.NEXORA_DESKTOP_UAT_TIMEOUT_MS ?? 180_000);
+  const autoApprove = process.env.NEXORA_DESKTOP_UAT_AUTO_APPROVE === "true";
+  const existingSessionId = process.env.NEXORA_DESKTOP_UAT_SESSION_ID?.trim() || null;
+  const approvedRequestIds = new Set<string>();
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
     throw new Error("NEXORA_DESKTOP_UAT_TIMEOUT_MS must be a positive integer.");
   }
 
-  await window!.webContents.executeJavaScript(`new Promise((resolveSubmit, rejectSubmit) => {
-    const deadline = Date.now() + 10000;
-    const submit = () => {
-      const settingsButton = document.querySelector('[data-action="settings"]');
-      if (settingsButton instanceof HTMLButtonElement) {
-        settingsButton.click();
-        const settingsForm = document.querySelector('[data-form="model-profile"]');
-        const modelInput = settingsForm?.querySelector('input[name="model"]');
-        if (!(settingsForm instanceof HTMLFormElement) || !(modelInput instanceof HTMLInputElement) || modelInput.value.length === 0) {
-          rejectSubmit(new Error('Desktop model Profile Settings did not project the Workspace model.'));
-          return;
-        }
-        document.querySelector('.settings-modal [data-action="close-settings"]')?.click();
-      }
-      const form = document.querySelector('[data-form="goal"]');
-      const input = form?.querySelector('textarea[name="goal"]');
-      if (form instanceof HTMLFormElement && input instanceof HTMLTextAreaElement) {
-        input.value = ${JSON.stringify(goal)};
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-        resolveSubmit(true);
-      } else if (Date.now() >= deadline) rejectSubmit(new Error('Desktop goal Composer did not become ready.'));
-      else setTimeout(submit, 100);
-    };
-    submit();
-  })`, true);
-
   const startedAt = new Date().toISOString();
+  if (existingSessionId === null) {
+    await window!.webContents.executeJavaScript(`new Promise((resolveSubmit, rejectSubmit) => {
+      const deadline = Date.now() + 10000;
+      const submit = () => {
+        const settingsButton = document.querySelector('[data-action="settings"]');
+        if (settingsButton instanceof HTMLButtonElement) {
+          settingsButton.click();
+          const settingsForm = document.querySelector('[data-form="model-profile"]');
+          const modelInput = settingsForm?.querySelector('input[name="model"]');
+          if (!(settingsForm instanceof HTMLFormElement) || !(modelInput instanceof HTMLInputElement) || modelInput.value.length === 0) {
+            rejectSubmit(new Error('Desktop model Profile Settings did not project the Workspace model.'));
+            return;
+          }
+          document.querySelector('.settings-modal [data-action="close-settings"]')?.click();
+        }
+        const form = document.querySelector('[data-form="goal"]');
+        const input = form?.querySelector('textarea[name="goal"]');
+        if (form instanceof HTMLFormElement && input instanceof HTMLTextAreaElement) {
+          input.value = ${JSON.stringify(goal)};
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+          resolveSubmit(true);
+        } else if (Date.now() >= deadline) rejectSubmit(new Error('Desktop goal Composer did not become ready.'));
+        else setTimeout(submit, 100);
+      };
+      submit();
+    })`, true);
+  } else {
+    await runtime().continueSession(existingSessionId, goal);
+  }
+
   const deadline = Date.now() + timeoutMs;
   let snapshot: DesktopSnapshot | null = null;
   while (Date.now() < deadline) {
     snapshot = await runtime().snapshot();
     const status = snapshot.session?.inspection.status;
     if (status === "succeeded") break;
+    if (autoApprove && approvePendingUatRequest(snapshot, approvedRequestIds)) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+      continue;
+    }
     if (["waiting_for_input", "waiting_for_approval", "blocked", "failed", "cancelled"].includes(status ?? "")) {
       throw new Error(`Desktop UAT stopped in ${status}.`);
     }
@@ -176,6 +187,10 @@ async function runDesktopUat(reportPath: string): Promise<void> {
       snapshot = await runtime().snapshot();
       const status = snapshot.session?.inspection.status;
       if (status === "succeeded" && snapshot.session!.runs.length >= 2) break;
+      if (autoApprove && approvePendingUatRequest(snapshot, approvedRequestIds)) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+        continue;
+      }
       if (["waiting_for_input", "waiting_for_approval", "blocked", "failed", "cancelled"].includes(status ?? "")) {
         throw new Error(`Desktop continuation UAT stopped in ${status}.`);
       }
@@ -187,7 +202,7 @@ async function runDesktopUat(reportPath: string): Promise<void> {
   }
 
   await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
-  const publicOutputCount = await window!.webContents.executeJavaScript(`document.querySelectorAll('.think-summary, .public-content .markdown-body').length`, true) as number;
+  const publicOutputCount = await window!.webContents.executeJavaScript(`document.querySelectorAll('.think-summary, .public-content .markdown-body, .result .markdown-body').length`, true) as number;
   if (publicOutputCount < 1) throw new Error("Desktop UAT did not render Provider public output.");
   const image = await window!.webContents.capturePage({ x: 0, y: 0, width: 1180, height: 800 });
   if (image.isEmpty()) throw new Error("Electron rendered an empty UAT capture.");
@@ -199,6 +214,7 @@ async function runDesktopUat(reportPath: string): Promise<void> {
     startedAt,
     completedAt: new Date().toISOString(),
     goal,
+    continuedExistingSession: existingSessionId !== null,
     workspace: snapshot.workspace.path,
     runId: inspection.runId,
     runIds: snapshot.session.runs.map((run) => run.inspection.runId),
@@ -222,6 +238,15 @@ async function runDesktopUat(reportPath: string): Promise<void> {
   await mkdir(dirname(reportPath), { recursive: true });
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   console.log(`Desktop UAT passed: ${inspection.runId}`);
+}
+
+function approvePendingUatRequest(snapshot: DesktopSnapshot, approvedRequestIds: Set<string>): boolean {
+  const inspection = snapshot.session?.inspection;
+  const request = inspection?.pendingRequest;
+  if (inspection === undefined || request?.kind !== "approval" || approvedRequestIds.has(request.id)) return false;
+  approvedRequestIds.add(request.id);
+  runtime().control(inspection.runId, { type: "approve", requestId: request.id });
+  return true;
 }
 
 ipcMain.handle("desktop:bootstrap", async () => await runtime().snapshot());

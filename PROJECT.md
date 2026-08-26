@@ -106,6 +106,7 @@ Harness 对以下能力负责：
 - cache-stable Prompt layout、Provider Transport、AgentWorkingContext、确定性 Context 收缩、Rehydration 与 Memory 策略；
 - Provider-native Tool Calling、归一化 ModelResponse、Planning controls、Reasoning 和非法响应修复；
 - 引导模型按任务事实选择直接行动、探索、可选 Plan 或最终文本；
+- 发现 Host 显式配置的 Agent Skills、投影有界元数据目录，并在模型显式选择后渐进加载策略指令；
 - 将模型业务语义编译为 Runtime Action，并把具体机械失败局部返回下一轮；
 - 通过 Runtime port 读取 Authority、提交 Plan/Command/finish proposal，不直接写 Run Store。
 
@@ -163,6 +164,7 @@ Runtime 对以下能力负责：
 - 依赖方向固定为 Host → Harness → Runtime，Runtime 不反向依赖 Harness；
 - Harness 的 Provider、Context、Memory、Planning、Reasoning 和 Completion 策略通过 ports 解耦，可以独立替换；
 - Agent Profile 只能影响模型工作与表达策略，不能改变 Tool 注册、权限、Approval、Evidence、Completion Gate 或 Run Status；
+- Skill 只能作为 Harness 策略指令影响模型如何完成任务，不能注册或直接执行 Tool，不能授权副作用、批准操作、建立 Evidence、修改 Plan/Run Status 或声明完成；
 - 同一 Provider 请求只使用一种 Action Transport；Prompt Cache 只复用 Provider 前缀，不复用响应或跳过 Runtime；
 - Runtime 不依赖 Provider、LLM、Memory、Provider-facing Context、具体 UI、Web 框架或宿主应用；
 - 扩展通过公开 Contract 接入，不能直接写 Core Store；
@@ -274,6 +276,25 @@ Run 状态       → State Machine + persisted Run
 → 实现并验证一条权威路径
 ```
 
+当前已授权独立 Feature `agent-skill-auto-selection`，用于解决通用 Agent 在不同任务中需要按需加载专门工作方法、但不能把所有领域指令永久塞入 System Prompt 的真实 Harness 扩展需求。
+
+授权范围：
+
+- 兼容开放 Agent Skills 目录约定，以 `SKILL.md` 的 `name`、`description` 元数据作为发现入口；
+- 仅从 Host 显式配置的本地根目录发现 Skill，启动时形成不可变目录快照；
+- 模型通过 Harness control 显式选择目录中的精确 `id`、`version` 与 package digest，下一决策轮才加载完整指令；
+- Skill 选择、目录和激活指令的 digest 进入现有 Model Call / Run Event 审计，并可从持久化事件恢复；
+- 路径、大小、数量、重复 ID、包漂移和配置冲突必须失败关闭；
+- 所有 Tool 调用继续走唯一 Runtime Tool、Approval、Invocation、Evidence 和 Completion 路径。
+
+本 Feature 不授权：
+
+- Skill 自动下载、联网更新、市场、通用插件 Registry 或依赖解析；
+- MCP、Workflow DSL、第二套 Agent Loop 或第三方编排框架；
+- 自动执行 Skill 中的脚本，或让 Skill 自行注册 Tool；
+- 让 Skill 获得高于 System、Host、Project 或用户要求的指令优先级；
+- 为 Skill 新增 Runtime 状态机、数据库 Authority 或副作用旁路。
+
 ### 1.5 — 发布与运行质量
 
 目标：只在出现真实长期调用方后，补齐其发布和运行所需的质量门禁。
@@ -322,10 +343,10 @@ Nexora 不计划把以下内容作为自身产品：
 - 面向终端用户的聊天产品；
 - 托管式 Agent SaaS 或云端多租户平台；
 - 无代码或低代码 Workflow 编辑器；
-- 以 Skill、MCP 或扩展市场作为产品中心；
+- 以 Skill、MCP 或扩展市场作为产品中心；本地按需 Skill 策略扩展不改变这一非目标；
 - 固定多 Agent 组织结构；
 - 某个垂类业务应用；
 - “一句话生成任意 Agent”的不可验证承诺；
 - 通过大量内置垂类模块证明所谓通用性。
 
-官方 Desktop 和其他宿主应用可以实现各自的 UI 与领域交互；服务端、MCP、Skill、工作流或多 Agent 协作仍必须由真实调用需求触发。只有这些能力形成 Runtime 的通用扩展需求并有真实调用方后，Nexora 才提供相应的最小公共边界。
+官方 Desktop 和其他宿主应用可以实现各自的 UI 与领域交互。当前仅授权上述 Harness 层本地 Skill 自动选择边界；服务端、MCP、Skill 市场、工作流或其他扩展仍必须由新的真实调用需求和独立 Feature Contract 触发。

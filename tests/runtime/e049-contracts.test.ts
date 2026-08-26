@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   EvidenceSchema,
@@ -178,6 +179,26 @@ describe("E049 authoritative runtime contracts", () => {
       }
     })();
     expect(diagnostics).toEqual([]);
+  });
+
+  it("explains schema rejection recovery without implying a Tool side effect", () => {
+    const error = new z.ZodError([{
+      code: "invalid_string",
+      validation: "regex",
+      path: ["expectedDigest"],
+      message: "Invalid"
+    }]);
+    const diagnostic = responseRejectionDiagnostic(error as Parameters<typeof responseRejectionDiagnostic>[0], {});
+    expect(diagnostic.kind).toBe("schema");
+    expect(diagnostic.recovery).toEqual(expect.objectContaining({
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: expect.stringContaining("authoritative filesystem.read")
+    }));
+    expect(diagnostic.recovery).toBeDefined();
+    expect(diagnostic.recovery).toEqual(expect.objectContaining({ fields: expect.arrayContaining([
+      expect.objectContaining({ path: "expectedDigest", expectedFormat: "sha256:<64 hexadecimal characters>" })
+    ]) }));
   });
 
   it("requires every evidence record to bind to a plan check and real subject", () => {

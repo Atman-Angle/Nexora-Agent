@@ -69,7 +69,7 @@ describe("E058 model-owned Tool selection", () => {
 
     expect(validateCompletion(run, [])).toEqual({
       passed: false,
-      issues: ["COMPLETION_EVIDENCE_REQUIRED", "CHECK_UNSATISFIED:search:read"],
+      issues: ["COMPLETION_EVIDENCE_REQUIRED", "STEP_INCOMPLETE:search", "CHECK_UNSATISFIED:search:read"],
       evidenceIds: []
     });
   });

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { createAgent } from "../../packages/harness/src/index.js";
 import type { ModelDecisionContext, ModelResponse, RuntimeOperationContext, RuntimeProvider } from "../../packages/harness/src/index.js";
-import { ScriptedRuntimeProvider, responseCall, responseInput, responseText, responseTools, successfulReadTool } from "./runtime-testkit.js";
+import { ScriptedRuntimeProvider, responseCall, responseDirect, responseInput, responseTools, successfulReadTool } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -27,7 +27,7 @@ describe("Phase 0 Nexora Fit Spike", () => {
           ] } },
           { name: "filesystem.read", arguments: { path: "src/scheduler.ts" } }
         ]),
-        responseText("Protocol repair completed without accepting the mixed delegation.")
+        responseDirect("Protocol repair completed without accepting the mixed delegation.")
       ]),
       tools: [successfulReadTool()]
     });
@@ -54,7 +54,7 @@ describe("Phase 0 Nexora Fit Spike", () => {
       workspace,
       provider: new ScriptedRuntimeProvider([
         responseInput("Pause Parent", "Create a Child at an idle cut point."),
-        responseText("Child objective completed.")
+        responseDirect("Child objective completed.")
       ]),
       tools: []
     });
@@ -89,9 +89,9 @@ describe("Phase 0 Nexora Fit Spike", () => {
         { objective: "Inspect the source adapters", profileRef: "researcher" }
       ] },
       responseCall("filesystem.read", { path: "secret.txt" }),
-      responseText("The scoped Worker completed without the unauthorized Tool."),
-      responseText("The second scoped Worker completed."),
-      responseText("Parent incorporated the Worker result.")
+      responseDirect("The scoped Worker completed without the unauthorized Tool."),
+      responseDirect("The second scoped Worker completed."),
+      responseDirect("Parent incorporated the Worker result.")
     ]);
     const runtime = createAgent({
       workspace,
@@ -182,9 +182,9 @@ describe("Phase 0 Nexora Fit Spike", () => {
         { objective: "Inspect scheduler failures", profileRef: "researcher" },
         { objective: "Inspect source adapters", profileRef: "researcher" }
       ] },
-      responseText("Worker one completed."),
-      responseText("Worker two completed."),
-      responseText("Delegation accepted and parent result is ready.")
+      responseDirect("Worker one completed."),
+      responseDirect("Worker two completed."),
+      responseDirect("Delegation accepted and parent result is ready.")
     ]);
     const runtime = createAgent({
       workspace, provider, tools: [],
@@ -245,10 +245,10 @@ class ExactReplayProvider implements RuntimeProvider {
   }
 
   async decide(context: ModelDecisionContext): Promise<ModelResponse> {
-    if (context.delegationAllowed === false) return responseText("Worker completed.");
+    if (context.delegationAllowed === false) return responseDirect("Worker completed.");
     this.#parentCalls += 1;
     if (this.#parentCalls <= 2) return this.#repeated;
-    return responseText("The exact accepted command was replayed without duplicate Children.");
+    return responseDirect("The exact accepted command was replayed without duplicate Children.");
   }
 }
 
@@ -272,7 +272,7 @@ class ChildDelegationProbeProvider implements RuntimeProvider {
         { objective: "Forbidden nested objective B" }
       ] });
     }
-    return responseText("Worker repaired the rejected nested delegation and completed locally.");
+    return responseDirect("Worker repaired the rejected nested delegation and completed locally.");
   }
 }
 
@@ -281,11 +281,11 @@ class WorkerObservationPromptProbeProvider implements RuntimeProvider {
 
   async decide(context: ModelDecisionContext, operation: RuntimeOperationContext): Promise<ModelResponse> {
     if (context.delegationAllowed === false) {
-      return responseText(`Worker completed: ${context.run.inputHistory[0]?.text ?? "unknown objective"}`);
+      return responseDirect(`Worker completed: ${context.run.inputHistory[0]?.text ?? "unknown objective"}`);
     }
     if ((context.workerObservations?.length ?? 0) === 2) {
       this.parentPromptAfterJoin = operation.compiledPrompt?.input ?? null;
-      return responseText("Parent synthesized both projected Worker reports.");
+      return responseDirect("Parent synthesized both projected Worker reports.");
     }
     return responseCall("nexora_delegate_workers", { assignments: [
       { objective: "Inspect scheduler lifecycle" },

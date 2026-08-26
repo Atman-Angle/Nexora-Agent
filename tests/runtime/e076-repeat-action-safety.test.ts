@@ -91,7 +91,7 @@ describe("E076 repeated Tool Action safety", () => {
       expect(result.delivery).toEqual(expect.objectContaining({
         outcome: "blocked",
         generatedBy: "deterministic",
-        unfinishedWork: ["Write the protected value once"]
+        unfinishedWork: ["Write the protected value once: use capability test.write"]
       }));
       expect(result.lastError?.code).toBe("NO_PROGRESS_DETECTED");
       expect(effects.count).toBe(1);

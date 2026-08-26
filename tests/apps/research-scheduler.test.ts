@@ -134,9 +134,9 @@ function createSuccessfulAgent(profile: ResearchProfile, workspace: string) {
       modelResponses.plan({
         goal: "Generate one scheduled daily article.",
         steps: [
-          { objective: "Discover." },
-          { objective: "Analyze." },
-          { objective: "Validate." }
+          { objective: "Discover.", checks: [{ toolName: "news.discover" }] },
+          { objective: "Analyze.", checks: [{ toolName: "news.analyze_selection" }] },
+          { objective: "Validate.", checks: [{ toolName: "news.validate_output" }] }
         ]
       }),
       modelResponses.tool({
