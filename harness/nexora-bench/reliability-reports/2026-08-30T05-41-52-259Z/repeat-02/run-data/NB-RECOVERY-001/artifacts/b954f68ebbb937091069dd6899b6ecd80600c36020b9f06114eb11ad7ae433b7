@@ -1,0 +1,1 @@
+{"text":null,"toolCalls":[{"callId":"call_ec6797d13b314e16b76ed4e8","name":"fixture.uncertain_apply","arguments":{"operation":"apply-once"}}],"finishReason":"tool_calls"}

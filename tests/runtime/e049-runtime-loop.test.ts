@@ -23,7 +23,7 @@ describe("E049 one persisted Runtime loop", () => {
     const calls = { calls: 0 };
     const provider = new ScriptedRuntimeProvider([
       { type: "call_tool", stepId: "inspect", checkIds: ["read-target"], toolName: "filesystem.read", input: { path: "src/index.ts" } },
-      { type: "request_input", question: "Provide a target", reason: "No accepted plan" }
+      { type: "request_input", question: "Provide a target", reason: "No accepted plan", basis: "user_exclusive" }
     ]);
     const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [successfulReadTool(calls)] });
 
@@ -43,8 +43,7 @@ describe("E049 one persisted Runtime loop", () => {
   it("resumes user input through the same Run and loop", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
-      { type: "request_input", question: "Which file?", reason: "Target missing" },
-      { type: "request_input", question: "Which file?", reason: "Target missing" },
+      { type: "request_input", question: "Which file?", reason: "Only the user can identify the intended target.", basis: "user_exclusive" },
       {
         type: "set_plan",
         basedOnVersion: null,
@@ -67,6 +66,45 @@ describe("E049 one persisted Runtime loop", () => {
     expect(view.events.filter((event) => event.type === "run.created")).toHaveLength(1);
     expect(view.events.map((event) => event.type)).toContain("run.resumed");
     expect(view.modelCalls.every((call) => call.phase === "decision")).toBe(true);
+    expect(provider.contexts.map((context) => context.strategyRouting?.strategyProfile)).toEqual([
+      "general",
+      "coding",
+      "coding",
+      "coding"
+    ]);
+    runtime.close();
+  });
+
+  it("rejects non-exclusive input basis while allowing a user-exclusive request", async () => {
+    const workspace = tempRoot();
+    const provider = new ScriptedRuntimeProvider([
+      { type: "request_input", question: "Which file?", reason: "Workspace contains the answer", basis: "workspace" },
+      { type: "request_input", question: "Which preference?", reason: "Only the user can choose", basis: "user_exclusive" }
+    ]);
+    const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [successfulReadTool()] });
+
+    const result = await runtime.start({ input: "Inspect the available file." });
+    const view = await runtime.inspect(result.runId);
+
+    expect(result.status).toBe("waiting");
+    expect(view.events.some((event) => event.type === "response.rejected")).toBe(true);
+    expect(view.snapshot.pendingRequest?.kind).toBe("input");
+    runtime.close();
+  });
+
+  it("does not let a legacy post-plan request bypass admissibility", async () => {
+    const workspace = tempRoot();
+    const provider = new ScriptedRuntimeProvider([
+      { type: "set_plan", basedOnVersion: null, taskContract: taskContract(), orderedSteps: setPlan(workspace).orderedSteps },
+      { type: "request_input", question: "Which file?", reason: "legacy request" },
+      { type: "request_input", question: "Which preference?", reason: "Only the user can choose", basis: "user_exclusive" }
+    ]);
+    const runtime = createRuntime({ workspace, dataDir: join(workspace, ".nexora"), provider, tools: [successfulReadTool()] });
+    const result = await runtime.start({ input: "Inspect a file." });
+    const view = await runtime.inspect(result.runId);
+    expect(result.status).toBe("waiting");
+    expect(view.events.some((event) => event.type === "response.rejected")).toBe(true);
+    expect(view.snapshot.pendingRequest?.kind).toBe("input");
     runtime.close();
   });
 });

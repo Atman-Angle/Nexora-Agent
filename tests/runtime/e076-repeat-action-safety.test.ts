@@ -85,11 +85,11 @@ describe("E076 repeated Tool Action safety", () => {
       });
       const view = await runtime.inspect(waiting.runId);
 
-      expect(result.status).toBe("blocked");
+      expect(result.status).toBe("failed");
       expect(result.stopReason).toBe("NO_PROGRESS_DETECTED");
       expect(result.summary).toContain("NO_PROGRESS_DETECTED");
       expect(result.delivery).toEqual(expect.objectContaining({
-        outcome: "blocked",
+        outcome: "failed",
         generatedBy: "deterministic",
         unfinishedWork: ["Write the protected value once: use capability test.write"]
       }));
@@ -101,8 +101,8 @@ describe("E076 repeated Tool Action safety", () => {
       expect(view.events.filter((event) => event.type === "approval.requested")).toHaveLength(1);
       expect(view.events.filter((event) => event.type === "approval.granted")).toHaveLength(1);
       expect(view.events.filter((event) => event.type === "response.rejected").length).toBeLessThanOrEqual(4);
-      expect(view.events.some((event) => event.type === "run.blocked" && event.payload.stopReason === "NO_PROGRESS_DETECTED")).toBe(true);
-      expect(view.events.filter((event) => event.type === "run.blocked")).toHaveLength(1);
+      expect(view.events.some((event) => event.type === "run.failed" && event.payload.stopReason === "NO_PROGRESS_DETECTED")).toBe(true);
+      expect(view.events.filter((event) => event.type === "run.blocked")).toHaveLength(0);
       expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
       expect(view.snapshot.result).toBeNull();
     } finally {

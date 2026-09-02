@@ -11,6 +11,7 @@ import {
   RuntimeBudgetsSchema,
   StructuredPlanSchema,
   TaskContractSchema,
+  UNPLANNED_STEP_ID,
   JsonValueSchema,
   createInitialRunSnapshot,
   type BranchRecord,
@@ -20,6 +21,7 @@ import {
   type RunEvent,
   type RunSnapshot,
   type RuntimeAction,
+  type RuntimeBudgetExtension,
   type RuntimeBudgets,
   type TaskContract,
   type ToolInvocation
@@ -81,6 +83,7 @@ import type {
   ForkOptions,
   MergeDecisions,
   MergeOutcome,
+  RecoveryDecision,
   RequestOptions,
   ResumeInput,
   RunFinalResult,
@@ -126,13 +129,15 @@ type NoProgressDiagnostic = {
   readonly fingerprint: string;
   readonly kind: string;
   readonly repeatCount: number;
+  readonly strategyFingerprints?: readonly string[];
+  readonly observationFingerprints?: readonly string[];
   readonly resources?: readonly string[];
   readonly reads?: number;
   readonly mutations?: number;
   readonly failures?: number;
 };
 
-const MAX_PROVIDER_RECOVERY_RESUMES_PER_PROGRESS_WINDOW = 1;
+const MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW = 2;
 
 export type {
   ApprovalDecision,
@@ -478,6 +483,7 @@ export class RuntimeEngine {
     observer?: RuntimeObserver
   ): Promise<RunResult> {
     let run = initial;
+    const durationDeadline = this.#armDurationDeadline(run, controller);
     this.#leases.acquire(run.runId);
     this.#assertAuditIntegrity(run.runId);
     try {
@@ -501,8 +507,11 @@ export class RuntimeEngine {
         });
         this.#notify(run.runId, observer);
       }
+      if (run.status === "blocked" && run.resumePredicate !== null) {
+        this.#assertResumePredicate(run, input);
+      }
       if (input.budgetExtension !== undefined) {
-        if (run.status !== "blocked" || !isBudgetStopReason(run.stopReason)) {
+        if (run.status !== "blocked" || run.resumePredicate?.kind !== "budget_extension") {
           throw new Error("A Budget Extension requires a budget-blocked Run.");
         }
         const extension = RuntimeBudgetExtensionSchema.parse(input.budgetExtension);
@@ -555,6 +564,7 @@ export class RuntimeEngine {
         return toRunResult(run);
       }
       if (run.status === "blocked" && isBudgetStopReason(run.stopReason)) {
+        if (run.resumePredicate?.kind !== "budget_extension") return toRunResult(run);
         if (this.#budgetFailure(run, Date.parse(this.#now())) !== null) {
           return toRunResult(run);
         }
@@ -565,7 +575,7 @@ export class RuntimeEngine {
         }, observer);
       } else if (
         run.status === "blocked"
-        && (run.lastError?.code === "PROVIDER_UNAVAILABLE" || run.lastError?.code === "CONTEXT_CAPACITY_EXCEEDED")
+        && run.resumePredicate?.kind === "provider_reconnect"
         && input.recoveryDecision === undefined
       ) {
         if (!this.#providerRecoveryAllowed(run.runId)) return toRunResult(run);
@@ -575,6 +585,7 @@ export class RuntimeEngine {
           reason: "provider_retry"
         }, observer);
       } else if (run.status === "blocked" && run.stopReason === "WORKER_RECOVERY_REQUIRED") {
+        if (run.resumePredicate?.kind !== "worker_recovery_decision") return toRunResult(run);
         this.#reconcileDelegatedBranches(run.runId);
         run = this.#requireRun(run.runId);
         if (this.#workerRecoveryRequests(run.runId).length > 0) return toRunResult(run);
@@ -719,6 +730,7 @@ export class RuntimeEngine {
         return toRunResult(failed);
       }
     } finally {
+      clearTimeout(durationDeadline);
       this.#leases.release(run.runId);
     }
   }
@@ -803,6 +815,7 @@ export class RuntimeEngine {
     controller: AbortController,
     observer?: RuntimeObserver
   ): Promise<RunResult> {
+    const durationDeadline = this.#armDurationDeadline(created, controller);
     this.#leases.acquire(created.runId);
     this.#assertAuditIntegrity(created.runId);
     try {
@@ -835,8 +848,17 @@ export class RuntimeEngine {
         return toRunResult(failed);
       }
     } finally {
+      clearTimeout(durationDeadline);
       this.#leases.release(created.runId);
     }
+  }
+
+  #armDurationDeadline(run: RunSnapshot, controller: AbortController): ReturnType<typeof setTimeout> {
+    const deadline = setTimeout(() => {
+      if (!controller.signal.aborted) controller.abort("DURATION_BUDGET_EXCEEDED");
+    }, run.budgets.maxDurationMs);
+    deadline.unref?.();
+    return deadline;
   }
 
   #createHandle(runId: string): RunHandle {
@@ -1019,10 +1041,17 @@ export class RuntimeEngine {
       && (run.stopReason === "PROVIDER_UNAVAILABLE" || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
       && !this.#providerRecoveryAllowed(runId)
     ) {
-      throw this.#controlConflict(
-        runId,
-        "Provider recovery is exhausted for the current progress window. Provide new input in a continuation Run after connectivity is restored; generic Resume is not allowed."
+      this.#fail(
+        run,
+        run.stopReason,
+        run.stopReason,
+        undefined,
+        "Provider recovery is exhausted for the current progress window."
       );
+      return;
+    }
+    if (run.status === "blocked" && run.resumePredicate !== null) {
+      this.#assertResumePredicate(run, options);
     }
     const unresolved = this.#store.listToolInvocations(runId)
       .filter(
@@ -1033,20 +1062,21 @@ export class RuntimeEngine {
     const unknown = unresolved.filter(
       (invocation) => invocation.status === "unknown"
     );
+    const recovery = options.recovery;
     if (unknown.length > 0) {
-      if (options.recovery === undefined) {
+      if (recovery === undefined && !this.#canAutomaticallyReconcile(unknown.map(({ id }) => id))) {
         throw this.#controlConflict(
           runId,
           "The unknown Tool Invocation requires a Recovery Decision."
         );
       }
-      if (!unknown.some(({ id }) => id === options.recovery!.invocationId)) {
+      if (recovery !== undefined && !unknown.some(({ id }) => id === recovery.invocationId)) {
         throw this.#controlConflict(
           runId,
           "Recovery Decision does not match the current unknown Tool Invocation."
         );
       }
-    } else if (options.recovery !== undefined) {
+    } else if (recovery !== undefined) {
       throw this.#controlConflict(
         runId,
         "Run has no unknown Tool Invocation to recover."
@@ -1062,13 +1092,13 @@ export class RuntimeEngine {
         "Running Run has no interrupted Tool Invocation to recover."
       );
     }
-    if (options.budgetExtension !== undefined && !isBudgetStopReason(run.stopReason)) {
+    if (options.budgetExtension !== undefined && run.resumePredicate?.kind !== "budget_extension") {
       throw this.#controlConflict(
         runId,
         "Budget Extension requires a budget-blocked Run."
       );
     }
-    if (isBudgetStopReason(run.stopReason) && options.budgetExtension === undefined && run.stopReason !== "DURATION_BUDGET_EXCEEDED") {
+    if (run.resumePredicate?.kind === "budget_extension" && options.budgetExtension === undefined) {
       throw this.#controlConflict(
         runId,
         "This Run requires a Budget Extension before it can resume."
@@ -1975,6 +2005,7 @@ export class RuntimeEngine {
       }, observer);
     }
     if (action.type === "call_tool") {
+      this.#assertMutationActionsAdmissible(run, [action]);
       return callTool(this.#services(signal, run.runId), run, action, observer);
     }
     throw new ActionRejectedError("Unsupported Runtime command.");
@@ -2266,6 +2297,7 @@ export class RuntimeEngine {
     observer?: RuntimeObserver
   ): Promise<RunSnapshot> {
     signal.throwIfAborted();
+    this.#assertMutationActionsAdmissible(run, action.actions);
     const services = this.#services(signal, run.runId);
     const plan = run.currentPlan;
     const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
@@ -2428,6 +2460,11 @@ export class RuntimeEngine {
 
   #setPlan(run: RunSnapshot, action: Extract<RuntimeAction, { type: "set_plan" }>, observer?: RuntimeObserver): RunSnapshot {
     const current = run.currentPlan;
+    if (current === null && this.#closedMutationForSlots(run, this.#unplannedMutationSlots(run)) !== null) {
+      throw new ActionRejectedError(
+        "PLAN_AFTER_UNPLANNED_MUTATION: a successful unplanned mutation cannot be retroactively expanded into a Plan without a later authoritative verification failure. Verify or finish the current result."
+      );
+    }
     let contract = run.taskContract;
     if (current === null) {
       if (action.basedOnVersion !== null) throw new ActionRejectedError("The first Plan must be based on null.");
@@ -2438,13 +2475,68 @@ export class RuntimeEngine {
       const hasNewInput = contract !== null && contract.inputVersion < run.inputHistory.length;
       if (hasNewInput && action.taskContract === undefined) throw new ActionRejectedError("New user input requires an updated Task Contract.");
       if (!hasNewInput && action.taskContract !== undefined) throw new ActionRejectedError("Task Contract cannot change without new user input.");
-      if (action.taskContract !== undefined) contract = this.#deriveTaskContract(run, action.taskContract);
+      if (action.taskContract !== undefined) {
+        this.#assertScopeRevisionPreservesRequiredOutcomes(contract?.scope, action.taskContract.scope);
+        contract = this.#deriveTaskContract(run, action.taskContract);
+      }
       assertCompletedStepsUnchanged(run, action.orderedSteps);
     }
     if (contract === null) throw new ActionRejectedError("Task Contract is missing.");
+    if (contract.scope !== undefined) {
+      const scopeOutcomeIds = new Set(contract.scope.requiredOutcomes.map((outcome) => outcome.id));
+      for (const step of action.orderedSteps) {
+        if (step.kind === undefined || step.scopeRefs === undefined) {
+          throw new ActionRejectedError(`PLAN_SCOPE_RELATION_REQUIRED: Plan Step ${step.id} is not bound to Task Scope.`);
+        }
+        if (step.scopeRefs.length === 0) {
+          throw new ActionRejectedError(
+            `PLAN_SCOPE_RELATION_INVALID: Plan Step ${step.id} must bind at least one Task Scope required outcome.`
+          );
+        }
+        if (step.kind === "required_outcome" && step.scopeRefs.length !== 1) {
+          throw new ActionRejectedError(
+            `PLAN_SCOPE_RELATION_INVALID: required_outcome Plan Step ${step.id} must bind exactly one Task Scope required outcome.`
+          );
+        }
+        const invalidRefs = step.scopeRefs.filter((scopeRef) => !scopeOutcomeIds.has(scopeRef));
+        if (invalidRefs.length > 0) {
+          throw new ActionRejectedError(
+            `PLAN_SCOPE_REF_INVALID: Plan Step ${step.id} references unknown Task Scope outcomes: ${invalidRefs.join(", ")}`
+          );
+        }
+      }
+      const coveredScopeOutcomes = new Set(action.orderedSteps
+        .filter((step) => step.kind === "required_outcome")
+        .flatMap((step) => step.scopeRefs ?? []));
+      const missingScopeOutcomes = contract.scope.requiredOutcomes
+        .map((outcome) => outcome.id)
+        .filter((outcomeId) => !coveredScopeOutcomes.has(outcomeId));
+      if (missingScopeOutcomes.length > 0) {
+        throw new ActionRejectedError(
+          `PLAN_SCOPE_REQUIRED_OUTCOME_UNCOVERED: ${missingScopeOutcomes.join(", ")}`
+        );
+      }
+      const scopeBindingCounts = new Map<string, number>();
+      for (const step of action.orderedSteps) {
+        if (step.kind !== "required_outcome") continue;
+        for (const scopeRef of step.scopeRefs ?? []) {
+          scopeBindingCounts.set(scopeRef, (scopeBindingCounts.get(scopeRef) ?? 0) + 1);
+        }
+      }
+      const duplicatedScopeOutcomes = contract.scope.requiredOutcomes
+        .map((outcome) => outcome.id)
+        .filter((outcomeId) => (scopeBindingCounts.get(outcomeId) ?? 0) > 1);
+      if (duplicatedScopeOutcomes.length > 0) {
+        throw new ActionRejectedError(
+          `PLAN_SCOPE_REQUIRED_OUTCOME_DUPLICATED: ${duplicatedScopeOutcomes.join(", ")}`
+        );
+      }
+    }
 
     const planSemantics = (steps: typeof action.orderedSteps): unknown => steps.map((step) => ({
       objective: normalizePlanText(step.objective),
+      kind: step.kind ?? null,
+      scopeRefs: step.scopeRefs ?? [],
       acceptanceChecks: step.acceptanceChecks.map((check) => normalizePlanValue(check))
     }));
     if (
@@ -2514,6 +2606,111 @@ export class RuntimeEngine {
     });
   }
 
+  #assertScopeRevisionPreservesRequiredOutcomes(
+    previous: PlanTaskContract["scope"] | undefined,
+    proposed: PlanTaskContract["scope"] | undefined
+  ): void {
+    if (previous === undefined) return;
+    if (proposed === undefined) {
+      throw new ActionRejectedError("TASK_SCOPE_REQUIRED_OUTCOME_REMOVED_OR_CHANGED: resolved Task Scope cannot be removed.");
+    }
+    const proposedById = new Map(proposed.requiredOutcomes.map((outcome) => [outcome.id, outcome]));
+    const changed = previous.requiredOutcomes.filter((outcome) => {
+      const next = proposedById.get(outcome.id);
+      return next === undefined
+        || next.description !== outcome.description
+        || next.source !== outcome.source;
+    });
+    if (changed.length > 0) {
+      throw new ActionRejectedError(
+        `TASK_SCOPE_REQUIRED_OUTCOME_REMOVED_OR_CHANGED: ${changed.map((outcome) => outcome.id).join(", ")}`
+      );
+    }
+  }
+
+  #assertMutationActionsAdmissible(
+    run: RunSnapshot,
+    actions: readonly Extract<RuntimeAction, { type: "call_tool" }>[]
+  ): void {
+    for (const action of actions) {
+      const tool = this.#tools.get(action.toolName);
+      if (tool?.contract.execution.effect.kind !== "write") continue;
+      const slots = this.#mutationSlots(run, action.stepId, action.checkIds, action.toolName);
+      const prior = this.#closedMutationForSlots(run, slots);
+      if (prior === null) continue;
+      throw new ActionRejectedError(
+        `MUTATION_VERIFICATION_REQUIRED: successful mutation ${prior.id} already satisfied the active mutation outcome. Verify or finish it; another write requires a later authoritative verification failure or new user input. No Tool side effect was admitted.`
+      );
+    }
+  }
+
+  #closedMutationForSlots(run: RunSnapshot, slots: readonly string[]): ToolInvocation | null {
+    const events = this.#store.listEvents(run.runId);
+    const inputBoundary = [...events].reverse().find((event) => (
+      event.type === "run.resumed" && typeof event.payload.inputSequence === "number"
+    ));
+    const invocations = this.#store.listToolInvocations(run.runId)
+      .filter((invocation) => inputBoundary === undefined || invocation.startedAt > inputBoundary.occurredAt);
+    let latest: { invocation: ToolInvocation; index: number } | null = null;
+    for (const [index, invocation] of invocations.entries()) {
+      if (
+        invocation.status !== "succeeded"
+        || this.#tools.get(invocation.toolName)?.contract.execution.effect.kind !== "write"
+        || !overlaps(slots, this.#mutationSlots(run, invocation.stepId, invocation.checkIds, invocation.toolName))
+      ) continue;
+      latest = { invocation, index };
+    }
+    if (latest === null) return null;
+    const verificationCheckIds = this.#verificationCheckIds(run, latest.invocation.stepId);
+    const mutationSubjects = new Set(run.evidence
+      .filter((evidence) => evidence.invocationId === latest.invocation.id)
+      .map((evidence) => evidence.subjectRef));
+    const failedVerification = invocations.slice(latest.index + 1).some((invocation) => {
+      if (invocation.status !== "failed") return false;
+      const effect = this.#tools.get(invocation.toolName)?.contract.execution.effect.kind;
+      if (effect === undefined || effect === "write") return false;
+      if (verificationCheckIds.length > 0) return overlaps(verificationCheckIds, invocation.checkIds);
+      if (effect === "execute") return true;
+      return this.#store.listToolAttempts(run.runId).some((attempt) => (
+        attempt.invocationId === invocation.id
+        && attempt.subjectRef !== null
+        && mutationSubjects.has(attempt.subjectRef)
+      ));
+    });
+    return failedVerification ? null : latest.invocation;
+  }
+
+  #mutationSlots(
+    run: RunSnapshot,
+    stepId: string,
+    checkIds: readonly string[],
+    toolName: string
+  ): readonly string[] {
+    if (stepId === UNPLANNED_STEP_ID) return [`${UNPLANNED_STEP_ID}:${toolName}`];
+    const step = run.currentPlan?.orderedSteps.find((candidate) => candidate.id === stepId);
+    const mutationChecks = step?.acceptanceChecks.filter((check) => (
+      check.kind === "tool_result" && check.role === "mutation" && checkIds.includes(check.id)
+    )).map((check) => check.id) ?? [];
+    return mutationChecks.length > 0 ? mutationChecks : [`step:${stepId}`];
+  }
+
+  #unplannedMutationSlots(run: RunSnapshot): readonly string[] {
+    return [...new Set(this.#store.listToolInvocations(run.runId).flatMap((invocation) => (
+      invocation.stepId === UNPLANNED_STEP_ID
+      && invocation.status === "succeeded"
+      && this.#tools.get(invocation.toolName)?.contract.execution.effect.kind === "write"
+        ? [`${UNPLANNED_STEP_ID}:${invocation.toolName}`]
+        : []
+    )))];
+  }
+
+  #verificationCheckIds(run: RunSnapshot, stepId: string): readonly string[] {
+    const step = run.currentPlan?.orderedSteps.find((candidate) => candidate.id === stepId);
+    return step?.acceptanceChecks.filter((check) => (
+      check.kind === "tool_result" && check.role === "verification"
+    )).map((check) => check.id) ?? [];
+  }
+
   #rejectResponse(run: RunSnapshot, error: z.ZodError | ActionRejectedError, rawResponse: unknown, observer?: RuntimeObserver): RunSnapshot {
     const diagnostic = responseRejectionDiagnostic(error, rawResponse);
     const message = JSON.stringify(diagnostic);
@@ -2555,7 +2752,19 @@ export class RuntimeEngine {
 
   #blockForProvider(run: RunSnapshot, error: unknown, observer?: RuntimeObserver): RunSnapshot {
     const errorCode = providerBoundaryErrorCode(error);
-    const retryable = this.#providerRecoveryAllowed(run.runId);
+    const retryable = this.#providerRecoveryAllowed(run.runId, 1);
+    if (!retryable) {
+      return this.#fail(
+        RunSnapshotSchema.parse({
+          ...run,
+          lastError: { code: errorCode, message: errorMessage(error), retryable: false, detailsArtifact: null }
+        }),
+        errorCode,
+        errorCode,
+        observer,
+        "Provider recovery is exhausted for the current progress window. Start a bounded continuation Run to continue from persisted facts."
+      );
+    }
     const blockedInput = RunSnapshotSchema.parse({
       ...run,
       lastError: { code: errorCode, message: errorMessage(error), retryable, detailsArtifact: null }
@@ -2563,17 +2772,70 @@ export class RuntimeEngine {
     const blocked = transitionRunStatus(blockedInput, "blocked", {
       now: this.#now(),
       stopReason: errorCode,
+      resumePredicate: {
+        kind: "provider_reconnect",
+        providerCode: errorCode,
+        remainingRecoverySegments: MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW - this.#providerFailureCount(run.runId) - 1,
+        verification: "bounded_provider_probe"
+      },
       delivery: deriveRunDelivery({
         run: blockedInput,
         outcome: "blocked",
         now: this.#now(),
         stopReason: errorCode,
-        ...(retryable ? {} : {
-          nextAction: "Provider recovery is exhausted for the current progress window. Restore connectivity, then continue with new corrective input in a continuation Run."
-        })
       })
     });
-    return this.#commit(run, blocked, "run.blocked", { stopReason: errorCode }, observer);
+    return this.#commit(run, blocked, "run.blocked", { stopReason: errorCode, resumePredicate: blocked.resumePredicate }, observer);
+  }
+
+  #assertResumePredicate(
+    run: RunSnapshot,
+    input: {
+      readonly budgetExtension?: RuntimeBudgetExtension;
+      readonly recoveryDecision?: RecoveryDecision;
+      readonly recovery?: RecoveryDecision;
+    }
+  ): void {
+    const predicate = run.resumePredicate;
+    const recoveryDecision = input.recoveryDecision ?? input.recovery;
+    if (predicate === null) return; // Explicit legacy compatibility: do not reinterpret historical blocked Runs.
+    if (predicate.kind === "provider_reconnect") {
+      if (!this.#providerRecoveryAllowed(run.runId) || predicate.remainingRecoverySegments <= 0) {
+        throw this.#controlConflict(run.runId, "Provider recovery predicate is no longer satisfiable.");
+      }
+      return;
+    }
+    if (predicate.kind === "budget_extension") {
+      if (input.budgetExtension === undefined) {
+        throw this.#controlConflict(run.runId, "This Run requires its persisted Budget Extension predicate.");
+      }
+      const extension = RuntimeBudgetExtensionSchema.parse(input.budgetExtension);
+      if (Object.entries(extension).some(([dimension]) => !predicate.allowedDimensions.includes(dimension as "iterations" | "modelCalls" | "toolCalls" | "retries"))) {
+        throw this.#controlConflict(run.runId, "Budget Extension does not satisfy the persisted predicate.");
+      }
+      return;
+    }
+    if (predicate.kind === "tool_recovery_decision") {
+      if (recoveryDecision === undefined && this.#canAutomaticallyReconcile(predicate.invocationIds)) return;
+      if (recoveryDecision === undefined || !predicate.invocationIds.includes(recoveryDecision.invocationId)) {
+        throw this.#controlConflict(run.runId, "Tool recovery decision does not satisfy the persisted predicate.");
+      }
+      return;
+    }
+    if (recoveryDecision !== undefined || input.budgetExtension !== undefined) {
+      throw this.#controlConflict(run.runId, "Worker recovery predicate requires its persisted worker recovery actions.");
+    }
+  }
+
+  #canAutomaticallyReconcile(invocationIds: readonly string[]): boolean {
+    if (invocationIds.length === 0) return false;
+    return invocationIds.every((invocationId) => {
+      const invocation = this.#store.getToolInvocation(invocationId);
+      const tool = invocation === null ? undefined : this.#tools.get(invocation.toolName);
+      return invocation?.status === "unknown"
+        && tool?.reconcile !== undefined
+        && tool.contract.execution.reconciliation !== undefined;
+    });
   }
 
   #blockForBudget(
@@ -2582,6 +2844,23 @@ export class RuntimeEngine {
     observer?: RuntimeObserver,
     deliverySummary?: string
   ): RunSnapshot {
+    if (stopReason === "DURATION_BUDGET_EXCEEDED") {
+      return this.#fail(
+        RunSnapshotSchema.parse({
+          ...run,
+          lastError: run.lastError ?? {
+            code: stopReason,
+            message: "The active execution segment reached its non-extendable duration limit.",
+            retryable: false,
+            detailsArtifact: null
+          }
+        }),
+        stopReason,
+        stopReason,
+        observer,
+        deliverySummary
+      );
+    }
     const blockedInput = RunSnapshotSchema.parse({
       ...run,
       lastError: run.lastError ?? {
@@ -2594,6 +2873,12 @@ export class RuntimeEngine {
     const blocked = transitionRunStatus(blockedInput, "blocked", {
       now: this.#now(),
       stopReason,
+      resumePredicate: {
+        kind: "budget_extension",
+        stopReason: stopReason as "ITERATION_BUDGET_EXCEEDED" | "MODEL_CALL_BUDGET_EXCEEDED" | "TOOL_CALL_BUDGET_EXCEEDED" | "RETRY_BUDGET_EXCEEDED",
+        allowedDimensions: ["iterations", "modelCalls", "toolCalls", "retries"],
+        minimumPositiveExtension: true
+      },
       delivery: deriveRunDelivery({
         run: blockedInput,
         outcome: "blocked",
@@ -2602,7 +2887,7 @@ export class RuntimeEngine {
         ...(deliverySummary === undefined ? {} : { summary: deliverySummary, generatedBy: "model" as const })
       })
     });
-    return this.#commit(run, blocked, "run.blocked", { stopReason, resumable: true }, observer);
+    return this.#commit(run, blocked, "run.blocked", { stopReason, resumable: true, resumePredicate: blocked.resumePredicate }, observer);
   }
 
   #blockForWorkerRecovery(
@@ -2623,6 +2908,10 @@ export class RuntimeEngine {
     const blocked = transitionRunStatus(blockedInput, "blocked", {
       now: this.#now(),
       stopReason,
+      resumePredicate: {
+        kind: "worker_recovery_decision",
+        childRunIds: recoveries.map(({ childRunId }) => childRunId)
+      },
       delivery: deriveRunDelivery({
         run: blockedInput,
         outcome: "blocked",
@@ -2632,11 +2921,14 @@ export class RuntimeEngine {
     });
     return this.#commit(run, blocked, "run.blocked", {
       stopReason,
-      workerRecoveries: recoveries.map(({ branchId, childRunId }) => ({ branchId, childRunId }))
+      workerRecoveries: recoveries.map(({ branchId, childRunId }) => ({ branchId, childRunId })),
+      resumePredicate: blocked.resumePredicate
     }, observer);
   }
 
   #enforceConvergence(run: RunSnapshot, observer?: RuntimeObserver): RunSnapshot | null {
+    const inherited = this.#inheritedNoProgressDiagnostic(run);
+    if (inherited !== null) return this.#failForNoProgress(run, inherited, observer);
     const diagnostic = this.#noProgressDiagnostic(run.runId);
     if (diagnostic === null) return null;
     if (run.budgetsUsed.iterations < (diagnostic.kind === "repeated_invalid_response" ? 2 : 3)) return null;
@@ -2647,7 +2939,7 @@ export class RuntimeEngine {
     // Bound it on the second occurrence instead of spending another Provider
     // turn on a warning-only cycle.
     if (diagnostic.kind === "repeated_invalid_response") {
-      return this.#blockForNoProgress(run, diagnostic, observer);
+      return this.#failForNoProgress(run, diagnostic, observer);
     }
     const recentEvents = this.#store.listRecentEvents(run.runId, 64);
     const warning = [...recentEvents].reverse().find((event) => (
@@ -2681,6 +2973,20 @@ export class RuntimeEngine {
     }
 
     const afterWarning = recentEvents.filter((event) => event.sequence > warning.sequence);
+    const revisedPlan = afterWarning.find((event) => (
+      event.type === "plan.set" && event.payload.noOp !== true
+    ));
+    const attemptedAfterReplan = revisedPlan === undefined
+      ? undefined
+      : afterWarning.find((event) => (
+        event.sequence > revisedPlan.sequence
+        && (event.type === "tool.succeeded" || event.type === "tool.failed" || event.type === "tool.recovered")
+      ));
+    // A Plan is an intent, not proof that its execution strategy changed. It
+    // may earn one empirical Tool attempt after a warning, so a genuinely
+    // different action can be observed; it must not reset the whole repeated
+    // action window merely by changing objectives or step IDs.
+    if (revisedPlan !== undefined && attemptedAfterReplan === undefined) return null;
     const repairAllowed = afterWarning.find((event) => (
       event.type === "runtime.event"
       && event.payload.name === "execution.no_progress.repair_allowed"
@@ -2747,7 +3053,7 @@ export class RuntimeEngine {
         }
       }
     }
-    return this.#blockForNoProgress(run, diagnostic, observer);
+    return this.#failForNoProgress(run, diagnostic, observer);
   }
 
   #recordProbationResolved(
@@ -2781,16 +3087,11 @@ export class RuntimeEngine {
     warning: Readonly<Record<string, unknown>>
   ): boolean {
     if (warning.kind !== "resource_churn") return false;
-    const input = invocation.inputJson;
-    const path = input !== null && typeof input === "object" && !Array.isArray(input)
-      ? (input as { readonly path?: unknown }).path
-      : undefined;
     const warnedResources = Array.isArray(warning.resources)
       ? warning.resources.filter((resource): resource is string => typeof resource === "string")
       : [];
-    if (typeof path !== "string") return true;
-    const canonicalPath = path.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
-    return !warnedResources.includes(canonicalPath);
+    const resource = this.#invocationResource(invocation);
+    return resource !== null && !warnedResources.includes(resource);
   }
 
   #noProgressDiagnostic(runId: string): NoProgressDiagnostic | null {
@@ -2806,10 +3107,27 @@ export class RuntimeEngine {
       event.type === "runtime.event"
       && event.payload.name === "execution.no_progress.probation_resolved"
     ));
-    const segmentBoundary = probationResolved !== undefined
-      && (lastInputResume === undefined || probationResolved.sequence > lastInputResume.sequence)
-      ? probationResolved
-      : lastInputResume;
+    const segmentBoundary = [lastInputResume, probationResolved]
+      .filter((event): event is RunEvent => event !== undefined)
+      .sort((left, right) => right.sequence - left.sequence)[0];
+    const inputSegmentRejections = allEvents.filter((event) => (
+      event.type === "response.rejected"
+      && isStateRejection(event)
+      && (lastInputResume === undefined || event.sequence > lastInputResume.sequence)
+    )).slice(-8);
+    const repeatedStateBoundary = repeatedRejectionIssue(inputSegmentRejections);
+    if (repeatedStateBoundary !== null) {
+      return {
+        fingerprint: digestCanonicalJson({
+          kind: "invalid_state_transition",
+          strategyFingerprint: repeatedStateBoundary.fingerprint,
+          inputSequence: lastInputResume?.payload.inputSequence ?? 1
+        }),
+        kind: "repeated_invalid_response",
+        repeatCount: repeatedStateBoundary.repeatCount,
+        strategyFingerprints: [repeatedStateBoundary.fingerprint]
+      };
+    }
     const segmentStartedAt = segmentBoundary?.occurredAt ?? "";
     const invocations = this.#store.listRecentToolInvocations(runId, 24)
       .filter((invocation) => invocation.startedAt >= segmentStartedAt)
@@ -2818,18 +3136,19 @@ export class RuntimeEngine {
     if (resourceChurn !== null) return resourceChurn;
     const latest = invocations.at(-1);
     if (latest !== undefined && (latest.status === "succeeded" || latest.status === "failed")) {
-      const outcome = latest.status === "succeeded" ? latest.resultJson : latest.errorJson;
-      const actionFingerprint = digestCanonicalJson({ toolName: latest.toolName, inputDigest: latest.inputDigest, status: latest.status, outcome });
+      const strategyFingerprint = invocationStrategyFingerprint(latest)!;
+      const observationFingerprint = invocationObservationFingerprint(latest)!;
+      const actionFingerprint = digestCanonicalJson({ strategyFingerprint, observationFingerprint });
       const completed = invocations.filter((invocation) => invocation.status === "succeeded" || invocation.status === "failed");
       let repeatCount = 0;
       let convergenceAnchor = `boundary:${segmentBoundary?.sequence ?? 0}`;
       for (let index = completed.length - 1; index >= 0; index -= 1) {
         const invocation = completed[index]!;
+        const candidateStrategyFingerprint = invocationStrategyFingerprint(invocation)!;
+        const candidateObservationFingerprint = invocationObservationFingerprint(invocation)!;
         const candidateFingerprint = digestCanonicalJson({
-          toolName: invocation.toolName,
-          inputDigest: invocation.inputDigest,
-          status: invocation.status,
-          outcome: invocation.status === "succeeded" ? invocation.resultJson : invocation.errorJson
+          strategyFingerprint: candidateStrategyFingerprint,
+          observationFingerprint: candidateObservationFingerprint
         });
         if (candidateFingerprint !== actionFingerprint) {
           convergenceAnchor = invocation.id;
@@ -2838,7 +3157,13 @@ export class RuntimeEngine {
         repeatCount += 1;
       }
       const fingerprint = digestCanonicalJson({ actionFingerprint, convergenceAnchor });
-      if (repeatCount >= 3) return { fingerprint, kind: latest.status === "failed" ? "repeated_tool_failure" : "repeated_tool_result", repeatCount };
+      if (repeatCount >= 3) return {
+        fingerprint,
+        kind: latest.status === "failed" ? "repeated_tool_failure" : "repeated_tool_result",
+        repeatCount,
+        strategyFingerprints: [strategyFingerprint],
+        observationFingerprints: [observationFingerprint]
+      };
     }
     const events = allEvents.filter((event) => segmentBoundary === undefined || event.sequence > segmentBoundary.sequence);
     const convergenceAnchor = events.reduce((sequence, event) => {
@@ -2850,10 +3175,28 @@ export class RuntimeEngine {
     const noOps = convergenceEvents.filter((event) => event.type === "plan.set" && event.payload.noOp === true).slice(-4);
     if (noOps.length >= 3) {
       const fingerprint = digestCanonicalJson({ kind: "equivalent_plan", version: noOps.at(-1)?.payload.version, convergenceAnchor });
-      return { fingerprint, kind: "equivalent_plan", repeatCount: noOps.length };
+      return {
+        fingerprint,
+        kind: "equivalent_plan",
+        repeatCount: noOps.length,
+        strategyFingerprints: [digestCanonicalJson({ kind: "equivalent_plan", version: noOps.at(-1)?.payload.version })]
+      };
     }
-    const rejections = convergenceEvents.filter((event) => event.type === "response.rejected").slice(-4);
+    const rejections = convergenceEvents.filter((event) => event.type === "response.rejected").slice(-6);
     if (rejections.length >= 2) {
+      const repeatedIssue = repeatedRejectionIssue(rejections);
+      if (repeatedIssue !== null) {
+        return {
+          fingerprint: digestCanonicalJson({
+            kind: "invalid_response_issue",
+            strategyFingerprint: repeatedIssue.fingerprint,
+            convergenceAnchor
+          }),
+          kind: "repeated_invalid_response",
+          repeatCount: repeatedIssue.repeatCount,
+          strategyFingerprints: [repeatedIssue.fingerprint]
+        };
+      }
       const latestMessage = rejections.at(-1)?.payload.message;
       const equivalent = rejections.filter((event) => event.payload.message === latestMessage).length;
       if (equivalent >= 3) {
@@ -2874,26 +3217,93 @@ export class RuntimeEngine {
     return null;
   }
 
+  #inheritedNoProgressDiagnostic(run: RunSnapshot): NoProgressDiagnostic | null {
+    const allCurrentEvents = this.#store.listEvents(run.runId);
+    const allCurrentInvocations = this.#store.listToolInvocations(run.runId);
+    const correctiveResume = [...allCurrentEvents].reverse().find((event) => (
+      event.type === "run.resumed" && event.payload.reason === "no_progress_corrective_input"
+    ));
+    const sameRunBlockedEvent = correctiveResume === undefined
+      ? undefined
+      : [...allCurrentEvents].reverse().find((event) => (
+          event.sequence < correctiveResume.sequence
+          && (event.type === "run.blocked" || event.type === "run.failed")
+          && event.payload.stopReason === "NO_PROGRESS_DETECTED"
+        ));
+    const blockedAncestor = sameRunBlockedEvent === undefined
+      ? [...this.#continuationAncestors(run)].reverse().find(({ run: ancestor }) => (
+          (ancestor.status === "blocked" || ancestor.status === "failed")
+          && ancestor.stopReason === "NO_PROGRESS_DETECTED"
+        ))
+      : undefined;
+    const blockedEvent = sameRunBlockedEvent ?? (blockedAncestor === undefined
+      ? undefined
+      : [...blockedAncestor.events].reverse().find((event) => (
+          (event.type === "run.blocked" || event.type === "run.failed")
+          && event.payload.stopReason === "NO_PROGRESS_DETECTED"
+        )));
+    if (blockedEvent === undefined) return null;
+    const priorEvents = sameRunBlockedEvent === undefined
+      ? blockedAncestor!.events
+      : allCurrentEvents.filter((event) => event.sequence <= sameRunBlockedEvent.sequence);
+    const currentEvents = correctiveResume === undefined
+      ? allCurrentEvents
+      : allCurrentEvents.filter((event) => event.sequence > correctiveResume.sequence);
+    const priorInvocations = invocationsReferencedByEvents(
+      sameRunBlockedEvent === undefined ? blockedAncestor!.invocations : allCurrentInvocations,
+      priorEvents
+    );
+    const currentInvocations = invocationsReferencedByEvents(allCurrentInvocations, currentEvents);
+    const diagnostic = blockedEvent.payload.diagnostic;
+    if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return null;
+    const prior = diagnostic as Readonly<Record<string, unknown>>;
+    const kind = typeof prior.kind === "string" ? prior.kind : "repeated_action";
+    const priorRepeatCount = typeof prior.repeatCount === "number" ? prior.repeatCount : 1;
+    const priorStrategies = Array.isArray(prior.strategyFingerprints)
+      ? prior.strategyFingerprints.filter((item): item is string => typeof item === "string")
+      : inheritedStrategyFingerprints(kind, priorEvents, priorInvocations);
+    const priorObservations = Array.isArray(prior.observationFingerprints)
+      ? prior.observationFingerprints.filter((item): item is string => typeof item === "string")
+      : inheritedObservationFingerprints(kind, priorInvocations);
+    if (hasAuthoritativeProgressBeyondStrategy(currentEvents, currentInvocations, priorStrategies, priorObservations)) return null;
+    const currentStrategies = kind === "resource_churn"
+      ? this.#resourceChurnDiagnostic([...currentInvocations])?.strategyFingerprints ?? []
+      : currentFailureStrategyFingerprints(kind, currentEvents, currentInvocations);
+    const repeatedStrategies = currentStrategies.filter((item) => priorStrategies.includes(item));
+    if (repeatedStrategies.length === 0) return null;
+    return {
+      fingerprint: digestCanonicalJson({
+        kind: "inherited_no_progress",
+        sourceRunId: blockedAncestor?.run.runId ?? run.runId,
+        sourceEventSequence: blockedEvent.sequence,
+        repeatedStrategies
+      }),
+      kind,
+      repeatCount: priorRepeatCount + 1,
+      strategyFingerprints: repeatedStrategies,
+      ...(Array.isArray(prior.resources)
+        ? { resources: prior.resources.filter((item): item is string => typeof item === "string") }
+        : {})
+    };
+  }
+
   #resourceChurnDiagnostic(
     invocations: ReturnType<RunStore["listRecentToolInvocations"]>
   ): NoProgressDiagnostic | null {
     const resources = new Map<string, { reads: number; mutations: number; failures: number }>();
     for (const invocation of invocations) {
       if (invocation.status !== "succeeded" && invocation.status !== "failed") continue;
-      const input = invocation.inputJson;
-      if (input === null || typeof input !== "object" || Array.isArray(input)) continue;
-      const path = (input as { readonly path?: unknown }).path;
-      if (typeof path !== "string" || path.trim().length === 0) continue;
       const effect = this.#tools.get(invocation.toolName)?.contract.execution.effect.kind;
       if (effect !== "read" && effect !== "write") continue;
-      const canonicalPath = path.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
-      const counts = resources.get(canonicalPath) ?? { reads: 0, mutations: 0, failures: 0 };
+      const resource = this.#invocationResource(invocation);
+      if (resource === null) continue;
+      const counts = resources.get(resource) ?? { reads: 0, mutations: 0, failures: 0 };
       if (effect === "read") counts.reads += 1;
       else {
         counts.mutations += 1;
         if (invocation.status === "failed") counts.failures += 1;
       }
-      resources.set(canonicalPath, counts);
+      resources.set(resource, counts);
     }
     const candidate = [...resources.entries()]
       .filter(([, counts]) => counts.reads >= 4 && counts.mutations >= 3)
@@ -2908,6 +3318,7 @@ export class RuntimeEngine {
       fingerprint: digestCanonicalJson({ kind: "resource_churn", resource }),
       kind: "resource_churn",
       repeatCount: counts.reads + counts.mutations,
+      strategyFingerprints: [digestCanonicalJson({ kind: "resource_churn", resource })],
       resources: [resource],
       reads: counts.reads,
       mutations: counts.mutations,
@@ -2915,27 +3326,45 @@ export class RuntimeEngine {
     };
   }
 
-  #blockForNoProgress(
+  #invocationResource(invocation: ToolInvocation): string | null {
+    const input = invocation.inputJson;
+    const path = input !== null && typeof input === "object" && !Array.isArray(input)
+      ? (input as { readonly path?: unknown }).path
+      : undefined;
+    if (typeof path === "string" && path.trim().length > 0) return canonicalResource(path);
+    const evidence = this.#store.getRun(invocation.runId)?.evidence.find((candidate) => (
+      candidate.invocationId === invocation.id
+    ));
+    if (evidence !== undefined) return canonicalResource(evidence.subjectRef);
+    const attempt = this.#store.listToolAttempts(invocation.runId)
+      .filter((candidate) => candidate.invocationId === invocation.id && candidate.subjectRef !== null)
+      .at(-1);
+    return attempt?.subjectRef === null || attempt?.subjectRef === undefined
+      ? null
+      : canonicalResource(attempt.subjectRef);
+  }
+
+  #failForNoProgress(
     run: RunSnapshot,
     diagnostic: NoProgressDiagnostic,
     observer?: RuntimeObserver
   ): RunSnapshot {
     const stopReason = "NO_PROGRESS_DETECTED";
-    const blockedInput = RunSnapshotSchema.parse({
+    const failedInput = RunSnapshotSchema.parse({
       ...run,
       lastError: {
         code: stopReason,
         message: `Execution repeated ${diagnostic.kind} ${diagnostic.repeatCount} times without a new authoritative fact.`,
-        retryable: true,
+        retryable: false,
         detailsArtifact: null
       }
     });
-    const blocked = transitionRunStatus(blockedInput, "blocked", {
+    const failed = transitionRunStatus(failedInput, "failed", {
       now: this.#now(),
       stopReason,
-      delivery: deriveRunDelivery({ run: blockedInput, outcome: "blocked", now: this.#now(), stopReason })
+      delivery: deriveRunDelivery({ run: failedInput, outcome: "failed", now: this.#now(), stopReason })
     });
-    return this.#commit(run, blocked, "run.blocked", { stopReason, diagnostic }, observer);
+    return this.#commit(run, failed, "run.failed", { stopReason, diagnostic }, observer);
   }
 
   #budgetFailure(run: RunSnapshot, activeStartedAt: number): string | null {
@@ -3099,26 +3528,31 @@ export class RuntimeEngine {
     });
   }
 
-  #providerRecoveryAllowed(runId: string): boolean {
-    return this.#providerRecoveryResumeCount(runId)
-      < MAX_PROVIDER_RECOVERY_RESUMES_PER_PROGRESS_WINDOW;
+  #providerRecoveryAllowed(runId: string, pendingFailures = 0): boolean {
+    return this.#providerFailureCount(runId) + pendingFailures < MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW;
   }
 
-  #providerRecoveryResumeCount(runId: string): number {
-    const events = this.#store.listEvents(runId);
-    const lastProgressSequence = events.reduce((latest, event) => (
-      isProviderRecoveryProgressEvent(event) ? event.sequence : latest
-    ), 0);
-    return events.filter((event) => (
-      event.sequence > lastProgressSequence
-      && event.type === "run.resumed"
-      && event.payload.reason === "provider_retry"
+  #providerFailureCount(runId: string): number {
+    const run = this.#requireRun(runId);
+    const lineage = [
+      ...this.#continuationAncestors(run).map((item) => item.events),
+      this.#store.listEvents(runId)
+    ].flat();
+    const lastProgressIndex = lineage.reduce((latest, event, index) => (
+      isProviderRecoveryProgressEvent(event) ? index : latest
+    ), -1);
+    return lineage.slice(lastProgressIndex + 1).filter((event) => (
+      event.type === "run.blocked"
+      && (event.payload.stopReason === "PROVIDER_UNAVAILABLE"
+        || event.payload.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
     )).length;
   }
 
   #isRecoverableContinuationParent(run: RunSnapshot): boolean {
+    if (run.stopReason === "NO_PROGRESS_DETECTED") {
+      return run.status === "blocked" || run.status === "failed";
+    }
     if (run.status !== "blocked") return false;
-    if (run.stopReason === "NO_PROGRESS_DETECTED") return true;
     return (
       run.stopReason === "PROVIDER_UNAVAILABLE"
       || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED"
@@ -3688,14 +4122,206 @@ function isBudgetStopReason(value: string | null): boolean {
 }
 
 function isProviderRecoveryProgressEvent(event: RunEvent): boolean {
-  if (event.type === "run.resumed" && typeof event.payload.inputSequence === "number") return true;
-  if (event.type === "plan.set" && event.payload.noOp !== true) return true;
   return event.type === "tool.attempt.succeeded"
-    || event.type === "context.evidence_recorded"
     || event.type === "validation.passed"
     || event.type === "recovery.confirmed_succeeded"
     || event.type === "recovery.confirmed_failed"
     || event.type === "branch.merged";
+}
+
+function invocationsReferencedByEvents(
+  invocations: readonly ToolInvocation[],
+  events: readonly RunEvent[]
+): readonly ToolInvocation[] {
+  const invocationIds = new Set(events.flatMap((event) => (
+    typeof event.payload.invocationId === "string" ? [event.payload.invocationId] : []
+  )));
+  return invocations.filter((invocation) => invocationIds.has(invocation.id));
+}
+
+function hasAuthoritativeProgressBeyondStrategy(
+  events: readonly RunEvent[],
+  invocations: readonly ToolInvocation[],
+  priorStrategies: readonly string[],
+  priorObservations: readonly string[] = []
+): boolean {
+  if (events.some((event) => (
+    event.type === "tool.recovered"
+    || event.type === "validation.passed"
+    || event.type === "recovery.confirmed_succeeded"
+    || event.type === "recovery.confirmed_failed"
+    || event.type === "branch.merged"
+    || event.type === "run.succeeded"
+  ))) return true;
+  return invocations.some((invocation) => {
+    const strategy = invocationStrategyFingerprint(invocation);
+    if (strategy === null) return false;
+    if (!priorStrategies.includes(strategy)) return true;
+    const observation = invocationObservationFingerprint(invocation);
+    return observation !== null && !priorObservations.includes(observation);
+  });
+}
+
+function repeatedRejectionIssue(
+  rejections: readonly RunEvent[]
+): { readonly fingerprint: string; readonly repeatCount: number } | null {
+  const counts = new Map<string, number>();
+  for (const rejection of rejections) {
+    for (const fingerprint of rejectionIssueFingerprints(rejection)) {
+      counts.set(fingerprint, (counts.get(fingerprint) ?? 0) + 1);
+    }
+  }
+  const repeated = [...counts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort(([leftFingerprint, leftCount], [rightFingerprint, rightCount]) => (
+      rightCount - leftCount || leftFingerprint.localeCompare(rightFingerprint)
+    ))[0];
+  return repeated === undefined ? null : { fingerprint: repeated[0], repeatCount: repeated[1] };
+}
+
+function isStateRejection(event: RunEvent): boolean {
+  if (event.type !== "response.rejected") return false;
+  const diagnostic = event.payload.diagnostic;
+  return diagnostic !== null
+    && typeof diagnostic === "object"
+    && !Array.isArray(diagnostic)
+    && (diagnostic as { readonly kind?: unknown }).kind === "state";
+}
+
+function rejectionIssueFingerprints(event: RunEvent): readonly string[] {
+  if (event.type !== "response.rejected") return [];
+  const diagnostic = event.payload.diagnostic;
+  if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return [];
+  const value = diagnostic as { readonly kind?: unknown; readonly issues?: unknown };
+  if (!Array.isArray(value.issues)) return [];
+  return value.issues.flatMap((issue) => {
+    if (issue === null || typeof issue !== "object" || Array.isArray(issue)) return [];
+    const item = issue as { readonly path?: unknown; readonly code?: unknown; readonly message?: unknown };
+    if (typeof item.path !== "string" || typeof item.code !== "string") return [];
+    return [digestCanonicalJson({
+      kind: typeof value.kind === "string" ? value.kind : "unknown",
+      path: item.path,
+      code: item.code,
+      ...(value.kind === "state" && item.code === "response_rejected" && typeof item.message === "string"
+        ? { message: item.message }
+        : {})
+    })];
+  });
+}
+
+function invocationStrategyFingerprint(invocation: ToolInvocation): string | null {
+  if (invocation.status !== "succeeded" && invocation.status !== "failed") return null;
+  return digestCanonicalJson({
+    toolName: invocation.toolName,
+    inputDigest: invocation.inputDigest,
+  });
+}
+
+function invocationObservationFingerprint(invocation: ToolInvocation): string | null {
+  if (invocation.status !== "succeeded" && invocation.status !== "failed") return null;
+  const outcome = invocation.status === "succeeded"
+    ? invocation.resultJson
+    : (() => {
+        const error = invocation.errorJson;
+        if (error === null || typeof error !== "object" || Array.isArray(error)) return error;
+        const value = error as { readonly code?: unknown; readonly retryable?: unknown; readonly details?: unknown };
+        return {
+          code: value.code,
+          retryable: value.retryable,
+          ...(value.details === undefined ? {} : { details: value.details })
+        };
+      })();
+  return digestCanonicalJson({
+    status: invocation.status,
+    outcome
+  });
+}
+
+function inheritedObservationFingerprints(
+  kind: string,
+  invocations: readonly ToolInvocation[]
+): readonly string[] {
+  if (kind !== "repeated_tool_failure" && kind !== "repeated_tool_result") return [];
+  return invocations.flatMap((invocation) => {
+    const fingerprint = invocationObservationFingerprint(invocation);
+    return fingerprint === null ? [] : [fingerprint];
+  });
+}
+
+function inheritedStrategyFingerprints(
+  kind: string,
+  events: readonly RunEvent[],
+  invocations: readonly ToolInvocation[]
+): readonly string[] {
+  if (kind === "repeated_invalid_response" || kind === "repeated_response_rejection") {
+    const rejection = [...events].reverse().find((event) => event.type === "response.rejected");
+    return rejection === undefined ? [] : rejectionIssueFingerprints(rejection);
+  }
+  if (kind === "repeated_tool_failure" || kind === "repeated_tool_result") {
+    const latest = [...invocations].reverse().find((invocation) => (
+      invocation.status === "succeeded" || invocation.status === "failed"
+    ));
+    const fingerprint = latest === undefined ? null : invocationStrategyFingerprint(latest);
+    return fingerprint === null ? [] : [fingerprint];
+  }
+  if (kind === "equivalent_plan") {
+    const plan = [...events].reverse().find((event) => event.type === "plan.set" && event.payload.noOp === true);
+    return plan === undefined ? [] : [digestCanonicalJson({ kind, version: plan.payload.version })];
+  }
+  if (kind === "resource_churn") {
+    const blocked = [...events].reverse().find((event) => event.type === "run.blocked");
+    const diagnostic = blocked?.payload.diagnostic;
+    const resources = diagnostic !== null && typeof diagnostic === "object" && !Array.isArray(diagnostic)
+      && Array.isArray((diagnostic as { readonly resources?: unknown }).resources)
+      ? (diagnostic as { readonly resources: unknown[] }).resources.filter((item): item is string => typeof item === "string")
+      : [];
+    return resources.map((resource) => digestCanonicalJson({ kind, resource }));
+  }
+  return [];
+}
+
+function currentFailureStrategyFingerprints(
+  kind: string,
+  events: readonly RunEvent[],
+  invocations: readonly ToolInvocation[]
+): readonly string[] {
+  if (kind === "repeated_invalid_response" || kind === "repeated_response_rejection") {
+    return events.flatMap((event) => rejectionIssueFingerprints(event));
+  }
+  if (kind === "repeated_tool_failure" || kind === "repeated_tool_result") {
+    return invocations.flatMap((invocation) => {
+      const fingerprint = invocationStrategyFingerprint(invocation);
+      return fingerprint === null ? [] : [fingerprint];
+    });
+  }
+  if (kind === "equivalent_plan") {
+    return events
+      .filter((event) => event.type === "plan.set" && event.payload.noOp === true)
+      .map((event) => digestCanonicalJson({ kind, version: event.payload.version }));
+  }
+  if (kind === "resource_churn") {
+    return invocations.flatMap((invocation) => {
+      if (invocation.status !== "succeeded" && invocation.status !== "failed") return [];
+      const input = invocation.inputJson;
+      if (input === null || typeof input !== "object" || Array.isArray(input)) return [];
+      const path = (input as { readonly path?: unknown }).path;
+      if (typeof path !== "string") return [];
+      return [digestCanonicalJson({
+        kind,
+        resource: path.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase()
+      })];
+    });
+  }
+  return [];
+}
+
+function canonicalResource(value: string): string {
+  return value.trim().replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
+}
+
+function overlaps(left: readonly string[], right: readonly string[]): boolean {
+  const values = new Set(left);
+  return right.some((item) => values.has(item));
 }
 
 function correctableRejection(event: RunEvent): boolean {

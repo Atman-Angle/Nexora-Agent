@@ -89,6 +89,7 @@ export function defineProviderAdapter(
       context,
       host: NEUTRAL_HOST,
       transport: definition.transport,
+      hybridContext: "on",
       ...(measurement === undefined ? {} : { measurement })
     });
   }

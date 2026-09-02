@@ -216,6 +216,10 @@ describe("D2 RunHandle interaction", () => {
     });
     const run = firstRuntime.run("Read after Provider recovery.");
     expect((await run.wait()).status).toBe("blocked");
+    expect((await run.inspect()).resumePredicate).toMatchObject({
+      kind: "provider_reconnect",
+      verification: "bounded_provider_probe"
+    });
     await firstRuntime.close();
 
     const secondRuntime = createRuntime({
@@ -226,6 +230,10 @@ describe("D2 RunHandle interaction", () => {
     });
     const reopened = secondRuntime.openRun(run.id);
     expect((await reopened.inspect()).recovery).toBeNull();
+    expect((await reopened.inspect()).resumePredicate).toMatchObject({
+      kind: "provider_reconnect",
+      verification: "bounded_provider_probe"
+    });
     await reopened.resume();
     expect((await reopened.result()).status).toBe("succeeded");
     await secondRuntime.close();

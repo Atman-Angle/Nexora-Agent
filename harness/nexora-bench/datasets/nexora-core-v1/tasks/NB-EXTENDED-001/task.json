@@ -21,6 +21,7 @@
   },
   "expectedTerminal": "succeeded",
   "driver": {
+    "approvalPolicy": { "mode": "unattended", "maxApprovals": 6, "rules": [ { "toolName": "filesystem.write", "decision": "approve", "maxApprovals": 2 }, { "toolName": "fixture.sequence_validate", "decision": "approve", "maxApprovals": 2 } ] },
     "approvals": [
       { "occurrence": 1, "decision": "approve", "restartBeforeDecision": true },
       { "occurrence": 2, "decision": "approve", "restartBeforeDecision": true }

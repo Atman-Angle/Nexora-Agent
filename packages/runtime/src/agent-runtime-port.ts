@@ -66,6 +66,8 @@ export type AgentAuditEvent =
   {
     readonly type: "model.turn";
     readonly payload: {
+      readonly modelDecisionId: string;
+      readonly executionUnitId: string | null;
       readonly hasText: boolean;
       readonly finishReason: string | null;
       readonly toolCallCount: number;
@@ -76,6 +78,27 @@ export type AgentAuditEvent =
         readonly name: string;
         readonly arguments: unknown;
       }[];
+    };
+  }
+  | {
+    readonly type: "execution.unit.started";
+    readonly payload: {
+      readonly modelDecisionId: string;
+      readonly executionUnitId: string;
+      readonly outcomeRef: string;
+      readonly unitStart: string;
+      readonly intendedToolCalls: number;
+    };
+  }
+  | {
+    readonly type: "execution.unit.completed";
+    readonly payload: {
+      readonly modelDecisionId: string;
+      readonly executionUnitId: string;
+      readonly linkedToolInvocations: readonly string[];
+      readonly unitStart: string;
+      readonly unitEnd: string;
+      readonly stopReason: string;
     };
   };
 

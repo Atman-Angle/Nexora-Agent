@@ -118,6 +118,18 @@ try {
 - Managed long-running local processes through the same Runtime authority
 - Bounded Supervisor and Child Run coordination with isolated workspaces
 - Desktop, CLI, public TypeScript API, and Runtime testing utilities
+- Task-scope authority that keeps required outcomes, exclusions, and Step bindings explicit across replans
+- Coding-strategy and hybrid decision context for bounded autonomous execution with manifest-diff awareness
+- Editable workspace artifacts, including rich documents and Office-format workflows with persisted links and evidence
+- Execution cadence, liveness, and convergence controls for long-running coding tasks
+
+## What is included in this development snapshot?
+
+This snapshot advances Nexora's end-to-end execution surface. The Runtime and Harness now preserve task scope as an authoritative contract, reject unauthorized scope expansion, and require every required outcome to remain planned before completion. Provider-native tool calling, transient recovery, bounded retries, hybrid decision context, and coding-task strategy are integrated into the agent loop.
+
+The Desktop workspace now supports richer streaming sessions, workspace links, editable deliverables, and Office-oriented artifacts. The benchmark harness, canaries, and Runtime/Desktop suites were expanded to exercise recovery, liveness, completion authority, document editing, and multi-format delivery paths.
+
+The implementation is intentionally accompanied by its specifications, execution plans, reports, and measured canary outputs under [`docs/`](./docs/README.md), so the behavior and remaining verification limits are reviewable alongside the code.
 
 ## Project status
 

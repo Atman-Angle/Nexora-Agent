@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
 type KnownProject = { readonly path: string };
@@ -19,7 +20,14 @@ export function resolveKnownWorkspaceEntry(
   if (relativeTarget === "" || relativeTarget === ".." || relativeTarget.startsWith(`..\\`) || relativeTarget.startsWith("../") || isAbsolute(relativeTarget)) {
     throw new Error("Workspace entry resolves outside the Project workspace.");
   }
-  return target;
+  if (!existsSync(target)) throw new Error("Workspace entry does not exist.");
+  const realWorkspaceRoot = realpathSync.native(workspaceRoot);
+  const realTarget = realpathSync.native(target);
+  const realRelativeTarget = relative(realWorkspaceRoot, realTarget);
+  if (realRelativeTarget === "" || realRelativeTarget === ".." || realRelativeTarget.startsWith(`..\\`) || realRelativeTarget.startsWith("../") || isAbsolute(realRelativeTarget)) {
+    throw new Error("Workspace entry resolves outside the Project workspace through a symbolic link.");
+  }
+  return realTarget;
 }
 
 export function resolveExternalUrl(input: string): string {

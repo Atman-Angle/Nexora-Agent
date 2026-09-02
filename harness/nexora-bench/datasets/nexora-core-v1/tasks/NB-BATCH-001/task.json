@@ -11,7 +11,7 @@
     "digest": "sha256:7985c9479d25b955422173b91646ec9dd1b2943107afd1e1e1d492bc3d19edb2"
   },
   "scenario": "tasks/NB-BATCH-001/scenario.ts",
-  "allowedCapabilities": ["fixture.delayed_read", "filesystem.write", "shell.execute"],
+  "allowedCapabilities": ["fixture.delayed_read", "filesystem.list", "filesystem.write", "shell.execute"],
   "budgets": {
     "maxIterations": 12,
     "maxModelCalls": 12,
@@ -21,6 +21,7 @@
   },
   "expectedTerminal": "succeeded",
   "driver": {
+    "approvalPolicy": { "mode": "unattended", "maxApprovals": 8, "rules": [ { "toolName": "filesystem.write", "decision": "approve", "maxApprovals": 2 }, { "toolName": "shell.execute", "decision": "approve", "maxApprovals": 6 } ] },
     "approvals": [
       { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false },
       { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }

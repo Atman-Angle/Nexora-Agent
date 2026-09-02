@@ -23,6 +23,19 @@ export {
   type SkillTrust
 } from "./skills.js";
 export type { CreateRuntimeOptions } from "./types.js";
+export {
+  codingPhaseGuidance,
+  codingReasoningLevel,
+  compactCodingToolObservations,
+  projectCodingContext,
+  projectStrategyRouting,
+  type CodingControlPhase,
+  type CodingReasoningLevel,
+  type CodingDecisionContext,
+  type CodingStrategyMode,
+  type CodingTaskShape,
+  type StrategyRouting
+} from "./coding-strategy.js";
 
 export {
   RuntimeEngine,
@@ -91,6 +104,9 @@ export {
   type RuntimeBudgetExtension,
   type CompletionRequirements,
   type StructuredPlan,
+  type PlanTaskScope,
+  type TaskScopeOutcome,
+  type TaskScopeSource,
   type TaskContract
 } from "@nexora/runtime";
 

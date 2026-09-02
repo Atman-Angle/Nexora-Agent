@@ -185,10 +185,34 @@ async function runTask(input: {
     let inspection = await handle.wait();
     await cancellation.settled();
     const occurrences = { approval: 0, input: 0, recovery: 0 };
+    const approvalRuleCounts = new Map<number, number>();
+    let approvalGranted = 0;
+    let approvalDenied = 0;
 
     for (let control = 0; control < 100 && !isTerminalOrExpectedStop(inspection, input.task); control += 1) {
       if (inspection.status === "waiting_for_approval") {
         occurrences.approval += 1;
+        const requestId = inspection.pendingRequest?.id;
+        if (requestId === undefined) throw new Error("Approval status is missing its pending request.");
+        const policyDecision = approvalDecision(input.task, inspection, approvalRuleCounts);
+        if (policyDecision !== null) {
+          if (policyDecision.restartBeforeDecision) {
+            await runtime.close();
+            await scenario.dispose?.();
+            ({ runtime, scenario } = await createExecution());
+            handle = runtime.openRun(handle.id);
+            inspection = await handle.inspect();
+          }
+          if (policyDecision.decision === "approve") {
+            await handle.approve({ requestId });
+            approvalGranted += 1;
+          } else {
+            await handle.deny({ requestId, ...(policyDecision.reason === undefined ? {} : { reason: policyDecision.reason }) });
+            approvalDenied += 1;
+          }
+          inspection = await handle.wait();
+          continue;
+        }
         const action = input.task.driver.approvals.find((item) => item.occurrence === occurrences.approval);
         if (action === undefined) break;
         if (action.restartBeforeDecision) {
@@ -198,11 +222,14 @@ async function runTask(input: {
           handle = runtime.openRun(handle.id);
           inspection = await handle.inspect();
         }
-        const requestId = inspection.pendingRequest?.id;
-        if (requestId === undefined) throw new Error("Approval status is missing its pending request.");
-        if (action.decision === "approve") await handle.approve({ requestId });
-        else await handle.deny({ requestId, ...(action.reason === undefined ? {} : { reason: action.reason }) });
-        inspection = await handle.inspect();
+        if (action.decision === "approve") {
+          await handle.approve({ requestId });
+          approvalGranted += 1;
+        } else {
+          await handle.deny({ requestId, ...(action.reason === undefined ? {} : { reason: action.reason }) });
+          approvalDenied += 1;
+        }
+        inspection = await handle.wait();
         continue;
       }
       if (inspection.status === "waiting_for_input") {
@@ -369,6 +396,59 @@ function isTerminalOrExpectedStop(inspection: RunInspection, task: EvalTask): bo
   return false;
 }
 
+type ApprovalPolicy = NonNullable<EvalTask["driver"]["approvalPolicy"]>;
+
+function approvalDecision(
+  task: EvalTask,
+  inspection: RunInspection,
+  ruleCounts: Map<number, number>
+): ApprovalPolicy["rules"][number] & { readonly restartBeforeDecision: false } | {
+  readonly decision: "deny";
+  readonly reason: string;
+  readonly restartBeforeDecision: false;
+} | null {
+  const policy = task.driver.approvalPolicy;
+  if (policy === undefined) return null;
+  const pending = inspection.pendingRequest;
+  const action = pending?.kind === "approval" ? pending : undefined;
+  const toolName = action?.toolName;
+  if (typeof toolName !== "string") {
+    return { decision: "deny", reason: "Approval request has no recognized Tool identity.", restartBeforeDecision: false };
+  }
+  if (!task.allowedCapabilities.includes(toolName)) {
+    return { decision: "deny", reason: `Approval request is outside the task capability contract: ${toolName}.`, restartBeforeDecision: false };
+  }
+  const ruleIndex = policy.rules.findIndex((rule) => (
+    rule.toolName === toolName
+    && (rule.input === undefined || matchesApprovalInput(rule.input, action?.input))
+  ));
+  if (ruleIndex < 0) {
+    return { decision: "deny", reason: `Task approval policy does not allow ${toolName}.`, restartBeforeDecision: false };
+  }
+  if (policy.maxApprovals !== undefined && [...ruleCounts.values()].reduce((sum, count) => sum + count, 0) >= policy.maxApprovals) {
+    return { decision: "deny", reason: "Task approval policy risk budget is exhausted.", restartBeforeDecision: false };
+  }
+  const rule = policy.rules[ruleIndex]!;
+  const used = ruleCounts.get(ruleIndex) ?? 0;
+  if (rule.maxApprovals !== undefined && used >= rule.maxApprovals) {
+    return { decision: "deny", reason: `Task approval policy limit for ${toolName} is exhausted.`, restartBeforeDecision: false };
+  }
+  ruleCounts.set(ruleIndex, used + 1);
+  return { ...rule, restartBeforeDecision: false };
+}
+
+function matchesApprovalInput(expected: Record<string, unknown>, actual: unknown): boolean {
+  if (actual === null || typeof actual !== "object" || Array.isArray(actual)) return false;
+  const value = actual as Record<string, unknown>;
+  return Object.entries(expected).every(([key, expectedValue]) => {
+    const actualValue = value[key];
+    if (expectedValue !== null && typeof expectedValue === "object" && !Array.isArray(expectedValue)) {
+      return matchesApprovalInput(expectedValue as Record<string, unknown>, actualValue);
+    }
+    return JSON.stringify(actualValue) === JSON.stringify(expectedValue);
+  });
+}
+
 async function loadScenarioFactory(path: string): Promise<ScenarioFactory> {
   const module = await import(`${pathToFileURL(path).href}?bench=${Date.now()}`) as { readonly createScenario?: unknown };
   if (typeof module.createScenario !== "function") {
@@ -458,7 +538,11 @@ function infrastructureFailure(
       responseRejectionRate: 0,
       repairRecoveryCount: 0,
       firstPersistedProgressMs: null,
-      progressAcrossRestartCount: 0
+      progressAcrossRestartCount: 0,
+      approvalRequestedCount: 0,
+      approvalGrantedCount: 0,
+      approvalDeniedCount: 0,
+      approvalGrantToolExecutionRate: null
     },
     promptStrategy: {
       calls: [],

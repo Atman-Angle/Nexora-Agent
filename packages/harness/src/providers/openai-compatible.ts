@@ -6,7 +6,6 @@ import { RuntimeError } from "@nexora/runtime/internal";
 import { estimateTextTokens } from "../context/budget.js";
 import type { ProviderPromptCachePolicy, ProviderTransportProfile } from "../prompt.js";
 import { decisionHasSemanticPressure } from "../provider-policy.js";
-import type { JsonSchema } from "../tool-schema.js";
 import {
   defineProviderAdapter,
   type ProviderCompletionOperation,
@@ -510,8 +509,13 @@ function normalizeAssistantMessage(
   // of being misclassified as Provider protocol corruption.
   const bindings = providerToolBindings(request.toolCatalog);
   const toolCalls = nativeCalls.map((call): ProviderToolCall => {
-    const binding = bindings.find((item) => item.providerName === call.function.name);
-    if (binding === undefined) throw new Error(`Provider returned an unknown native Tool: ${call.function.name}`);
+    const matches = bindings.filter((item) => (
+      item.providerName === call.function.name || item.tool.name === call.function.name
+    ));
+    if (matches.length !== 1) {
+      throw new Error(`Provider returned an ${matches.length === 0 ? "unknown" : "ambiguous"} native Tool: ${call.function.name}`);
+    }
+    const binding = matches[0]!;
     const args = parseJsonObject(call.function.arguments);
     if (args === null) {
       throw new RetryableProviderError(
@@ -523,7 +527,7 @@ function normalizeAssistantMessage(
       name: binding.tool.name,
       arguments: normalizePlanToolReferences(
         binding.tool.name,
-        normalizeJsonEncodedComposites(args, binding.tool.inputSchema) as Record<string, unknown>,
+        args,
         bindings
       )
     };
@@ -674,89 +678,6 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-/**
- * Some OpenAI-compatible Providers double-encode nested object/array Tool
- * arguments even though the outer function arguments are valid JSON. Repair
- * only fields whose advertised JSON Schema requires a composite value; the
- * Runtime's Zod Schema remains the final authority and rejects everything
- * else. JSON-looking values declared as strings are deliberately untouched.
- */
-function normalizeJsonEncodedComposites(value: unknown, schema: JsonSchema): unknown {
-  let normalized = value;
-  const allowedTypes = schemaTypes(schema);
-  if (
-    typeof normalized === "string"
-    && !allowedTypes.has("string")
-    && (allowedTypes.has("object") || allowedTypes.has("array"))
-  ) {
-    try {
-      const parsed = JSON.parse(normalized) as unknown;
-      if (
-        (allowedTypes.has("object") && isJsonObject(parsed))
-        || (allowedTypes.has("array") && Array.isArray(parsed))
-      ) normalized = parsed;
-    } catch {
-      // Preserve the raw value so the authoritative Runtime Schema reports it.
-    }
-  }
-
-  const schemas = schemaBranches(schema);
-  if (Array.isArray(normalized)) {
-    const itemSchemas = schemas
-      .map((candidate) => candidate.items)
-      .filter(isJsonSchema);
-    if (itemSchemas.length === 0) return normalized;
-    return normalized.map((item) => itemSchemas.reduce(
-      (current, itemSchema) => normalizeJsonEncodedComposites(current, itemSchema),
-      item
-    ));
-  }
-  if (!isJsonObject(normalized)) return normalized;
-
-  const result: Record<string, unknown> = { ...normalized };
-  for (const [key, current] of Object.entries(result)) {
-    const propertySchemas = schemas
-      .map((candidate) => isJsonObject(candidate.properties) ? candidate.properties[key] : undefined)
-      .filter(isJsonSchema);
-    result[key] = propertySchemas.reduce(
-      (propertyValue, propertySchema) => normalizeJsonEncodedComposites(propertyValue, propertySchema),
-      current
-    );
-  }
-  return result;
-}
-
-function schemaTypes(schema: JsonSchema): Set<string> {
-  const types = new Set<string>();
-  for (const candidate of schemaBranches(schema)) {
-    if (typeof candidate.type === "string") types.add(candidate.type);
-    else if (Array.isArray(candidate.type)) {
-      for (const type of candidate.type) if (typeof type === "string") types.add(type);
-    }
-  }
-  return types;
-}
-
-function schemaBranches(schema: JsonSchema): readonly JsonSchema[] {
-  const branches: JsonSchema[] = [schema];
-  for (const key of ["anyOf", "oneOf", "allOf"] as const) {
-    const candidates = schema[key];
-    if (!Array.isArray(candidates)) continue;
-    for (const candidate of candidates) {
-      if (isJsonSchema(candidate)) branches.push(...schemaBranches(candidate));
-    }
-  }
-  return branches;
-}
-
-function isJsonObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isJsonSchema(value: unknown): value is JsonSchema {
-  return isJsonObject(value);
 }
 
 function nonEmptyText(value: string | null | undefined): string | null {

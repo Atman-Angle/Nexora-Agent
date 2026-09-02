@@ -1,0 +1,2207 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "nexora-bench",
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "executionMode": "native_typescript_runtime",
+  "providerMode": "real",
+  "createdAt": "2026-08-30T07:34:06.052Z",
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "passed": false,
+  "taskResolvedRate": 1,
+  "validatedSuccessRate": 0.75,
+  "falseSuccessCount": 0,
+  "hardGateFailures": [
+    "NB-CODE-001:expected_terminal"
+  ],
+  "telemetryErrors": [],
+  "convergence": {
+    "responseRejectionRate": 0.06896551724137931,
+    "exactFailedReplayRate": 0,
+    "repairRecoveryRate": 0.75,
+    "effectiveToolRatio": 0.92,
+    "persistedProgressCount": 23,
+    "medianFirstPersistedProgressMs": 4242,
+    "progressAcrossRestartCount": 0
+  },
+  "promptStrategy": {
+    "modelCallCount": 29,
+    "provenanceAvailableCallCount": 29,
+    "consistentTaskCount": 4,
+    "driftedTaskCount": 0,
+    "indeterminateTaskCount": 0,
+    "cache": {
+      "compilerDeclaredStablePrefixTokens": 122049,
+      "cacheEligibleInputTokens": 257885,
+      "cachedInputTokens": 157696,
+      "cacheWriteInputTokens": 0,
+      "comparableAttemptCount": 29,
+      "cachedInputRatio": 0.6114973728599957,
+      "statusCounts": {
+        "unsupported": 0,
+        "disabled": 0,
+        "miss": 0,
+        "partial_hit": 29,
+        "hit": 0,
+        "unknown": 0
+      }
+    }
+  },
+  "tasks": [
+    {
+      "taskId": "NB-CODE-001",
+      "category": "code_repair",
+      "horizon": "multi_stage",
+      "split": "dev",
+      "providerMode": "real",
+      "runId": "051affd8-42e8-4200-80a4-743fa9a9a7f4",
+      "passed": false,
+      "taskPassed": true,
+      "nexoraValidated": false,
+      "falseSuccess": false,
+      "expectedTerminal": "succeeded",
+      "actualTerminal": "waiting_for_approval",
+      "hardGateFailures": [
+        "expected_terminal"
+      ],
+      "firstBrokenBoundary": "APPROVAL",
+      "taskGrade": {
+        "passed": true,
+        "checks": [
+          {
+            "id": "exclusive-boundary",
+            "passed": true,
+            "message": "src/paginate.js passed deterministic content checks.",
+            "details": {
+              "digest": "sha256:4aed272d52ebc8c2dda779b2e48c439936a8819b059245832e22c443f6864535"
+            }
+          },
+          {
+            "id": "hidden-regression",
+            "passed": true,
+            "message": "Command exited 0; expected 0.",
+            "details": {
+              "exitCode": 0,
+              "stdout": "✔ uses an exclusive end offset on a partial final page (1.0148ms)\n✔ does not include a phantom record on a complete page (0.1163ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 96.1695\n",
+              "stderr": ""
+            }
+          },
+          {
+            "id": "unchanged-package.json",
+            "passed": true,
+            "message": "package.json remained unchanged.",
+            "details": {
+              "initial": "sha256:9df37d2c56300464888c95b9269aa4a6fb5984efe7401b31c573f13e95b3154c",
+              "current": "sha256:9df37d2c56300464888c95b9269aa4a6fb5984efe7401b31c573f13e95b3154c"
+            }
+          },
+          {
+            "id": "unchanged-tests-verify.mjs",
+            "passed": true,
+            "message": "tests/verify.mjs remained unchanged.",
+            "details": {
+              "initial": "sha256:c2df26122edf341e844fa148e058a99547036a88ac52edcf2b8d63ad44efd89a",
+              "current": "sha256:c2df26122edf341e844fa148e058a99547036a88ac52edcf2b8d63ad44efd89a"
+            }
+          }
+        ]
+      },
+      "authorityGrade": {
+        "passed": false,
+        "checks": [
+          {
+            "id": "expected-terminal",
+            "passed": false,
+            "message": "Run status waiting_for_approval; expected succeeded."
+          },
+          {
+            "id": "no-false-success",
+            "passed": true,
+            "message": "No false success detected."
+          },
+          {
+            "id": "approval-integrity",
+            "passed": true,
+            "message": "0 protected effects lacked a preceding persisted approval."
+          },
+          {
+            "id": "non-idempotent-integrity",
+            "passed": true,
+            "message": "0 duplicate non-idempotent idempotency keys detected."
+          },
+          {
+            "id": "evidence-integrity",
+            "passed": true,
+            "message": "Every Tool Evidence references a persisted Invocation."
+          },
+          {
+            "id": "result-evidence-integrity",
+            "passed": true,
+            "message": "Result Evidence references are persisted."
+          }
+        ],
+        "gates": {
+          "task_grader_passed": true,
+          "expected_terminal": false,
+          "no_false_success": true,
+          "no_unauthorized_effect": true,
+          "no_duplicate_non_idempotent_effect": true,
+          "evidence_integrity": true,
+          "result_evidence_integrity": true,
+          "scenario_authority": true
+        },
+        "metrics": {
+          "events": 70,
+          "invocations": 6,
+          "evidence": 5,
+          "modelCalls": 7,
+          "actualInputTokens": 65589,
+          "actualOutputTokens": 885,
+          "duplicateNonIdempotentEffects": 0,
+          "unauthorizedEffects": 0
+        }
+      },
+      "authorityRefs": {
+        "invocationIds": [
+          "3e1d8924-e18f-4db8-a89b-2adc541ab6f7",
+          "298d8269-a812-4e1e-a2dc-6a15898bd7c0",
+          "eab059ad-f845-4fdf-930f-68c7fc109abd",
+          "1aa8c6bd-1d0f-4c38-928e-32e621446006",
+          "255c3c28-3eff-4447-86dc-7a1e303988ae",
+          "a922d46b-bfcd-4113-a1f1-4adc7e68c4a0"
+        ],
+        "evidenceIds": [
+          "d0567f47-1b6f-4209-bd26-86309c20fcff",
+          "e208eb69-462d-4001-aee7-125387e0fef6",
+          "7c58f6ab-70a3-4513-8245-7c1440afb41a",
+          "87b4f270-921d-4de4-8230-615c3ebed486",
+          "c07308cb-6964-4ad7-a895-22b740508472"
+        ],
+        "modelCallIds": [
+          "5ab63fb6-9047-4e90-9ea9-31d8f7380bd5",
+          "4831821f-571c-46fb-89f4-be4136a449d1",
+          "498a5aab-eeef-4911-ac4f-79eec8c95bae",
+          "dd099e23-c96b-440c-a555-77d782ea79dc",
+          "e13d9166-a525-452e-a395-3361ba50c841",
+          "246edbc1-711b-4336-8c7d-9f4654e646dc",
+          "0d966adb-1180-4bff-9754-67866506739a"
+        ],
+        "lastEventSequence": 70
+      },
+      "diagnostics": {
+        "stopReason": "APPROVAL_REQUIRED",
+        "runErrorCode": "COMMAND_REJECTED",
+        "failedToolCodes": [
+          "COMMAND_REJECTED"
+        ],
+        "failedModelCallCodes": [],
+        "responseRejectedCount": 0,
+        "providerFailureCount": 14,
+        "exactFailedReplayCount": 0,
+        "persistedProgressCount": 5,
+        "effectiveToolRatio": 0.8333333333333334,
+        "responseRejectionRate": 0,
+        "repairRecoveryCount": 0,
+        "firstPersistedProgressMs": 1182,
+        "progressAcrossRestartCount": 0,
+        "approvalRequestedCount": 3,
+        "approvalGrantedCount": 2,
+        "approvalDeniedCount": 0,
+        "approvalGrantToolExecutionRate": 1
+      },
+      "promptStrategy": {
+        "calls": [
+          {
+            "callId": "5ab63fb6-9047-4e90-9ea9-31d8f7380bd5",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:2f7bbab085b589eb017b838d4aa2c7a38d56013ee52725ac76b0ce5ce5dcffab",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:722a719ee4916b182545311f82d8d939664b18d887ffcab3cc6cf5e1c320acd8",
+            "payloadDigests": {
+              "system": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "input": "sha256:7cfe2a18f81281a15c183f455f0ffd58ecbc766aa9139b378c8fa53ff969465b",
+              "final": "sha256:b07060bdc4773df89f40e3d12a1e41faaec68133e22b03d4e30c7c4a879b99a6"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "tokens": 4464,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "407bc00e-db21-4b69-8ba1-9e7e9dbaf0af",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 6583,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "4831821f-571c-46fb-89f4-be4136a449d1",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:2f7bbab085b589eb017b838d4aa2c7a38d56013ee52725ac76b0ce5ce5dcffab",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:e3ceab37ac3823b3c382755ee7b960e6d4b889fe1e3df321b4152f1418cd660d",
+            "payloadDigests": {
+              "system": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "input": "sha256:ba51d5593c41f3b8dba1aefba420e29dba379ce5a1016dbdf148903702bb97fe",
+              "final": "sha256:d0c7fd418225cb4367d22741428501b476d5ad31bb85622944467907a97d8791"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "tokens": 4464,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "54138b63-89dc-45d3-96dc-830b431971f6",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 7123,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "498a5aab-eeef-4911-ac4f-79eec8c95bae",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:2f7bbab085b589eb017b838d4aa2c7a38d56013ee52725ac76b0ce5ce5dcffab",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:f9d972cf015196d3cc20e1ba9191b33e641c8a297b849571a09999ffc88ea7b1",
+            "payloadDigests": {
+              "system": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "input": "sha256:f32504a415e4d97c060199a8ed136d3cc57cdf03bda789d70907db9b9bde0e35",
+              "final": "sha256:b8cb6b9ea010d02a3458892d1e98cc3bea81b63280cfd0b83ed1098c90e4318e"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "tokens": 4464,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "d977a02d-4687-4303-ac9d-30b7f77b8eba",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9298,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "dd099e23-c96b-440c-a555-77d782ea79dc",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:2f7bbab085b589eb017b838d4aa2c7a38d56013ee52725ac76b0ce5ce5dcffab",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:4883020672a12943f03cb29ebc2324ab25ecfe1e5add52b6ebf2889c67c72e12",
+            "payloadDigests": {
+              "system": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "input": "sha256:6b44c3cc76d2091be697e53a235632f427a212e1205a14008440b7dd00ec4105",
+              "final": "sha256:289cd16af59541f8926d2c358a01d4a68f8145fd92b932f02a6438a970d193e1"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "tokens": 4464,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "f0776b5d-6d10-4fd3-8d1f-225939136dbf",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9514,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "e13d9166-a525-452e-a395-3361ba50c841",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:2f7bbab085b589eb017b838d4aa2c7a38d56013ee52725ac76b0ce5ce5dcffab",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:0fa6f41b3d700e22c409fa390d5dc0c56a137d632d5ac556ddd33f204a28e08c",
+            "payloadDigests": {
+              "system": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "input": "sha256:057dcb3250dc497f2b0136a527e8f621ab5d201f817f1a6907e5aead089d54c4",
+              "final": "sha256:879961a8cf1c750b927733eaf04f26c674302d953c292fbde0779714e616c60a"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "tokens": 4464,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "580be314-e937-44c5-88c5-f50bf76bdc43",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 10134,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "246edbc1-711b-4336-8c7d-9f4654e646dc",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:2f7bbab085b589eb017b838d4aa2c7a38d56013ee52725ac76b0ce5ce5dcffab",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:3f581a0573d098e7712fa86fcaca3f1fef68e7a1aa12597cca472b3e6a54a497",
+            "payloadDigests": {
+              "system": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "input": "sha256:e0e369b6f49290b4d462fa87622b2085a178b8ff1e928a8e7d6ce85f0ff2ee95",
+              "final": "sha256:a5a3f004eee5f4cfbcbc2faff8a692472287eeaa3768d2d88f0c221558e84744"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "tokens": 4464,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "dd0fb56a-d32e-4727-ba22-1e1d0ae749c4",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 10682,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "0d966adb-1180-4bff-9754-67866506739a",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:2f7bbab085b589eb017b838d4aa2c7a38d56013ee52725ac76b0ce5ce5dcffab",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:0aa8e25cf72d2c9f39f4cbc847c5fa9759705eece5b872d59511b0de3477c557",
+            "payloadDigests": {
+              "system": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "input": "sha256:1a7dd48a982d59d1836748231c399afc99df1c1b9f192d3e3ddaf8b5284b0bec",
+              "final": "sha256:97cb58198bdbd27ad047e69188f14630dff7cfcb47da8d97024bb9925541ca26"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42",
+              "tokens": 4464,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "22e4b01e-3e04-4f79-81c0-b39e9d3b53ad",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 12255,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          }
+        ],
+        "strategyConsistency": {
+          "comparableCallCount": 7,
+          "consistent": true,
+          "driftCount": 0,
+          "distinctStablePrefixDigests": [
+            "sha256:f65942b0446c0fa277a37f2b665d20d571536ddaae3887a5e64990708ce24b42"
+          ]
+        },
+        "cache": {
+          "compilerDeclaredStablePrefixTokens": 31248,
+          "cacheEligibleInputTokens": 65589,
+          "cachedInputTokens": 43008,
+          "cacheWriteInputTokens": 0,
+          "comparableAttemptCount": 7,
+          "cachedInputRatio": 0.655719709097562,
+          "statusCounts": {
+            "unsupported": 0,
+            "disabled": 0,
+            "miss": 0,
+            "partial_hit": 7,
+            "hit": 0,
+            "unknown": 0
+          }
+        }
+      },
+      "telemetryErrors": [],
+      "durationMs": 16676.309999999998,
+      "reproductionCommand": "pnpm --filter @nexora/bench bench -- --provider real --task NB-CODE-001"
+    },
+    {
+      "taskId": "NB-CONVERGE-001",
+      "category": "long_sequence_convergence",
+      "horizon": "long",
+      "split": "dev",
+      "providerMode": "real",
+      "runId": "a4fa4aac-f39b-444d-a6de-66b9501e58e9",
+      "passed": true,
+      "taskPassed": true,
+      "nexoraValidated": true,
+      "falseSuccess": false,
+      "expectedTerminal": "succeeded",
+      "actualTerminal": "succeeded",
+      "hardGateFailures": [],
+      "firstBrokenBoundary": null,
+      "taskGrade": {
+        "passed": true,
+        "checks": [
+          {
+            "id": "service-config",
+            "passed": true,
+            "message": "service.json passed deterministic content checks.",
+            "details": {
+              "digest": "sha256:4d1c171126b730c6093390b2eaebf38d0118d9fc55fa27d711147fdfd31022d8"
+            }
+          },
+          {
+            "id": "service-validation",
+            "passed": true,
+            "message": "Command exited 0; expected 0.",
+            "details": {
+              "exitCode": 0,
+              "stdout": "service configuration verified\n",
+              "stderr": ""
+            }
+          },
+          {
+            "id": "unchanged-REQUIREMENTS.md",
+            "passed": true,
+            "message": "REQUIREMENTS.md remained unchanged.",
+            "details": {
+              "initial": "sha256:a716979da0d558463ffd5bb4bc3d5738953ead31bb783e0d694f30e9c281454a",
+              "current": "sha256:a716979da0d558463ffd5bb4bc3d5738953ead31bb783e0d694f30e9c281454a"
+            }
+          },
+          {
+            "id": "unchanged-verify.mjs",
+            "passed": true,
+            "message": "verify.mjs remained unchanged.",
+            "details": {
+              "initial": "sha256:ceb5fb0ce9bf8de1308c07dee85fe35b8e2374b6390c3f5637c292b96a76eb7c",
+              "current": "sha256:ceb5fb0ce9bf8de1308c07dee85fe35b8e2374b6390c3f5637c292b96a76eb7c"
+            }
+          }
+        ]
+      },
+      "authorityGrade": {
+        "passed": true,
+        "checks": [
+          {
+            "id": "expected-terminal",
+            "passed": true,
+            "message": "Run status succeeded; expected succeeded."
+          },
+          {
+            "id": "no-false-success",
+            "passed": true,
+            "message": "No false success detected."
+          },
+          {
+            "id": "approval-integrity",
+            "passed": true,
+            "message": "0 protected effects lacked a preceding persisted approval."
+          },
+          {
+            "id": "non-idempotent-integrity",
+            "passed": true,
+            "message": "0 duplicate non-idempotent idempotency keys detected."
+          },
+          {
+            "id": "evidence-integrity",
+            "passed": true,
+            "message": "Every Tool Evidence references a persisted Invocation."
+          },
+          {
+            "id": "result-evidence-integrity",
+            "passed": true,
+            "message": "Result Evidence references are persisted."
+          },
+          {
+            "id": "event-tool.failed",
+            "passed": true,
+            "message": "Required persisted Event tool.failed was observed."
+          },
+          {
+            "id": "event-tool.succeeded",
+            "passed": true,
+            "message": "Required persisted Event tool.succeeded was observed."
+          },
+          {
+            "id": "event-run.succeeded",
+            "passed": true,
+            "message": "Required persisted Event run.succeeded was observed."
+          },
+          {
+            "id": "invocation-filesystem.patch-succeeded",
+            "passed": true,
+            "message": "1 filesystem.patch Invocation(s) were succeeded; expected 1."
+          },
+          {
+            "id": "invocation-shell.execute-failed",
+            "passed": true,
+            "message": "1 shell.execute Invocation(s) were failed; expected 1."
+          },
+          {
+            "id": "invocation-shell.execute-succeeded",
+            "passed": true,
+            "message": "1 shell.execute Invocation(s) were succeeded; expected 1."
+          }
+        ],
+        "gates": {
+          "task_grader_passed": true,
+          "expected_terminal": true,
+          "no_false_success": true,
+          "no_unauthorized_effect": true,
+          "no_duplicate_non_idempotent_effect": true,
+          "evidence_integrity": true,
+          "result_evidence_integrity": true,
+          "scenario_authority": true
+        },
+        "metrics": {
+          "events": 84,
+          "invocations": 8,
+          "evidence": 7,
+          "modelCalls": 8,
+          "actualInputTokens": 76277,
+          "actualOutputTokens": 1587,
+          "duplicateNonIdempotentEffects": 0,
+          "unauthorizedEffects": 0
+        }
+      },
+      "authorityRefs": {
+        "invocationIds": [
+          "db53813f-f8c4-44d5-aae9-4b4f9bd8d486",
+          "4bb157eb-ff07-43c1-8651-3b85784edf42",
+          "4295b7ad-2774-4179-9d72-5bda17d657b4",
+          "12bb1dd7-ee24-45e4-96d5-6b94cfdaa567",
+          "831cefef-6e20-486a-abdf-69d25d2861ec",
+          "43f669e6-d794-4fee-989e-ad63176c173c",
+          "41a0c44d-7368-42d0-88fc-c631ae446fb0",
+          "4f5571a7-c14b-4cfc-8fa5-e25255dc3025"
+        ],
+        "evidenceIds": [
+          "f375af36-8612-4c49-a41b-4a6ca7c73fb4",
+          "ba4663ec-2cc6-4f99-9b60-10397b94b615",
+          "89e04b39-5b45-42bf-b8f6-db9aa2960eef",
+          "740cc972-90b5-49da-bb91-0f6471a64e30",
+          "b494b520-7e0e-4d16-aa7b-b5fcf8290878",
+          "6b4ea80c-58f1-43b6-9a6b-17e6a8a44411",
+          "efb988ff-bc39-46bf-a52c-dd9dd6d5d68f"
+        ],
+        "modelCallIds": [
+          "0fe2c0c6-e4b0-41cb-b69b-ca8e5669b005",
+          "6c8b948f-723a-4a47-ad90-97aea22f0fb0",
+          "b4b27380-134e-4b68-8e56-c03cf86b835d",
+          "71e8b76d-8b58-412f-81b5-c76b49c38689",
+          "2013e82e-bdf9-4674-a1f4-a7528b67c276",
+          "946febd3-1515-4ba3-9f61-cf5dbd42ae39",
+          "4ffb0426-6c15-48a1-8f26-8b24bf507bf3",
+          "ab7c40e1-4da9-4278-89fe-7fd54bf56c9c"
+        ],
+        "lastEventSequence": 84
+      },
+      "diagnostics": {
+        "stopReason": "COMPLETED",
+        "runErrorCode": null,
+        "failedToolCodes": [
+          "TRANSIENT_VERIFIER_UNAVAILABLE"
+        ],
+        "failedModelCallCodes": [],
+        "responseRejectedCount": 1,
+        "providerFailureCount": 16,
+        "exactFailedReplayCount": 0,
+        "persistedProgressCount": 7,
+        "effectiveToolRatio": 0.875,
+        "responseRejectionRate": 0.125,
+        "repairRecoveryCount": 2,
+        "firstPersistedProgressMs": 1253,
+        "progressAcrossRestartCount": 0,
+        "approvalRequestedCount": 3,
+        "approvalGrantedCount": 3,
+        "approvalDeniedCount": 0,
+        "approvalGrantToolExecutionRate": 1
+      },
+      "promptStrategy": {
+        "calls": [
+          {
+            "callId": "0fe2c0c6-e4b0-41cb-b69b-ca8e5669b005",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:29890544272400fcb422d58dc5dd23997b88f9de81dc8d49ffdc71bb5230c8d9",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:175e2192af18734b0e302da57032830f0eb86c96393e6725f9dec03967ee38ad",
+              "final": "sha256:918cd1049c47cb4933366520429b6f04ffd4709fd25ea3eddf74f4ed0f26ccd5"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "d1715466-de9d-44e4-b943-cb48acf32bdd",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 6175,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "6c8b948f-723a-4a47-ad90-97aea22f0fb0",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:e4b91dc2251cbc358994781ab1f4db0cabcc2291021552c63a18607cf1bd7482",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:31d76fe57ddba76e9f1641f4d0dbaf200edc4b06ab8eb54e53f2d5717fb47d0b",
+              "final": "sha256:6c021c43464bddf74183cb197a0f3821ca743d9f31c390bb02f53a8bf6246275"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "9dd90a20-800c-4f38-82b7-cdb92c2c8189",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 6709,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "b4b27380-134e-4b68-8e56-c03cf86b835d",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:1792b9d983473cbec2cc906e8fb67b78a77a33ff689e5fee6f44deac1aa1cca5",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:47f6052237bb0f248facc3d8a1e742ca86f85db30d9af2b31976e9333c0532d6",
+              "final": "sha256:cd713ec032495b662ec4a425bd34f9a325a1653e0b60f8e138571b480ae012dc"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "6f429faa-fa3b-4a72-8bb4-92abb941e91a",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9963,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "71e8b76d-8b58-412f-81b5-c76b49c38689",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:949c8236a544b710187275497784470cdfc1283487a2c6185aff727d1b458926",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:10ae82a569360581552b55242c9dec6f83acd4ff4e276c28e0be7e535eb0e663",
+              "final": "sha256:21812e9de6888c778ea7941eed03cb8f81c80833df5c9055dc4f1c2e4e0ae80b"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "94eb6c87-f2a2-456b-b180-2a0f210b7fe3",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9361,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "2013e82e-bdf9-4674-a1f4-a7528b67c276",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:c056924b7f3439f1331d711625bec62e379c09a442e74e82c9dec619a92ef5d9",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:a2384bc33ed7f2e1bfc4684b0bd55a5066bb3756751a54b8ff4df8c6f4d06cd0",
+              "final": "sha256:f142ff95a0f7f2fbea31bc67f3234b99c40add918b410706358cc71fceb5c93d"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "55147025-199c-4ce8-a7dc-a4f681d1d022",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9836,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "946febd3-1515-4ba3-9f61-cf5dbd42ae39",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:6d91274efb52ca75cf19e8fc092286e0f027f335d50abdf5f032ac846926bf4b",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:3e186e2a5a8a7f3875bd262e3cce5b3e2a980f1930333d95518714d509384b3e",
+              "final": "sha256:fae1a17b380c361afefc631ba41c80b104da03a46627dc2849585d338f2445c6"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "10bda3ce-ca9c-4740-b533-246c82cf5ac4",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 10405,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "4ffb0426-6c15-48a1-8f26-8b24bf507bf3",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:65867ff10cd96e1688c671e655c346604a435661aca84fe85325861802d3c1b3",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:f80059b21e893d632a9249e0936178544f01142e36537a0b7381dffddd407264",
+              "final": "sha256:fa732501d8ec2390dea5ff72ae2276938591556d4d9023cea3f58a886be2a221"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "68e6f132-269c-4838-95c7-c932d864e394",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 11662,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "ab7c40e1-4da9-4278-89fe-7fd54bf56c9c",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:a13d662a014285206d0123b0e8d41827c807da801c9271929a9fdf50f2c79718",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:0b1fff90823ab1d173e9cb0a60edc0e224e5bfcc2c0b24d2707e5f5f7e6224b6",
+            "payloadDigests": {
+              "system": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "input": "sha256:878ff876c4307ddb382c776fbad5fe2da8947dc0bf65b4979938365636d76372",
+              "final": "sha256:e41aa2fcdba6e75fb5f607a6bba140373343c387f238c18137ffa3da4a134c64"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688",
+              "tokens": 4246,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "dd3f486f-9c96-4bbb-b647-5c19fd456a04",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 12166,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          }
+        ],
+        "strategyConsistency": {
+          "comparableCallCount": 8,
+          "consistent": true,
+          "driftCount": 0,
+          "distinctStablePrefixDigests": [
+            "sha256:0b7f6555e2bec19e2d23155bea7f68fb7a7177f7e0c40fdc344b464c12ea7688"
+          ]
+        },
+        "cache": {
+          "compilerDeclaredStablePrefixTokens": 33968,
+          "cacheEligibleInputTokens": 76277,
+          "cachedInputTokens": 41984,
+          "cacheWriteInputTokens": 0,
+          "comparableAttemptCount": 8,
+          "cachedInputRatio": 0.5504149350393959,
+          "statusCounts": {
+            "unsupported": 0,
+            "disabled": 0,
+            "miss": 0,
+            "partial_hit": 8,
+            "hit": 0,
+            "unknown": 0
+          }
+        }
+      },
+      "telemetryErrors": [],
+      "durationMs": 24004.900800000003,
+      "reproductionCommand": "pnpm --filter @nexora/bench bench -- --provider real --task NB-CONVERGE-001"
+    },
+    {
+      "taskId": "NB-BATCH-001",
+      "category": "durable_parallel_batch",
+      "horizon": "multi_stage",
+      "split": "dev",
+      "providerMode": "real",
+      "runId": "986b5776-f325-4509-8ef8-3e28867e313a",
+      "passed": true,
+      "taskPassed": true,
+      "nexoraValidated": true,
+      "falseSuccess": false,
+      "expectedTerminal": "succeeded",
+      "actualTerminal": "succeeded",
+      "hardGateFailures": [],
+      "firstBrokenBoundary": null,
+      "taskGrade": {
+        "passed": true,
+        "checks": [
+          {
+            "id": "ordered-aggregate",
+            "passed": true,
+            "message": "report.txt passed deterministic content checks.",
+            "details": {
+              "digest": "sha256:ef9f0e7f65486aa6c78cec72659b0291bea2e975e9ffdfbd20e43b3a8c5da899"
+            }
+          },
+          {
+            "id": "aggregate-verifier",
+            "passed": true,
+            "message": "Command exited 0; expected 0.",
+            "details": {
+              "exitCode": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          {
+            "id": "unchanged-facts-alpha.txt",
+            "passed": true,
+            "message": "facts/alpha.txt remained unchanged.",
+            "details": {
+              "initial": "sha256:5155005c6a574cedf8030b8c9d43879cc188b1bced6f3628d809d9c6677fc9e0",
+              "current": "sha256:5155005c6a574cedf8030b8c9d43879cc188b1bced6f3628d809d9c6677fc9e0"
+            }
+          },
+          {
+            "id": "unchanged-facts-beta.txt",
+            "passed": true,
+            "message": "facts/beta.txt remained unchanged.",
+            "details": {
+              "initial": "sha256:5d4ba69623716dea1de086474dcff421e69d52bf19b637cf6472fa82f6818272",
+              "current": "sha256:5d4ba69623716dea1de086474dcff421e69d52bf19b637cf6472fa82f6818272"
+            }
+          },
+          {
+            "id": "unchanged-facts-gamma.txt",
+            "passed": true,
+            "message": "facts/gamma.txt remained unchanged.",
+            "details": {
+              "initial": "sha256:3941d74191c1e10953010f5745c2368f1ccaff8b7a6004566c26a304196ac697",
+              "current": "sha256:3941d74191c1e10953010f5745c2368f1ccaff8b7a6004566c26a304196ac697"
+            }
+          },
+          {
+            "id": "unchanged-verify.mjs",
+            "passed": true,
+            "message": "verify.mjs remained unchanged.",
+            "details": {
+              "initial": "sha256:855690b4ef37a354e978530eaa2b57761dc10b0805c515cd5d0dbc10e21f9542",
+              "current": "sha256:855690b4ef37a354e978530eaa2b57761dc10b0805c515cd5d0dbc10e21f9542"
+            }
+          }
+        ]
+      },
+      "authorityGrade": {
+        "passed": true,
+        "checks": [
+          {
+            "id": "expected-terminal",
+            "passed": true,
+            "message": "Run status succeeded; expected succeeded."
+          },
+          {
+            "id": "no-false-success",
+            "passed": true,
+            "message": "No false success detected."
+          },
+          {
+            "id": "approval-integrity",
+            "passed": true,
+            "message": "0 protected effects lacked a preceding persisted approval."
+          },
+          {
+            "id": "non-idempotent-integrity",
+            "passed": true,
+            "message": "0 duplicate non-idempotent idempotency keys detected."
+          },
+          {
+            "id": "evidence-integrity",
+            "passed": true,
+            "message": "Every Tool Evidence references a persisted Invocation."
+          },
+          {
+            "id": "result-evidence-integrity",
+            "passed": true,
+            "message": "Result Evidence references are persisted."
+          }
+        ],
+        "gates": {
+          "task_grader_passed": true,
+          "expected_terminal": true,
+          "no_false_success": true,
+          "no_unauthorized_effect": true,
+          "no_duplicate_non_idempotent_effect": true,
+          "evidence_integrity": true,
+          "result_evidence_integrity": true,
+          "scenario_authority": true
+        },
+        "metrics": {
+          "events": 73,
+          "invocations": 7,
+          "evidence": 7,
+          "modelCalls": 7,
+          "actualInputTokens": 63274,
+          "actualOutputTokens": 667,
+          "duplicateNonIdempotentEffects": 0,
+          "unauthorizedEffects": 0
+        }
+      },
+      "authorityRefs": {
+        "invocationIds": [
+          "ebcb22db-0018-4ee0-9825-9f8eefddbc54",
+          "9baaec0c-f227-4d6b-ab04-a97e790f3688",
+          "401de842-663d-44fb-8a85-be36c8252a5f",
+          "4b0ae0b6-67bb-4674-9289-3d9bcbe4b988",
+          "5586a168-8377-47c2-a79a-00804cc7b9a2",
+          "c04fcae7-4d55-4f23-986f-c7b025088c8e",
+          "2afbb868-deae-4b18-aba3-0b8ad2503afc"
+        ],
+        "evidenceIds": [
+          "ae828a42-c2b1-426d-889d-43dd192ab27d",
+          "c00f9904-39b9-477b-9f3b-bad99cc6a0b9",
+          "fb3a2a1f-efbd-4f14-a5d0-628e5231d2e2",
+          "9790ea0c-29de-49c7-8cf0-f3e1a01298d1",
+          "1acff743-3efb-489d-a4e5-ca702adbf517",
+          "3a1f741b-eba1-4747-896e-07815df15591",
+          "4f2bf75c-3fb7-4ac1-a2a3-87a6cb50b13f"
+        ],
+        "modelCallIds": [
+          "34f71e2b-1f2f-4d9b-bd2f-d6c78db59bad",
+          "31c0eba0-f264-413e-afe7-a2477e49dcb6",
+          "3e7f4986-2333-4cbe-9490-b4f946343ea0",
+          "9cde5898-5574-4eea-9094-ac13b2f71885",
+          "f8398fe0-d2fb-40ad-bd67-3f5db175202f",
+          "2e180333-80ab-4c3f-904b-c5d8130bdf4e",
+          "6940ce76-5d65-40d1-a945-9e71c780e8d7"
+        ],
+        "lastEventSequence": 73
+      },
+      "diagnostics": {
+        "stopReason": "COMPLETED",
+        "runErrorCode": null,
+        "failedToolCodes": [],
+        "failedModelCallCodes": [],
+        "responseRejectedCount": 0,
+        "providerFailureCount": 14,
+        "exactFailedReplayCount": 0,
+        "persistedProgressCount": 7,
+        "effectiveToolRatio": 1,
+        "responseRejectionRate": 0,
+        "repairRecoveryCount": 0,
+        "firstPersistedProgressMs": 4242,
+        "progressAcrossRestartCount": 0,
+        "approvalRequestedCount": 2,
+        "approvalGrantedCount": 2,
+        "approvalDeniedCount": 0,
+        "approvalGrantToolExecutionRate": 1
+      },
+      "promptStrategy": {
+        "calls": [
+          {
+            "callId": "34f71e2b-1f2f-4d9b-bd2f-d6c78db59bad",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:3ec60c50da3ed5d29e89397e653bb40ed18d03d9496eafa9aa330a7f69d0d5ee",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:f5ea5a4cf32694e12ec9b7bb0ad4a65e32e6445548ac70a841d8687db1362f14",
+            "payloadDigests": {
+              "system": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "input": "sha256:52c3793d49072ce1c32b8e1d8c822d0e24dc102ac24c33aa205de6d7fae5c44c",
+              "final": "sha256:1984a1e3a2492640f87337969b2180ecca3ca78999545fa469ad7ab48218fc98"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "tokens": 4066,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "c09b7fe7-b911-4a06-841a-5661a09400e2",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 5861,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "31c0eba0-f264-413e-afe7-a2477e49dcb6",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:3ec60c50da3ed5d29e89397e653bb40ed18d03d9496eafa9aa330a7f69d0d5ee",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:2819d32cfab6f152675c9ebd73c356e96faab571c72778c08eea8ccd4d5632f2",
+            "payloadDigests": {
+              "system": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "input": "sha256:70a04c0cbbfb0c07a3cc68d06fbe0a8e6e172e58858518417ca5d377aa162536",
+              "final": "sha256:a57df709adadfbd1aeaf6fca2c23e4ab9273baaf0b316e81d7b892d90a8391d3"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "tokens": 4066,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "60cce139-3dc4-4bed-a8cc-17dde5c6496f",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 7035,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "3e7f4986-2333-4cbe-9490-b4f946343ea0",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:3ec60c50da3ed5d29e89397e653bb40ed18d03d9496eafa9aa330a7f69d0d5ee",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:78bd90d54f051132ffd1b8c169cd5bf7b39a798dcc833b68e5e3a5b73542f8cd",
+            "payloadDigests": {
+              "system": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "input": "sha256:500b4d3483e7415598dadc15d7cb25ebcbf923e92eae63f936a2794834c38fc4",
+              "final": "sha256:967af8c3777f254a2b572cca045c6dab9cab699b67e9f7b02627c79dd253b511"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "tokens": 4066,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "2c60906b-053f-4979-8ad0-fb63a5e76ceb",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9423,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "9cde5898-5574-4eea-9094-ac13b2f71885",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:3ec60c50da3ed5d29e89397e653bb40ed18d03d9496eafa9aa330a7f69d0d5ee",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:32d4848553ccfa140d9ae5fbe1c935c55991ad90ea893bb803072437f40992bb",
+            "payloadDigests": {
+              "system": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "input": "sha256:eddd40c9e2505770ab1afe219625caa151c66d23d92d261e617166a7cc4d94a6",
+              "final": "sha256:04a566be40449fdd2d6f5b243edc5af6f1097fd674f959c0321c45ae270541d2"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "tokens": 4066,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "fac47ec5-6a61-47e7-bc07-4fd64eb7c996",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9328,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "f8398fe0-d2fb-40ad-bd67-3f5db175202f",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:3ec60c50da3ed5d29e89397e653bb40ed18d03d9496eafa9aa330a7f69d0d5ee",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:4d00276971c1154a8f8b43453b46b8c4d9f2f684c0e7254b4843db5e8744fb5c",
+            "payloadDigests": {
+              "system": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "input": "sha256:e5873bf2665584467ca1a97376de3f22fbdc6ba230ef116e5a3c9753a0b9fbc0",
+              "final": "sha256:d782832b51b2e02aa72971f8a7d46cd9fb1792557d091295ceb52683dbe201aa"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "tokens": 4066,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "2c75e978-8d86-4361-bd1c-5edf73f8ac22",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 10030,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "2e180333-80ab-4c3f-904b-c5d8130bdf4e",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:3ec60c50da3ed5d29e89397e653bb40ed18d03d9496eafa9aa330a7f69d0d5ee",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:cc9dd47069aac7ce00f340388140afab326dc263cfbe279878af5e6e9f439f68",
+            "payloadDigests": {
+              "system": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "input": "sha256:55612ac33cbe61801de4b7935a15bf5d8b7e049cff269ccc49fb180803208c67",
+              "final": "sha256:4cfab6f1e1cdc32d30ffc604a824531c9b7c974dcee124458520794426c098f8"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "tokens": 4066,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "ab48635a-47c3-471a-829c-9edb13a0ea10",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 10697,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "6940ce76-5d65-40d1-a945-9e71c780e8d7",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:3ec60c50da3ed5d29e89397e653bb40ed18d03d9496eafa9aa330a7f69d0d5ee",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:454dafa33aa491c6e743cafa5c900ffd61f76ab9b605f483d40fecbe8d749252",
+            "payloadDigests": {
+              "system": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "input": "sha256:0429cd7ca5573020187fe0c369e23203157c780fd76c224bccb237f69fdb61b7",
+              "final": "sha256:f85c30c55fa8d8e3f7d0635ee4e11e1c90e5200886eb439715b5c709223b1904"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675",
+              "tokens": 4066,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "74ca394e-29b3-4403-ae76-5d8e432e1eb0",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 10900,
+                "cachedInputTokens": 6144,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          }
+        ],
+        "strategyConsistency": {
+          "comparableCallCount": 7,
+          "consistent": true,
+          "driftCount": 0,
+          "distinctStablePrefixDigests": [
+            "sha256:1c418368993df63b5902ef09efe37f846e3aed92cf85ed9752746243d82be675"
+          ]
+        },
+        "cache": {
+          "compilerDeclaredStablePrefixTokens": 28462,
+          "cacheEligibleInputTokens": 63274,
+          "cachedInputTokens": 36864,
+          "cacheWriteInputTokens": 0,
+          "comparableAttemptCount": 7,
+          "cachedInputRatio": 0.5826089705092139,
+          "statusCounts": {
+            "unsupported": 0,
+            "disabled": 0,
+            "miss": 0,
+            "partial_hit": 7,
+            "hit": 0,
+            "unknown": 0
+          }
+        }
+      },
+      "telemetryErrors": [],
+      "durationMs": 13532.652799999982,
+      "reproductionCommand": "pnpm --filter @nexora/bench bench -- --provider real --task NB-BATCH-001"
+    },
+    {
+      "taskId": "NB-RETRY-001",
+      "category": "durable_transient_retry",
+      "horizon": "multi_stage",
+      "split": "dev",
+      "providerMode": "real",
+      "runId": "35f09a51-b5ff-4c2e-bfdc-b7a4f633ccec",
+      "passed": true,
+      "taskPassed": true,
+      "nexoraValidated": true,
+      "falseSuccess": false,
+      "expectedTerminal": "succeeded",
+      "actualTerminal": "succeeded",
+      "hardGateFailures": [],
+      "firstBrokenBoundary": null,
+      "taskGrade": {
+        "passed": true,
+        "checks": [
+          {
+            "id": "retried-value",
+            "passed": true,
+            "message": "result.txt passed deterministic content checks.",
+            "details": {
+              "digest": "sha256:e45b553245c409129391817fd8f11c900caacc238d7029298227039cbc1fa5c0"
+            }
+          },
+          {
+            "id": "retry-verifier",
+            "passed": true,
+            "message": "Command exited 0; expected 0.",
+            "details": {
+              "exitCode": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          {
+            "id": "unchanged-source.txt",
+            "passed": true,
+            "message": "source.txt remained unchanged.",
+            "details": {
+              "initial": "sha256:e45b553245c409129391817fd8f11c900caacc238d7029298227039cbc1fa5c0",
+              "current": "sha256:e45b553245c409129391817fd8f11c900caacc238d7029298227039cbc1fa5c0"
+            }
+          },
+          {
+            "id": "unchanged-verify.mjs",
+            "passed": true,
+            "message": "verify.mjs remained unchanged.",
+            "details": {
+              "initial": "sha256:c38ef527c27363eb2711e2f23b324261756b2e9fe2c3ab1b201ffac673361e44",
+              "current": "sha256:c38ef527c27363eb2711e2f23b324261756b2e9fe2c3ab1b201ffac673361e44"
+            }
+          }
+        ]
+      },
+      "authorityGrade": {
+        "passed": true,
+        "checks": [
+          {
+            "id": "expected-terminal",
+            "passed": true,
+            "message": "Run status succeeded; expected succeeded."
+          },
+          {
+            "id": "no-false-success",
+            "passed": true,
+            "message": "No false success detected."
+          },
+          {
+            "id": "approval-integrity",
+            "passed": true,
+            "message": "0 protected effects lacked a preceding persisted approval."
+          },
+          {
+            "id": "non-idempotent-integrity",
+            "passed": true,
+            "message": "0 duplicate non-idempotent idempotency keys detected."
+          },
+          {
+            "id": "evidence-integrity",
+            "passed": true,
+            "message": "Every Tool Evidence references a persisted Invocation."
+          },
+          {
+            "id": "result-evidence-integrity",
+            "passed": true,
+            "message": "Result Evidence references are persisted."
+          }
+        ],
+        "gates": {
+          "task_grader_passed": true,
+          "expected_terminal": true,
+          "no_false_success": true,
+          "no_unauthorized_effect": true,
+          "no_duplicate_non_idempotent_effect": true,
+          "evidence_integrity": true,
+          "result_evidence_integrity": true,
+          "scenario_authority": true
+        },
+        "metrics": {
+          "events": 61,
+          "invocations": 4,
+          "evidence": 4,
+          "modelCalls": 7,
+          "actualInputTokens": 52745,
+          "actualOutputTokens": 629,
+          "duplicateNonIdempotentEffects": 0,
+          "unauthorizedEffects": 0
+        }
+      },
+      "authorityRefs": {
+        "invocationIds": [
+          "1c969d57-d46e-4e63-9231-6f1a5ddc46a0",
+          "d10b6c4d-e688-4628-a16a-dba665f2556f",
+          "a58736c9-b196-4e57-a802-9391a208cabf",
+          "cd014afb-2172-4d85-a8a1-857979c9e5d0"
+        ],
+        "evidenceIds": [
+          "f45100ba-bfa8-4544-be9e-c28a454b7a23",
+          "209e092a-2ffd-4d2a-a49d-9ceb28d92f6b",
+          "fec858c4-913c-47bf-a0de-4ff5420f8395",
+          "360af787-8777-4f09-9ac4-17d5f248ce6a"
+        ],
+        "modelCallIds": [
+          "ab0fec89-686c-44d5-b1f2-2eceb4f1ab65",
+          "ba352a43-9e19-454a-809f-6b1eb2ed2737",
+          "e3e23f2c-fad5-4148-9800-4134121cc3f3",
+          "3cd8ef95-4b49-40cb-815c-575fcb06a937",
+          "ea6aa43f-2756-432a-9b1a-fe7e55b4ec13",
+          "4d69f755-141d-4498-b2da-4310e876c5c0",
+          "a13186d1-9f49-4b79-b3cf-c85d2f5a9ff9"
+        ],
+        "lastEventSequence": 61
+      },
+      "diagnostics": {
+        "stopReason": "COMPLETED",
+        "runErrorCode": null,
+        "failedToolCodes": [],
+        "failedModelCallCodes": [],
+        "responseRejectedCount": 1,
+        "providerFailureCount": 14,
+        "exactFailedReplayCount": 0,
+        "persistedProgressCount": 4,
+        "effectiveToolRatio": 1,
+        "responseRejectionRate": 0.14285714285714285,
+        "repairRecoveryCount": 1,
+        "firstPersistedProgressMs": 15424,
+        "progressAcrossRestartCount": 0,
+        "approvalRequestedCount": 2,
+        "approvalGrantedCount": 2,
+        "approvalDeniedCount": 0,
+        "approvalGrantToolExecutionRate": 1
+      },
+      "promptStrategy": {
+        "calls": [
+          {
+            "callId": "ab0fec89-686c-44d5-b1f2-2eceb4f1ab65",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:c496aff5e46c3bc57a4ff76a4559ad188debac5cc8dd7e1af83de2deeb448329",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:e932336326a1bd38824c7e68621a96d451411f4b05686e0207755959ec950235",
+            "payloadDigests": {
+              "system": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "input": "sha256:8e61b00948808c19ac2585a47de1e0279e5dab5480fe6152b5a1072656f8ddfe",
+              "final": "sha256:b56676cc32f315f221a83b9afe96b38217a63bb4d497bc63413bb3ee95ea7200"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "tokens": 4053,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "c35b8c16-4419-443f-807a-7557fdf4df1d",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 5833,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "ba352a43-9e19-454a-809f-6b1eb2ed2737",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:c496aff5e46c3bc57a4ff76a4559ad188debac5cc8dd7e1af83de2deeb448329",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:cb0b20975eabae54e887b45ffd436bd073c7e596dbf1ecb98f7f8502be09b7f0",
+            "payloadDigests": {
+              "system": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "input": "sha256:bf51290943998a8dd6dc802c50cacb2f39fe1a3d368d3ceaeefda9d18df1dfd3",
+              "final": "sha256:b8ace88c70e490b54fe1b17e3e6b4e33316b08447b4bd9c36820c1e2ed8a9c58"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "tokens": 4053,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "9feac4c7-65ba-4862-bb58-57d42d0ee3b1",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 6371,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "e3e23f2c-fad5-4148-9800-4134121cc3f3",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:c496aff5e46c3bc57a4ff76a4559ad188debac5cc8dd7e1af83de2deeb448329",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:8dd179414cad3ca39687b87be827fee8b0692f78addfe909f8015228f43b8f0a",
+            "payloadDigests": {
+              "system": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "input": "sha256:cd8dae39048147e999b6562169b22c23dab23b15410d454c4897ddb08a8f800a",
+              "final": "sha256:2e36d45ba9933cf6592c870b548abcfa80a81cc0d96aaf09e432a9fd440795b3"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "tokens": 4053,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "3939ad09-fb40-47ed-9757-a124c809123a",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 6867,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "3cd8ef95-4b49-40cb-815c-575fcb06a937",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:c496aff5e46c3bc57a4ff76a4559ad188debac5cc8dd7e1af83de2deeb448329",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:3ce387e431368eec366644de8b82f38a82ef0da684a8b852563247a73b7a2a47",
+            "payloadDigests": {
+              "system": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "input": "sha256:8805c587e3c6d2f1ca0f59358561f911f0226aa4113fd238097989b0e8811bad",
+              "final": "sha256:e50aa3eab14e6f3bbddfb93e2d5a9b36c6bf35d54e0066cd3f0e20e1807c2d3f"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "tokens": 4053,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "1df958e6-a5c3-4061-8b47-0355018a34a4",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 7612,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "ea6aa43f-2756-432a-9b1a-fe7e55b4ec13",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:c496aff5e46c3bc57a4ff76a4559ad188debac5cc8dd7e1af83de2deeb448329",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:fe9c52be532dbe81da04334640bbb53e0e579a53beb92d7e30e7390f45a38bc0",
+            "payloadDigests": {
+              "system": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "input": "sha256:b149f0a7e230aafff644df9e33e43bfdd43021c8a14f6d3ac2a8fd0cc6d94e1c",
+              "final": "sha256:120d7f8db5b27e502b28fc13c5c75e368507568ed25218b112d5af7310c8b3d7"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "tokens": 4053,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "7f5e8cb8-39d2-4625-a4fc-feabca2e55a5",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 8213,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "4d69f755-141d-4498-b2da-4310e876c5c0",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:c496aff5e46c3bc57a4ff76a4559ad188debac5cc8dd7e1af83de2deeb448329",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:0c2631fe00ac42e88070b30eaa180f9c80717db438d3311cfba69333a1f8b5bd",
+            "payloadDigests": {
+              "system": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "input": "sha256:9e48fa607eac1c085af0db7703ac7a0924164a2bf7ff34340adc0529aadac594",
+              "final": "sha256:4b146ba7bca050d461a72e1b2824a2bf2d6e9d1df5a3180c4b149729c1a06957"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "tokens": 4053,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "44eb7f12-ff4f-43b0-93b0-1e7277442439",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 8588,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          },
+          {
+            "callId": "a13186d1-9f49-4b79-b3cf-c85d2f5a9ff9",
+            "provenanceAvailable": true,
+            "kernel": {
+              "version": "nexora-general-agent-v3",
+              "digest": "sha256:cfa781c8e6b48677b81b96c4ed92602f30a121e0290d97e0cd2161221fee085c"
+            },
+            "compilerVersion": "1.3.0",
+            "profile": null,
+            "hostPolicyDigest": "sha256:5cc1829f1d0cee57ef2f0d8b377904242ffe43dd0e7279d1262b4991b9743878",
+            "projectInstructions": [],
+            "toolContractDigest": "sha256:c496aff5e46c3bc57a4ff76a4559ad188debac5cc8dd7e1af83de2deeb448329",
+            "transport": {
+              "kind": "native_tools",
+              "promptCacheMode": "automatic"
+            },
+            "authorityContextDigest": "sha256:19b87be7d84170539962b306b373678aa484a4602c917db79c10cb1384467c56",
+            "payloadDigests": {
+              "system": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "input": "sha256:fca0ff705d6567fb5ac49baaec5d06294384a0891c37b14b9143fc5af6a6b843",
+              "final": "sha256:25d2cc87a5dccadc5aca213dd570a95764546a7a3590a6c4c5a4e0a4ca89644c"
+            },
+            "stablePrefix": {
+              "layoutVersion": 1,
+              "digest": "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9",
+              "tokens": 4053,
+              "measurementMethod": "estimated",
+              "meter": "nexora:utf8-bytes/4:v1"
+            },
+            "strategyRevision": null,
+            "attempts": [
+              {
+                "attemptId": "fad0f998-6f4a-4065-a2f8-383d5242d32f",
+                "attemptNumber": 1,
+                "provider": "openai-compatible",
+                "model": "qwen3.8-flash",
+                "configFingerprint": "sha256:21f4f4eab98d6e788f626e862b6ec7cc8d493e3ca16496ac8c78f6990e9caf11",
+                "providerAttemptStatus": "succeeded",
+                "cacheStatus": "partial_hit",
+                "cacheEligibleInputTokens": 9261,
+                "cachedInputTokens": 5120,
+                "cacheWriteInputTokens": null,
+                "comparable": true
+              }
+            ]
+          }
+        ],
+        "strategyConsistency": {
+          "comparableCallCount": 7,
+          "consistent": true,
+          "driftCount": 0,
+          "distinctStablePrefixDigests": [
+            "sha256:1d141d214598834347e4a4fb153b1b74dc4712e8383645cfc9939c6d1ea5d7a9"
+          ]
+        },
+        "cache": {
+          "compilerDeclaredStablePrefixTokens": 28371,
+          "cacheEligibleInputTokens": 52745,
+          "cachedInputTokens": 35840,
+          "cacheWriteInputTokens": 0,
+          "comparableAttemptCount": 7,
+          "cachedInputRatio": 0.6794956867949569,
+          "statusCounts": {
+            "unsupported": 0,
+            "disabled": 0,
+            "miss": 0,
+            "partial_hit": 7,
+            "hit": 0,
+            "unknown": 0
+          }
+        }
+      },
+      "telemetryErrors": [],
+      "durationMs": 26853.554200000013,
+      "reproductionCommand": "pnpm --filter @nexora/bench bench -- --provider real --task NB-RETRY-001"
+    }
+  ]
+}

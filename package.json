@@ -24,11 +24,20 @@
     "benchmark:context-memory:provider": "node --env-file=.env --import tsx tests/benchmarks/context-memory-provider-v1.ts",
     "canary:context-memory": "node --env-file=.env --import tsx tests/canaries/context-memory-continuity.ts",
     "canary:provider-frontend": "node --env-file=.env --import tsx tests/canaries/provider-native-frontend.ts",
+    "canary:coding-strategy-ab": "node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts",
+    "canary:coding-execution-cadence-ab": "node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts --suite ab --variant coding --cadence both --output docs/coding-execution-cadence-v0.1-ab-results.json",
+    "canary:autonomous-coding-primary": "node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts --suite primary",
+    "canary:task-scope-authority": "node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts --suite primary --variant coding --feature task-scope-authority-v0.1 --output docs/task-scope-authority-v0.1-real-provider.json",
+    "canary:autonomous-coding-reliability": "node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts --suite reliability",
+    "canary:office-docx": "node --env-file=.env --import tsx tests/canaries/office-docx-real-provider.ts",
+    "canary:office-multi-format": "node --env-file=.env --import tsx tests/canaries/office-multi-format-real-provider.ts",
+    "canary:existing-office": "node --import tsx tests/canaries/existing-office-real-app-uat.ts",
     "canary:qwen-multi-agent": "node --env-file=.env --import tsx tests/canaries/supervisor-real-qwen-multi-agent.ts",
     "nexora": "node --import tsx apps/cli/src/index.ts",
     "desktop": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop start",
     "desktop:uat": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop uat",
-    "desktop:uat:deterministic": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop uat:deterministic"
+    "desktop:uat:deterministic": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop uat:deterministic",
+    "desktop:uat:recovery": "pnpm --filter @nexora/runtime build && pnpm --filter @nexora/harness build && pnpm --filter @nexora/desktop uat:recovery"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",

@@ -1,0 +1,510 @@
+$ node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts --suite primary --variant coding --output docs/task-scope-authority-v0.1-real-provider.json
+{
+  "schemaVersion": 2,
+  "feature": "autonomous-coding-execution-v0.1",
+  "suite": "primary",
+  "createdAt": "2026-09-01T15:43:46.397Z",
+  "model": "Qwen 3.8 Flash",
+  "providerModelId": "qwen3.8-flash",
+  "provider": "openai-compatible",
+  "transport": "native_tools",
+  "invariantInputs": {
+    "runtime": "Nexora Runtime through createAgent",
+    "tools": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search",
+      "filesystem.write",
+      "filesystem.patch",
+      "process.start",
+      "process.inspect",
+      "process.logs",
+      "process.stop",
+      "shell.execute",
+      "git.status",
+      "git.diff",
+      "git.show"
+    ],
+    "budgets": {
+      "maxIterations": 32,
+      "maxModelCalls": 32,
+      "maxToolCalls": 24,
+      "maxRetries": 3,
+      "maxDurationMs": 720000
+    },
+    "codingStrategy": "auto"
+  },
+  "samples": [
+    {
+      "label": "primary",
+      "scenario": "greenfield",
+      "prompt": "请在这个空工作区中创建一个个人探索日志 Web 应用。必须支持添加、编辑、删除记录，按文本搜索，按类别筛选，刷新后通过本地持久化保留数据，并提供基本可用的界面。其他细节由你判断。",
+      "expectedTaskShape": "greenfield",
+      "strategy": "auto",
+      "hybridContext": "on",
+      "codingExecutionCadence": "on",
+      "executionUnitStarts": [
+        {
+          "sequence": 26,
+          "modelDecisionId": "37ccd48a-6ffc-4729-b731-6af501b92a03",
+          "executionUnitId": "08aa68a1-e3c7-4ec2-8e3e-6446e66bbf53",
+          "intendedToolCalls": 2
+        }
+      ],
+      "executionUnitCompletions": [
+        {
+          "sequence": 28,
+          "modelDecisionId": "37ccd48a-6ffc-4729-b731-6af501b92a03",
+          "executionUnitId": "08aa68a1-e3c7-4ec2-8e3e-6446e66bbf53",
+          "stopReason": "APPROVAL_REQUIRED",
+          "linkedToolInvocations": []
+        },
+        {
+          "sequence": 32,
+          "modelDecisionId": "37ccd48a-6ffc-4729-b731-6af501b92a03",
+          "executionUnitId": "ffa7756f-ca49-4425-b75e-6f87b353cd39",
+          "stopReason": "OUTCOME_BOUNDARY",
+          "linkedToolInvocations": [
+            "397d28a7-2458-4364-8cd8-2361e922bf58"
+          ]
+        }
+      ],
+      "maxIntendedToolCalls": 2,
+      "maxLinkedToolInvocations": 1,
+      "realBoundedUnitObserved": false,
+      "strategyRouting": {
+        "sequence": 2,
+        "strategyProfile": "coding",
+        "activationReason": "user_intent_is_software_engineering",
+        "confidence": "high",
+        "codingTaskShape": "greenfield"
+      },
+      "strategyRoutingTurns": [
+        {
+          "sequence": 2,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 13,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 21,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 33,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        }
+      ],
+      "routingCorrect": true,
+      "runId": "a45bfeb3-3b33-46c6-bfde-a0b230360514",
+      "status": "blocked",
+      "stopReason": "PROVIDER_UNAVAILABLE",
+      "durationMs": 333636,
+      "modelCalls": 4,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "callId": "e47ad7a2-02a2-49f0-94d0-f571e48900c3",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 7683,
+          "actualInputTokens": 11008,
+          "actualOutputTokens": 822,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 2,
+          "callId": "440be9e8-670a-4edc-8f32-91d40afad37c",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 8101,
+          "actualInputTokens": 11818,
+          "actualOutputTokens": 5684,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 3,
+          "callId": "0dc39447-0a90-4aa6-b0ee-5d5e0604ecd8",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 10860,
+          "actualInputTokens": 14997,
+          "actualOutputTokens": 5027,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 4,
+          "callId": "018ca7bc-fb83-4ad6-b9c5-d55a497b900f",
+          "status": "failed",
+          "errorCode": "PROVIDER_ERROR",
+          "measuredInputTokens": 12694,
+          "actualInputTokens": null,
+          "actualOutputTokens": null,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 3,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "timingDiagnostics": [
+        {
+          "callId": "e47ad7a2-02a2-49f0-94d0-f571e48900c3",
+          "sequence": 1,
+          "controlState": {
+            "phase": "INITIAL_PLANNING",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": null,
+          "requestDecisionStartedAt": "2026-09-01T15:38:12.780Z",
+          "promptContextBuildMs": 7,
+          "providerWaitGenerationMs": 9197,
+          "responseParseValidationMs": 25,
+          "approvalWaitMs": 0,
+          "linkedTools": [
+            {
+              "invocationId": "884b24c1-d7ac-4366-8540-a103b81e503b",
+              "toolName": "filesystem.list",
+              "startedAt": "2026-09-01T15:38:22.059Z",
+              "endedAt": "2026-09-01T15:38:22.203Z",
+              "durationMs": 144
+            }
+          ],
+          "nextLoopOverheadMs": 92,
+          "modelDecisionMs": 9231
+        },
+        {
+          "callId": "440be9e8-670a-4edc-8f32-91d40afad37c",
+          "sequence": 2,
+          "controlState": {
+            "phase": "INITIAL_PLANNING",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": null,
+          "requestDecisionStartedAt": "2026-09-01T15:38:22.295Z",
+          "promptContextBuildMs": 17,
+          "providerWaitGenerationMs": 108269,
+          "responseParseValidationMs": 7,
+          "approvalWaitMs": 0,
+          "linkedTools": [],
+          "nextLoopOverheadMs": 182,
+          "modelDecisionMs": 108542
+        },
+        {
+          "callId": "0dc39447-0a90-4aa6-b0ee-5d5e0604ecd8",
+          "sequence": 3,
+          "controlState": {
+            "phase": "EXECUTION",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [
+              "交付静态页面结构与样式：表单、搜索/筛选工具栏、日志列表容器，浏览器可直接打开",
+              "实现记录的新增、编辑、删除闭环（含表单校验、编辑态提示与取消）",
+              "实现关键词搜索与类别筛选的组合过滤逻辑及空状态提示",
+              "实现 localStorage 持久化：启动加载、变更后写入、损坏数据容错与存储不可用提示",
+              "验证交付文件语法与完整性"
+            ],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-09-01T15:40:11.036Z",
+          "promptContextBuildMs": 44,
+          "providerWaitGenerationMs": 33818,
+          "responseParseValidationMs": 4,
+          "approvalWaitMs": 57,
+          "linkedTools": [
+            {
+              "invocationId": "397d28a7-2458-4364-8cd8-2361e922bf58",
+              "toolName": "filesystem.write",
+              "startedAt": "2026-09-01T15:40:45.220Z",
+              "endedAt": "2026-09-01T15:40:45.239Z",
+              "durationMs": 19
+            }
+          ],
+          "nextLoopOverheadMs": 219,
+          "modelDecisionMs": 33934
+        },
+        {
+          "callId": "018ca7bc-fb83-4ad6-b9c5-d55a497b900f",
+          "sequence": 4,
+          "controlState": {
+            "phase": "EXECUTION",
+            "completedOutcomes": [
+              "交付静态页面结构与样式：表单、搜索/筛选工具栏、日志列表容器，浏览器可直接打开"
+            ],
+            "unfinishedOutcomes": [
+              "实现记录的新增、编辑、删除闭环（含表单校验、编辑态提示与取消）",
+              "实现关键词搜索与类别筛选的组合过滤逻辑及空状态提示",
+              "实现 localStorage 持久化：启动加载、变更后写入、损坏数据容错与存储不可用提示",
+              "验证交付文件语法与完整性"
+            ],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-09-01T15:40:45.458Z",
+          "promptContextBuildMs": 30,
+          "providerWaitGenerationMs": 180055,
+          "responseParseValidationMs": null,
+          "approvalWaitMs": 0,
+          "linkedTools": [],
+          "nextLoopOverheadMs": null,
+          "modelDecisionMs": 180860
+        }
+      ],
+      "responseRejections": [],
+      "toolCalls": 2,
+      "effectiveToolsPerModelDecision": 0.5,
+      "failedTools": 0,
+      "effectiveToolRatio": 1,
+      "toolNames": [
+        "filesystem.list",
+        "filesystem.write"
+      ],
+      "planOutcomes": 5,
+      "planObjectives": [
+        "交付静态页面结构与样式：表单、搜索/筛选工具栏、日志列表容器，浏览器可直接打开",
+        "实现记录的新增、编辑、删除闭环（含表单校验、编辑态提示与取消）",
+        "实现关键词搜索与类别筛选的组合过滤逻辑及空状态提示",
+        "实现 localStorage 持久化：启动加载、变更后写入、损坏数据容错与存储不可用提示",
+        "验证交付文件语法与完整性"
+      ],
+      "taskScope": {
+        "taskShape": "greenfield",
+        "requiredOutcomes": [
+          {
+            "id": "ui",
+            "description": "提供基本可用的静态页面界面：记录表单、工具栏（搜索/筛选）、日志列表与样式，浏览器直接打开 index.html 即可使用",
+            "source": "user_explicit"
+          },
+          {
+            "id": "crud",
+            "description": "用户可通过界面添加、编辑和删除探索记录，列表与计数即时更新",
+            "source": "user_explicit"
+          },
+          {
+            "id": "search_filter",
+            "description": "用户可按关键词搜索记录，并按类别筛选记录，两者可组合使用",
+            "source": "user_explicit"
+          },
+          {
+            "id": "persistence",
+            "description": "记录保存在浏览器 localStorage 中，页面刷新后数据、类别与编辑状态行为正确恢复",
+            "source": "user_explicit"
+          },
+          {
+            "id": "verified",
+            "description": "交付文件的语法与完整性经过验证（JS 语法检查通过，三个文件内容与设计一致）",
+            "source": "agent_inferred"
+          }
+        ],
+        "assumptions": [
+          {
+            "description": "技术栈为原生 HTML/CSS/JavaScript 静态文件，无构建工具、无后端、无第三方依赖",
+            "source": "agent_inferred"
+          },
+          {
+            "description": "界面文案使用中文，记录字段为：标题（必填）、类别、日期、内容",
+            "source": "agent_inferred"
+          },
+          {
+            "description": "持久化键为 localStorage 的 exploration-log.entries.v1，读取时对损坏数据做容错",
+            "source": "agent_inferred"
+          },
+          {
+            "description": "Host canary 限制：不启动常驻服务器，也不运行临时脚本，只做文件写入与有界语法检查",
+            "source": "workspace_fact"
+          }
+        ],
+        "excludedScope": [
+          "导入/导出、备份与撤销功能",
+          "多设备同步、云端后端或账号系统",
+          "图片/附件上传与富文本编辑器",
+          "自动化测试框架、打包器、开发服务器",
+          "键盘快捷键与国际化多语言"
+        ],
+        "completionCriteria": [
+          "工作区存在 index.html、styles.css、app.js 三个文件且相互引用正确",
+          "app.js 通过 node --check 语法检查",
+          "代码中可实现并验证：新增/编辑/删除、关键词搜索、类别筛选、localStorage 读写与损坏容错",
+          "无外部网络依赖（无 CDN 脚本或字体）"
+        ],
+        "resolutionMode": "shape"
+      },
+      "optionalOutcomes": [],
+      "scopeExpansionRate": 0,
+      "verificationCalls": 0,
+      "usefulVerificationCalls": 0,
+      "verificationEfficiency": null,
+      "repeatedStrategy": 0,
+      "repeatedStrategyCount": 0,
+      "planRevisionCount": 0,
+      "sameFileEditCount": 0,
+      "fileEditCounts": {
+        "index.html": 1
+      },
+      "noProgress": false,
+      "noProgressCount": 0,
+      "blockedCount": 1,
+      "noProgressRecoverySucceeded": false,
+      "timeToFirstToolMs": 9303,
+      "timeToFirstEditMs": 152464,
+      "timeToFirstVerificationMs": null,
+      "firstCoreOutcomeSatisfiedMs": null,
+      "allCoreOutcomesSatisfiedMs": null,
+      "completionAttempted": false,
+      "completionAttemptCount": 0,
+      "firstCompletionAttemptMs": null,
+      "terminalTimeMs": 333612,
+      "approvalsGranted": 1,
+      "approvalsDenied": 0,
+      "files": [
+        "index.html"
+      ],
+      "coreRequirements": {
+        "add": true,
+        "edit": true,
+        "delete": true,
+        "search": false,
+        "filter": false,
+        "persistence": false
+      },
+      "coreCompletionRate": 0.5,
+      "syntaxExitCode": 1,
+      "falseSuccess": false,
+      "lastError": {
+        "code": "PROVIDER_UNAVAILABLE",
+        "message": "Provider did not return response headers for 60000ms.",
+        "retryable": true
+      },
+      "summary": "Completed 1 planned item(s) and preserved 2 confirmed fact(s) before PROVIDER_UNAVAILABLE."
+    }
+  ],
+  "aggregate": {
+    "sampleCount": 1,
+    "completionRate": 0,
+    "validatedSampleRate": 0,
+    "falseSuccessCount": 0,
+    "routingCorrectRate": 1,
+    "averageTimeToFirstToolMs": 9303,
+    "averagePlanRevisionCount": 0,
+    "averageRepeatedEditCount": 0,
+    "averageEffectiveToolRatio": 1,
+    "averageScopeExpansionRate": 0,
+    "noProgressCount": 0,
+    "noProgressRecoverySuccessCount": 0,
+    "blockedCount": 1
+  },
+  "validated": false
+}
+[ELIFECYCLE] Command failed with exit code 1.
+
+EXIT_CODE=1

@@ -7,13 +7,23 @@
     "build": "tsc -p tsconfig.json",
     "start": "pnpm build && electron dist/main.js",
     "uat": "pnpm build && node uat.mjs",
-    "uat:deterministic": "pnpm build && node uat.mjs --deterministic"
+    "uat:deterministic": "pnpm build && node uat.mjs --deterministic",
+    "uat:recovery": "pnpm build && node uat.mjs --deterministic-recovery",
+    "uat:document": "pnpm build && node uat.mjs --deterministic-document"
   },
   "dependencies": {
     "@nexora/harness": "workspace:*",
+    "@xmldom/xmldom": "0.8.11",
+    "docx": "9.7.1",
+    "exceljs": "4.4.0",
+    "fflate": "0.8.2",
+    "pdf-lib": "1.17.1",
+    "pdfkit": "0.20.1",
+    "pptxgenjs": "4.0.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/pdfkit": "0.17.6",
     "electron": "^37.2.6"
   }
 }

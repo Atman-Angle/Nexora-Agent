@@ -1,0 +1,9 @@
+Aggregate Report
+================
+
+Source Values (ordered):
+  ALPHA = 17
+  BETA  = 29
+  GAMMA = 43
+
+Total = 89

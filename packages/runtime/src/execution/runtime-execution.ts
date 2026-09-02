@@ -21,8 +21,10 @@ import {
   type RuntimeServices,
   ToolResultSchema,
   type RuntimeObserver,
+  ToolReconciliationResultSchema,
   type RuntimeTool,
-  type RuntimeToolResult
+  type RuntimeToolResult,
+  type RuntimeToolReconciliationResult
 } from "../runtime-types.js";
 import { RuntimeError, cancellationReason } from "../runtime-error.js";
 import { transitionRunStatus } from "../state-machine.js";
@@ -204,12 +206,12 @@ async function executeDurableToolAttempt(
   let failureDetails: ReturnType<typeof toolFailureDiagnostics>;
   const reused = reusableReadResult(services, invocation, tool, attemptNumber);
   try {
-    const executed = reused?.result ?? await services.withHeartbeat(invocation.runId, () => tool.execute(parsedInput, {
+    const executed = reused?.result ?? await services.withHeartbeat(invocation.runId, () => abortableToolExecution(tool.execute(parsedInput, {
         workspace: services.workspace,
         runId: invocation.runId,
         invocationId: invocation.id,
         signal: services.signal
-      }));
+      }), services.signal));
     failureDetails = toolFailureDiagnostics(executed);
     const returned = ToolResultSchema.parse(executed);
     result = returned.status === "success"
@@ -699,12 +701,12 @@ export async function executeToolInvocation(
   let result: RuntimeToolResult;
   let failureDetails: ReturnType<typeof toolFailureDiagnostics>;
   try {
-    const executed = await services.withHeartbeat(run.runId, () => tool.execute(parsedInput, {
+    const executed = await services.withHeartbeat(run.runId, () => abortableToolExecution(tool.execute(parsedInput, {
         workspace: services.workspace,
         runId: run.runId,
         invocationId: invocation.id,
         signal: services.signal
-      }));
+      }), services.signal));
     failureDetails = toolFailureDiagnostics(executed);
     const returned = ToolResultSchema.parse(executed);
     if (
@@ -882,6 +884,7 @@ function markInvocationUnknownForCancellation(
   const blocked = transitionRunStatus(blockedInput, "blocked", {
     now,
     stopReason: "TOOL_RESULT_UNKNOWN",
+    resumePredicate: { kind: "tool_recovery_decision", invocationIds: [invocation.id] },
     delivery: deriveRunDelivery({
       run: blockedInput,
       outcome: "blocked",
@@ -915,18 +918,28 @@ export async function recoverToolInvocation(
   observer?: RuntimeObserver
 ): Promise<RunSnapshot> {
   let run = runInput;
-  const initialSlice = services.store.readExecutionSlice(run.runId);
-  const initialState = reduceRecoveryState({
-    ...initialSlice,
+  if (decision === undefined) {
+    const unknowns = services.store.readExecutionSlice(run.runId).invocations
+      .filter((invocation) => invocation.status === "unknown");
+    for (const invocation of unknowns) {
+      const tool = services.tools.get(invocation.toolName);
+      if (tool?.reconcile === undefined || tool.contract.execution.reconciliation === undefined) continue;
+      run = await reconcileUnknownInvocation(services, run, invocation, tool, observer);
+    }
+  }
+
+  const currentSlice = services.store.readExecutionSlice(run.runId);
+  const currentState = reduceRecoveryState({
+    ...currentSlice,
     now: services.now(),
     maxAttempts: MAX_TRANSIENT_ATTEMPTS_PER_INVOCATION
   });
-  if (!initialState.valid) {
-    throw new Error(`Persisted Tool execution is corrupt: ${initialState.issues.map(({ code }) => code).join(", ")}`);
+  if (!currentState.valid) {
+    throw new Error(`Persisted Tool execution is corrupt: ${currentState.issues.map(({ code }) => code).join(", ")}`);
   }
 
   if (decision !== undefined) {
-    const invocation = initialSlice.invocations.find(
+    const invocation = currentSlice.invocations.find(
       (item) => item.id === decision.invocationId && item.status === "unknown"
     );
     if (invocation === undefined) {
@@ -935,12 +948,23 @@ export async function recoverToolInvocation(
     return applyRecoveryDecision(services, run, invocation, decision, observer);
   }
 
-  const byId = new Map(initialSlice.invocations.map((invocation) => [invocation.id, invocation]));
-  for (const action of initialState.actions) {
+  const byId = new Map(currentSlice.invocations.map((invocation) => [invocation.id, invocation]));
+  for (const action of currentState.actions) {
     if (action.type !== "require_confirmation") continue;
     const invocation = byId.get(action.invocationId);
     if (invocation === undefined || invocation.status === "unknown") continue;
     run = markInvocationUnknownForRecovery(services, run, invocation, observer);
+  }
+
+  // An interrupted non-idempotent Invocation is marked unknown above. Give
+  // the Tool's reconciliation capability the same automatic first chance as
+  // an Invocation that was already persisted as unknown.
+  const newlyUnknown = services.store.readExecutionSlice(run.runId).invocations
+    .filter((invocation) => invocation.status === "unknown");
+  for (const invocation of newlyUnknown) {
+    const tool = services.tools.get(invocation.toolName);
+    if (tool?.reconcile === undefined || tool.contract.execution.reconciliation === undefined) continue;
+    run = await reconcileUnknownInvocation(services, run, invocation, tool, observer);
   }
 
   const slice = services.store.readExecutionSlice(run.runId);
@@ -1070,6 +1094,99 @@ export async function recoverToolInvocation(
   return run;
 }
 
+async function reconcileUnknownInvocation(
+  services: RuntimeServices,
+  run: RunSnapshot,
+  invocation: ToolInvocation,
+  tool: RuntimeTool,
+  observer?: RuntimeObserver
+): Promise<RunSnapshot> {
+  const capability = tool.contract.execution.reconciliation;
+  if (capability === undefined || tool.reconcile === undefined) return run;
+  const parsedInput = tool.contract.execution.inputSchema.parse(invocation.inputJson);
+  let result: RuntimeToolReconciliationResult;
+  try {
+    result = ToolReconciliationResultSchema.parse(await services.withHeartbeat(
+      run.runId,
+      () => tool.reconcile!(parsedInput, {
+        workspace: services.workspace,
+        runId: run.runId,
+        invocationId: invocation.id,
+        signal: services.signal
+      })
+    ));
+  } catch {
+    // A failed reconciliation is not evidence of a failed effect. Preserve the
+    // unknown Invocation and the existing confirmation-only safety path.
+    return run;
+  }
+  if (result.status === "indeterminate") return run;
+
+  const facts = JsonValueSchema.parse(tool.contract.evidence.factsSchema.parse(result.facts));
+  const factDigest = digestCanonicalJson(facts);
+  const evidence: Evidence = {
+    id: services.createId(),
+    kind: result.status === "confirmed_succeeded" ? "tool_result" : "state_assertion",
+    source: "tool",
+    producedAt: services.now(),
+    planVersion: invocation.planVersion,
+    stepId: invocation.stepId,
+    checkId: result.status === "confirmed_succeeded"
+      ? (matchingToolResultCheckIds(run, invocation.stepId, invocation.toolName, invocation.checkIds, invocation.id)[0]
+        ?? `reconciliation:${invocation.id}`)
+      : `reconciliation:${invocation.id}`,
+    subjectRef: result.subjectRef,
+    invocationId: invocation.id,
+    artifactRef: null,
+    digest: factDigest
+  };
+  const evidenceList = [...run.evidence, evidence];
+  const nextBase = RunSnapshotSchema.parse({
+    ...run,
+    evidence: evidenceList,
+    stepProgress: result.status === "confirmed_succeeded" && run.currentPlan !== null
+      ? completeSatisfiedSteps(run.currentPlan, run.stepProgress, evidenceList)
+      : run.stepProgress,
+    lastError: null,
+    updatedAt: services.now()
+  });
+  const next = transitionRunStatus(nextBase, "running", { now: services.now() });
+  const resolved = services.store.resolveUnknownToolInvocationAndCommitRun({
+    invocationId: invocation.id,
+    status: result.status === "confirmed_succeeded" ? "succeeded" : "failed",
+    resolution: { reconciliation: result.status, facts },
+    payloadDigest: factDigest,
+    previous: run,
+    next,
+    fencingToken: services.fencingToken(run.runId),
+    event: {
+      type: "tool.reconciled",
+      occurredAt: services.now(),
+      payload: {
+        invocationId: invocation.id,
+        toolName: invocation.toolName,
+        status: result.status,
+        evidenceId: evidence.id,
+        replay: result.status === "confirmed_no_effect" && capability.replay === "after_no_effect"
+      }
+    }
+  });
+  services.notify(run.runId, observer);
+  if (result.status === "confirmed_succeeded") return resolved.run;
+  if (capability.replay !== "after_no_effect") return resolved.run;
+
+  const replayAction: CallToolAction = {
+    type: "call_tool",
+    stepId: invocation.stepId,
+    checkIds: invocation.checkIds,
+    toolName: invocation.toolName,
+    input: parsedInput
+  };
+  // The exact action was already approved before it became unknown. Passing
+  // approved=true reuses that decision; it does not broaden Tool policy.
+  return callTool(services, resolved.run, replayAction, observer, true);
+}
+
 function markInvocationUnknownForRecovery(
   services: RuntimeServices,
   run: RunSnapshot,
@@ -1090,6 +1207,7 @@ function markInvocationUnknownForRecovery(
     ? RunSnapshotSchema.parse({
         ...blockedInput,
         stopReason: "TOOL_RESULT_UNKNOWN",
+        resumePredicate: { kind: "tool_recovery_decision", invocationIds: [invocation.id] },
         delivery: deriveRunDelivery({
           run: blockedInput,
           outcome: "blocked",
@@ -1101,6 +1219,7 @@ function markInvocationUnknownForRecovery(
     : transitionRunStatus(blockedInput, "blocked", {
         now,
         stopReason: "TOOL_RESULT_UNKNOWN",
+        resumePredicate: { kind: "tool_recovery_decision", invocationIds: [invocation.id] },
         delivery: deriveRunDelivery({
           run: blockedInput,
           outcome: "blocked",
@@ -1178,6 +1297,12 @@ function applyRecoveryDecision(
           ...resolvedInput,
           status: "blocked",
           stopReason: "TOOL_RESULT_UNKNOWN",
+          resumePredicate: {
+            kind: "tool_recovery_decision",
+            invocationIds: services.store.listToolInvocations(runInput.runId)
+              .filter((item) => item.status === "unknown" && item.id !== invocation.id)
+              .map((item) => item.id)
+          },
           lastError: {
             code: "TOOL_RESULT_UNKNOWN",
             message: "Another non-idempotent Tool result still requires confirmation.",
@@ -1246,6 +1371,12 @@ function applyRecoveryDecision(
           ...base,
           status: "blocked",
           stopReason: "TOOL_RESULT_UNKNOWN",
+          resumePredicate: {
+            kind: "tool_recovery_decision",
+            invocationIds: services.store.listToolInvocations(runInput.runId)
+              .filter((item) => item.status === "unknown" && item.id !== invocation.id)
+              .map((item) => item.id)
+          },
           lastError: {
             code: "TOOL_RESULT_UNKNOWN",
             message: "Another non-idempotent Tool result still requires confirmation.",
@@ -1300,4 +1431,28 @@ function matchingToolResultCheckIds(
     ))
     .map((check) => check.id);
   return matching.length === 0 ? [`invocation:${invocationId}`] : matching;
+}
+
+function abortableToolExecution<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return cancellationReason(signal) === "DURATION_BUDGET_EXCEEDED"
+      ? Promise.reject(signal.reason)
+      : operation;
+  }
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => {
+      if (cancellationReason(signal) === "DURATION_BUDGET_EXCEEDED") reject(signal.reason);
+    };
+    signal.addEventListener("abort", aborted, { once: true });
+    void operation.then(
+      (value) => {
+        signal.removeEventListener("abort", aborted);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", aborted);
+        reject(error);
+      }
+    );
+  });
 }

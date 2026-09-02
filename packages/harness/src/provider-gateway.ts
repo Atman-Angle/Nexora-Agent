@@ -23,6 +23,7 @@ import type {
 } from "./providers/model-client.js";
 import type { PromptHostConfiguration } from "./profile.js";
 import { compilePrompt, type CompiledPrompt } from "./prompt.js";
+import { contextSection } from "./context/hybrid-context.js";
 
 export type RequestModelServices = {
   readonly provider: RuntimeProvider;
@@ -31,6 +32,10 @@ export type RequestModelServices = {
   readonly capturePolicy: "metadata" | "redacted";
   readonly promptHost: PromptHostConfiguration;
   readonly publicOutputListener?: AgentPublicOutputListener;
+  /** Eval-only context projection switch; product default is ON. */
+  readonly hybridContext: "on" | "off";
+  /** Eval-only coding cadence switch; product default is ON. */
+  readonly codingExecutionCadence: "on" | "off";
 };
 
 export type RequestModelResult =
@@ -69,16 +74,20 @@ export async function requestModel(
   if (signal.aborted) {
     return { outcome: "failed", run: runInput, error: signal.reason };
   }
+  const requestDecisionStartedAt = services.runtime.now();
   let runForLedger = runInput;
   let effectiveContext = context;
   let effectivePrompt: CompiledPrompt = compilePrompt({
     context: effectiveContext,
     host: services.promptHost,
+    hybridContext: services.hybridContext,
+    codingExecutionCadence: services.codingExecutionCadence,
     transport: services.provider.transport ?? {
       kind: "structured_output",
       promptCache: { mode: "disabled" }
     }
   });
+  let promptCompiledAt = services.runtime.now();
   const strategyConfigurationDigest = effectivePrompt.strategy.configurationDigest;
   try {
     assertStrategyContinuity(services, runInput.runId, effectivePrompt);
@@ -109,6 +118,8 @@ export async function requestModel(
       effectivePrompt = compilePrompt({
         context: effectiveContext,
         host: services.promptHost,
+        hybridContext: services.hybridContext,
+        codingExecutionCadence: services.codingExecutionCadence,
         transport: effectivePrompt.transport,
         strategyConfigurationDigest
       });
@@ -139,10 +150,13 @@ export async function requestModel(
   effectivePrompt = compilePrompt({
     context: effectiveContext,
     host: services.promptHost,
+    hybridContext: services.hybridContext,
+    codingExecutionCadence: services.codingExecutionCadence,
     transport: effectivePrompt.transport,
     measurement: assessment.measurement,
     strategyConfigurationDigest
   });
+  promptCompiledAt = services.runtime.now();
   const now = services.runtime.now();
   const intent: ModelCallIntent = {
     id: services.runtime.createId(),
@@ -173,6 +187,8 @@ export async function requestModel(
     eventType: "model.requested",
     eventPayload: {
       ...eventPayload,
+      requestDecisionStartedAt,
+      promptCompiledAt,
       budgetDecision: assessment.decision,
       measuredInputTokens: assessment.measurement.inputTokens,
       inputTokensBeforeCompaction,
@@ -222,7 +238,7 @@ export async function requestModel(
         let publicReasoning = "";
         let publicContent = "";
         try {
-          const value = await services.provider.decide(effectiveContext, {
+          const value = await abortableProviderDecision(services.provider.decide(effectiveContext, {
             signal,
             compiledPrompt: effectivePrompt,
             reportTokenUsage: (usage) => { attemptUsage = parseProviderTokenUsage(usage); },
@@ -244,7 +260,7 @@ export async function requestModel(
                 });
               }
             })
-          });
+          }), signal);
           if (publicSequence > 0) {
             emitPublicOutput(services.publicOutputListener, {
               type: "text.completed",
@@ -369,6 +385,24 @@ export async function requestModel(
   }
 }
 
+function abortableProviderDecision<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => reject(signal.reason);
+    signal.addEventListener("abort", aborted, { once: true });
+    void operation.then(
+      (value) => {
+        signal.removeEventListener("abort", aborted);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", aborted);
+        reject(error);
+      }
+    );
+  });
+}
+
 function assertStrategyContinuity(
   services: RequestModelServices,
   runId: string,
@@ -461,6 +495,27 @@ function buildContextManifest(
       addDigest(`skill:${skill.id}:instructions`, skill.instructionDigest, skill.trust === "trusted" ? "authority" : "untrusted_external");
     });
   }
+  const sections = {
+    stablePolicy: contextSection(prompt.contextSections.stablePolicy),
+    currentState: contextSection(prompt.contextSections.currentState),
+    recentTrajectory: contextSection(prompt.contextSections.recentTrajectory),
+    workingSet: contextSection(prompt.contextSections.workingSet),
+    olderContext: contextSection(prompt.contextSections.olderContext),
+    toolSchema: contextSection(prompt.contextSections.toolSchema)
+  };
+  const dynamicTokens = sections.currentState.tokens + sections.recentTrajectory.tokens
+    + sections.workingSet.tokens + sections.olderContext.tokens;
+  const staleObservations = context.toolObservations.filter((item) => (
+    (item.repeatCount ?? 1) > 1 || item.payloadMode === "reference"
+  )).length;
+  const repeatedGuidance = new Set<string>();
+  let guidanceCount = 0;
+  let duplicateGuidanceCount = 0;
+  for (const value of [JSON.stringify(prompt.contextSections.stablePolicy), JSON.stringify(prompt.contextSections.currentState)]) {
+    guidanceCount += 1;
+    if (repeatedGuidance.has(value)) duplicateGuidanceCount += 1;
+    repeatedGuidance.add(value);
+  }
   return {
     schemaVersion: 1 as const,
     projectionDigest: context.projection.digest,
@@ -468,7 +523,15 @@ function buildContextManifest(
     measuredInputTokens: assessment.measurement.inputTokens,
     measurementMethod: assessment.measurement.method,
     meter: assessment.measurement.meter,
-    strategy: prompt.strategy
+    strategy: prompt.strategy,
+    sections,
+    quality: {
+      currentStateRatio: dynamicTokens === 0 ? 0 : sections.currentState.tokens / dynamicTokens,
+      staleContextRatio: context.toolObservations.length === 0 ? 0 : staleObservations / context.toolObservations.length,
+      repeatedPolicyRatio: guidanceCount === 0 ? 0 : duplicateGuidanceCount / guidanceCount,
+      trajectoryContinuityCoverage: context.toolObservations.length === 0
+        || (prompt.contextSections.recentTrajectory as readonly unknown[]).length > 0
+    }
   };
 }
 

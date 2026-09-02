@@ -50,13 +50,23 @@ describe("E053 Tool capability and Approval input convergence", () => {
       expect(initial.every((tool) => tool.capability.purpose.length > 0 && tool.decision.useWhen.length > 0 && tool.evidence.produces.length > 0)).toBe(true);
       expect(initial.every((tool) => tool.execution.inputExample !== undefined)).toBe(true);
       expect(shell).toEqual(expect.objectContaining({
-        capability: expect.objectContaining({ purpose: expect.any(String) }),
-        execution: expect.objectContaining({ inputExample: {
-          command: "node",
-          args: ["--test", "test/example.test.js"],
-          cwd: ".",
-          timeoutMs: 60_000
-        } })
+        capability: expect.objectContaining({
+          purpose: expect.stringContaining(`Host process platform ${process.platform}`)
+        }),
+        execution: expect.objectContaining({
+          inputSchema: expect.objectContaining({
+            properties: expect.objectContaining({
+              command: expect.objectContaining({ description: expect.stringContaining("native executable") }),
+              args: expect.objectContaining({ description: expect.stringContaining("separate array item") })
+            })
+          }),
+          inputExample: {
+            command: "node",
+            args: ["--test", "test/example.test.js"],
+            cwd: ".",
+            timeoutMs: 60_000
+          }
+        })
       }));
       expect(active.filter((tool) => tool.execution.inputExample !== undefined).map((tool) => tool.identity.name))
         .toEqual(initial.map((tool) => tool.identity.name));
@@ -264,7 +274,10 @@ async function capabilityProviderStub(): Promise<CapabilityStub> {
       const toolsMarker = "[TOOLS]\n";
       const toolOffset = system.lastIndexOf(toolsMarker);
       if (toolOffset < 0) throw new Error("Compiled Prompt omitted Tool contracts.");
-      const capabilities = JSON.parse(system.slice(toolOffset + toolsMarker.length)) as WireContextTool[];
+      const toolsStart = toolOffset + toolsMarker.length;
+      const nextSegment = system.indexOf("\n[", toolsStart);
+      const toolsText = nextSegment < 0 ? system.slice(toolsStart) : system.slice(toolsStart, nextSegment);
+      const capabilities = JSON.parse(toolsText) as WireContextTool[];
       const context: HttpContext = {
         workingSet: { observations: payload.observationsAndRepair.toolObservations },
         capabilities

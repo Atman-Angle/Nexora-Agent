@@ -4,6 +4,7 @@ export function renderMarkdown(source: string): string {
   let paragraph: string[] = [];
   let list: { ordered: boolean; items: string[] } | null = null;
   let code: { language: string; lines: string[] } | null = null;
+  let table: string[] | null = null;
 
   const flushParagraph = (): void => {
     if (paragraph.length === 0) return;
@@ -19,8 +20,22 @@ export function renderMarkdown(source: string): string {
   const flushCode = (): void => {
     if (code === null) return;
     const language = code.language.replace(/[^A-Za-z0-9_-]/g, "");
-    output.push(`<pre><code${language ? ` class="language-${language}"` : ""}>${escapeHtml(code.lines.join("\n"))}</code></pre>`);
+    output.push(`<figure class="code-block"><figcaption><span>${escapeHtml(language || "代码")}</span><button type="button" class="copy-code" aria-label="复制代码">复制</button></figcaption><pre><code${language ? ` class="language-${language}"` : ""}>${escapeHtml(code.lines.join("\n"))}</code></pre></figure>`);
     code = null;
+  };
+  const flushTable = (): void => {
+    if (table === null || table.length === 0) return;
+    const rows = table.map((row) => row.trim().replace(/^\|\s?/, "").replace(/\s?\|$/, "").split(/\s*\|\s*/));
+    const separator = rows[1];
+    if (separator === undefined || !separator.every((cell) => /^:?-{3,}:?$/.test(cell.trim()))) {
+      output.push(`<p>${table.map((line) => inlineMarkdown(line)).join("<br>")}</p>`);
+      table = null;
+      return;
+    }
+    const header = rows[0] ?? [];
+    const body = rows.slice(2);
+    output.push(`<div class="markdown-table-wrap"><table><thead><tr>${header.map((cell) => `<th>${inlineMarkdown(cell)}</th>`).join("")}</tr></thead><tbody>${body.map((row) => `<tr>${header.map((_cell, index) => `<td>${inlineMarkdown(row[index] ?? "")}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+    table = null;
   };
 
   for (const line of lines) {
@@ -29,6 +44,7 @@ export function renderMarkdown(source: string): string {
       if (code === null) {
         flushParagraph();
         flushList();
+        flushTable();
         code = { language: fence[1] ?? "", lines: [] };
       } else flushCode();
       continue;
@@ -40,6 +56,21 @@ export function renderMarkdown(source: string): string {
     if (line.trim().length === 0) {
       flushParagraph();
       flushList();
+      flushTable();
+      continue;
+    }
+    if (/^\s*\|?.+\|.+\|?\s*$/.test(line)) {
+      flushParagraph();
+      flushList();
+      table ??= [];
+      table.push(line);
+      continue;
+    }
+    flushTable();
+    if (/^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$/u.test(line)) {
+      flushParagraph();
+      flushList();
+      output.push("<hr>");
       continue;
     }
     const heading = /^(#{1,6})\s+(.+)$/.exec(line);
@@ -73,6 +104,7 @@ export function renderMarkdown(source: string): string {
   flushCode();
   flushParagraph();
   flushList();
+  flushTable();
   return output.join("");
 }
 

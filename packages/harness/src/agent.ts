@@ -30,8 +30,10 @@ import {
   resolvePromptHostConfiguration,
   type PromptHostConfiguration
 } from "./profile.js";
+import { planControlState } from "./prompt.js";
 import { DEFAULT_DELEGATION_POLICY, DelegationPolicySchema, type DelegationPolicy } from "./multi-agent.js";
 import { SkillCatalog } from "./skills.js";
+import type { CodingStrategyMode } from "./coding-strategy.js";
 
 export type {
   AgentPublicOutputEvent,
@@ -54,7 +56,18 @@ export function createAgent(options: CreateAgentOptions): RuntimeEngine {
     resolveProviderModelProfile(provider);
     const delegationPolicy = DelegationPolicySchema.parse(options.delegationPolicy ?? DEFAULT_DELEGATION_POLICY);
     const skillCatalog = options.skills === undefined ? null : SkillCatalog.load(options.skills);
-    const driver = createAgentDriver(provider, memory, capturePolicy, promptHost, delegationPolicy, skillCatalog, options.publicOutputListener);
+    const driver = createAgentDriver(
+      provider,
+      memory,
+      capturePolicy,
+      promptHost,
+      delegationPolicy,
+      skillCatalog,
+      options.publicOutputListener,
+      options.codingStrategy ?? "auto",
+      options.hybridContext ?? "on",
+      options.codingExecutionCadence ?? "on"
+    );
     return new RuntimeEngine({
       workspace: options.workspace,
       tools: options.tools,
@@ -132,12 +145,27 @@ function createAgentDriver(
   promptHost: PromptHostConfiguration,
   delegationPolicy: DelegationPolicy,
   skillCatalog: SkillCatalog | null,
-  publicOutputListener: AgentPublicOutputListener | undefined
+  publicOutputListener: AgentPublicOutputListener | undefined,
+  codingStrategy: CodingStrategyMode,
+  hybridContext: "on" | "off",
+  codingExecutionCadence: "on" | "off"
 ): AgentDriver {
   return {
     async run(runtime, initial, signal, observer): Promise<RunResult> {
       return await runAgentLoop(
-        createLoopPort({ runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, skillCatalog, publicOutputListener }),
+        createLoopPort({
+          runtime,
+          provider,
+          memory,
+          capturePolicy,
+          promptHost,
+          delegationPolicy,
+          skillCatalog,
+          publicOutputListener,
+          codingStrategy,
+          hybridContext,
+          codingExecutionCadence
+        }),
         initial,
         signal,
         observer
@@ -158,11 +186,47 @@ function createLoopPort(input: {
   readonly delegationPolicy: DelegationPolicy;
   readonly skillCatalog: SkillCatalog | null;
   readonly publicOutputListener: AgentPublicOutputListener | undefined;
+  readonly codingStrategy: CodingStrategyMode;
+  readonly hybridContext: "on" | "off";
+  readonly codingExecutionCadence: "on" | "off";
 }): AgentLoopRuntimePort {
-  const { runtime, provider, memory, capturePolicy, promptHost, delegationPolicy, skillCatalog, publicOutputListener } = input;
+  const {
+    runtime,
+    provider,
+    memory,
+    capturePolicy,
+    promptHost,
+    delegationPolicy,
+    skillCatalog,
+    publicOutputListener,
+    codingStrategy,
+    hybridContext,
+    codingExecutionCadence
+  } = input;
   return {
     now: () => runtime.now(),
     createId: () => runtime.createId(),
+    requiresTaskContract: (run) => {
+      if (promptHost.hostPolicy?.taskMode === "change") return true;
+      const state = runtime.readState(run.runId);
+      const effectByTool = new Map(state.tools.map((tool) => [
+        tool.contract.identity.name,
+        tool.contract.execution.effect.kind
+      ]));
+      if (state.invocations.some((invocation) => effectByTool.get(invocation.toolName) !== "read")) {
+        return true;
+      }
+      return state.events.some((event) => {
+        if (event.type !== "model.turn" || !Array.isArray(event.payload.toolCalls)) return false;
+        return event.payload.toolCalls.some((call) => {
+          if (typeof call !== "object" || call === null || !("name" in call) || typeof call.name !== "string") {
+            return false;
+          }
+          const effect = effectByTool.get(call.name);
+          return effect !== undefined && effect !== "read";
+        });
+      });
+    },
     buildDecisionContext: (run) => {
       const state = runtime.readState(run.runId);
       return buildDecisionContext({
@@ -178,17 +242,36 @@ function createLoopPort(input: {
         },
         ...(memory === undefined ? {} : { memory, now: runtime.now() }),
         ...(state.forkContext === null ? {} : { forkContext: state.forkContext }),
-        ...(skillCatalog === null ? {} : { skills: skillCatalog.project(state.events) })
+        ...(skillCatalog === null ? {} : { skills: skillCatalog.project(state.events) }),
+        hostTaskMode: promptHost.hostPolicy?.taskMode ?? "infer",
+        codingStrategy
       });
     },
     recordContextRefEvidence: (run, facts, observer) => (
       runtime.recordContextEvidence(run, facts, observer)
     ),
     requestDecision: async (run, context, signal, observer) => await requestModel(
-      gatewayServices(runtime, provider, memory, capturePolicy, promptHost, publicOutputListener),
+      gatewayServices(
+        runtime,
+        provider,
+        memory,
+        capturePolicy,
+        promptHost,
+        publicOutputListener,
+        hybridContext,
+        codingExecutionCadence
+      ),
       run,
       context,
-      { providerContractVersion: context.providerContractVersion },
+      {
+        providerContractVersion: context.providerContractVersion,
+        strategyProfile: context.strategyRouting?.strategyProfile ?? "general",
+        activationReason: context.strategyRouting?.reason ?? "routing_not_projected",
+        confidence: context.strategyRouting?.confidence ?? "low",
+        codingTaskShape: context.strategyRouting?.codingTaskShape ?? null,
+        controlState: planControlState(context),
+        planRevision: context.run.currentPlan?.version ?? null
+      },
       signal,
       observer,
       true
@@ -204,22 +287,157 @@ function createLoopPort(input: {
     blockForProvider: (run, error, observer) => (
       runtime.blockForProvider(run, error, observer)
     ),
-    recordModelResponse: (run, response, compiledActionTypes, observer) => {
+    cadenceMode: codingExecutionCadence,
+    recordModelResponse: (
+      run,
+      response,
+      compiledActionTypes,
+      decisionAudit,
+      observer,
+      argumentNormalizations = []
+    ) => {
+      const normalizationByCall = new Map(argumentNormalizations.map((item) => [item.callId, item]));
       runtime.recordAgentEvent(run.runId, {
         type: "model.turn",
         payload: {
+          modelDecisionId: decisionAudit.modelDecisionId,
+          executionUnitId: decisionAudit.executionUnitId ?? null,
           hasText: response.text !== null,
           finishReason: response.finishReason,
           toolCallCount: response.toolCalls.length,
           controlCallCount: response.toolCalls.filter(isControlCall).length,
           compiledActionTypes,
-          toolCalls: response.toolCalls.map((call) => ({
-            callId: call.callId,
-            name: call.name,
-            arguments: call.arguments
-          }))
+          toolCalls: response.toolCalls.map((call) => {
+            const normalization = normalizationByCall.get(call.callId);
+            return {
+              callId: call.callId,
+              name: call.name,
+              arguments: call.arguments,
+              ...(normalization === undefined ? {} : {
+                providerArguments: normalization.providerArguments,
+                normalizedArguments: normalization.normalizedArguments,
+                argumentNormalization: normalization.changes
+              })
+            };
+          })
         }
       }, observer);
+    },
+    recordExecutionUnit: (runId, event, observer) => {
+      runtime.recordAgentEvent(runId, event, observer);
+    },
+    invocations: (runId) => runtime.readState(runId).invocations.map((invocation) => ({
+      id: invocation.id,
+      status: invocation.status
+    })),
+    resumableExecutionUnit: (run) => {
+      const state = runtime.readState(run.runId);
+      const turn = [...state.events].reverse().find((event) => (
+        event.type === "model.turn"
+        && typeof event.payload.modelDecisionId === "string"
+        && typeof event.payload.executionUnitId === "string"
+      ));
+      if (turn === undefined || !Array.isArray(turn.payload.toolCalls)) return null;
+      if (state.events.some((event) => (
+        event.sequence > turn.sequence
+        && (event.type === "input.received"
+          || (event.type === "run.resumed" && typeof event.payload.inputSequence === "number"))
+      ))) return null;
+      const modelDecisionId = turn.payload.modelDecisionId as string;
+      const completedUnits = state.events.filter((event) => (
+        event.sequence > turn.sequence
+        && event.type === "execution.unit.completed"
+        && event.payload.modelDecisionId === modelDecisionId
+      ));
+      const approvalStops = completedUnits.filter((event) => (
+        event.payload.stopReason === "APPROVAL_REQUIRED"
+      )).length;
+      if (approvalStops === 0 || completedUnits.at(-1)?.payload.stopReason !== "APPROVAL_REQUIRED") {
+        return null;
+      }
+      const invocationById = new Map(state.invocations.map((invocation) => [invocation.id, invocation]));
+      const completedInvocations = state.events
+        .filter((event) => event.sequence > turn.sequence && event.type === "tool.started")
+        .map((event) => typeof event.payload.invocationId === "string"
+          ? invocationById.get(event.payload.invocationId)
+          : undefined)
+        .filter((invocation) => invocation !== undefined);
+      const interrupted = completedInvocations.find((invocation) => (
+        invocation.status === "failed" || invocation.status === "unknown"
+      ));
+      if (interrupted !== undefined) {
+        runtime.recordAgentEvent(run.runId, {
+          type: "execution.unit.completed",
+          payload: {
+            modelDecisionId,
+            executionUnitId: runtime.createId(),
+            linkedToolInvocations: completedInvocations.map((invocation) => invocation.id),
+            unitStart: turn.occurredAt,
+            unitEnd: runtime.now(),
+            stopReason: interrupted.status === "unknown" ? "UNKNOWN_SIDE_EFFECT" : "TOOL_FAILURE"
+          }
+        });
+        return null;
+      }
+      if (
+        completedInvocations.length !== approvalStops
+      ) return null;
+      const registeredTools = new Set(state.tools.map((tool) => tool.contract.identity.name));
+      const calls = turn.payload.toolCalls.flatMap((value) => {
+        if (value === null || typeof value !== "object") return [];
+        const call = value as Record<string, unknown>;
+        if (
+          typeof call.callId !== "string"
+          || typeof call.name !== "string"
+          || !registeredTools.has(call.name)
+          || !("arguments" in call)
+        ) return [];
+        return [{ callId: call.callId, name: call.name, arguments: call.arguments }];
+      });
+      const intendedOutcome = state.events.find((event) => (
+        event.sequence > turn.sequence
+        && event.type === "execution.unit.started"
+        && event.payload.modelDecisionId === modelDecisionId
+        && typeof event.payload.outcomeRef === "string"
+      ))?.payload.outcomeRef;
+      const currentOutcome = run.stepProgress.find((progress) => progress.status === "active")?.stepId ?? null;
+      if (
+        completedInvocations.length < calls.length
+        && typeof intendedOutcome === "string"
+        && currentOutcome !== intendedOutcome
+      ) {
+        runtime.recordAgentEvent(run.runId, {
+          type: "execution.unit.completed",
+          payload: {
+            modelDecisionId,
+            executionUnitId: runtime.createId(),
+            linkedToolInvocations: completedInvocations.map((invocation) => invocation.id),
+            unitStart: turn.occurredAt,
+            unitEnd: runtime.now(),
+            stopReason: "OUTCOME_BOUNDARY"
+          }
+        });
+        return null;
+      }
+      if (completedInvocations.length >= calls.length) {
+        runtime.recordAgentEvent(run.runId, {
+          type: "execution.unit.completed",
+          payload: {
+            modelDecisionId,
+            executionUnitId: runtime.createId(),
+            linkedToolInvocations: completedInvocations.map((invocation) => invocation.id),
+            unitStart: turn.occurredAt,
+            unitEnd: runtime.now(),
+            stopReason: "COMPLETED"
+          }
+        });
+        return null;
+      }
+      return {
+        modelDecisionId,
+        calls: calls.slice(completedInvocations.length),
+        linkedToolInvocations: completedInvocations.map((invocation) => invocation.id)
+      };
     },
     validateSkillSelection: (selection) => {
       if (skillCatalog === null) throw new ActionRejectedError("SKILL_SELECTION_UNAVAILABLE: No Skill catalog is configured for this Agent.");
@@ -265,7 +483,9 @@ function gatewayServices(
   memory: RuntimeMemoryOptions | undefined,
   capturePolicy: "metadata" | "redacted",
   promptHost: PromptHostConfiguration,
-  publicOutputListener: AgentPublicOutputListener | undefined
+  publicOutputListener: AgentPublicOutputListener | undefined,
+  hybridContext: "on" | "off",
+  codingExecutionCadence: "on" | "off"
 ): RequestModelServices {
   return {
     provider,
@@ -273,6 +493,8 @@ function gatewayServices(
     capturePolicy,
     promptHost,
     ...(publicOutputListener === undefined ? {} : { publicOutputListener }),
+    hybridContext,
+    codingExecutionCadence,
     ...(memory === undefined ? {} : { memory })
   };
 }

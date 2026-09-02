@@ -118,6 +118,10 @@ export type TaskReport = {
     readonly repairRecoveryCount: number;
     readonly firstPersistedProgressMs: number | null;
     readonly progressAcrossRestartCount: number;
+    readonly approvalRequestedCount: number;
+    readonly approvalGrantedCount: number;
+    readonly approvalDeniedCount: number;
+    readonly approvalGrantToolExecutionRate: number | null;
   };
   readonly promptStrategy: PromptStrategyReport;
   readonly telemetryErrors: readonly string[];
@@ -268,7 +272,16 @@ function diagnostics(view: RunView): TaskReport["diagnostics"] {
     progressAcrossRestartCount: view.events.filter((item) => (
       item.type === "run.resumed"
       && segmentSequences.some((sequence) => sequence < item.sequence)
-    )).length
+    )).length,
+    approvalRequestedCount: view.events.filter((item) => item.type === "approval.requested").length,
+    approvalGrantedCount: view.events.filter((item) => item.type === "approval.granted").length,
+    approvalDeniedCount: view.events.filter((item) => item.type === "approval.denied").length,
+    approvalGrantToolExecutionRate: (() => {
+      const grants = view.events.filter((item) => item.type === "approval.granted");
+      if (grants.length === 0) return null;
+      const starts = view.events.filter((item) => item.type === "tool.started");
+      return grants.filter((grant) => starts.some((start) => start.sequence > grant.sequence)).length / grants.length;
+    })()
   });
 }
 
@@ -620,12 +633,30 @@ function classifyBoundary(input: {
   if (input.authorityGrade.metrics.unauthorizedEffects > 0) return "APPROVAL";
   if (input.authorityGrade.metrics.duplicateNonIdempotentEffects > 0) return "INVOCATION_RECOVERY";
   if (input.authorityGrade.gates.evidence_integrity === false || input.authorityGrade.gates.result_evidence_integrity === false) return "EVIDENCE";
-  if (input.authorityGrade.gates.no_false_success === false) return "COMPLETION";
+  if (input.authorityGrade.gates.no_false_success === false) return "COMPLETION_CONTRACT";
   if (input.inspection.recovery !== null || input.view.toolInvocations.some((item) => item.status === "unknown")) return "INVOCATION_RECOVERY";
+  if (input.inspection.status === "waiting_for_approval") return "APPROVAL";
+  if (input.view.events.some((item) => item.type === "validation.failed")) return "VALIDATION";
+  const failedToolCodes = input.view.toolInvocations.flatMap((item) => {
+    if (item.status !== "failed" || item.errorJson === null || typeof item.errorJson !== "object") return [];
+    const code = (item.errorJson as { readonly code?: unknown }).code;
+    return typeof code === "string" ? [code] : [];
+  });
+  if (failedToolCodes.some((code) => code === "PROCESS_START_FAILED" || code === "COMMAND_REJECTED")) {
+    return "MODEL_CAPABILITY";
+  }
   if (!input.taskGrade.passed && input.view.toolInvocations.some((item) => item.status === "failed")) return "TOOL_EXECUTION";
   if (!input.taskGrade.passed && input.view.snapshot.status === "blocked") return "PROVIDER_EXTERNAL";
   if (!input.taskGrade.passed) return "TASK_UNDERSTANDING";
-  if (input.authorityGrade.gates.expected_terminal === false) return "COMPLETION";
+  if (input.authorityGrade.gates.expected_terminal === false) {
+    if (input.inspection.stopReason === "NO_PROGRESS_DETECTED") return "CONVERGENCE";
+    if (
+      input.view.snapshot.currentPlan !== null
+      && input.view.snapshot.stepProgress.some((step) => step.status !== "completed")
+    ) return "PLAN";
+    if (input.view.events.some((item) => item.type === "response.rejected")) return "COMPLETION_CONTRACT";
+    return "COMPLETION_CONTRACT";
+  }
   if (input.telemetryErrors.length > 0) return "EVAL_INFRASTRUCTURE";
   return null;
 }
@@ -644,7 +675,14 @@ function expectedFor(boundary: FailureBoundary): string {
     EVIDENCE: "Evidence and Result cite persisted authoritative entities.",
     COMPLETION: "Only independently correct work reaches succeeded and COMPLETED completion.",
     PROVIDER_EXTERNAL: "Provider availability failures remain classified and recoverable without false success.",
-    EFFICIENCY: "The task completes within its fixed budgets without no-progress work."
+    EFFICIENCY: "The task completes within its fixed budgets without no-progress work.",
+    MODEL_CAPABILITY: "The model maps the remaining objective to a valid available capability and contract-shaped input.",
+    TOOL_CONTRACT: "Tool schemas and descriptions expose executable boundaries without ambiguity or conflicting guidance.",
+    PLAN: "The remaining Plan distinguishes source observations, output verification and unfinished outcomes.",
+    VALIDATION: "Required validation executes and its authoritative result reaches the Run.",
+    COMPLETION_CONTRACT: "A legitimate completion proposal satisfies the unchanged deterministic Completion Gate.",
+    CONVERGENCE: "Bounded convergence stops repeated no-progress work without preempting a legal completion path.",
+    PRODUCT_PATH: "The production Host path drives the same Runtime lifecycle and authoritative transitions."
   };
   return descriptions[boundary];
 }

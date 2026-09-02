@@ -26,12 +26,29 @@ export const ModelPlanRemovalSchema = z.object({
 
 export const ModelPlanTaskSchema = z.object({
   objective: NonEmptyString,
+  kind: z.enum(["required_outcome", "supporting"]).optional(),
+  supports: z.array(NonEmptyString).min(1).max(16).optional(),
   checks: z.array(ModelPlanCheckSchema).max(8).optional().default([])
 }).strict();
 export type ModelPlanTask = z.input<typeof ModelPlanTaskSchema>;
 
 export const ModelPlanUpdateSchema = z.object({
   goal: ModelTextSchema.optional(),
+  scope: z.object({
+    taskShape: z.enum(["greenfield", "feature", "bug_fix", "refactor"]),
+    requiredOutcomes: z.array(z.object({
+      id: NonEmptyString,
+      description: NonEmptyString,
+      source: z.enum(["user_explicit", "agent_inferred", "workspace_fact"])
+    }).strict()).min(1).max(32),
+    assumptions: z.array(z.object({
+      description: NonEmptyString,
+      source: z.enum(["user_explicit", "agent_inferred", "workspace_fact"])
+    }).strict()).max(32),
+    excludedScope: z.array(NonEmptyString).max(64),
+    completionCriteria: z.array(NonEmptyString).min(1).max(32),
+    resolutionMode: z.enum(["pass_through", "normalize", "shape"])
+  }).strict().optional(),
   tasks: z.array(ModelPlanTaskSchema).min(1).max(MAX_MODEL_PLAN_TASKS),
   removeSteps: z.array(ModelPlanRemovalSchema).max(32).optional().default([])
 }).strict();
@@ -39,7 +56,8 @@ export type ModelPlanUpdate = z.input<typeof ModelPlanUpdateSchema>;
 
 export const ModelInputRequestSchema = z.object({
   question: NonEmptyString,
-  reason: NonEmptyString
+  reason: NonEmptyString,
+  basis: z.enum(["user_exclusive", "workspace", "tool", "context", "persisted_fact"]).optional()
 }).strict();
 export type ModelInputRequest = z.infer<typeof ModelInputRequestSchema>;
 
@@ -118,6 +136,7 @@ export const modelResponses = Object.freeze({
       UPDATE_PLAN_CONTROL,
       {
         ...(input.goal === undefined ? {} : { goal: input.goal }),
+        ...(input.scope === undefined ? {} : { scope: input.scope }),
         tasks: input.tasks
       },
       input.callId
@@ -135,6 +154,7 @@ export const modelResponses = Object.freeze({
       name: UPDATE_PLAN_CONTROL,
       arguments: {
         ...(input.goal === undefined ? {} : { goal: input.goal }),
+        ...(input.scope === undefined ? {} : { scope: input.scope }),
         tasks: input.tasks
       },
       ...(input.callId === undefined ? {} : { callId: input.callId })

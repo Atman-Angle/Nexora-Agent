@@ -11,7 +11,7 @@
     "digest": "sha256:9f57e4831de384ac3e459bdb8c49d39cd456643f199b83f855041acde4f2821a"
   },
   "scenario": "tasks/NB-CONVERGE-001/scenario.ts",
-  "allowedCapabilities": ["filesystem.read", "filesystem.patch", "shell.execute"],
+  "allowedCapabilities": ["filesystem.list", "filesystem.read", "filesystem.patch", "shell.execute"],
   "budgets": {
     "maxIterations": 18,
     "maxModelCalls": 18,
@@ -21,6 +21,7 @@
   },
   "expectedTerminal": "succeeded",
   "driver": {
+    "approvalPolicy": { "mode": "unattended", "maxApprovals": 10, "rules": [ { "toolName": "filesystem.patch", "decision": "approve", "maxApprovals": 2 }, { "toolName": "shell.execute", "decision": "approve", "maxApprovals": 8 } ] },
     "approvals": [
       { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false },
       { "occurrence": 2, "decision": "approve", "restartBeforeDecision": true },

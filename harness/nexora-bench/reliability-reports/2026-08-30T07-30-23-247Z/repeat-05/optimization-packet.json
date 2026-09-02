@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "primaryCluster": null,
+  "constraints": [
+    "Do not modify the Eval dataset, fixtures, graders, expected results or holdout configuration.",
+    "Fix the first broken boundary without adding task-specific production branches.",
+    "Do not change public Contracts, State Machine, Plan, Invocation, Evidence or Completion authorities without stopping for a decision.",
+    "Keep all edits inside the current Feature scope and follow AGENTS.md, LOOP.md and TESTS.md."
+  ],
+  "acceptanceCommands": []
+}

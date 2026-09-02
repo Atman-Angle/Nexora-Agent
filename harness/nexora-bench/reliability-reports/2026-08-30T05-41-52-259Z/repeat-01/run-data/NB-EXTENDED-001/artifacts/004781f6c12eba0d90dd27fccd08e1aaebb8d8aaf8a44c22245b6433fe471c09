@@ -1,0 +1,1 @@
+{"text":null,"toolCalls":[{"callId":"call_477594cde72c497c92d5a250","name":"filesystem.write","arguments":{"content":"count: 24\ntotal: 300\n","path":"summary.txt"}}],"finishReason":"tool_calls"}

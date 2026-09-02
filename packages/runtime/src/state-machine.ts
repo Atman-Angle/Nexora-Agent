@@ -2,6 +2,7 @@ import {
   RunStatusSchema,
   type RunSnapshot,
   type RunDelivery,
+  type ResumePredicate,
   type RunStatus
 } from "./contracts.js";
 
@@ -20,6 +21,7 @@ export type RunStatusTransitionOptions = {
   readonly pendingRequest?: RunSnapshot["pendingRequest"];
   readonly result?: NonNullable<RunSnapshot["result"]>;
   readonly delivery?: RunDelivery;
+  readonly resumePredicate?: ResumePredicate;
 };
 
 export function assertRunStatusTransition(from: RunStatus, to: RunStatus): void {
@@ -39,6 +41,9 @@ export function transitionRunStatus(
 
   if (nextStatus === "waiting" && options.pendingRequest === undefined) {
     throw new Error("A waiting Run requires a pending request.");
+  }
+  if (nextStatus === "blocked" && options.resumePredicate === undefined) {
+    throw new Error("A new blocked Run requires a typed resume predicate.");
   }
   if (nextStatus === "succeeded") {
     if (options.result === undefined) {
@@ -72,6 +77,7 @@ export function transitionRunStatus(
     delivery: nextStatus === "running" || nextStatus === "waiting"
       ? null
       : options.delivery ?? run.delivery,
+    resumePredicate: nextStatus === "blocked" ? options.resumePredicate! : null,
     updatedAt: options.now
   };
 }

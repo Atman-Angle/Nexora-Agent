@@ -130,6 +130,23 @@ describe("E117 general Agent continuity", () => {
     const workspace = tempRoot();
     let tier = "silver";
     const provider = queuedProvider([
+      modelResponses.plan({
+        goal: "Upgrade customer-42 to gold and confirm the resulting tier.",
+        tasks: [
+          {
+            objective: "Inspect the current customer tier.",
+            checks: [{ toolName: "records.lookup", role: "verification" }]
+          },
+          {
+            objective: "Upgrade customer-42 to gold.",
+            checks: [{ toolName: "records.update", role: "mutation" }]
+          },
+          {
+            objective: "Confirm the resulting customer tier.",
+            checks: [{ toolName: "records.lookup", role: "verification" }]
+          }
+        ]
+      }),
       modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
       modelResponses.tool({ name: "records.update", arguments: { recordId: "customer-42", tier: "gold" } }),
       modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),

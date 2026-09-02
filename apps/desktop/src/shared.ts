@@ -2,6 +2,7 @@ import type {
   AgentPublicOutputEvent,
   AuditHistoryPage,
   RecoveryDecision,
+  RuntimeBudgetExtension,
   RunInspection,
   TextArtifactView
 } from "@nexora/harness";
@@ -42,7 +43,7 @@ export type ModelProfileInput = {
   readonly apiKey?: string;
   readonly model: string;
   readonly contextWindowTokens?: number;
-  readonly activeInputTargetTokens?: number;
+  readonly activeInputTargetTokens?: number | null;
   readonly decisionOutputTokens: number;
   readonly transport: "native_tools" | "structured_output";
   readonly reasoning?: "off" | "dynamic" | "on";
@@ -60,8 +61,31 @@ export type WorkspaceView = {
   readonly selectedModelProfileId: string | null;
 };
 
+export type AttachmentView = {
+  readonly id: string;
+  readonly name: string;
+  readonly workspacePath: string;
+  readonly digest: string;
+  readonly byteLength: number;
+  readonly mediaType: string;
+  readonly kind: "office" | "image" | "pdf";
+  readonly source?: {
+    readonly kind: "folder";
+    readonly id: string;
+    readonly name: string;
+    readonly fileCount: number;
+    readonly totalBytes: number;
+  };
+};
+
+export type DesktopMessageInput = {
+  readonly text: string;
+  readonly attachments: readonly AttachmentView[];
+};
+
 export type SessionRunView = {
   readonly userInput: string;
+  readonly attachments: readonly AttachmentView[];
   readonly inspection: RunInspection;
   readonly history: AuditHistoryPage;
   readonly publicOutputs: readonly PersistedPublicOutput[];
@@ -84,6 +108,38 @@ export type SessionView = {
   readonly inspection: RunInspection;
   readonly history: AuditHistoryPage;
   readonly managedProcesses: readonly ManagedProcessView[];
+  readonly deliverables: readonly DeliverableSummary[];
+};
+
+export type DeliverableSummary = {
+  readonly deliverableId: string;
+  readonly kind: "rich_document";
+  readonly title: string;
+  readonly manifestPath: string;
+  readonly previewPath: string;
+  readonly revision: number;
+  readonly sourceDigest: string;
+  readonly previewDigest: string;
+  readonly files: readonly {
+    readonly format: "docx" | "xlsx" | "pptx" | "pdf";
+    readonly path: string;
+    readonly digest: string;
+    readonly byteLength: number;
+  }[];
+  readonly validation: "passed" | "unavailable";
+  readonly stage: "created" | "imported" | "modified" | "exported";
+  readonly sourceRunId: string;
+  readonly changedBlockIds: readonly string[];
+  readonly preservedBlockCount: number;
+};
+
+export type DeliverablePreview = {
+  readonly deliverableId: string;
+  readonly title: string;
+  readonly revision: number;
+  readonly sourceDigest: string;
+  readonly previewDigest: string;
+  readonly html: string;
 };
 
 export type ManagedProcessView = {
@@ -111,7 +167,7 @@ export type SessionControl =
   | { readonly type: "deny"; readonly requestId: string; readonly reason?: string }
   | { readonly type: "cancel" }
   | { readonly type: "resume" }
-  | { readonly type: "extend_budget" }
+  | { readonly type: "extend_budget"; readonly budgetExtension: RuntimeBudgetExtension }
   | { readonly type: "worker_resume"; readonly branchId: string; readonly childRunId: string }
   | { readonly type: "worker_discard"; readonly branchId: string }
   | { readonly type: "recover"; readonly recovery: RecoveryDecision };
@@ -119,10 +175,14 @@ export type SessionControl =
 export type DesktopBridge = {
   bootstrap(): Promise<DesktopSnapshot>;
   chooseWorkspace(): Promise<DesktopSnapshot | null>;
+  chooseAttachments(): Promise<readonly AttachmentView[]>;
+  chooseAttachmentFolder(): Promise<readonly AttachmentView[]>;
+  stageDroppedAttachments(files: readonly File[]): Promise<readonly AttachmentView[]>;
   addProject(path: string): Promise<DesktopSnapshot>;
+  removeProject(path: string): Promise<DesktopSnapshot>;
   switchProject(path: string): Promise<DesktopSnapshot>;
-  startSession(goal: string): Promise<DesktopSnapshot>;
-  continueSession(sessionId: string, text: string): Promise<DesktopSnapshot>;
+  startSession(input: DesktopMessageInput): Promise<DesktopSnapshot>;
+  continueSession(sessionId: string, input: DesktopMessageInput): Promise<DesktopSnapshot>;
   compactSession(sessionId: string): Promise<DesktopSnapshot>;
   openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot>;
   archiveSession(projectPath: string, sessionId: string, archived: boolean): Promise<DesktopSnapshot>;
@@ -130,8 +190,10 @@ export type DesktopBridge = {
   saveModelProfile(profile: ModelProfileInput): Promise<DesktopSnapshot>;
   deleteModelProfile(profileId: string): Promise<DesktopSnapshot>;
   selectModelProfile(profileId: string): Promise<DesktopSnapshot>;
+  setSelectedModelReasoning(reasoning: "off" | "dynamic" | "on"): Promise<DesktopSnapshot>;
   control(runId: string, control: SessionControl): Promise<void>;
   readArtifact(digest: string): Promise<TextArtifactView>;
+  readDeliverable(projectPath: string, manifestPath: string, expectedRevision: number, expectedPreviewDigest: string): Promise<DeliverablePreview>;
   openWorkspaceEntry(projectPath: string, entryPath: string): Promise<void>;
   openExternal(url: string): Promise<void>;
   onSnapshot(listener: (snapshot: DesktopSnapshot) => void): () => void;

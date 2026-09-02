@@ -94,6 +94,7 @@ export function projectRunInspection(
     revision: snapshot.revision,
     status,
     stopReason: snapshot.stopReason,
+    resumePredicate: snapshot.resumePredicate,
     completion: snapshot.completionRequirements,
     budgets: snapshot.budgets,
     budgetsUsed: snapshot.budgetsUsed,

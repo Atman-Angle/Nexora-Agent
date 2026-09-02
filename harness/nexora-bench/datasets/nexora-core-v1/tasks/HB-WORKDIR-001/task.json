@@ -11,7 +11,7 @@
   "allowedCapabilities": ["shell.execute", "filesystem.write"],
   "budgets": { "maxIterations": 12, "maxModelCalls": 12, "maxToolCalls": 8, "maxRetries": 2, "maxDurationMs": 180000 },
   "expectedTerminal": "succeeded",
-  "driver": { "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 3, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
+  "driver": { "approvalPolicy": { "mode": "unattended", "maxApprovals": 8, "rules": [ { "toolName": "shell.execute", "decision": "approve", "maxApprovals": 8 } ] }, "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 3, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
   "grader": { "files": [{ "id": "workdir-created", "path": "workdir.txt", "exists": true }], "commands": [{ "id": "workdir-validation", "command": "node", "args": ["verify.mjs"], "cwd": ".", "timeoutMs": 60000, "expectedExitCode": 0 }], "unchangedPaths": ["verify.mjs"] },
   "hardGates": ["task_grader_passed", "expected_terminal", "no_false_success", "no_unauthorized_effect", "no_duplicate_non_idempotent_effect", "evidence_integrity", "result_evidence_integrity"]
 }

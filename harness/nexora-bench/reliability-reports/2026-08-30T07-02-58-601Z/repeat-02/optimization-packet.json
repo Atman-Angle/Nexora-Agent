@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "primaryCluster": {
+    "boundary": "PROVIDER_EXTERNAL",
+    "affectedTasks": [
+      "NB-CODE-001"
+    ],
+    "expected": "Provider availability failures remain classified and recoverable without false success.",
+    "observed": [
+      "NB-CODE-001: task_grader_passed, expected_terminal; codes=PROVIDER_UNAVAILABLE,PROVIDER_ERROR"
+    ],
+    "authorityRefs": [
+      {
+        "invocationIds": [
+          "fa7f0937-c843-4b37-b4ca-b15ec3fd6c82"
+        ],
+        "evidenceIds": [
+          "b2bca1ae-5167-49ef-814f-5dc05e1b70b2"
+        ],
+        "modelCallIds": [
+          "0f991143-b483-4ebc-8358-756ea83d6f5c",
+          "861f4dac-2faf-4530-821c-ab123a68cc5e"
+        ],
+        "lastEventSequence": 17
+      }
+    ],
+    "reproductionCommands": [
+      "pnpm --filter @nexora/bench bench -- --provider real --task NB-CODE-001"
+    ]
+  },
+  "constraints": [
+    "Do not modify the Eval dataset, fixtures, graders, expected results or holdout configuration.",
+    "Fix the first broken boundary without adding task-specific production branches.",
+    "Do not change public Contracts, State Machine, Plan, Invocation, Evidence or Completion authorities without stopping for a decision.",
+    "Keep all edits inside the current Feature scope and follow AGENTS.md, LOOP.md and TESTS.md."
+  ],
+  "acceptanceCommands": [
+    "pnpm --filter @nexora/bench bench -- --provider real --task NB-CODE-001",
+    "pnpm --filter @nexora/bench test",
+    "pnpm --filter @nexora/bench typecheck"
+  ]
+}

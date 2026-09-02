@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "primaryCluster": {
+    "boundary": "TOOL_EXECUTION",
+    "affectedTasks": [
+      "NB-RETRY-001"
+    ],
+    "expected": "Tool execution produces the expected external state and persisted result.",
+    "observed": [
+      "NB-RETRY-001: task_grader_passed, expected_terminal; codes=TOOL_CALL_BUDGET_EXCEEDED,PROCESS_EXIT_NONZERO"
+    ],
+    "authorityRefs": [
+      {
+        "invocationIds": [
+          "739de0e0-5605-4fed-9bae-24a2b48b28c8",
+          "9ad9bcc2-d4e9-4c19-929f-ef2adc3fdbac",
+          "c1bcd0b4-8013-4dd6-8114-748e64419b21",
+          "e888643d-cabb-48af-9532-dc5806f9eeb2",
+          "a71f6568-2d20-4a23-aae6-9b704a8b521a",
+          "3e666ace-d637-45aa-8c39-bfb7f1042b86"
+        ],
+        "evidenceIds": [
+          "3258a602-dde3-43bd-878f-06a506e28cdc",
+          "fa771bb2-9dd4-49a0-8546-99189fdfe201",
+          "63e0707b-eb5e-4dfc-9758-556bfed8189b",
+          "38b87385-9aa6-42aa-92ca-0640e39a199f",
+          "22a81412-40b1-442f-adb6-a4012f420f25"
+        ],
+        "modelCallIds": [
+          "7c984bb8-d1f4-4ea7-9049-82dac793016e",
+          "978e21ac-0dc2-4272-a42d-f03995e68792",
+          "a9cad0c1-f069-455e-a1b8-a86c0eda6ea9",
+          "fad56519-e011-43c6-9cd0-f430d00d9c7f",
+          "fa25560d-a38c-43a8-a26a-05bc4a7d471a",
+          "5795f204-a75f-46ab-87e6-3054399dc2f1",
+          "8adf6f0d-b3c4-4e5c-a891-c0ec2eb57807"
+        ],
+        "lastEventSequence": 70
+      }
+    ],
+    "reproductionCommands": [
+      "pnpm --filter @nexora/bench bench -- --provider real --task NB-RETRY-001"
+    ]
+  },
+  "constraints": [
+    "Do not modify the Eval dataset, fixtures, graders, expected results or holdout configuration.",
+    "Fix the first broken boundary without adding task-specific production branches.",
+    "Do not change public Contracts, State Machine, Plan, Invocation, Evidence or Completion authorities without stopping for a decision.",
+    "Keep all edits inside the current Feature scope and follow AGENTS.md, LOOP.md and TESTS.md."
+  ],
+  "acceptanceCommands": [
+    "pnpm --filter @nexora/bench bench -- --provider real --task NB-RETRY-001",
+    "pnpm --filter @nexora/bench test",
+    "pnpm --filter @nexora/bench typecheck"
+  ]
+}

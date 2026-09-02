@@ -263,6 +263,7 @@ function lifecycleType(type: string): LifecycleEventType | null {
     "tool.started": "tool.started",
     "tool.succeeded": "tool.succeeded",
     "tool.failed": "tool.failed",
+    "tool.reconciled": "tool.reconciled",
     "tool.retried": "tool.retried",
     "validation.requested": "validation.started",
     "validation.passed": "validation.passed",

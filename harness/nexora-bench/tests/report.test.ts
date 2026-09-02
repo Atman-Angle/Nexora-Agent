@@ -103,7 +103,7 @@ function report(tasks: readonly TaskReport[]): EvalReport {
       effectiveToolRatio: 0,
       persistedProgressCount: 0,
       medianFirstPersistedProgressMs: null,
-      progressAcrossRestartCount: 0
+      progressAcrossRestartCount: 0,
     },
     promptStrategy: {
       modelCallCount: 0,
@@ -163,7 +163,11 @@ function task(overrides: Partial<TaskReport> = {}): TaskReport {
       responseRejectionRate: 0,
       repairRecoveryCount: 0,
       firstPersistedProgressMs: null,
-      progressAcrossRestartCount: 0
+      progressAcrossRestartCount: 0,
+      approvalRequestedCount: 0,
+      approvalGrantedCount: 0,
+      approvalDeniedCount: 0,
+      approvalGrantToolExecutionRate: null
     },
     promptStrategy: {
       calls: [],

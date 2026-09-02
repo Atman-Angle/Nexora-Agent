@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "primaryCluster": {
+    "boundary": "TOOL_EXECUTION",
+    "affectedTasks": [
+      "QB-MAXSUM-001"
+    ],
+    "expected": "Tool execution produces the expected external state and persisted result.",
+    "observed": [
+      "QB-MAXSUM-001: task_grader_passed, expected_terminal; codes=ITERATION_BUDGET_EXCEEDED,PROCESS_EXIT_NONZERO"
+    ],
+    "authorityRefs": [
+      {
+        "invocationIds": [
+          "70e0ce8d-2719-4130-bd66-ce2067aafde5",
+          "f3739822-548f-4962-90e1-36c8d6e262f9",
+          "902633ff-c321-455f-ba86-23cbf12ea572",
+          "01240391-71d3-4f55-9146-5c6530da5e86",
+          "6fc27336-2943-44d7-b91f-c0a046cba541",
+          "2d4ebe73-1007-416b-976b-aad6d0a7a8e4",
+          "175e1142-5041-4ec7-9655-7327e5f3ed51",
+          "87bdc844-73dc-4475-89d1-eeffc251e277",
+          "ac8b0628-c0ed-4e08-91c0-2d62c5108345"
+        ],
+        "evidenceIds": [
+          "6c04e99a-adaa-467a-9645-4ed17df69b9d",
+          "94ee39b0-d92d-4dfb-94fd-e106c5c563da",
+          "240be6a0-c85b-46de-a569-0dceccb450f4",
+          "8feb2f94-625d-403f-beb6-36dc515877fa",
+          "6572760c-e6e8-40d4-a750-f30d776bb148",
+          "db471e09-da0d-48eb-9f4d-9191402fa900",
+          "92b5f34d-c702-4498-829d-7e2b81fe0c82",
+          "4f549b3a-91ac-4d7e-9dba-7996ba06df6a"
+        ],
+        "modelCallIds": [
+          "fe8f7b35-fb36-4023-a411-453ed28c7bc4",
+          "82404f1a-b893-425b-9636-8639efce9a0e",
+          "a7e27fd9-c212-4637-b361-7e4811eb630c",
+          "5224c0ca-6d6d-4ee4-b6dd-c34512adeff5",
+          "0d1a6baa-e768-459b-9176-917ada02f2df",
+          "32899d34-ed8c-4d50-8e30-4fbcd7c95744",
+          "69c2dcd2-d8b1-474f-873c-81910c23d746",
+          "34ac62ac-6fbc-4bb7-b737-f26acc5eb293",
+          "05afe898-962b-4605-99ab-f988a75ed379",
+          "d3de4065-ed19-4579-b1de-ddac7434937f",
+          "b14db844-4451-42a4-9f98-d77cc2bd569f",
+          "0e683404-c8a8-49cf-8509-e71e496c0270",
+          "646f6643-517e-41ab-b306-72eea6cc4a92",
+          "840634d2-d5ba-4dee-9173-f0e104cfe7d6"
+        ],
+        "lastEventSequence": 125
+      }
+    ],
+    "reproductionCommands": [
+      "pnpm --filter @nexora/bench bench -- --provider real --task QB-MAXSUM-001"
+    ]
+  },
+  "constraints": [
+    "Do not modify the Eval dataset, fixtures, graders, expected results or holdout configuration.",
+    "Fix the first broken boundary without adding task-specific production branches.",
+    "Do not change public Contracts, State Machine, Plan, Invocation, Evidence or Completion authorities without stopping for a decision.",
+    "Keep all edits inside the current Feature scope and follow AGENTS.md, LOOP.md and TESTS.md."
+  ],
+  "acceptanceCommands": [
+    "pnpm --filter @nexora/bench bench -- --provider real --task QB-MAXSUM-001",
+    "pnpm --filter @nexora/bench test",
+    "pnpm --filter @nexora/bench typecheck"
+  ]
+}

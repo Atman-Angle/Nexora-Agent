@@ -186,7 +186,7 @@ describe("D1 developer Runtime golden path", () => {
     await runtime.close();
   });
 
-  it("returns a persisted resumable budget pause without throwing away the repair error", async () => {
+  it("returns a persisted terminal convergence failure without throwing away the repair error", async () => {
     const workspace = temporaryWorkspace();
     const provider: RuntimeProvider = runtimeActionTestProvider({
       async decide() {
@@ -206,11 +206,11 @@ describe("D1 developer Runtime golden path", () => {
     });
     const inspection = await run.wait();
 
-    expect(inspection.status).toBe("blocked");
+    expect(inspection.status).toBe("failed");
     expect(inspection.stopReason).toBe("NO_PROGRESS_DETECTED");
     expect(inspection.error?.code).toBe("NO_PROGRESS_DETECTED");
-    expect(inspection.result).toBeNull();
-    await expect(run.result()).rejects.toThrow("Run is not terminal");
+    expect(inspection.result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    await expect(run.result()).resolves.toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
     await runtime.close();
   });
 

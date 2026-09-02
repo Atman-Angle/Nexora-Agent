@@ -1,0 +1,1 @@
+{"text":null,"toolCalls":[{"callId":"call_f99300982301425485fa5460","name":"filesystem.write","arguments":{"content":"transient-service-value=ready\n","path":"result.txt"}}],"finishReason":"tool_calls"}

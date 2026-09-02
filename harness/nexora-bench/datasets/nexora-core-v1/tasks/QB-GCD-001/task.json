@@ -11,7 +11,7 @@
   "allowedCapabilities": ["filesystem.read", "filesystem.patch", "shell.execute"],
   "budgets": { "maxIterations": 14, "maxModelCalls": 14, "maxToolCalls": 10, "maxRetries": 2, "maxDurationMs": 240000 },
   "expectedTerminal": "succeeded",
-  "driver": { "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
+  "driver": { "approvalPolicy": { "mode": "unattended", "maxApprovals": 6, "rules": [ { "toolName": "filesystem.patch", "decision": "approve", "maxApprovals": 2 }, { "toolName": "shell.execute", "decision": "approve", "maxApprovals": 4 } ] }, "approvals": [{ "occurrence": 1, "decision": "approve", "restartBeforeDecision": false }, { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }], "inputs": [], "recoveries": [] },
   "grader": { "files": [{ "id": "recursive-step", "path": "gcd.py", "exists": true, "includes": ["return gcd(b, a % b)"], "excludes": ["return gcd(a % b, b)"] }], "commands": [{ "id": "original-cases", "command": "python", "args": ["verify.py"], "cwd": ".", "timeoutMs": 60000, "expectedExitCode": 0 }], "unchangedPaths": ["verify.py", "testcases.json"] },
   "hardGates": ["task_grader_passed", "expected_terminal", "no_false_success", "no_unauthorized_effect", "no_duplicate_non_idempotent_effect", "evidence_integrity", "result_evidence_integrity"]
 }

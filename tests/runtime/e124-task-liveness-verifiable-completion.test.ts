@@ -16,6 +16,7 @@ import {
   responseCall,
   responseDirect,
   responseInput,
+  responsePlan,
   responseText,
   successfulReadTool
 } from "./runtime-testkit.js";
@@ -131,6 +132,14 @@ describe("E124 task liveness and verifiable completion", () => {
     expect(calls.calls).toBe(1);
 
     const handle = runtime.openRun(blocked.runId);
+    expect((await handle.inspect()).resumePredicate).toEqual({
+      kind: "budget_extension",
+      stopReason: "TOOL_CALL_BUDGET_EXCEEDED",
+      allowedDimensions: ["iterations", "modelCalls", "toolCalls", "retries"],
+      minimumPositiveExtension: true
+    });
+    await expect(handle.resume()).rejects.toThrow(/Budget Extension/);
+    await expect(handle.resume({ budgetExtension: { toolCalls: 0 } })).rejects.toThrow();
     await handle.resume({ budgetExtension: { toolCalls: 1 } });
     const completed = await handle.result();
     const inspection = await handle.inspect();
@@ -140,6 +149,7 @@ describe("E124 task liveness and verifiable completion", () => {
     expect(calls.calls).toBe(1);
     expect(inspection.budgets.maxToolCalls).toBe(2);
     expect(inspection.budgetsUsed.toolCalls).toBe(1);
+    expect(inspection.resumePredicate).toBeNull();
   });
 
   it("pages every list and search result beyond the old hard caps", async () => {
@@ -200,7 +210,13 @@ describe("E124 task liveness and verifiable completion", () => {
     const provider: RuntimeProvider = {
       async decide(context) {
         contexts.push(structuredClone(context));
-        return contexts.length === 1
+        if (contexts.length === 1) {
+          return responsePlan({
+            goal: "Run the diagnostic and preserve its complete failed output.",
+            tasks: [{ objective: "Execute the diagnostic and retain its failure details.", checks: [{ toolName: "shell.execute", role: "verification" }] }]
+          });
+        }
+        return contexts.length === 2
           ? responseCall("shell.execute", {
               command: process.execPath,
               args: ["-e", "process.stdout.write('z'.repeat(70000)); process.exit(7)"],
@@ -235,7 +251,7 @@ describe("E124 task liveness and verifiable completion", () => {
     expect(ref).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(details?.details?.artifactRefs).toContain(ref);
     expect(new ArtifactStore(artifactDir).getText(ref)).toBe("z".repeat(70_000));
-    expect(contexts[1]?.rehydratedFacts.map((fact) => fact.ref)).toContain(`artifact:${ref}`);
+    expect(contexts[2]?.rehydratedFacts.map((fact) => fact.ref)).toContain(`artifact:${ref}`);
   });
 
   it("blocks before Provider execution when authoritative Inputs cannot fit", async () => {

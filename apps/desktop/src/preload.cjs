@@ -1,9 +1,13 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("nexora", Object.freeze({
   bootstrap: () => ipcRenderer.invoke("desktop:bootstrap"),
   chooseWorkspace: () => ipcRenderer.invoke("desktop:choose-workspace"),
+  chooseAttachments: () => ipcRenderer.invoke("desktop:choose-attachments"),
+  chooseAttachmentFolder: () => ipcRenderer.invoke("desktop:choose-attachment-folder"),
+  stageDroppedAttachments: (files) => ipcRenderer.invoke("desktop:stage-attachments", Array.from(files, (file) => webUtils.getPathForFile(file))),
   addProject: (path) => ipcRenderer.invoke("desktop:add-project", path),
+  removeProject: (path) => ipcRenderer.invoke("desktop:remove-project", path),
   switchProject: (path) => ipcRenderer.invoke("desktop:switch-project", path),
   startSession: (goal) => ipcRenderer.invoke("desktop:start-session", goal),
   continueSession: (sessionId, text) => ipcRenderer.invoke("desktop:continue-session", sessionId, text),
@@ -14,8 +18,10 @@ contextBridge.exposeInMainWorld("nexora", Object.freeze({
   saveModelProfile: (profile) => ipcRenderer.invoke("desktop:save-model-profile", profile),
   deleteModelProfile: (profileId) => ipcRenderer.invoke("desktop:delete-model-profile", profileId),
   selectModelProfile: (profileId) => ipcRenderer.invoke("desktop:select-model-profile", profileId),
+  setSelectedModelReasoning: (reasoning) => ipcRenderer.invoke("desktop:set-selected-model-reasoning", reasoning),
   control: (runId, control) => ipcRenderer.invoke("desktop:control", runId, control),
   readArtifact: (digest) => ipcRenderer.invoke("desktop:read-artifact", digest),
+  readDeliverable: (projectPath, manifestPath, expectedRevision, expectedPreviewDigest) => ipcRenderer.invoke("desktop:read-deliverable", projectPath, manifestPath, expectedRevision, expectedPreviewDigest),
   openWorkspaceEntry: (projectPath, entryPath) => ipcRenderer.invoke("desktop:open-workspace-entry", projectPath, entryPath),
   openExternal: (url) => ipcRenderer.invoke("desktop:open-external", url),
   onSnapshot: (listener) => {

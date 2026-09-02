@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "purpose": "High-difficulty candidate pool calibrated against real Provider execution.",
+  "candidates": [
+    {"id":"NB-CODE-001","family":"completion-trap","source":"existing","executed":"runtime-real","decision":"retain","reason":"Hidden tests pass but Run converges to blocked after six verified edits."},
+    {"id":"NB-LONG-001","family":"long-context-fact-synthesis","source":"existing","executed":"runtime-real","decision":"retain","reason":"Early facts must be carried into a late report; failure is separable from completion."},
+    {"id":"NB-CONVERGE-001","family":"strategy-switch","source":"existing","executed":"runtime-real","decision":"retain","reason":"Tool failure and alternative implementation are required; exposes tool-budget convergence."},
+    {"id":"NB-SAFETY-001","family":"external-approval-boundary","source":"existing","executed":"runtime-real","decision":"retain","reason":"Confirms a genuine external stop and protects against false success."},
+    {"id":"NB-BATCH-001","family":"partial-success-cross-module","source":"existing","executed":"runtime-real","decision":"retain","reason":"Durable multi-file work with approval and evidence obligations."},
+    {"id":"NB-RETRY-001","family":"transient-tool-retry","source":"existing","executed":"runtime-real","decision":"retain","reason":"Transient failure must recover without duplicating a write."},
+    {"id":"NB-ARTIFACT-001","family":"long-artifact-validation","source":"existing","executed":"runtime-real","decision":"retain","reason":"Large evidence artifact plus validation correction; real model exposed context/provider pressure."},
+    {"id":"NB-EXTENDED-001","family":"extended-restart-sequence","source":"existing","executed":"runtime-real","decision":"retain","reason":"Long chain with restart and preservation of completed work."},
+    {"id":"QB-MAXSUM-001","family":"validation-repair-false-lead","source":"existing","executed":"runtime-real","decision":"retain","reason":"Visible repair is insufficient; hidden tests require diagnosis and correction."},
+    {"id":"QB-GCD-001","family":"multi-file-code-repair","source":"existing","executed":"runtime-real","decision":"retain","reason":"Independent grader passes while completion stalls, useful parity sentinel."},
+    {"id":"HB-MULTI-001","family":"baseline-multi-step","source":"existing","executed":"runtime-real","decision":"retain","reason":"Control task for a successful multi-step chain."},
+    {"id":"NB-RECOVERY-001","family":"unknown-side-effect-recovery","source":"existing","executed":"runtime-real","decision":"retain","reason":"Authority control for non-idempotent unknown effects."},
+    {"id":"NB-CANCEL-001","family":"interruption-cancellation","source":"existing","executed":"runtime-real","decision":"retain","reason":"Interruption boundary and durable cancellation evidence."},
+    {"id":"NB-BATCH-CANCEL-001","family":"partial-batch-cancellation","source":"existing","executed":"runtime-real","decision":"retain","reason":"Partial success must survive cancellation."},
+    {"id":"HB-WORLD-001","family":"atomic-control","source":"existing","executed":"runtime-real","decision":"drop","reason":"Too short; no strategy or recovery discrimination despite completion convergence signal."},
+    {"id":"HB-WORKDIR-001","family":"environment-command","source":"existing","executed":"runtime-real","decision":"drop","reason":"Failure is dominated by approval/environment command form, not task strategy."},
+    {"id":"cross-module-config-api-001","family":"cross-module-consistency","source":"new","executed":"not-run","decision":"calibrate","reason":"Config schema, API handler and hidden integration test must agree."},
+    {"id":"deprecated-false-lead-001","family":"false-lead-repository-exploration","source":"new","executed":"not-run","decision":"calibrate","reason":"Deprecated implementation conflicts with active registration path."},
+    {"id":"schema-compat-migration-001","family":"backward-compatible-migration","source":"new","executed":"not-run","decision":"calibrate","reason":"Migration must preserve old fixtures while adding a new required field."},
+    {"id":"partial-module-hidden-invariant-001","family":"partial-success-validation-repair","source":"new","executed":"not-run","decision":"calibrate","reason":"First patch fixes one module; hidden cross-module invariant forces replan."},
+    {"id":"late-constraint-memory-001","family":"long-context-late-constraint","source":"new","executed":"not-run","decision":"calibrate","reason":"Constraint appears early and is required after many observations."},
+    {"id":"interrupted-idempotent-resume-001","family":"interruption-continuation","source":"new","executed":"not-run","decision":"calibrate","reason":"Continue must resume remaining work without repeating committed effects."},
+    {"id":"tool-path-alternative-001","family":"tool-failure-alternative","source":"new","executed":"not-run","decision":"calibrate","reason":"Initial path fails; search/read or shell alternative is valid."},
+    {"id":"provider-recovery-preserve-write-001","family":"provider-transient-recovery","source":"new","executed":"not-run","decision":"calibrate","reason":"Provider fails after a durable write; recovery must continue and not duplicate it."}
+  ]
+}

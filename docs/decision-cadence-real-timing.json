@@ -1,0 +1,678 @@
+{
+  "schemaVersion": 2,
+  "feature": "autonomous-coding-execution-v0.1",
+  "suite": "primary",
+  "createdAt": "2026-08-31T13:45:13.974Z",
+  "model": "Qwen 3.8 Flash",
+  "providerModelId": "qwen3.8-flash",
+  "provider": "openai-compatible",
+  "transport": "native_tools",
+  "invariantInputs": {
+    "runtime": "Nexora Runtime through createAgent",
+    "tools": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search",
+      "filesystem.write",
+      "filesystem.patch",
+      "process.start",
+      "process.inspect",
+      "process.logs",
+      "process.stop",
+      "shell.execute",
+      "git.status",
+      "git.diff",
+      "git.show"
+    ],
+    "budgets": {
+      "maxIterations": 32,
+      "maxModelCalls": 32,
+      "maxToolCalls": 24,
+      "maxRetries": 3,
+      "maxDurationMs": 720000
+    },
+    "codingStrategy": "auto"
+  },
+  "samples": [
+    {
+      "label": "primary",
+      "scenario": "greenfield",
+      "prompt": "请在这个空工作区中创建一个个人探索日志 Web 应用。必须支持添加、编辑、删除记录，按文本搜索，按类别筛选，刷新后通过本地持久化保留数据，并提供基本可用的界面。其他细节由你判断。",
+      "expectedTaskShape": "greenfield",
+      "strategy": "auto",
+      "hybridContext": "on",
+      "strategyRouting": {
+        "sequence": 2,
+        "strategyProfile": "coding",
+        "activationReason": "user_intent_is_software_engineering",
+        "confidence": "high",
+        "codingTaskShape": "greenfield"
+      },
+      "strategyRoutingTurns": [
+        {
+          "sequence": 2,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 13,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 19,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 28,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 37,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 48,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 57,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 68,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        }
+      ],
+      "routingCorrect": true,
+      "runId": "885853f9-01a3-4364-8c82-1f7826151df9",
+      "status": "succeeded",
+      "stopReason": "COMPLETED",
+      "durationMs": 203228,
+      "modelCalls": 8,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "callId": "a5651d6b-162a-4c1d-9cba-dfadf94b0535",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 6804,
+          "actualInputTokens": 9817,
+          "actualOutputTokens": 358,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 2,
+          "callId": "744a34c3-a10f-42ec-8fe1-bd31dfe35b5e",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 7221,
+          "actualInputTokens": 10614,
+          "actualOutputTokens": 4418,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 3,
+          "callId": "08af85c7-e41c-4100-8dae-1266320cd484",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 8557,
+          "actualInputTokens": 12534,
+          "actualOutputTokens": 855,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 4,
+          "callId": "6dd8afaf-a6be-4b40-a09f-6a87c79cf2d7",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 10283,
+          "actualInputTokens": 14723,
+          "actualOutputTokens": 2265,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 5,
+          "callId": "55760f06-f697-4ed1-8322-1422ee243aee",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 13351,
+          "actualInputTokens": 19755,
+          "actualOutputTokens": 3600,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 6,
+          "callId": "242fce49-d7fd-473a-8b46-da54abe3aaaf",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 20598,
+          "actualInputTokens": 27799,
+          "actualOutputTokens": 290,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 7,
+          "callId": "81b70459-92fe-4410-9c92-b46bd4c0d5fc",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 20157,
+          "actualInputTokens": 27658,
+          "actualOutputTokens": 71,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 8,
+          "callId": "ba9d50d8-4671-424c-a9a3-b103ea9617ec",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 19179,
+          "actualInputTokens": 26223,
+          "actualOutputTokens": 896,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "timingDiagnostics": [
+        {
+          "callId": "a5651d6b-162a-4c1d-9cba-dfadf94b0535",
+          "sequence": 1,
+          "controlState": {
+            "phase": "INITIAL_PLANNING",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": null,
+          "requestDecisionStartedAt": "2026-08-31T13:41:50.823Z",
+          "promptContextBuildMs": 24,
+          "providerWaitGenerationMs": 6299,
+          "responseParseValidationMs": 19,
+          "approvalWaitMs": 0,
+          "linkedTools": [
+            {
+              "invocationId": "fba53dc1-884a-46c6-86e0-215186dac5f5",
+              "toolName": "filesystem.list",
+              "startedAt": "2026-08-31T13:41:57.238Z",
+              "endedAt": "2026-08-31T13:41:57.302Z",
+              "durationMs": 64
+            }
+          ],
+          "nextLoopOverheadMs": 207,
+          "modelDecisionMs": 6350
+        },
+        {
+          "callId": "744a34c3-a10f-42ec-8fe1-bd31dfe35b5e",
+          "sequence": 2,
+          "controlState": {
+            "phase": "INITIAL_PLANNING",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": null,
+          "requestDecisionStartedAt": "2026-08-31T13:41:57.509Z",
+          "promptContextBuildMs": 76,
+          "providerWaitGenerationMs": 50045,
+          "responseParseValidationMs": 10,
+          "approvalWaitMs": 0,
+          "linkedTools": [],
+          "nextLoopOverheadMs": 288,
+          "modelDecisionMs": 50096
+        },
+        {
+          "callId": "08af85c7-e41c-4100-8dae-1266320cd484",
+          "sequence": 3,
+          "controlState": {
+            "phase": "EXECUTION",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [
+              "创建 index.html，提供表单、搜索、类别筛选和记录列表界面。",
+              "创建 styles.css，使界面基本可用且响应式。",
+              "创建 app.js，实现增删改查、搜索、类别筛选和 localStorage 持久化。",
+              "使用可用语法检查命令验证 app.js。",
+              "列出工作区文件，确认应用文件已创建。"
+            ],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-08-31T13:42:47.969Z",
+          "promptContextBuildMs": 97,
+          "providerWaitGenerationMs": 9603,
+          "responseParseValidationMs": 2,
+          "approvalWaitMs": 26,
+          "linkedTools": [
+            {
+              "invocationId": "bb547dce-0ce5-4121-a6b3-7812a943be9e",
+              "toolName": "filesystem.write",
+              "startedAt": "2026-08-31T13:42:57.751Z",
+              "endedAt": "2026-08-31T13:42:57.762Z",
+              "durationMs": 11
+            }
+          ],
+          "nextLoopOverheadMs": 138,
+          "modelDecisionMs": 9645
+        },
+        {
+          "callId": "6dd8afaf-a6be-4b40-a09f-6a87c79cf2d7",
+          "sequence": 4,
+          "controlState": {
+            "phase": "EXECUTION",
+            "completedOutcomes": [
+              "创建 index.html，提供表单、搜索、类别筛选和记录列表界面。"
+            ],
+            "unfinishedOutcomes": [
+              "创建 styles.css，使界面基本可用且响应式。",
+              "创建 app.js，实现增删改查、搜索、类别筛选和 localStorage 持久化。",
+              "使用可用语法检查命令验证 app.js。",
+              "列出工作区文件，确认应用文件已创建。"
+            ],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-08-31T13:42:57.900Z",
+          "promptContextBuildMs": 35,
+          "providerWaitGenerationMs": 17568,
+          "responseParseValidationMs": 6,
+          "approvalWaitMs": 43,
+          "linkedTools": [
+            {
+              "invocationId": "defbfc60-f5be-45c4-8ecc-1881c37c8de9",
+              "toolName": "filesystem.write",
+              "startedAt": "2026-08-31T13:43:15.603Z",
+              "endedAt": "2026-08-31T13:43:15.629Z",
+              "durationMs": 26
+            }
+          ],
+          "nextLoopOverheadMs": 134,
+          "modelDecisionMs": 17586
+        },
+        {
+          "callId": "55760f06-f697-4ed1-8322-1422ee243aee",
+          "sequence": 5,
+          "controlState": {
+            "phase": "EXECUTION",
+            "completedOutcomes": [
+              "创建 index.html，提供表单、搜索、类别筛选和记录列表界面。",
+              "创建 styles.css，使界面基本可用且响应式。"
+            ],
+            "unfinishedOutcomes": [
+              "创建 app.js，实现增删改查、搜索、类别筛选和 localStorage 持久化。",
+              "使用可用语法检查命令验证 app.js。",
+              "列出工作区文件，确认应用文件已创建。"
+            ],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-08-31T13:43:15.763Z",
+          "promptContextBuildMs": 56,
+          "providerWaitGenerationMs": 94742,
+          "responseParseValidationMs": 6,
+          "approvalWaitMs": 71,
+          "linkedTools": [
+            {
+              "invocationId": "3294946f-dede-4126-bfe6-2748d465de69",
+              "toolName": "filesystem.write",
+              "startedAt": "2026-08-31T13:44:50.958Z",
+              "endedAt": "2026-08-31T13:44:50.985Z",
+              "durationMs": 27
+            }
+          ],
+          "nextLoopOverheadMs": 504,
+          "modelDecisionMs": 95028
+        },
+        {
+          "callId": "242fce49-d7fd-473a-8b46-da54abe3aaaf",
+          "sequence": 6,
+          "controlState": {
+            "phase": "EXECUTION",
+            "completedOutcomes": [
+              "创建 index.html，提供表单、搜索、类别筛选和记录列表界面。",
+              "创建 styles.css，使界面基本可用且响应式。",
+              "创建 app.js，实现增删改查、搜索、类别筛选和 localStorage 持久化。"
+            ],
+            "unfinishedOutcomes": [
+              "使用可用语法检查命令验证 app.js。",
+              "列出工作区文件，确认应用文件已创建。"
+            ],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-08-31T13:44:51.489Z",
+          "promptContextBuildMs": 78,
+          "providerWaitGenerationMs": 5448,
+          "responseParseValidationMs": 3,
+          "approvalWaitMs": 52,
+          "linkedTools": [
+            {
+              "invocationId": "3d5d0862-a5de-45c4-a11e-c67851451e73",
+              "toolName": "shell.execute",
+              "startedAt": "2026-08-31T13:44:57.105Z",
+              "endedAt": "2026-08-31T13:44:57.353Z",
+              "durationMs": 248
+            }
+          ],
+          "nextLoopOverheadMs": 344,
+          "modelDecisionMs": 5468
+        },
+        {
+          "callId": "81b70459-92fe-4410-9c92-b46bd4c0d5fc",
+          "sequence": 7,
+          "controlState": {
+            "phase": "EXECUTION",
+            "completedOutcomes": [
+              "创建 index.html，提供表单、搜索、类别筛选和记录列表界面。",
+              "创建 styles.css，使界面基本可用且响应式。",
+              "创建 app.js，实现增删改查、搜索、类别筛选和 localStorage 持久化。",
+              "使用可用语法检查命令验证 app.js。"
+            ],
+            "unfinishedOutcomes": [
+              "列出工作区文件，确认应用文件已创建。"
+            ],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-08-31T13:44:57.697Z",
+          "promptContextBuildMs": 84,
+          "providerWaitGenerationMs": 3079,
+          "responseParseValidationMs": 3,
+          "approvalWaitMs": 0,
+          "linkedTools": [
+            {
+              "invocationId": "d9654db3-069f-4ebe-b410-1dc3947d24a6",
+              "toolName": "filesystem.list",
+              "startedAt": "2026-08-31T13:45:00.891Z",
+              "endedAt": "2026-08-31T13:45:00.915Z",
+              "durationMs": 24
+            }
+          ],
+          "nextLoopOverheadMs": 151,
+          "modelDecisionMs": 3102
+        },
+        {
+          "callId": "ba9d50d8-4671-424c-a9a3-b103ea9617ec",
+          "sequence": 8,
+          "controlState": {
+            "phase": "VALIDATION",
+            "completedOutcomes": [
+              "创建 index.html，提供表单、搜索、类别筛选和记录列表界面。",
+              "创建 styles.css，使界面基本可用且响应式。",
+              "创建 app.js，实现增删改查、搜索、类别筛选和 localStorage 持久化。",
+              "使用可用语法检查命令验证 app.js。",
+              "列出工作区文件，确认应用文件已创建。"
+            ],
+            "unfinishedOutcomes": [],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "All current Plan outcomes are marked complete. Check that required validation facts are present; if they are, stop Plan maintenance and submit the completion control."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": 1,
+          "requestDecisionStartedAt": "2026-08-31T13:45:01.066Z",
+          "promptContextBuildMs": 83,
+          "providerWaitGenerationMs": 12603,
+          "responseParseValidationMs": 2,
+          "approvalWaitMs": 0,
+          "linkedTools": [],
+          "nextLoopOverheadMs": null,
+          "modelDecisionMs": 12618
+        }
+      ],
+      "responseRejections": [],
+      "toolCalls": 6,
+      "failedTools": 0,
+      "effectiveToolRatio": 0.8333333333333334,
+      "toolNames": [
+        "filesystem.list",
+        "filesystem.write",
+        "filesystem.write",
+        "filesystem.write",
+        "shell.execute",
+        "filesystem.list"
+      ],
+      "planOutcomes": 5,
+      "planObjectives": [
+        "创建 index.html，提供表单、搜索、类别筛选和记录列表界面。",
+        "创建 styles.css，使界面基本可用且响应式。",
+        "创建 app.js，实现增删改查、搜索、类别筛选和 localStorage 持久化。",
+        "使用可用语法检查命令验证 app.js。",
+        "列出工作区文件，确认应用文件已创建。"
+      ],
+      "optionalOutcomes": [
+        "undo"
+      ],
+      "scopeExpansionRate": 0.14285714285714285,
+      "verificationCalls": 1,
+      "usefulVerificationCalls": 1,
+      "verificationEfficiency": 1,
+      "repeatedStrategy": 1,
+      "repeatedStrategyCount": 1,
+      "planRevisionCount": 0,
+      "sameFileEditCount": 0,
+      "fileEditCounts": {
+        "index.html": 1,
+        "styles.css": 1,
+        "app.js": 1
+      },
+      "noProgress": false,
+      "noProgressCount": 0,
+      "blockedCount": 0,
+      "noProgressRecoverySucceeded": false,
+      "timeToFirstToolMs": 6503,
+      "timeToFirstEditMs": 67016,
+      "timeToFirstVerificationMs": 186370,
+      "firstCoreOutcomeSatisfiedMs": 180253,
+      "allCoreOutcomesSatisfiedMs": 180253,
+      "completionAttempted": true,
+      "completionAttemptCount": 1,
+      "firstCompletionAttemptMs": 203034,
+      "terminalTimeMs": 203039,
+      "approvalsGranted": 4,
+      "approvalsDenied": 0,
+      "files": [
+        "app.js",
+        "index.html",
+        "styles.css"
+      ],
+      "coreRequirements": {
+        "add": true,
+        "edit": true,
+        "delete": true,
+        "search": true,
+        "filter": true,
+        "persistence": true
+      },
+      "coreCompletionRate": 1,
+      "syntaxExitCode": 0,
+      "falseSuccess": false,
+      "lastError": null,
+      "summary": "个人探索日志 Web 应用已在工作区创建完成，共三个文件（均由 Tool 结果确认存在）：`index.html`、`styles.css`、`app.js`。\n\n## 文件与职责\n- **index.html**（2897 字节）：页面结构。包含记录表单（标题、类别、内容、日期）、工具栏（搜索框、类别筛选下拉、排序下拉）、统计行、记录列表容器、空状态提示，并在底部说明数据存放于本机 localStorage。\n- **styles.css**（4928 字节）：基础可用界面。双栏卡片布局（表单侧栏 + 列表主区），在 820px 以下自动折叠为单列；按钮/输入聚焦态、类别徽章、搜索高亮 `mark`、编辑中高亮卡片、删除按钮危险色，并支持 `prefers-reduced-motion`。\n- **app.js**（13385 字节）：全部应用逻辑，IIFE + `'use strict'`，无外部依赖。\n\n## 已实现的能力\n- **添加**：表单提交生成记录（`crypto.randomUUID()`，不可用时回退到时间戳+随机 ID），标题为空时给出内联错误提示。\n- **编辑**：卡片「编辑」把记录载入表单并切换为「更新记录」模式，提供「取消编辑」；更新保留原 `createdAt`，刷新 `updatedAt`。\n- **删除**：`window.confirm` 二次确认后移除；若删除的是正在编辑的记录，表单自动复位。\n- **文本搜索**：对标题 + 内容 + 类别做大小写不敏感的子串匹配，输入即时过滤，并在结果中用 `<mark>` 高亮关键词。\n- **类别筛选**：下拉选项由现有记录的类别动态生成（空类别归入「未分类」），始终保留「全部类别」；筛选值在重渲染后尽量保持，类别消失时回落到「全部」。表单类别输入带 `datalist` 自动补全。\n- **持久化**：每次增删改后写入 localStorage（键 `exploration-log.entries.v1`），启动时读取并逐条规范化（字段类型/长度校验、日期格式校验），刷新与关闭浏览器后数据保留；同时监听 `storage` 事件，多标签页会自动同步。localStorage 被禁用或数据损坏时会提示并从空白开始，不会抛错中断。\n- **附加判断项**：排序（最近更新 / 最早更新 / 标题 A→Z，中文按 `zh-Hans-CN` 排序）、记录统计、DOM 全部用 `createElement`/`textContent` 构建以避免注入风险。\n\n## 验证情况\n- `node --check app.js` 退出码 0，无 stderr —— JS 语法通过。\n- `filesystem.list` 确认工作区仅含上述三个文件，HTML 中引用的 `styles.css`、`app.js` 路径与实际文件名一致。\n- 按 Host 约束未启动常驻服务器、未运行临时脚本，因此**未做浏览器端交互回归**；逻辑正确性的证据止于语法检查与静态代码审查。\n\n## 使用方式\n直接用浏览器打开工作区中的 `index.html` 即可（纯静态文件，无需构建或依赖安装）。若需局域网访问，可自行用任意静态服务器托管该目录。"
+    }
+  ],
+  "aggregate": {
+    "sampleCount": 1,
+    "completionRate": 1,
+    "validatedSampleRate": 1,
+    "falseSuccessCount": 0,
+    "routingCorrectRate": 1,
+    "averageTimeToFirstToolMs": 6503,
+    "averagePlanRevisionCount": 0,
+    "averageRepeatedEditCount": 0,
+    "averageEffectiveToolRatio": 0.8333333333333334,
+    "averageScopeExpansionRate": 0.14285714285714285,
+    "noProgressCount": 0,
+    "noProgressRecoverySuccessCount": 0,
+    "blockedCount": 0
+  },
+  "validated": true
+}

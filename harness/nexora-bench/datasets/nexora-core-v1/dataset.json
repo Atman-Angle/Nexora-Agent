@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "nexora-core-v1",
-  "version": 11,
+  "version": 13,
   "description": "Reproducible multi-step Nexora Runtime tasks with deterministic external and authority grading.",
   "tasks": [
     "tasks/NB-CODE-001/task.json",

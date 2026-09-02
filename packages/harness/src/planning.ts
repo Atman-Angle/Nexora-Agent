@@ -1,5 +1,6 @@
 import {
   type AcceptanceCheck,
+  type PlanTaskScope,
   type RunSnapshot,
   type RuntimeAction,
   type StructuredPlan,
@@ -33,7 +34,7 @@ import {
 
 type ToolAction = Extract<RuntimeAction, { type: "call_tool" | "execute_step" }>;
 
-const DelegateWorkersSchema = z.object({
+export const DelegateWorkersSchema = z.object({
   finalDeliverable: z.string().trim().min(1).max(4_096).optional(),
   assignments: z.array(z.object({
     objective: z.string().trim().min(1),
@@ -104,6 +105,7 @@ export function compileModelPlan(
     run,
     createId,
     goal: update.goal,
+    scope: update.scope,
     tasks: update.tasks,
     removeSteps: update.removeSteps ?? [],
     availableToolNames
@@ -155,6 +157,7 @@ function compilePlanTasks(input: {
   readonly run: RunSnapshot;
   readonly createId: () => string;
   readonly goal: string | undefined;
+  readonly scope: PlanTaskScope | undefined;
   readonly tasks: readonly ModelPlanTask[];
   readonly removeSteps: readonly { readonly stepId: string; readonly reason: string }[];
   readonly availableToolNames: readonly string[] | undefined;
@@ -163,6 +166,7 @@ function compilePlanTasks(input: {
   const hasNewInput = run.taskContract !== null
     && run.taskContract.inputVersion < run.inputHistory.length;
   const requiresTaskContract = run.currentPlan === null || run.taskContract === null || hasNewInput;
+  const scope = resolveTaskScope(run, input.scope);
   const completedSteps = run.currentPlan === null
     ? []
     : run.stepProgress
@@ -203,7 +207,11 @@ function compilePlanTasks(input: {
       usedStepIds.add(existing.id);
       return completedIds.has(existing.id) ? [] : [existing];
     }
-    return [compileTask(task, input.createId, input.availableToolNames)];
+    const scopeBinding = resolveScopeBinding({
+      task,
+      scope
+    });
+    return [compileTask(task, scopeBinding, input.createId, input.availableToolNames)];
   });
   const remainingObjectives = input.tasks.map((task) => task.objective);
   const preservedIncompleteSteps = (run.currentPlan?.orderedSteps ?? []).filter((step) => (
@@ -212,6 +220,7 @@ function compilePlanTasks(input: {
     && !removedIds.has(step.id)
   ));
   const nextIncompleteSteps = [...preservedIncompleteSteps, ...compiledSteps];
+  assertRequiredScopeOutcomesCovered(scope, [...completedSteps, ...nextIncompleteSteps]);
   const currentIncompleteCount = (run.currentPlan?.orderedSteps.length ?? 0) - completedSteps.length;
   const unfinishedStepLimit = run.currentPlan === null
     ? MAX_MODEL_PLAN_TASKS
@@ -228,7 +237,8 @@ function compilePlanTasks(input: {
     ? {
         goal: input.goal ?? run.inputHistory.at(-1)!.text,
         constraints: [],
-        acceptanceCriteria: remainingObjectives
+        acceptanceCriteria: scope?.completionCriteria ?? remainingObjectives,
+        ...(scope === undefined ? {} : { scope })
       }
     : undefined;
   return {
@@ -239,14 +249,51 @@ function compilePlanTasks(input: {
   };
 }
 
+function assertRequiredScopeOutcomesCovered(
+  scope: PlanTaskScope | undefined,
+  steps: readonly StructuredPlan["orderedSteps"][number][]
+): void {
+  if (scope === undefined) return;
+  const covered = new Set(steps
+    .filter((step) => step.kind === "required_outcome")
+    .flatMap((step) => step.scopeRefs ?? []));
+  const missing = scope.requiredOutcomes
+    .map((outcome) => outcome.id)
+    .filter((outcomeId) => !covered.has(outcomeId));
+  if (missing.length > 0) {
+    throw new ActionRejectedError(`PLAN_SCOPE_REQUIRED_OUTCOME_UNCOVERED: ${missing.join(", ")}`);
+  }
+  const bindings = new Map<string, number>();
+  for (const step of steps) {
+    if (step.kind !== "required_outcome") continue;
+    for (const scopeRef of step.scopeRefs ?? []) {
+      bindings.set(scopeRef, (bindings.get(scopeRef) ?? 0) + 1);
+    }
+  }
+  const duplicated = scope.requiredOutcomes
+    .map((outcome) => outcome.id)
+    .filter((outcomeId) => (bindings.get(outcomeId) ?? 0) > 1);
+  if (duplicated.length > 0) {
+    throw new ActionRejectedError(`PLAN_SCOPE_REQUIRED_OUTCOME_DUPLICATED: ${duplicated.join(", ")}`);
+  }
+}
+
 function compileTask(
   task: ModelPlanTask,
+  scopeBinding: {
+    readonly kind: "required_outcome" | "supporting";
+    readonly scopeRefs: readonly string[];
+  } | undefined,
   createId: () => string,
   availableToolNames: readonly string[] | undefined
 ): StructuredPlan["orderedSteps"][number] {
   return {
     id: `step-${createId()}`,
     objective: task.objective,
+    ...(scopeBinding === undefined ? {} : {
+      kind: scopeBinding.kind,
+      scopeRefs: [...scopeBinding.scopeRefs]
+    }),
     acceptanceChecks: (task.checks ?? []).map((check) => {
       const toolName = canonicalToolName(check.toolName, availableToolNames);
       return {
@@ -259,6 +306,74 @@ function compileTask(
       };
     })
   };
+}
+
+function resolveTaskScope(run: RunSnapshot, proposed: PlanTaskScope | undefined): PlanTaskScope | undefined {
+  if (proposed !== undefined) {
+    const previous = run.taskContract?.scope;
+    const hasNewInput = run.taskContract !== null
+      && run.taskContract.inputVersion < run.inputHistory.length;
+    if (previous !== undefined && !hasNewInput) {
+      if (JSON.stringify(previous) !== JSON.stringify(proposed)) {
+        throw new ActionRejectedError(
+          "TASK_SCOPE_REVISION_REQUIRES_NEW_USER_INPUT: ordinary Plan revision cannot change the persisted Task Scope."
+        );
+      }
+      return previous;
+    }
+    assertScopeRevisionPreservesRequiredOutcomes(previous, proposed);
+    return proposed;
+  }
+  if (run.taskContract?.scope !== undefined) return run.taskContract.scope;
+  return undefined;
+}
+
+function assertScopeRevisionPreservesRequiredOutcomes(
+  previous: PlanTaskScope | undefined,
+  proposed: PlanTaskScope
+): void {
+  if (previous === undefined) return;
+  const proposedById = new Map(proposed.requiredOutcomes.map((outcome) => [outcome.id, outcome]));
+  const changed = previous.requiredOutcomes.filter((outcome) => {
+    const next = proposedById.get(outcome.id);
+    return next === undefined
+      || next.description !== outcome.description
+      || next.source !== outcome.source;
+  });
+  if (changed.length > 0) {
+    throw new ActionRejectedError(
+      `TASK_SCOPE_REQUIRED_OUTCOME_REMOVED_OR_CHANGED: ${changed.map((outcome) => outcome.id).join(", ")}`
+    );
+  }
+}
+
+function resolveScopeBinding(input: {
+  readonly task: ModelPlanTask;
+  readonly scope: PlanTaskScope | undefined;
+}): { readonly kind: "required_outcome" | "supporting"; readonly scopeRefs: readonly string[] } | undefined {
+  if (input.scope === undefined) return undefined;
+  if (input.task.kind === undefined || input.task.supports === undefined) {
+    throw new ActionRejectedError(
+      "PLAN_SCOPE_RELATION_REQUIRED: every new Plan outcome in a resolved Task Scope must declare kind and supports."
+    );
+  }
+  const validIds = new Set(input.scope.requiredOutcomes.map((outcome) => outcome.id));
+  const invalid = input.task.supports.filter((id) => !validIds.has(id));
+  if (invalid.length > 0) {
+    throw new ActionRejectedError(`PLAN_SCOPE_REF_INVALID: ${invalid.join(", ")}`);
+  }
+  const scopeRefs = [...new Set(input.task.supports)];
+  if (scopeRefs.length === 0) {
+    throw new ActionRejectedError(
+      "PLAN_SCOPE_RELATION_INVALID: every Plan Step in a resolved Task Scope must bind at least one Task Scope required outcome."
+    );
+  }
+  if (input.task.kind === "required_outcome" && scopeRefs.length !== 1) {
+    throw new ActionRejectedError(
+      "PLAN_SCOPE_RELATION_INVALID: a required_outcome Step must bind exactly one Task Scope required outcome."
+    );
+  }
+  return { kind: input.task.kind, scopeRefs };
 }
 
 function canonicalToolName(

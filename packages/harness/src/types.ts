@@ -10,6 +10,7 @@ import type {
 } from "./profile.js";
 import type { DelegationPolicy } from "./multi-agent.js";
 import type { SkillConfiguration } from "./skills.js";
+import type { CodingStrategyMode } from "./coding-strategy.js";
 
 export type RuntimeMemoryOptions = {
   readonly store: MemoryStore;
@@ -48,6 +49,12 @@ export type CreateAgentOptions = {
   readonly delegationPolicy?: DelegationPolicy;
   readonly skills?: SkillConfiguration;
   readonly publicOutputListener?: AgentPublicOutputListener;
+  /** Turn-level strategy override. Product default is auto; coding/general are for development and eval. */
+  readonly codingStrategy?: CodingStrategyMode;
+  /** Eval-only switch; product default remains the Hybrid projection. */
+  readonly hybridContext?: "on" | "off";
+  /** Eval switch for coding-only bounded execution units; product default is ON. */
+  readonly codingExecutionCadence?: "on" | "off";
 };
 
 /** @deprecated Use CreateAgentOptions. */

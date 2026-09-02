@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-30T06:53:45.477Z",
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true,
+    "worktreeDigest": "sha256:27962be13ffba90e0b49a0f628631435fbabd1e2dc47d1891b46ac4c6468c4ea"
+  },
+  "repeatsRequested": 1,
+  "repeatsCompleted": 1,
+  "taskIds": [
+    "NB-CODE-001"
+  ],
+  "reportPaths": [
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\reliability-reports\\2026-08-30T06-53-45-477Z\\repeat-01\\report.json"
+  ]
+}

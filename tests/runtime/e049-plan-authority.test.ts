@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRuntime, type ModelDecisionContext } from "../../packages/harness/src/index.js";
-import { responseCall, responseDirect, responsePlan, ScriptedRuntimeProvider, finishFromEvidence, readStep, setPlan, successfulReadTool } from "./runtime-testkit.js";
+import { responseCall, responseDirect, responsePlan, ScriptedRuntimeProvider, finishFromEvidence, readStep, setPlan, successfulReadTool, taskScope } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -23,9 +23,10 @@ describe("E049 single Structured Plan authority", () => {
     const provider = new ScriptedRuntimeProvider([
       responsePlan({
         goal: "Inspect the target and return verified evidence",
+        scope: taskScope(),
         tasks: [
-          { objective: "Read the target", checks: [{ toolName: "filesystem.read", role: "verification" }] },
-          { objective: "Read the duplicate target copy", checks: [{ toolName: "filesystem.read", role: "verification" }] }
+          { objective: "Read the target", kind: "required_outcome", supports: ["inspect-target"], checks: [{ toolName: "filesystem.read", role: "verification" }] },
+          { objective: "Read the duplicate target copy", kind: "supporting", supports: ["inspect-target"], checks: [{ toolName: "filesystem.read", role: "verification" }] }
         ]
       }),
       (context: ModelDecisionContext) => responsePlan({
@@ -296,7 +297,7 @@ describe("E049 single Structured Plan authority", () => {
       {
         type: "set_plan",
         basedOnVersion: null,
-        taskContract: { goal: "Inspect the target", constraints: [], acceptanceCriteria: ["The target is inspected"] },
+        taskContract: { goal: "Inspect the target", constraints: [], acceptanceCriteria: ["The target is inspected"], scope: taskScope() },
         orderedSteps: [readStep()]
       },
       { type: "request_input", question: "Continue?", reason: "test stop" }
@@ -313,7 +314,8 @@ describe("E049 single Structured Plan authority", () => {
       goal: "Inspect the target",
       workspace,
       constraints: [],
-      acceptanceCriteria: ["Read the target"]
+      acceptanceCriteria: ["A successful target read provides verification evidence."],
+      scope: taskScope()
     });
     runtime.close();
   });
@@ -326,7 +328,7 @@ describe("E049 single Structured Plan authority", () => {
       {
         type: "set_plan",
         basedOnVersion: 1,
-        taskContract: { goal: "Inspect both inputs", constraints: ["Preserve formatting"], acceptanceCriteria: ["Both inputs are covered"] },
+        taskContract: { goal: "Inspect both inputs", constraints: ["Preserve formatting"], acceptanceCriteria: ["Both inputs are covered"], scope: taskScope() },
         orderedSteps: [readStep()]
       },
       { type: "request_input", question: "Continue?", reason: "test stop" }
@@ -346,7 +348,8 @@ describe("E049 single Structured Plan authority", () => {
       workspace,
       goal: "Inspect both inputs",
       constraints: [],
-      acceptanceCriteria: ["Read the target"]
+      acceptanceCriteria: ["A successful target read provides verification evidence."],
+      scope: taskScope()
     }));
     runtime.close();
   });

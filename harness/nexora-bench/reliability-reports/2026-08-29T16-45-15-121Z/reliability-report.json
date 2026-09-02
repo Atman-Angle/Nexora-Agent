@@ -1,0 +1,253 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "nexora-stress-reliability",
+  "createdAt": "2026-08-29T16:45:15.121Z",
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true,
+    "worktreeDigest": "sha256:0ed02a133de7c81cc8ec666ec7d4fb8090a76a74b5227b709760c645ee587b26"
+  },
+  "provider": {
+    "provider": "openai-compatible",
+    "model": "qwen3.7-flash",
+    "configFingerprint": "sha256:e2f1cb4365bba49f35a3c7fa40e64622b7d50b2ef0e7408cdb0751b09a1989cc"
+  },
+  "repeats": 1,
+  "taskIds": [
+    "NB-LONG-001",
+    "QB-MAXSUM-001"
+  ],
+  "runCount": 2,
+  "overall": {
+    "strictPassRate": 1,
+    "independentTaskSuccessRate": 1,
+    "runtimeValidatedSuccessRate": 1,
+    "authorityPassRate": 1,
+    "falseSuccessRate": 0,
+    "modelCalls": {
+      "mean": 9,
+      "median": 9,
+      "standardDeviation": 0,
+      "min": 9,
+      "max": 9
+    },
+    "toolCalls": {
+      "mean": 7.5,
+      "median": 7.5,
+      "standardDeviation": 0.5,
+      "min": 7,
+      "max": 8
+    },
+    "toolBudgetExhaustionRate": 0,
+    "failedToolInvocationRate": 0,
+    "repairSuccessRate": 1,
+    "strategySwitchSuccessRate": null,
+    "invalidResponseRate": 0.1111111111111111,
+    "toolContractViolationRate": 0,
+    "finalControlRejectionRate": 0,
+    "providerExternalFailureRate": 0,
+    "environmentFailureRate": 0
+  },
+  "boundaryDistribution": {},
+  "tasks": {
+    "NB-LONG-001": {
+      "runs": 1,
+      "stability": "Stable",
+      "strictSuccessRate": 1,
+      "passAt1": 1,
+      "repeatedRunVariance": 0,
+      "independentTaskSuccessRate": 1,
+      "runtimeValidatedSuccessRate": 1,
+      "authorityPassRate": 1,
+      "falseSuccessRate": 0,
+      "terminalDistribution": {
+        "succeeded": 1
+      },
+      "boundaryDistribution": {},
+      "modelCalls": {
+        "mean": 9,
+        "median": 9,
+        "standardDeviation": 0,
+        "min": 9,
+        "max": 9
+      },
+      "toolCalls": {
+        "mean": 8,
+        "median": 8,
+        "standardDeviation": 0,
+        "min": 8,
+        "max": 8
+      },
+      "evidenceCount": {
+        "mean": 8,
+        "median": 8,
+        "standardDeviation": 0,
+        "min": 8,
+        "max": 8
+      },
+      "approvalCount": {
+        "mean": 2,
+        "median": 2,
+        "standardDeviation": 0,
+        "min": 2,
+        "max": 2
+      },
+      "failedToolInvocationRate": 0,
+      "repeatedToolStrategyRate": 0,
+      "toolBudgetExhaustionRate": 0,
+      "repairSuccessRate": 1,
+      "strategySwitchSuccessRate": null,
+      "noProgressWarningRate": 0,
+      "convergenceBlockedRate": 0,
+      "invalidResponseRate": 0.1111111111111111,
+      "toolContractViolationRate": 0,
+      "finalControlRejectionRate": 0,
+      "providerExternalFailureRate": 0,
+      "environmentFailureRate": 0,
+      "durationMs": {
+        "mean": 14993.4644,
+        "median": 14993.4644,
+        "standardDeviation": 0,
+        "min": 14993.4644,
+        "max": 14993.4644
+      }
+    },
+    "QB-MAXSUM-001": {
+      "runs": 1,
+      "stability": "Stable",
+      "strictSuccessRate": 1,
+      "passAt1": 1,
+      "repeatedRunVariance": 0,
+      "independentTaskSuccessRate": 1,
+      "runtimeValidatedSuccessRate": 1,
+      "authorityPassRate": 1,
+      "falseSuccessRate": 0,
+      "terminalDistribution": {
+        "succeeded": 1
+      },
+      "boundaryDistribution": {},
+      "modelCalls": {
+        "mean": 9,
+        "median": 9,
+        "standardDeviation": 0,
+        "min": 9,
+        "max": 9
+      },
+      "toolCalls": {
+        "mean": 7,
+        "median": 7,
+        "standardDeviation": 0,
+        "min": 7,
+        "max": 7
+      },
+      "evidenceCount": {
+        "mean": 7,
+        "median": 7,
+        "standardDeviation": 0,
+        "min": 7,
+        "max": 7
+      },
+      "approvalCount": {
+        "mean": 2,
+        "median": 2,
+        "standardDeviation": 0,
+        "min": 2,
+        "max": 2
+      },
+      "failedToolInvocationRate": 0,
+      "repeatedToolStrategyRate": 0.2857142857142857,
+      "toolBudgetExhaustionRate": 0,
+      "repairSuccessRate": 1,
+      "strategySwitchSuccessRate": null,
+      "noProgressWarningRate": 0,
+      "convergenceBlockedRate": 0,
+      "invalidResponseRate": 0.1111111111111111,
+      "toolContractViolationRate": 0,
+      "finalControlRejectionRate": 0,
+      "providerExternalFailureRate": 0,
+      "environmentFailureRate": 0,
+      "durationMs": {
+        "mean": 21457.667800000003,
+        "median": 21457.667800000003,
+        "standardDeviation": 0,
+        "min": 21457.667800000003,
+        "max": 21457.667800000003
+      }
+    }
+  },
+  "runs": [
+    {
+      "repeat": 1,
+      "taskId": "NB-LONG-001",
+      "runId": "7ed6a21a-0092-45d6-995f-50585fe7344d",
+      "passed": true,
+      "independentTaskSuccess": true,
+      "runtimeValidatedSuccess": true,
+      "authorityPass": true,
+      "falseSuccess": false,
+      "terminal": "succeeded",
+      "boundary": null,
+      "stopReason": "COMPLETED",
+      "modelCalls": 9,
+      "toolCalls": 8,
+      "evidenceCount": 8,
+      "approvalCount": 2,
+      "failedToolInvocations": 0,
+      "repeatedToolStrategies": 0,
+      "toolBudgetExhausted": false,
+      "failureObservations": 1,
+      "repairAttempts": 1,
+      "repairedFailures": 1,
+      "strategySwitches": 0,
+      "successfulStrategySwitches": 0,
+      "noProgressWarnings": 0,
+      "convergenceBlocked": false,
+      "invalidResponses": 1,
+      "toolContractViolations": 0,
+      "finalControlRejections": 0,
+      "providerAttempts": 9,
+      "failedProviderAttempts": 0,
+      "environmentFailure": false,
+      "durationMs": 14993.4644
+    },
+    {
+      "repeat": 1,
+      "taskId": "QB-MAXSUM-001",
+      "runId": "ffd60899-8c69-4aa1-9627-86093c44b230",
+      "passed": true,
+      "independentTaskSuccess": true,
+      "runtimeValidatedSuccess": true,
+      "authorityPass": true,
+      "falseSuccess": false,
+      "terminal": "succeeded",
+      "boundary": null,
+      "stopReason": "COMPLETED",
+      "modelCalls": 9,
+      "toolCalls": 7,
+      "evidenceCount": 7,
+      "approvalCount": 2,
+      "failedToolInvocations": 0,
+      "repeatedToolStrategies": 2,
+      "toolBudgetExhausted": false,
+      "failureObservations": 1,
+      "repairAttempts": 1,
+      "repairedFailures": 1,
+      "strategySwitches": 0,
+      "successfulStrategySwitches": 0,
+      "noProgressWarnings": 0,
+      "convergenceBlocked": false,
+      "invalidResponses": 1,
+      "toolContractViolations": 0,
+      "finalControlRejections": 0,
+      "providerAttempts": 9,
+      "failedProviderAttempts": 0,
+      "environmentFailure": false,
+      "durationMs": 21457.667800000003
+    }
+  ]
+}

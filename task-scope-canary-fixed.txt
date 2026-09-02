@@ -1,0 +1,277 @@
+$ node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts --suite primary --variant coding --output docs/task-scope-authority-v0.1-real-provider.json
+{
+  "schemaVersion": 2,
+  "feature": "autonomous-coding-execution-v0.1",
+  "suite": "primary",
+  "createdAt": "2026-09-01T15:51:48.450Z",
+  "model": "Qwen 3.8 Flash",
+  "providerModelId": "qwen3.8-flash",
+  "provider": "openai-compatible",
+  "transport": "native_tools",
+  "invariantInputs": {
+    "runtime": "Nexora Runtime through createAgent",
+    "tools": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search",
+      "filesystem.write",
+      "filesystem.patch",
+      "process.start",
+      "process.inspect",
+      "process.logs",
+      "process.stop",
+      "shell.execute",
+      "git.status",
+      "git.diff",
+      "git.show"
+    ],
+    "budgets": {
+      "maxIterations": 32,
+      "maxModelCalls": 32,
+      "maxToolCalls": 24,
+      "maxRetries": 3,
+      "maxDurationMs": 720000
+    },
+    "codingStrategy": "auto"
+  },
+  "samples": [
+    {
+      "label": "primary",
+      "scenario": "greenfield",
+      "prompt": "请在这个空工作区中创建一个个人探索日志 Web 应用。必须支持添加、编辑、删除记录，按文本搜索，按类别筛选，刷新后通过本地持久化保留数据，并提供基本可用的界面。其他细节由你判断。",
+      "expectedTaskShape": "greenfield",
+      "strategy": "auto",
+      "hybridContext": "on",
+      "codingExecutionCadence": "on",
+      "executionUnitStarts": [],
+      "executionUnitCompletions": [],
+      "maxIntendedToolCalls": 0,
+      "maxLinkedToolInvocations": 0,
+      "realBoundedUnitObserved": false,
+      "strategyRouting": {
+        "sequence": 2,
+        "strategyProfile": "coding",
+        "activationReason": "user_intent_is_software_engineering",
+        "confidence": "high",
+        "codingTaskShape": "greenfield"
+      },
+      "strategyRoutingTurns": [
+        {
+          "sequence": 2,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 13,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        }
+      ],
+      "routingCorrect": true,
+      "runId": "cf53edb8-ff5f-41d8-9909-9d01a9a915f4",
+      "status": "blocked",
+      "stopReason": "PROVIDER_UNAVAILABLE",
+      "durationMs": 207943,
+      "modelCalls": 2,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "callId": "4d98693a-3110-48a1-8e08-c41c0df2f417",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 7683,
+          "actualInputTokens": 11008,
+          "actualOutputTokens": 2995,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 2,
+          "callId": "fede9996-6649-4f6a-b019-0c0a0b69485f",
+          "status": "failed",
+          "errorCode": "PROVIDER_ERROR",
+          "measuredInputTokens": 8101,
+          "actualInputTokens": null,
+          "actualOutputTokens": null,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 3,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "timingDiagnostics": [
+        {
+          "callId": "4d98693a-3110-48a1-8e08-c41c0df2f417",
+          "sequence": 1,
+          "controlState": {
+            "phase": "INITIAL_PLANNING",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": null,
+          "requestDecisionStartedAt": "2026-09-01T15:48:20.537Z",
+          "promptContextBuildMs": 5,
+          "providerWaitGenerationMs": 26933,
+          "responseParseValidationMs": 3,
+          "approvalWaitMs": 0,
+          "linkedTools": [
+            {
+              "invocationId": "6f786f69-0008-4a91-85ac-de16dbe800f5",
+              "toolName": "filesystem.list",
+              "startedAt": "2026-09-01T15:48:47.495Z",
+              "endedAt": "2026-09-01T15:48:47.507Z",
+              "durationMs": 12
+            }
+          ],
+          "nextLoopOverheadMs": 48,
+          "modelDecisionMs": 26948
+        },
+        {
+          "callId": "fede9996-6649-4f6a-b019-0c0a0b69485f",
+          "sequence": 2,
+          "controlState": {
+            "phase": "INITIAL_PLANNING",
+            "completedOutcomes": [],
+            "unfinishedOutcomes": [],
+            "invalidatedOutcomes": [],
+            "guidance": [
+              "Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes."
+            ]
+          },
+          "strategyProfile": "coding",
+          "planRevision": null,
+          "requestDecisionStartedAt": "2026-09-01T15:48:47.555Z",
+          "promptContextBuildMs": 11,
+          "providerWaitGenerationMs": 180059,
+          "responseParseValidationMs": null,
+          "approvalWaitMs": 0,
+          "linkedTools": [],
+          "nextLoopOverheadMs": null,
+          "modelDecisionMs": 180853
+        }
+      ],
+      "responseRejections": [],
+      "toolCalls": 1,
+      "effectiveToolsPerModelDecision": 0.5,
+      "failedTools": 0,
+      "effectiveToolRatio": 1,
+      "toolNames": [
+        "filesystem.list"
+      ],
+      "planOutcomes": 0,
+      "planObjectives": [],
+      "taskScope": null,
+      "optionalOutcomes": [],
+      "scopeExpansionRate": 0,
+      "verificationCalls": 0,
+      "usefulVerificationCalls": 0,
+      "verificationEfficiency": null,
+      "repeatedStrategy": 0,
+      "repeatedStrategyCount": 0,
+      "planRevisionCount": 0,
+      "sameFileEditCount": 0,
+      "fileEditCounts": {},
+      "noProgress": false,
+      "noProgressCount": 0,
+      "blockedCount": 1,
+      "noProgressRecoverySucceeded": false,
+      "timeToFirstToolMs": 26985,
+      "timeToFirstEditMs": null,
+      "timeToFirstVerificationMs": null,
+      "firstCoreOutcomeSatisfiedMs": null,
+      "allCoreOutcomesSatisfiedMs": null,
+      "completionAttempted": false,
+      "completionAttemptCount": 0,
+      "firstCompletionAttemptMs": null,
+      "terminalTimeMs": 207919,
+      "approvalsGranted": 0,
+      "approvalsDenied": 0,
+      "files": [],
+      "coreRequirements": {
+        "add": false,
+        "edit": false,
+        "delete": false,
+        "search": false,
+        "filter": false,
+        "persistence": false
+      },
+      "coreCompletionRate": 0,
+      "syntaxExitCode": 1,
+      "falseSuccess": false,
+      "lastError": {
+        "code": "PROVIDER_UNAVAILABLE",
+        "message": "Provider did not return response headers for 60000ms.",
+        "retryable": true
+      },
+      "summary": "Completed 0 planned item(s) and preserved 1 confirmed fact(s) before PROVIDER_UNAVAILABLE."
+    }
+  ],
+  "aggregate": {
+    "sampleCount": 1,
+    "completionRate": 0,
+    "validatedSampleRate": 0,
+    "falseSuccessCount": 0,
+    "routingCorrectRate": 1,
+    "averageTimeToFirstToolMs": 26985,
+    "averagePlanRevisionCount": 0,
+    "averageRepeatedEditCount": 0,
+    "averageEffectiveToolRatio": 1,
+    "averageScopeExpansionRate": 0,
+    "noProgressCount": 0,
+    "noProgressRecoverySuccessCount": 0,
+    "blockedCount": 1
+  },
+  "validated": false
+}
+[ELIFECYCLE] Command failed with exit code 1.
+
+EXIT_CODE=1

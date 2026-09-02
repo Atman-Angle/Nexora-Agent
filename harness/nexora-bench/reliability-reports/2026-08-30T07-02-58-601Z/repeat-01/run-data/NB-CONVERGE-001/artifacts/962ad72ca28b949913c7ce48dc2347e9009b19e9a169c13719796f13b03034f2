@@ -1,0 +1,1 @@
+{"text":null,"toolCalls":[{"callId":"call_9573eb23c99e4d7981360b4f","name":"filesystem.patch","arguments":{"expectedDigest":"sha256:8fb4db5c29a8da1b226524ece29cf442ea876a04db8de7a8e94e852ec9177f44","find":"\"healthCheck\": false","path":"service.json","replace":"\"healthCheck\": true"}}],"finishReason":"tool_calls"}

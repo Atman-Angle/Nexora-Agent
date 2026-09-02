@@ -39,4 +39,34 @@ describe("E062 waiting-safe duration budget", () => {
     expect((await runtime.inspect(waiting.runId)).snapshot.inputHistory).toHaveLength(2);
     runtime.close();
   });
+
+  it("fails a hard duration boundary instead of offering a budget extension", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e062-hard-duration-"));
+    roots.push(workspace);
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: {
+        async decide() {
+          await new Promise<void>((resolve) => setTimeout(resolve, 25));
+          return { type: "request_input", question: "Should not wait", reason: "Duration must stop first" };
+        }
+      },
+      tools: []
+    });
+
+    const result = await runtime.start({
+      input: "Reach the hard duration boundary.",
+      budgets: { maxIterations: 5, maxModelCalls: 5, maxToolCalls: 1, maxRetries: 1, maxDurationMs: 5 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "failed", stopReason: "DURATION_BUDGET_EXCEEDED" });
+    expect(inspection.snapshot.resumePredicate).toBeNull();
+    await expect(runtime.resume({ runId: result.runId, budgetExtension: { iterations: 1 } })).resolves.toMatchObject({
+      status: "failed",
+      stopReason: "DURATION_BUDGET_EXCEEDED"
+    });
+    runtime.close();
+  });
 });

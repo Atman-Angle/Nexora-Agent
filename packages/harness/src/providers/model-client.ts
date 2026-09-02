@@ -7,6 +7,7 @@ import type {
 } from "@nexora/runtime/internal";
 import type { CompiledPrompt, ProviderTransportProfile } from "../prompt.js";
 import type { JsonSchema } from "../tool-schema.js";
+import type { CodingDecisionContext, StrategyRouting } from "../coding-strategy.js";
 import type { ModelResponse } from "./model-response.js";
 import type { SkillDecisionContext } from "../skills.js";
 
@@ -174,6 +175,10 @@ export type ModelDecisionContext = {
    * with existing custom adapters; production wire projections may omit it.
    */
   readonly repair?: RepairContext | null;
+  /** Derived, non-authoritative strategy projection; absent for General Tasks. */
+  readonly coding?: CodingDecisionContext;
+  /** Turn-level Harness routing fact; never a Runtime authority. */
+  readonly strategyRouting?: StrategyRouting;
   readonly skills?: SkillDecisionContext;
   readonly tools: readonly {
     readonly identity: { readonly name: string };

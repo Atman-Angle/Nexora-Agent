@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-30T06:42:56.756Z",
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true,
+    "worktreeDigest": "sha256:27962be13ffba90e0b49a0f628631435fbabd1e2dc47d1891b46ac4c6468c4ea"
+  },
+  "repeatsRequested": 5,
+  "repeatsCompleted": 5,
+  "taskIds": [
+    "NB-CONVERGE-001",
+    "NB-BATCH-001",
+    "NB-RETRY-001",
+    "NB-CODE-001"
+  ],
+  "reportPaths": [
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\reliability-reports\\2026-08-30T06-42-56-756Z\\repeat-01\\report.json",
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\reliability-reports\\2026-08-30T06-42-56-756Z\\repeat-02\\report.json",
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\reliability-reports\\2026-08-30T06-42-56-756Z\\repeat-03\\report.json",
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\reliability-reports\\2026-08-30T06-42-56-756Z\\repeat-04\\report.json",
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\reliability-reports\\2026-08-30T06-42-56-756Z\\repeat-05\\report.json"
+  ]
+}

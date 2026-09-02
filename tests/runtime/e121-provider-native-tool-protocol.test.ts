@@ -255,6 +255,36 @@ describe("E050 Provider response contract convergence", () => {
     });
   });
 
+  it("accepts a unique registered canonical Tool name when a native Provider echoes the prompt name instead of its safe alias", async () => {
+    const workspace = tempRoot("nexora-e121-native-canonical-tool-");
+    let decisions = 0;
+    const server = await providerMessageServer(async () => {
+      decisions += 1;
+      return decisions === 1
+        ? {
+            content: null,
+            tool_calls: [{ id: "canonical-read", type: "function" as const, function: { name: "example.read", arguments: JSON.stringify({ path: "target.txt" }) } }]
+          }
+        : {
+            content: null,
+            tool_calls: [{ id: "canonical-input", type: "function" as const, function: { name: REQUEST_INPUT_CONTROL, arguments: JSON.stringify({ question: "Continue?", reason: "Canonical native name normalized." }) } }]
+          };
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({ baseUrl: `http://127.0.0.1:${server.port}/v1`, apiKey: "test-key", model: "test-model" }),
+      tools: [exampleTool({ path: "target.txt" })]
+    });
+
+    const result = await runtime.start({ input: "Inspect the target." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(view.toolInvocations).toEqual([expect.objectContaining({ toolName: "example.read", status: "succeeded" })]);
+  });
+
   it("repairs only schema-declared composite fields double-encoded by a native Provider", async () => {
     const workspace = tempRoot("nexora-e050-native-nested-json-");
     let decisions = 0;
@@ -313,6 +343,165 @@ describe("E050 Provider response contract convergence", () => {
       }
     });
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+  });
+
+  it("normalizes schema-declared structured arguments for structured_output before Tool validation", async () => {
+    const workspace = tempRoot("nexora-e121-structured-argument-normalization-");
+    const executed: unknown[] = [];
+    let decisions = 0;
+    const providerBlocks = JSON.stringify([
+      { type: "paragraph", text: "Executive summary" },
+      { type: "paragraph", text: "Q3 actions" }
+    ]);
+    const server = await providerServer(async () => {
+      decisions += 1;
+      return decisions === 1
+        ? toolResponse("example.normalized", {
+            blocks: providerBlocks,
+            config: JSON.stringify({ enabled: true }),
+            expectedRevision: "1",
+            literal: JSON.stringify({ keep: "as text" })
+          })
+        : inputResponse("Continue?", "Structured argument normalization proved.");
+    });
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: createOpenAICompatibleProvider({
+        baseUrl: `http://127.0.0.1:${server.port}/v1`,
+        apiKey: "test-key",
+        model: "test-model",
+        transport: "structured_output"
+      }),
+      tools: [normalizationExampleTool(executed)]
+    });
+
+    const result = await runtime.start({ input: "Create the structured report." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result.status).toBe("waiting");
+    expect(executed).toEqual([{
+      blocks: [
+        { type: "paragraph", text: "Executive summary" },
+        { type: "paragraph", text: "Q3 actions" }
+      ],
+      config: { enabled: true },
+      expectedRevision: 1,
+      literal: '{"keep":"as text"}'
+    }]);
+    expect(view.toolInvocations).toEqual([expect.objectContaining({
+      toolName: "example.normalized",
+      status: "succeeded",
+      inputJson: executed[0]
+    })]);
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+    expect(view.events.find((event) => event.type === "model.turn")?.payload).toMatchObject({
+      toolCalls: [{
+        name: "example.normalized",
+        providerArguments: {
+          blocks: providerBlocks,
+          config: '{"enabled":true}',
+          expectedRevision: "1",
+          literal: '{"keep":"as text"}'
+        },
+        normalizedArguments: executed[0],
+        argumentNormalization: [
+          { path: "/blocks", kind: "json_array" },
+          { path: "/config", kind: "json_object" },
+          { path: "/expectedRevision", kind: "integer_string" }
+        ]
+      }]
+    });
+  });
+
+  it("rejects ambiguous or invalid structured argument encodings without Tool side effects", async () => {
+    const cases: readonly {
+      readonly name: string;
+      readonly schema: z.ZodTypeAny;
+      readonly value: unknown;
+    }[] = [
+      { name: "array ordinary text", schema: z.array(z.string()), value: "hello" },
+      { name: "array receives object", schema: z.array(z.string()), value: '{"value":1}' },
+      { name: "object receives array", schema: z.object({ value: z.number() }).strict(), value: "[1]" },
+      { name: "malformed JSON", schema: z.array(z.string()), value: '["missing"' },
+      { name: "second encoded layer", schema: z.array(z.number()), value: JSON.stringify(JSON.stringify([1, 2])) },
+      {
+        name: "normalized inner field remains invalid",
+        schema: z.array(z.object({ id: z.number().int() }).strict()),
+        value: JSON.stringify([{ id: "wrong" }])
+      },
+      {
+        name: "encoded value exceeds normalization size",
+        schema: z.array(z.string()),
+        value: JSON.stringify(["x".repeat(1_000_001)])
+      },
+      {
+        name: "encoded value exceeds normalization depth",
+        schema: nestedObjectSchema(34),
+        value: JSON.stringify(nestedObjectValue(34))
+      }
+    ];
+
+    for (const testCase of cases) {
+      const workspace = tempRoot(`nexora-e121-normalization-reject-${testCase.name.replace(/\s+/gu, "-")}-`);
+      const calls = { count: 0 };
+      const runtime = createRuntime({
+        workspace,
+        dataDir: join(workspace, ".nexora"),
+        provider: new ScriptedRuntimeProvider([
+          scriptedToolResponse(
+            "example.strict-normalization",
+            { value: testCase.value },
+            `reject-${cases.indexOf(testCase)}`
+          ),
+          { type: "propose_finish", summary: `Rejected ${testCase.name} without executing the Tool.` }
+        ]),
+        tools: [singleValueTool(testCase.schema, calls)]
+      });
+
+      const result = await runtime.start({
+        input: `Reject ${testCase.name}.`,
+        completion: { evidence: "optional", requiredToolNames: [] },
+        budgets: { maxIterations: 3, maxModelCalls: 2, maxToolCalls: 2, maxRetries: 0, maxDurationMs: 30_000 }
+      });
+      const view = await runtime.inspect(result.runId);
+      runtime.close();
+
+      expect(calls.count, testCase.name).toBe(0);
+      expect(view.toolInvocations, testCase.name).toEqual([]);
+      expect(view.events.map((event) => event.type), testCase.name).toContain("response.rejected");
+    }
+  });
+
+  it("preserves JSON-looking text when the Tool Schema declares a string", async () => {
+    const workspace = tempRoot("nexora-e121-normalization-string-");
+    const calls: unknown[] = [];
+    const provider = new ScriptedRuntimeProvider([
+      scriptedToolResponse(
+        "example.strict-normalization",
+        { value: '[{"keep":"text"}]' },
+        "preserve-string"
+      ),
+      { type: "propose_finish", summary: "String preservation proved." }
+    ]);
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider,
+      tools: [singleValueTool(z.string(), { count: 0 }, calls)]
+    });
+
+    const result = await runtime.start({ input: "Preserve the literal string." });
+    const view = await runtime.inspect(result.runId);
+    runtime.close();
+
+    expect(result.status).toBe("succeeded");
+    expect(calls).toEqual(['[{"keep":"text"}]']);
+    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
+    expect(view.events.find((event) => event.type === "model.turn")?.payload).not.toHaveProperty(
+      "toolCalls.0.providerArguments"
+    );
   });
 
   it("continues native Plan controls with an accepted Tool result", async () => {
@@ -1140,6 +1329,96 @@ function nestedExampleTool(): RuntimeTool {
   };
 }
 
+function normalizationExampleTool(executed: unknown[]): RuntimeTool {
+  const inputSchema = z.object({
+    blocks: z.array(z.object({
+      type: z.literal("paragraph"),
+      text: z.string().min(1)
+    }).strict()).min(1),
+    config: z.object({ enabled: z.boolean() }).strict(),
+    expectedRevision: z.number().int().positive(),
+    literal: z.string()
+  }).strict();
+  return {
+    contract: {
+      identity: { name: "example.normalized" },
+      capability: { purpose: "Consume strict structured input.", nonGoals: ["Guess ambiguous input."] },
+      decision: { useWhen: ["Structured input is available."], avoidWhen: ["Input is ambiguous."] },
+      execution: {
+        effect: { kind: "read", description: "Records validated structured input without mutation." },
+        idempotent: true,
+        inputSchema,
+        inputExample: {
+          blocks: [{ type: "paragraph", text: "Example" }],
+          config: { enabled: true },
+          expectedRevision: 1,
+          literal: "text"
+        }
+      },
+      evidence: {
+        produces: ["Validated structured input."],
+        factsSchema: z.object({ accepted: z.boolean() }).strict()
+      }
+    },
+    async execute(input) {
+      executed.push(inputSchema.parse(input));
+      return { status: "success", subjectRef: "normalized", facts: { accepted: true } };
+    }
+  };
+}
+
+function singleValueTool(
+  valueSchema: z.ZodTypeAny,
+  counter: { count: number },
+  values: unknown[] = []
+): RuntimeTool {
+  const inputSchema = z.object({ value: valueSchema }).strict();
+  return {
+    contract: {
+      identity: { name: "example.strict-normalization" },
+      capability: { purpose: "Validate one exact value.", nonGoals: ["Infer another value."] },
+      decision: { useWhen: ["The exact value is supplied."], avoidWhen: ["The value is ambiguous."] },
+      execution: {
+        effect: { kind: "read", description: "Validates without mutation." },
+        idempotent: true,
+        inputSchema,
+        inputExample: { value: exampleForSchema(valueSchema) }
+      },
+      evidence: {
+        produces: ["Validated input."],
+        factsSchema: z.object({ accepted: z.boolean() }).strict()
+      }
+    },
+    async execute(input) {
+      const parsed = inputSchema.parse(input);
+      counter.count += 1;
+      values.push(parsed.value);
+      return { status: "success", subjectRef: "strict", facts: { accepted: true } };
+    }
+  };
+}
+
+function nestedObjectSchema(depth: number): z.ZodTypeAny {
+  let schema: z.ZodTypeAny = z.object({ leaf: z.string() }).strict();
+  for (let index = 0; index < depth; index += 1) schema = z.object({ child: schema }).strict();
+  return schema;
+}
+
+function nestedObjectValue(depth: number): unknown {
+  let value: unknown = { leaf: "value" };
+  for (let index = 0; index < depth; index += 1) value = { child: value };
+  return value;
+}
+
+function exampleForSchema(schema: z.ZodTypeAny): unknown {
+  if (schema.safeParse("example").success) return "example";
+  if (schema.safeParse([]).success) return [];
+  if (schema.safeParse({ value: 1 }).success) return { value: 1 };
+  const nested = nestedObjectValue(34);
+  if (schema.safeParse(nested).success) return nested;
+  return null;
+}
+
 async function providerServer(
   decide: (request: ProviderRequest) => Promise<unknown>
 ): Promise<{ readonly port: number }> {
@@ -1186,6 +1465,14 @@ function planResponse(goal: string, objectives: readonly string[]) {
 
 function toolResponse(name: string, argumentsValue: unknown) {
   return structuredCalls([{ name, arguments: argumentsValue }]);
+}
+
+function scriptedToolResponse(name: string, argumentsValue: unknown, callId: string) {
+  return {
+    text: null,
+    toolCalls: [{ callId, name, arguments: argumentsValue }],
+    finishReason: "tool_calls"
+  };
 }
 
 function inputResponse(question: string, reason: string) {

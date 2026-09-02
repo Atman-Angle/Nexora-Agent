@@ -1,0 +1,368 @@
+{
+  "schemaVersion": 1,
+  "feature": "coding-strategy-v0.1",
+  "createdAt": "2026-08-31T06:46:23.770Z",
+  "model": "Qwen 3.8 Flash",
+  "providerModelId": "qwen3.8-flash",
+  "provider": "openai-compatible",
+  "transport": "native_tools",
+  "prompt": "请在这个空工作区中创建一个个人探索日志 Web 应用。必须支持添加、编辑、删除记录，按文本搜索，按类别筛选，刷新后通过本地持久化保留数据，并提供基本可用的界面。其他细节由你判断。",
+  "invariantInputs": {
+    "runtime": "Nexora Runtime through createAgent",
+    "tools": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search",
+      "filesystem.write",
+      "filesystem.patch",
+      "process.start",
+      "process.inspect",
+      "process.logs",
+      "process.stop",
+      "shell.execute",
+      "git.status",
+      "git.diff",
+      "git.show"
+    ],
+    "budgets": {
+      "maxIterations": 32,
+      "maxModelCalls": 32,
+      "maxToolCalls": 24,
+      "maxRetries": 3,
+      "maxDurationMs": 720000
+    },
+    "workspace": "fresh empty temporary directory per variant",
+    "differingInput": "codingStrategy only"
+  },
+  "baselineReference": {
+    "status": "blocked",
+    "duration": "11m47s",
+    "filesEdited": 4,
+    "scopeExpansion": "large",
+    "noProgress": true,
+    "source": "docs/nexora-coding-strategy-v0.1-spec-updated.md"
+  },
+  "variants": {
+    "general": {
+      "label": "general",
+      "strategy": "disabled",
+      "runId": "f34ec012-6e43-4110-b4b1-0e9aa44af5fa",
+      "status": "blocked",
+      "stopReason": "NO_PROGRESS_DETECTED",
+      "durationMs": 390082,
+      "modelCalls": 8,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 2,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 3,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 4,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 5,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 6,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 7,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 8,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 3,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "responseRejections": [
+        {
+          "sequence": 20,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "TASK_CONTRACT_REQUIRED",
+                "message": "TASK_CONTRACT_REQUIRED: create the Task Contract and Structured Plan with nexora_update_plan before the first write or execute action. Read-only exploration may remain unplanned."
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The Runtime rejected this action before execution. Correct the request using the rejection details and do not resend it unchanged."
+            }
+          },
+          "detailsArtifact": "sha256:dc497cf34ec9b4c8312c5404b559af9daed0c13614f1cf989abee1b9c284cadc"
+        },
+        {
+          "sequence": 26,
+          "diagnostic": {
+            "kind": "schema",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "tasks.5.checks.0.role",
+                "code": "invalid_enum_value",
+                "message": "Invalid enum value. Expected 'mutation' | 'verification', received 'execute'"
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "Correct the invalid field(s) using authoritative facts and do not resend the rejected response unchanged.",
+              "fields": [
+                {
+                  "path": "tasks.5.checks.0.role",
+                  "code": "invalid_enum_value"
+                }
+              ]
+            }
+          },
+          "detailsArtifact": "sha256:f03c6d60f9d84c33edd76d747fb601a727a8bd120ced7fc21fe83376d24309e0"
+        },
+        {
+          "sequence": 49,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "FINAL_CONTROL_REQUIRED",
+                "message": "FINAL_CONTROL_REQUIRED: after workspace execution, return the final answer through nexora_respond; bare model content is not a completion proposal."
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The text was not accepted as a task result. Preserve all completed Tool effects and do not call workspace Tools again. Submit exactly one Provider-native nexora_respond control call containing the user-facing answer; ordinary assistant text cannot complete this Run."
+            }
+          },
+          "detailsArtifact": "sha256:39a13094393e60b1e39f0f3e9619272796e314160216386f0966d1254e750693"
+        },
+        {
+          "sequence": 55,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "response_rejected",
+                "message": "Completion is not valid: STEP_INCOMPLETE:step-a6584eed-8949-4b54-b0f4-9be421340c49, CHECK_UNSATISFIED:step-a6584eed-8949-4b54-b0f4-9be421340c49:check-af8f5eee-a1fe-4bcd-bf2b-9421819f50a0, STEP_INCOMPLETE:step-eaa54853-845e-4df9-b96d-14b645bee05c, CHECK_UNSATISFIED:step-eaa54853-845e-4df9-b96d-14b645bee05c:check-78298390-d0ab-4099-bef3-1c98f0e196f1, STEP_INCOMPLETE:step-8e5a04c8-a4f7-45c8-a62e-e2ebe9884e8e, CHECK_UNSATISFIED:step-8e5a04c8-a4f7-45c8-a62e-e2ebe9884e8e:check-82f3dfa9-ad3e-4bd1-b9a7-"
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The Runtime rejected this action before execution. Correct the request using the rejection details and do not resend it unchanged."
+            }
+          },
+          "detailsArtifact": "sha256:ff6f89f3e383ea3575fbca080fbf23f890fbb5909e10e8f98741c50a5c4680f5"
+        },
+        {
+          "sequence": 65,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "FINAL_CONTROL_REQUIRED",
+                "message": "FINAL_CONTROL_REQUIRED: after workspace execution, return the final answer through nexora_respond; bare model content is not a completion proposal."
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The text was not accepted as a task result. Preserve all completed Tool effects and do not call workspace Tools again. Submit exactly one Provider-native nexora_respond control call containing the user-facing answer; ordinary assistant text cannot complete this Run."
+            }
+          },
+          "detailsArtifact": "sha256:01657555e442452868b2c612462bccc2d4c6dee51048bd8571769392a84dc6f4"
+        }
+      ],
+      "toolCalls": 2,
+      "failedTools": 0,
+      "toolNames": [
+        "filesystem.list",
+        "filesystem.write"
+      ],
+      "planOutcomes": 6,
+      "planObjectives": [
+        "创建应用入口 index.html，包含日志表单（标题/日期/类别/正文）、搜索框、类别筛选、列表区域与静态资源引用",
+        "创建样式 styles.css，提供基本可用的响应式界面（表单、卡片列表、空状态、高亮与操作按钮）",
+        "创建逻辑 app.js：localStorage 读写、增删改、文本搜索（标题+正文）、类别筛选、排序、编辑回填与删除确认",
+        "创建 README.md 说明启动方式与功能范围",
+        "回读三个核心文件，确认功能点（add/edit/delete/search/filter/persist）均已实现且引用路径一致",
+        "用本地静态服务器加载页面并确认 HTTP 200，验证应用可实际打开"
+      ],
+      "optionalOutcomes": [
+        "import_export"
+      ],
+      "scopeExpansionRate": 0.14285714285714285,
+      "verificationCalls": 0,
+      "usefulVerificationCalls": 0,
+      "verificationEfficiency": null,
+      "repeatedStrategy": 0,
+      "noProgress": true,
+      "timeToFirstEditMs": 112604,
+      "timeToFirstVerificationMs": null,
+      "approvalsGranted": 1,
+      "approvalsDenied": 0,
+      "files": [
+        "index.html"
+      ],
+      "coreRequirements": {
+        "add": true,
+        "edit": true,
+        "delete": true,
+        "search": false,
+        "filter": false,
+        "persistence": false
+      },
+      "coreCompletionRate": 0.5,
+      "syntaxExitCode": 1,
+      "falseSuccess": false,
+      "lastError": {
+        "code": "NO_PROGRESS_DETECTED",
+        "message": "Execution repeated repeated_invalid_response 2 times without a new authoritative fact.",
+        "retryable": true
+      },
+      "summary": "Completed 1 planned item(s) and preserved 2 confirmed fact(s) before NO_PROGRESS_DETECTED."
+    },
+    "coding": null
+  },
+  "comparison": null
+}

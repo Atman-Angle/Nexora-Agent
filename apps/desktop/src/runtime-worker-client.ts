@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { AgentPublicOutputEvent } from "@nexora/harness";
-import type { DesktopSnapshot, ModelProfileInput, SessionControl } from "./shared.js";
+import type { AttachmentView, DeliverablePreview, DesktopMessageInput, DesktopSnapshot, ModelProfileInput, SessionControl } from "./shared.js";
 
 type PendingRequest = {
   readonly resolve: (value: unknown) => void;
@@ -45,9 +45,11 @@ export class RuntimeWorkerClient {
 
   snapshot(): Promise<DesktopSnapshot> { return this.#invoke("snapshot") as Promise<DesktopSnapshot>; }
   addProject(path: string): Promise<DesktopSnapshot> { return this.#invoke("addProject", path) as Promise<DesktopSnapshot>; }
+  removeProject(path: string): Promise<DesktopSnapshot> { return this.#invoke("removeProject", path) as Promise<DesktopSnapshot>; }
   setWorkspace(path: string): Promise<DesktopSnapshot> { return this.#invoke("setWorkspace", path) as Promise<DesktopSnapshot>; }
-  startSession(goal: string): Promise<DesktopSnapshot> { return this.#invoke("startSession", goal) as Promise<DesktopSnapshot>; }
-  continueSession(sessionId: string, text: string): Promise<DesktopSnapshot> { return this.#invoke("continueSession", sessionId, text) as Promise<DesktopSnapshot>; }
+  stageAttachments(paths: readonly string[]): Promise<readonly AttachmentView[]> { return this.#invoke("stageAttachments", paths) as Promise<readonly AttachmentView[]>; }
+  startSession(input: string | DesktopMessageInput): Promise<DesktopSnapshot> { return this.#invoke("startSession", typeof input === "string" ? { text: input, attachments: [] } : input) as Promise<DesktopSnapshot>; }
+  continueSession(sessionId: string, input: string | DesktopMessageInput): Promise<DesktopSnapshot> { return this.#invoke("continueSession", sessionId, typeof input === "string" ? { text: input, attachments: [] } : input) as Promise<DesktopSnapshot>; }
   compactSession(sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("compactSession", sessionId) as Promise<DesktopSnapshot>; }
   openSession(projectPath: string, sessionId: string): Promise<DesktopSnapshot> { return this.#invoke("openSession", projectPath, sessionId) as Promise<DesktopSnapshot>; }
   archiveSession(projectPath: string, sessionId: string, archived: boolean): Promise<DesktopSnapshot> { return this.#invoke("archiveSession", projectPath, sessionId, archived) as Promise<DesktopSnapshot>; }
@@ -55,8 +57,12 @@ export class RuntimeWorkerClient {
   saveModelProfile(profile: ModelProfileInput): Promise<DesktopSnapshot> { return this.#invoke("saveModelProfile", profile) as Promise<DesktopSnapshot>; }
   deleteModelProfile(profileId: string): Promise<DesktopSnapshot> { return this.#invoke("deleteModelProfile", profileId) as Promise<DesktopSnapshot>; }
   selectModelProfile(profileId: string): Promise<DesktopSnapshot> { return this.#invoke("selectModelProfile", profileId) as Promise<DesktopSnapshot>; }
+  setSelectedModelReasoning(reasoning: "off" | "dynamic" | "on"): Promise<DesktopSnapshot> { return this.#invoke("setSelectedModelReasoning", reasoning) as Promise<DesktopSnapshot>; }
   async control(runId: string, control: SessionControl): Promise<void> { await this.#invoke("control", runId, control); }
   readArtifact(digest: string): Promise<unknown> { return this.#invoke("readArtifact", digest); }
+  readDeliverable(projectPath: string, manifestPath: string, expectedRevision: number, expectedPreviewDigest: string): Promise<DeliverablePreview> {
+    return this.#invoke("readDeliverable", projectPath, manifestPath, expectedRevision, expectedPreviewDigest) as Promise<DeliverablePreview>;
+  }
 
   async close(): Promise<void> {
     if (this.#closed) return;
