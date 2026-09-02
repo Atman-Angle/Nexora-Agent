@@ -11,7 +11,7 @@
     "digest": "sha256:4475dde2c33d208364f008f64ac30d765efb4b11e301ab176450969f12f40eac"
   },
   "scenario": "tasks/NB-RETRY-001/scenario.ts",
-  "allowedCapabilities": ["fixture.transient_read", "filesystem.write", "shell.execute"],
+  "allowedCapabilities": ["fixture.transient_read", "filesystem.list", "filesystem.write", "shell.execute"],
   "budgets": {
     "maxIterations": 10,
     "maxModelCalls": 10,
@@ -21,6 +21,7 @@
   },
   "expectedTerminal": "succeeded",
   "driver": {
+    "approvalPolicy": { "mode": "unattended", "maxApprovals": 6, "rules": [ { "toolName": "filesystem.write", "decision": "approve", "maxApprovals": 2 }, { "toolName": "shell.execute", "decision": "approve", "maxApprovals": 4 } ] },
     "approvals": [
       { "occurrence": 1, "decision": "approve", "restartBeforeDecision": false },
       { "occurrence": 2, "decision": "approve", "restartBeforeDecision": false }

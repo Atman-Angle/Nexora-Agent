@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { RunSnapshot, RuntimeAction } from "@nexora/runtime/internal";
+import type { AgentAuditEvent, RunSnapshot, RuntimeAction } from "@nexora/runtime/internal";
 import type { DecisionContextResult } from "./context/decision-context.js";
 import {
   REQUEST_INPUT_CONTROL,
@@ -9,6 +9,10 @@ import {
   DIRECT_RESPONSE_CONTROL,
   SKILL_SELECTION_CONTROL,
   isControlCall,
+  ModelDirectResponseSchema,
+  ModelInputRequestSchema,
+  ModelPlanUpdateSchema,
+  SkillSelectionInputSchema,
   type ModelResponse
 } from "./providers/model-response.js";
 import type { RehydratedFact } from "./providers/model-client.js";
@@ -21,13 +25,18 @@ import {
   compileModelFinish,
   compileModelPlan,
   compileProviderToolCalls,
+  DelegateWorkersSchema,
   parseDelegationControl,
   parseDirectResponseControl,
   parseInputControl,
   parseModelResponse,
   parsePlanControl
 } from "./planning.js";
-import { SkillSelectionInputSchema } from "./providers/model-response.js";
+import { providerJsonSchema, type JsonSchema } from "./tool-schema.js";
+import {
+  normalizeProviderToolArguments,
+  type ToolArgumentNormalizationDiagnostic
+} from "./tool-argument-normalization.js";
 
 const PREMATURE_INPUT_REPAIR = "AUTONOMOUS_INPUT_REPAIR_REQUIRED";
 const DELEGATION_ACTION_MUST_BE_EXCLUSIVE = "DELEGATION_ACTION_MUST_BE_EXCLUSIVE";
@@ -35,8 +44,10 @@ const FINAL_CONTROL_REQUIRED = "FINAL_CONTROL_REQUIRED";
 
 /** Runtime mechanics consumed by the sole Harness-owned Agent Loop. */
 export interface AgentLoopRuntimePort {
+  readonly cadenceMode: "on" | "off";
   now(): string;
   createId(): string;
+  requiresTaskContract(run: RunSnapshot): boolean;
   buildDecisionContext(run: RunSnapshot): DecisionContextResult;
   recordContextRefEvidence(
     run: RunSnapshot,
@@ -75,8 +86,27 @@ export interface AgentLoopRuntimePort {
     run: RunSnapshot,
     response: ModelResponse,
     compiledActionTypes: readonly string[],
+    decisionAudit: {
+      readonly modelDecisionId: string;
+      readonly executionUnitId?: string;
+    },
+    observer?: RuntimeObserver,
+    argumentNormalizations?: readonly ToolArgumentNormalizationDiagnostic[]
+  ): void;
+  recordExecutionUnit(
+    runId: string,
+    event: Extract<AgentAuditEvent, { readonly type: "execution.unit.started" | "execution.unit.completed" }>,
     observer?: RuntimeObserver
   ): void;
+  invocations(runId: string): readonly {
+    readonly id: string;
+    readonly status: "prepared" | "started" | "succeeded" | "failed" | "unknown";
+  }[];
+  resumableExecutionUnit(run: RunSnapshot): null | {
+    readonly modelDecisionId: string;
+    readonly calls: ModelResponse["toolCalls"];
+    readonly linkedToolInvocations: readonly string[];
+  };
   validateSkillSelection(selection: unknown): unknown;
   dispatch(
     run: RunSnapshot,
@@ -107,7 +137,7 @@ export async function runAgentLoop(
   const activeStartedAt = Date.parse(runtime.now());
   while (run.status === "running") {
     if (signal.aborted) {
-      run = runtime.cancel(run, cancellationReason(signal), observer);
+      run = stopForAbort(runtime, run, activeStartedAt, signal, observer);
       break;
     }
     const budgetFailure = runtime.failForBudget(run, activeStartedAt, observer);
@@ -119,6 +149,21 @@ export async function runAgentLoop(
     if (convergenceFailure !== null) {
       run = convergenceFailure;
       break;
+    }
+
+    const resumableUnit = runtime.resumableExecutionUnit(run);
+    if (resumableUnit !== null) {
+      run = await executeBoundedExecutionUnit({
+        runtime,
+        run,
+        action: compileProviderToolCalls(run, resumableUnit.calls),
+        modelDecisionId: resumableUnit.modelDecisionId,
+        executionUnitId: runtime.createId(),
+        initialInvocationIds: resumableUnit.linkedToolInvocations,
+        signal,
+        ...(observer === undefined ? {} : { observer })
+      });
+      if (run.status !== "running") break;
     }
 
     let decisionResult = runtime.buildDecisionContext(run);
@@ -146,7 +191,7 @@ export async function runAgentLoop(
     if (modelCall.outcome === "failed") {
       const error = modelCall.error;
       if (signal.aborted) {
-        run = runtime.cancel(run, cancellationReason(signal), observer);
+        run = stopForAbort(runtime, run, activeStartedAt, signal, observer);
         break;
       }
       run = runtime.blockForProvider(run, error, observer);
@@ -154,7 +199,7 @@ export async function runAgentLoop(
     }
     const rawResponse = modelCall.output;
     if (signal.aborted) {
-      run = runtime.cancel(run, cancellationReason(signal), observer);
+      run = stopForAbort(runtime, run, activeStartedAt, signal, observer);
       break;
     }
 
@@ -166,10 +211,12 @@ export async function runAgentLoop(
           run,
           response,
           response.toolCalls.length === 0 ? ["propose_finish"] : [],
+          { modelDecisionId: runtime.createId() },
           observer
         );
         summary = response.toolCalls.length === 0 ? response.text ?? undefined : undefined;
         if (summary !== undefined) {
+          requireTaskContractForCompletion(runtime, run);
           run = await runtime.dispatch(
             run,
             compileModelFinish(run, summary, bareTextCompletionMode(run, decisionContext)),
@@ -189,9 +236,16 @@ export async function runAgentLoop(
     }
 
     let normalizedResponse: ModelResponse | undefined;
+    let argumentNormalizations: readonly ToolArgumentNormalizationDiagnostic[] = [];
     let responseRecorded = false;
     try {
-      const response = parseModelResponse(rawResponse);
+      const parsedResponse = parseModelResponse(rawResponse);
+      const normalized = normalizeProviderToolArguments(
+        parsedResponse,
+        toolArgumentSchemas(decisionContext.tools)
+      );
+      const response = normalized.response;
+      argumentNormalizations = normalized.diagnostics;
       normalizedResponse = response;
       const planCalls = response.toolCalls.filter((call) => call.name === UPDATE_PLAN_CONTROL);
       const inputCalls = response.toolCalls.filter((call) => call.name === REQUEST_INPUT_CONTROL);
@@ -252,12 +306,52 @@ export async function runAgentLoop(
                 ? ["select_skills"]
                 : [])
       ];
-      runtime.recordModelResponse(run, response, actionTypes, observer);
+      const modelDecisionId = runtime.createId();
+      const executionUnit = boundedExecutionUnit(
+        runtime.cadenceMode,
+        decisionContext,
+        run,
+        runtimeCalls
+      );
+      const executionUnitId = executionUnit === null ? undefined : runtime.createId();
+      runtime.recordModelResponse(
+        run,
+        response,
+        actionTypes,
+        { modelDecisionId, ...(executionUnitId === undefined ? {} : { executionUnitId }) },
+        observer,
+        argumentNormalizations
+      );
       responseRecorded = true;
+      if (planUpdate === null && run.taskContract === null) {
+        const effectfulCalls = runtimeCalls.filter((call) => (
+          decisionContext.tools.find((tool) => tool.identity.name === call.name)?.execution.effect.kind !== "read"
+        ));
+        if (effectfulCalls.length > 0) {
+          throw new ActionRejectedError(
+            "TASK_CONTRACT_REQUIRED: create the Task Contract and Structured Plan with nexora_update_plan before the first write or execute action. Read-only exploration may remain unplanned."
+          );
+        }
+        if (directResponse !== null || response.toolCalls.length === 0) {
+          requireTaskContractForCompletion(runtime, run);
+        }
+      }
       if (planCalls.length === 1) {
         if (!planRevisionAllowed(decisionContext)) {
           throw new ActionRejectedError(
             "PLAN_REVISION_NOT_REQUIRED: execute or verify the current active Step; revise the Plan only after new user input or an authoritative failure invalidates it."
+          );
+        }
+        const scopeAuthorityActive = run.taskContract?.scope !== undefined
+          || decisionContext.strategyRouting?.strategyProfile === "coding";
+        const requiresScopeResolution = scopeAuthorityActive && (
+          run.currentPlan === null
+          || run.taskContract === null
+          || run.taskContract.inputVersion < run.inputHistory.length
+        );
+        if (requiresScopeResolution && planUpdate!.scope === undefined) {
+          throw new ActionRejectedError(
+            "TASK_SCOPE_REQUIRED: the first complex Coding Plan and every user-input Task Scope revision must include the complete resolved scope. Preserve specific requirements; for broad input provide bounded assumptions, exclusions and completion criteria."
           );
         }
         const planAction = compileModelPlan(
@@ -287,7 +381,7 @@ export async function runAgentLoop(
           observer
         );
       } else if (inputCalls.length === 1) {
-        if (shouldRepairPrematureInputRequest(run, decisionContext)) {
+        if (shouldRepairPrematureInputRequest(run, decisionContext, inputRequest ?? undefined)) {
           run = runtime.rejectResponse(
             run,
             new ActionRejectedError(
@@ -300,13 +394,24 @@ export async function runAgentLoop(
           const inputAction: RuntimeAction = {
             type: "request_input",
             question: inputRequest!.question,
-            reason: inputRequest!.reason
+            reason: inputRequest!.reason,
+            ...(inputRequest!.basis === undefined ? {} : { basis: inputRequest!.basis })
           };
           run = await runtime.dispatch(run, inputAction, signal, observer);
         }
       } else if (runtimeCalls.length > 0) {
         const toolAction = compileProviderToolCalls(run, runtimeCalls);
-        run = await runtime.dispatch(run, toolAction, signal, observer);
+        run = executionUnit === null || executionUnitId === undefined
+          ? await runtime.dispatch(run, toolAction, signal, observer)
+          : await executeBoundedExecutionUnit({
+              runtime,
+              run,
+              action: toolAction,
+              modelDecisionId,
+              executionUnitId,
+              signal,
+              ...(observer === undefined ? {} : { observer })
+            });
       } else if (response.toolCalls.length === 0) {
         if (
           run.currentPlan !== null
@@ -340,7 +445,14 @@ export async function runAgentLoop(
       if (!(error instanceof z.ZodError) && !(error instanceof ActionRejectedError)) throw error;
       modelCall.discardPublicOutput();
       if (normalizedResponse !== undefined && !responseRecorded) {
-        runtime.recordModelResponse(run, normalizedResponse, [], observer);
+        runtime.recordModelResponse(
+          run,
+          normalizedResponse,
+          [],
+          { modelDecisionId: runtime.createId() },
+          observer,
+          argumentNormalizations
+        );
       }
       // A compound Runtime command may have durably committed progress before
       // rejecting its final transition. Repair must continue from Authority,
@@ -350,6 +462,180 @@ export async function runAgentLoop(
     }
   }
   return toRunResult(run);
+}
+
+const MAX_EXECUTION_UNIT_ACTIONS = 2;
+
+type ExecutionUnitStopReason =
+  | "COMPLETED"
+  | "OBSERVATION_BARRIER"
+  | "VALIDATION_FAILURE"
+  | "TOOL_FAILURE"
+  | "APPROVAL_REQUIRED"
+  | "USER_INPUT"
+  | "OUTCOME_BOUNDARY"
+  | "UNKNOWN_SIDE_EFFECT"
+  | "BUDGET_BOUNDARY";
+
+function boundedExecutionUnit(
+  mode: "on" | "off",
+  context: DecisionContextResult["context"],
+  run: RunSnapshot,
+  calls: readonly ModelResponse["toolCalls"][number][]
+): { readonly actionCount: number } | null {
+  if (
+    mode !== "on"
+    || context.strategyRouting?.strategyProfile !== "coding"
+    || (context.repair ?? null) !== null
+    || run.lastError !== null
+    || calls.length < 2
+  ) return null;
+  const effects = calls.map((call) => (
+    context.tools.find((tool) => tool.identity.name === call.name)?.execution.effect.kind
+  ));
+  if (effects.includes("write") && effects.some((effect) => effect !== "write")) {
+    throw new ActionRejectedError(
+      "EXECUTION_UNIT_OBSERVATION_BARRIER: do not mix write intents with read, execute, validation, build, browser, log or external observations in one Coding execution unit."
+    );
+  }
+  if (!effects.every((effect) => effect === "write")) return null;
+  if (calls.length > MAX_EXECUTION_UNIT_ACTIONS) {
+    throw new ActionRejectedError(
+      `EXECUTION_UNIT_BUDGET_BOUNDARY: a Coding execution unit may contain at most ${MAX_EXECUTION_UNIT_ACTIONS} write intents.`
+    );
+  }
+  return { actionCount: calls.length };
+}
+
+async function executeBoundedExecutionUnit(input: {
+  readonly runtime: AgentLoopRuntimePort;
+  readonly run: RunSnapshot;
+  readonly action: RuntimeAction;
+  readonly modelDecisionId: string;
+  readonly executionUnitId: string;
+  readonly initialInvocationIds?: readonly string[];
+  readonly signal: AbortSignal;
+  readonly observer?: RuntimeObserver;
+}): Promise<RunSnapshot> {
+  if (input.action.type !== "execute_step" && input.action.type !== "call_tool") {
+    throw new ActionRejectedError("A bounded execution unit requires Tool intents.");
+  }
+  const actions = input.action.type === "execute_step" ? input.action.actions : [input.action];
+  const unitStart = input.runtime.now();
+  input.runtime.recordExecutionUnit(input.run.runId, {
+    type: "execution.unit.started",
+    payload: {
+      modelDecisionId: input.modelDecisionId,
+      executionUnitId: input.executionUnitId,
+      outcomeRef: input.action.stepId,
+      unitStart,
+      intendedToolCalls: actions.length
+    }
+  }, input.observer);
+
+  let current = input.run;
+  let stopReason: ExecutionUnitStopReason = "COMPLETED";
+  const invocationIds = new Set(input.initialInvocationIds ?? []);
+  const initialStepId = activeStepId(current);
+  try {
+    for (let index = 0; index < actions.length; index += 1) {
+      if (input.signal.aborted) {
+        stopReason = "USER_INPUT";
+        break;
+      }
+      if (current.budgetsUsed.toolCalls >= current.budgets.maxToolCalls) {
+        stopReason = "BUDGET_BOUNDARY";
+        break;
+      }
+      const before = new Set(input.runtime.invocations(current.runId).map((item) => item.id));
+      current = await input.runtime.dispatch(
+        current,
+        actions[index]!,
+        input.signal,
+        input.observer
+      );
+      const created = input.runtime.invocations(current.runId).filter((item) => !before.has(item.id));
+      created.forEach((item) => invocationIds.add(item.id));
+      if (current.status === "waiting") {
+        stopReason = "APPROVAL_REQUIRED";
+        break;
+      }
+      if (created.some((item) => item.status === "unknown")) {
+        stopReason = "UNKNOWN_SIDE_EFFECT";
+        break;
+      }
+      if (created.some((item) => item.status === "failed") || current.lastError !== null) {
+        stopReason = "TOOL_FAILURE";
+        break;
+      }
+      if (index < actions.length - 1 && activeStepId(current) !== initialStepId) {
+        stopReason = "OUTCOME_BOUNDARY";
+        break;
+      }
+    }
+  } catch (error) {
+    stopReason = input.signal.aborted
+      ? "USER_INPUT"
+      : error instanceof z.ZodError || error instanceof ActionRejectedError
+        ? "VALIDATION_FAILURE"
+        : "TOOL_FAILURE";
+    throw error;
+  } finally {
+    input.runtime.recordExecutionUnit(input.run.runId, {
+      type: "execution.unit.completed",
+      payload: {
+        modelDecisionId: input.modelDecisionId,
+        executionUnitId: input.executionUnitId,
+        linkedToolInvocations: [...invocationIds],
+        unitStart,
+        unitEnd: input.runtime.now(),
+        stopReason
+      }
+    }, input.observer);
+  }
+  return current;
+}
+
+function activeStepId(run: RunSnapshot): string | null {
+  return run.stepProgress.find((item) => item.status === "active")?.stepId ?? null;
+}
+
+function requireTaskContractForCompletion(runtime: AgentLoopRuntimePort, run: RunSnapshot): void {
+  if (run.taskContract !== null || !runtime.requiresTaskContract(run)) return;
+  throw new ActionRejectedError(
+    "TASK_CONTRACT_REQUIRED: establish the Runtime-owned Task Contract and Structured Plan with nexora_update_plan before proposing a task result after a change-task workflow or any write/execute action. Preserve every user requirement as a verifiable Plan outcome; if exploration proves no mutation is needed, verify that state in the Plan instead of inventing a mutation."
+  );
+}
+
+const CONTROL_ARGUMENT_SCHEMAS = new Map<string, JsonSchema>([
+  [UPDATE_PLAN_CONTROL, providerJsonSchema(ModelPlanUpdateSchema)],
+  [REQUEST_INPUT_CONTROL, providerJsonSchema(ModelInputRequestSchema)],
+  [DELEGATE_WORKERS_CONTROL, providerJsonSchema(DelegateWorkersSchema)],
+  [DIRECT_RESPONSE_CONTROL, providerJsonSchema(ModelDirectResponseSchema)],
+  [SKILL_SELECTION_CONTROL, providerJsonSchema(SkillSelectionInputSchema)]
+]);
+
+function toolArgumentSchemas(
+  tools: DecisionContextResult["context"]["tools"]
+): ReadonlyMap<string, JsonSchema> {
+  return new Map([
+    ...CONTROL_ARGUMENT_SCHEMAS,
+    ...tools.map((tool) => [tool.identity.name, tool.execution.inputSchema] as const)
+  ]);
+}
+
+function stopForAbort(
+  runtime: AgentLoopRuntimePort,
+  run: RunSnapshot,
+  activeStartedAt: number,
+  signal: AbortSignal,
+  observer?: RuntimeObserver
+): RunSnapshot {
+  if (cancellationReason(signal) === "DURATION_BUDGET_EXCEEDED") {
+    const budgetFailure = runtime.failForBudget(run, activeStartedAt, observer);
+    if (budgetFailure !== null) return budgetFailure;
+  }
+  return runtime.cancel(run, cancellationReason(signal), observer);
 }
 
 function bareTextCompletionMode(
@@ -374,8 +660,20 @@ function directControlCompletionMode(run: RunSnapshot): "task_result" | "direct_
 
 function shouldRepairPrematureInputRequest(
   run: RunSnapshot,
-  context: DecisionContextResult["context"]
+  context: DecisionContextResult["context"],
+  request?: { readonly basis?: "user_exclusive" | "workspace" | "tool" | "context" | "persisted_fact" | undefined }
 ): boolean {
+  const basis = request?.basis;
+  if (basis === "user_exclusive") return false;
+  if (basis !== undefined) {
+    return !run.lastError?.message.includes(PREMATURE_INPUT_REPAIR);
+  }
+  // Legacy requests without an admissibility basis cannot bypass the full-run
+  // guard once authoritative Plan or Tool facts exist. Ask the Agent to
+  // restate the request with an explicit user-exclusive basis.
+  if (run.currentPlan !== null || run.budgetsUsed.toolCalls > 0) {
+    return !run.lastError?.message.includes(PREMATURE_INPUT_REPAIR);
+  }
   if (
     run.currentPlan !== null
     || run.budgetsUsed.toolCalls > 0

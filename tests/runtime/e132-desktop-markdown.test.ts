@@ -6,7 +6,6 @@ import { renderMarkdown } from "../../apps/desktop/src/renderer/markdown.js";
 import { shouldSendOnEnter } from "../../apps/desktop/src/renderer/keyboard.js";
 import { createPublicOutputBatcher } from "../../apps/desktop/src/renderer/public-output-batcher.js";
 import { compactLatest, isFormalResultContent } from "../../apps/desktop/src/renderer/public-output-view.js";
-import { workspaceOutputs } from "../../apps/desktop/src/renderer/workspace-outputs.js";
 
 describe("E132 Desktop Markdown", () => {
   it("renders useful Markdown while escaping model-provided HTML and unsafe links", () => {
@@ -18,6 +17,16 @@ describe("E132 Desktop Markdown", () => {
       "- one",
       "- two",
       "",
+      "| File | Status |",
+      "| --- | --- |",
+      "| app.ts | changed |",
+      "",
+      "---",
+      "",
+      "```ts",
+      "const ok = true;",
+      "```",
+      "",
       "<script>alert(1)</script>",
       "[safe](https://example.com) [unsafe](javascript:alert(1))"
     ].join("\n"));
@@ -26,6 +35,13 @@ describe("E132 Desktop Markdown", () => {
     expect(html).toContain("<strong>passed</strong>");
     expect(html).toContain("<code>pnpm test</code>");
     expect(html).toContain("<ul><li>one</li><li>two</li></ul>");
+    expect(html).toContain('<div class="markdown-table-wrap"><table>');
+    expect(html).toContain("<th>File</th>");
+    expect(html).toContain("<td>app.ts</td>");
+    expect(html).toContain("<hr>");
+    expect(html).toContain('<figure class="code-block">');
+    expect(html).toContain('<span>ts</span><button type="button" class="copy-code"');
+    expect(html).toContain('<code class="language-ts">const ok = true;</code>');
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(html).toContain('href="https://example.com"');
     expect(html).not.toContain('href="javascript:');
@@ -42,11 +58,16 @@ describe("E132 Desktop keyboard submission", () => {
 });
 
 describe("E132 Desktop compact process output and deliverables", () => {
-  it("keeps reasoning as a compact single row until the user expands it", () => {
-    const css = readFileSync(resolve("apps/desktop/src/renderer/styles.css"), "utf8");
-    expect(css).toContain(".think-summary");
-    expect(css).toContain(".think-preview");
-    expect(css).toContain("text-overflow: ellipsis");
+  it("projects provider-exposed reasoning as one expandable inline transcript row", () => {
+    const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
+    const conversationSource = source.slice(source.indexOf("function conversation("), source.indexOf("function resultMeta("));
+    expect(conversationSource).not.toContain("activity-line");
+    expect(conversationSource).toContain('segment.channel === "reasoning"');
+    expect(conversationSource).toContain("Reasoning detail");
+    expect(conversationSource).toContain("深度思考");
+    expect(conversationSource).toContain("data-public-output-toggle");
+    expect(conversationSource).toContain("compactLatest(output.text, 220)");
+    expect(conversationSource).not.toContain("validation.passed");
   });
 
   it("coalesces token floods and keeps collapsed process DOM bounded", () => {
@@ -61,45 +82,36 @@ describe("E132 Desktop compact process output and deliverables", () => {
     scheduled[0]!();
     expect(flushes).toEqual([["run:call:attempt"]]);
     const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
-    expect(source).toContain("compactLatest(output.text, 180)");
+    expect(source).toContain("publicOutputBatcher.queue(key)");
+    expect(source).toContain("preview.textContent = compactLatest(output.text, 220)");
+    expect(source).toContain('cursor.textContent = output.completed ? "" : "▍"');
   });
 
-  it("shows the newest streaming text and reserves full content for the formal result", () => {
+  it("reserves Conversation output for the formal result", () => {
     expect(compactLatest("first second third fourth", 13)).toBe("…third fourth");
     expect(isFormalResultContent({ completed: false, text: "Done", resultSummary: "Done" })).toBe(false);
     expect(isFormalResultContent({ completed: true, text: "Working notes", resultSummary: "Done" })).toBe(false);
     expect(isFormalResultContent({ completed: true, text: "Done", resultSummary: "Done" })).toBe(true);
     const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
-    expect(source).toContain("reasoningAttempts.has(segment.baseKey)");
-    expect(source).toContain("Working</span>");
+    expect(source).toContain("if (!formalResult) continue");
   });
 
-  it("projects only successful workspace writes and patches as deduplicated deliverables", () => {
-    expect(workspaceOutputs([
-      { toolName: "filesystem.write", status: "succeeded", resultJson: { path: "site/index.html" } },
-      { toolName: "filesystem.patch", status: "succeeded", resultJson: { path: "site/index.html" } },
-      { toolName: "filesystem.write", status: "succeeded", resultJson: { path: "reports/result.docx" } },
-      { toolName: "filesystem.write", status: "failed", resultJson: { path: "failed.txt" } },
-      { toolName: "shell.exec", status: "succeeded", resultJson: { path: "ignored.txt" } }
-    ])).toEqual([
-      { path: "site/index.html", name: "index.html", kind: "website" },
-      { path: "reports/result.docx", name: "result.docx", kind: "document" }
-    ]);
-  });
-
-  it("keeps Tool results collapsed by default and preserves the explicit detail disclosure", () => {
+  it("keeps detailed Tool facts inline and removes the old Activity execution UI", () => {
     const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
-    expect(source).not.toContain("toolOutputPreview(invocation.resultJson");
-    expect(source).toContain("data-tool=\"${escapeAttr(invocation.id)}\"");
-    expect(source).toContain("${expanded ? `<div class=\"activity-detail\">");
-    expect(source).toContain("data-workspace-entry=\"${escapeAttr(presentation.workspacePath)}\"");
+    expect(source).toContain("function executionTranscript(run:");
+    expect(source).toContain("toolDetail(invocation, services)");
+    expect(source).toContain("run.inspection.evidence");
+    expect(source).not.toContain("function activity(session: SessionView)");
+    expect(source).not.toContain('data-view="activity"');
+    expect(source).not.toContain("activityTimeline");
   });
 
   it("shows the real model Context window and keeps transient automatic eviction out of Conversation", () => {
     const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
-    expect(source).toContain("<span>Context ${formatTokens(context.used)} / ${formatTokens(context.window)}</span>");
+    expect(source).toContain("上下文已使用 ${context.percent.toFixed(1)}%");
     expect(source).toContain("usage.inputTokens / usage.contextWindowTokens");
     expect(source).not.toContain("已自动压缩上下文");
-    expect(source).toContain('record.type !== "context.compaction.requested"');
+    expect(source).not.toContain('record.type !== "context.compaction.requested"');
+    expect(source).not.toContain("context-control-placeholder");
   });
 });

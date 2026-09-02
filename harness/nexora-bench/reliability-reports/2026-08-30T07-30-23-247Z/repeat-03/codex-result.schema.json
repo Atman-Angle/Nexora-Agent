@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "enum": [
+        "fixed",
+        "not_fixed",
+        "blocked"
+      ]
+    },
+    "boundary": {
+      "type": "string"
+    },
+    "rootCause": {
+      "type": "string"
+    },
+    "changedFiles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "residualRisk": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "boundary",
+    "rootCause",
+    "changedFiles",
+    "verification",
+    "residualRisk"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,745 @@
+{
+  "schemaVersion": 1,
+  "feature": "coding-strategy-v0.1",
+  "createdAt": "2026-08-31T06:51:03.1788947Z",
+  "model": "Qwen 3.8 Flash",
+  "providerModelId": "qwen3.8-flash",
+  "provider": "openai-compatible",
+  "transport": "native_tools",
+  "prompt": "请在这个空工作区中创建一个个人探索日志 Web 应用。必须支持添加、编辑、删除记录，按文本搜索，按类别筛选，刷新后通过本地持久化保留数据，并提供基本可用的界面。其他细节由你判断。",
+  "invariantInputs": {
+    "runtime": "Nexora Runtime through createAgent",
+    "tools": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search",
+      "filesystem.write",
+      "filesystem.patch",
+      "process.start",
+      "process.inspect",
+      "process.logs",
+      "process.stop",
+      "shell.execute",
+      "git.status",
+      "git.diff",
+      "git.show"
+    ],
+    "budgets": {
+      "maxIterations": 32,
+      "maxModelCalls": 32,
+      "maxToolCalls": 24,
+      "maxRetries": 3,
+      "maxDurationMs": 720000
+    },
+    "workspace": "fresh empty temporary directory per variant",
+    "differingInput": "codingStrategy only"
+  },
+  "baselineReference": {
+    "status": "blocked",
+    "duration": "11m47s",
+    "filesEdited": 4,
+    "scopeExpansion": "large",
+    "noProgress": true,
+    "source": "docs/nexora-coding-strategy-v0.1-spec-updated.md"
+  },
+  "variants": {
+    "general": {
+      "label": "general",
+      "strategy": "disabled",
+      "runId": "f34ec012-6e43-4110-b4b1-0e9aa44af5fa",
+      "status": "blocked",
+      "stopReason": "NO_PROGRESS_DETECTED",
+      "durationMs": 390082,
+      "modelCalls": 8,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 2,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 3,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 4,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 5,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 6,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 7,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 8,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 3,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "responseRejections": [
+        {
+          "sequence": 20,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "TASK_CONTRACT_REQUIRED",
+                "message": "TASK_CONTRACT_REQUIRED: create the Task Contract and Structured Plan with nexora_update_plan before the first write or execute action. Read-only exploration may remain unplanned."
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The Runtime rejected this action before execution. Correct the request using the rejection details and do not resend it unchanged."
+            }
+          },
+          "detailsArtifact": "sha256:dc497cf34ec9b4c8312c5404b559af9daed0c13614f1cf989abee1b9c284cadc"
+        },
+        {
+          "sequence": 26,
+          "diagnostic": {
+            "kind": "schema",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "tasks.5.checks.0.role",
+                "code": "invalid_enum_value",
+                "message": "Invalid enum value. Expected 'mutation' | 'verification', received 'execute'"
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "Correct the invalid field(s) using authoritative facts and do not resend the rejected response unchanged.",
+              "fields": [
+                {
+                  "path": "tasks.5.checks.0.role",
+                  "code": "invalid_enum_value"
+                }
+              ]
+            }
+          },
+          "detailsArtifact": "sha256:f03c6d60f9d84c33edd76d747fb601a727a8bd120ced7fc21fe83376d24309e0"
+        },
+        {
+          "sequence": 49,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "FINAL_CONTROL_REQUIRED",
+                "message": "FINAL_CONTROL_REQUIRED: after workspace execution, return the final answer through nexora_respond; bare model content is not a completion proposal."
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The text was not accepted as a task result. Preserve all completed Tool effects and do not call workspace Tools again. Submit exactly one Provider-native nexora_respond control call containing the user-facing answer; ordinary assistant text cannot complete this Run."
+            }
+          },
+          "detailsArtifact": "sha256:39a13094393e60b1e39f0f3e9619272796e314160216386f0966d1254e750693"
+        },
+        {
+          "sequence": 55,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "response_rejected",
+                "message": "Completion is not valid: STEP_INCOMPLETE:step-a6584eed-8949-4b54-b0f4-9be421340c49, CHECK_UNSATISFIED:step-a6584eed-8949-4b54-b0f4-9be421340c49:check-af8f5eee-a1fe-4bcd-bf2b-9421819f50a0, STEP_INCOMPLETE:step-eaa54853-845e-4df9-b96d-14b645bee05c, CHECK_UNSATISFIED:step-eaa54853-845e-4df9-b96d-14b645bee05c:check-78298390-d0ab-4099-bef3-1c98f0e196f1, STEP_INCOMPLETE:step-8e5a04c8-a4f7-45c8-a62e-e2ebe9884e8e, CHECK_UNSATISFIED:step-8e5a04c8-a4f7-45c8-a62e-e2ebe9884e8e:check-82f3dfa9-ad3e-4bd1-b9a7-"
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The Runtime rejected this action before execution. Correct the request using the rejection details and do not resend it unchanged."
+            }
+          },
+          "detailsArtifact": "sha256:ff6f89f3e383ea3575fbca080fbf23f890fbb5909e10e8f98741c50a5c4680f5"
+        },
+        {
+          "sequence": 65,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "FINAL_CONTROL_REQUIRED",
+                "message": "FINAL_CONTROL_REQUIRED: after workspace execution, return the final answer through nexora_respond; bare model content is not a completion proposal."
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The text was not accepted as a task result. Preserve all completed Tool effects and do not call workspace Tools again. Submit exactly one Provider-native nexora_respond control call containing the user-facing answer; ordinary assistant text cannot complete this Run."
+            }
+          },
+          "detailsArtifact": "sha256:01657555e442452868b2c612462bccc2d4c6dee51048bd8571769392a84dc6f4"
+        }
+      ],
+      "toolCalls": 2,
+      "failedTools": 0,
+      "toolNames": [
+        "filesystem.list",
+        "filesystem.write"
+      ],
+      "planOutcomes": 6,
+      "planObjectives": [
+        "创建应用入口 index.html，包含日志表单（标题/日期/类别/正文）、搜索框、类别筛选、列表区域与静态资源引用",
+        "创建样式 styles.css，提供基本可用的响应式界面（表单、卡片列表、空状态、高亮与操作按钮）",
+        "创建逻辑 app.js：localStorage 读写、增删改、文本搜索（标题+正文）、类别筛选、排序、编辑回填与删除确认",
+        "创建 README.md 说明启动方式与功能范围",
+        "回读三个核心文件，确认功能点（add/edit/delete/search/filter/persist）均已实现且引用路径一致",
+        "用本地静态服务器加载页面并确认 HTTP 200，验证应用可实际打开"
+      ],
+      "optionalOutcomes": [
+        "import_export"
+      ],
+      "scopeExpansionRate": 0.14285714285714285,
+      "verificationCalls": 0,
+      "usefulVerificationCalls": 0,
+      "verificationEfficiency": null,
+      "repeatedStrategy": 0,
+      "noProgress": true,
+      "timeToFirstEditMs": 112604,
+      "timeToFirstVerificationMs": null,
+      "approvalsGranted": 1,
+      "approvalsDenied": 0,
+      "files": [
+        "index.html"
+      ],
+      "coreRequirements": {
+        "add": true,
+        "edit": true,
+        "delete": true,
+        "search": false,
+        "filter": false,
+        "persistence": false
+      },
+      "coreCompletionRate": 0.5,
+      "syntaxExitCode": 1,
+      "falseSuccess": false,
+      "lastError": {
+        "code": "NO_PROGRESS_DETECTED",
+        "message": "Execution repeated repeated_invalid_response 2 times without a new authoritative fact.",
+        "retryable": true
+      },
+      "summary": "Completed 1 planned item(s) and preserved 2 confirmed fact(s) before NO_PROGRESS_DETECTED."
+    },
+    "coding": {
+      "label": "coding",
+      "strategy": "auto",
+      "runId": "33bf9b62-d95a-44b4-a325-86c828fca13b",
+      "status": "succeeded",
+      "stopReason": "COMPLETED",
+      "durationMs": 391026,
+      "modelCalls": 17,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 2,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 3,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 4,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 5,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 6,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 7,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 8,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 9,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 10,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 11,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 12,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 13,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 14,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 15,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 16,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 17,
+          "status": "succeeded",
+          "errorCode": null,
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "responseRejections": [
+        {
+          "sequence": 18,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "TASK_CONTRACT_REQUIRED",
+                "message": "TASK_CONTRACT_REQUIRED: create the Task Contract and Structured Plan with nexora_update_plan before the first write or execute action. Read-only exploration may remain unplanned."
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The Runtime rejected this action before execution. Correct the request using the rejection details and do not resend it unchanged."
+            }
+          },
+          "detailsArtifact": "sha256:deefe20363e7e181f8cf9d5b4389a295c582699f2a37294b4406d75d624280f0"
+        },
+        {
+          "sequence": 95,
+          "diagnostic": {
+            "kind": "state",
+            "responseType": "object",
+            "issues": [
+              {
+                "path": "$",
+                "code": "response_rejected",
+                "message": "Completion is not valid: UNPLANNED_MUTATION_UNVERIFIED, CHECK_EVIDENCE_STALE:step-406ac781-65fb-4d21-b36f-e5f1182367d7:check-3ac39e5d-1f9e-483d-8e62-7354b42868fa, CHECK_EVIDENCE_STALE:step-406ac781-65fb-4d21-b36f-e5f1182367d7:check-7f4f1b98-878f-4120-8fd2-6998c4242d1e"
+              }
+            ],
+            "recovery": {
+              "sideEffect": "none",
+              "doNotRepeat": true,
+              "nextAction": "The Runtime rejected this action before execution. Correct the request using the rejection details and do not resend it unchanged."
+            }
+          },
+          "detailsArtifact": "sha256:f4e2fd51afd6babf3c9d9dabed9b82b6709a479475b2e20804643a79d88cfccc"
+        }
+      ],
+      "toolCalls": 20,
+      "failedTools": 0,
+      "toolNames": [
+        "filesystem.list",
+        "filesystem.write",
+        "filesystem.write",
+        "filesystem.write",
+        "filesystem.list",
+        "filesystem.read",
+        "filesystem.read",
+        "shell.execute",
+        "filesystem.patch",
+        "filesystem.read",
+        "filesystem.read",
+        "filesystem.read",
+        "filesystem.read",
+        "filesystem.list",
+        "filesystem.read",
+        "filesystem.read",
+        "filesystem.read",
+        "filesystem.read",
+        "shell.execute",
+        "filesystem.list"
+      ],
+      "planOutcomes": 4,
+      "planObjectives": [
+        "创建 index.html：包含新增/编辑表单、搜索框、类别筛选、记录列表与空状态等界面骨架",
+        "创建 styles.css：提供基本可用、可读的桌面与移动端布局样式",
+        "创建 app.js：实现记录的增删改、文本搜索、类别筛选以及 localStorage 读写持久化",
+        "验证三个文件均已落盘、内容完整且脚本可被解析"
+      ],
+      "optionalOutcomes": [
+        "undo"
+      ],
+      "scopeExpansionRate": 0.14285714285714285,
+      "verificationCalls": 2,
+      "usefulVerificationCalls": 1,
+      "verificationEfficiency": 0.5,
+      "repeatedStrategy": 4,
+      "noProgress": false,
+      "timeToFirstEditMs": 71924,
+      "timeToFirstVerificationMs": 158294,
+      "approvalsGranted": 6,
+      "approvalsDenied": 0,
+      "files": [
+        "app.js",
+        "index.html",
+        "styles.css"
+      ],
+      "coreRequirements": {
+        "add": true,
+        "edit": true,
+        "delete": true,
+        "search": true,
+        "filter": true,
+        "persistence": true
+      },
+      "coreCompletionRate": 1,
+      "syntaxExitCode": 0,
+      "falseSuccess": false,
+      "lastError": null,
+      "summary": "个人探索日志 Web 应用已在工作区创建完成，共三个文件，纯静态、无需构建或联网。\n\n## 落盘文件（均已复核 digest）\n| 文件 | 大小 | 内容 digest |\n|---|---|---|\n| `index.html` | 2646 B | `sha256:23b275a5…11d2ab18` |\n| `styles.css` | 4394 B | `sha256:bc4b9ce5…25077e48` |\n| `app.js` | 9484 B | `sha256:da376596…9a19c9f8` |\n\n## 需求覆盖\n- **添加**：`#entry-form` 表单（标题必填、类别下拉、正文多行），提交后写入列表并持久化；标题为空时在页面内给出错误提示，不弹原生校验框（`novalidate` + 自定义提示）。\n- **编辑**：每条记录的「编辑」按钮把该条回填进表单，表头切换为「编辑记录」、按钮变为「更新记录」并出现「取消编辑」；保存时只更新 `updatedAt`，`createdAt` 保留。\n- **删除**：「删除」按钮带 `confirm` 二次确认；若删除的正是当前编辑中的条目，表单自动复位。\n- **文本搜索**：搜索框 `input` 实时触发，对「标题 + 正文 + 类别」拼接后做不区分大小写的子串匹配。\n- **类别筛选**：筛选下拉由 `DEFAULT_CATEGORIES`（学习/技术/生活/兴趣/其他）动态生成，含「全部类别」，与搜索条件叠加生效。\n- **本地持久化**：`localStorage` key `exploration-log.entries.v1`，JSON 序列化。读取时对每条记录做 `sanitize`（缺标题丢弃、类别非法归入「其他」、时间戳兜底）；JSON 解析失败时把损坏原文备份到 `…v1.corrupt-backup` 并从空列表继续；存储被拒绝或写满时页面内提示，不会白屏。\n- **界面**：两张卡片面板 + 工具栏 + 记录列表；区分三种空态（无记录 / 有记录但筛选无命中 / 正常）并显示「显示 N / 共 M 条」计数；`@media (max-width: 600px)` 下工具栏改为纵向、按钮拉伸；列表按 `updatedAt` 倒序。\n\n## 实现要点\n- 所有列表 DOM 通过 `createElement` + `textContent` 构建，不使用 `innerHTML`，用户输入的标题/正文不会被当作 HTML 执行。\n- ID 优先用 `crypto.randomUUID()`，不可用时回退到时间戳+随机串。\n- 代码为单个 IIFE + `'use strict'`，ES5/ES2015 混合语法，兼容旧浏览器。\n\n## 验证结果\n- `node --check app.js` → 退出码 0，stderr 为空，脚本语法可解析。\n- `filesystem.list .` → 工作区恰为 `app.js`、`index.html`、`styles.css` 三项，无残留文件。\n- 三个文件全文分块读取核对，`index.html` 中引用的 `styles.css`、`app.js` 与所有元素 id 均存在且与脚本查询一致；过程中发现的 `styles.css` 一行重复 `color` 声明已修正并二次复核。\n\n## 使用方式\n直接用浏览器打开 `index.html` 即可（双击文件或拖入浏览器）；若希望走 HTTP 协议，在该目录起任意静态服务器后访问 `index.html`。数据按浏览器+目录 origin 隔离，清除浏览器站点数据会一并清空记录。\n\n## 可自行调整的默认值\n类别集合在 `app.js` 顶部的 `DEFAULT_CATEGORIES` 常量中，改这一处即可同步表单与筛选下拉；存储结构版本号在 `STORAGE_KEY`，将来变更格式时可递增 key 做迁移。"
+    }
+  },
+  "comparison": {
+    "durationDeltaMs": 944,
+    "modelCallDelta": 9,
+    "toolCallDelta": 18,
+    "scopeExpansionRateDelta": 0.0,
+    "verificationEfficiencyDelta": null,
+    "coreCompletionDelta": 0.5,
+    "codingValidated": true
+  }
+}

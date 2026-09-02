@@ -32,7 +32,14 @@ export const FailureBoundarySchema = z.enum([
   "EVIDENCE",
   "COMPLETION",
   "PROVIDER_EXTERNAL",
-  "EFFICIENCY"
+  "EFFICIENCY",
+  "MODEL_CAPABILITY",
+  "TOOL_CONTRACT",
+  "PLAN",
+  "VALIDATION",
+  "COMPLETION_CONTRACT",
+  "CONVERGENCE",
+  "PRODUCT_PATH"
 ]);
 
 const BudgetsSchema = z.object({
@@ -96,6 +103,17 @@ export const EvalTaskSchema = z.object({
   budgets: BudgetsSchema,
   expectedTerminal: ExpectedTerminalSchema,
   driver: z.object({
+    approvalPolicy: z.object({
+      mode: z.enum(["unattended", "interactive"]),
+      rules: z.array(z.object({
+        toolName: IdentifierSchema,
+        decision: z.enum(["approve", "deny"]),
+        maxApprovals: z.number().int().positive().optional(),
+        input: z.record(z.unknown()).optional(),
+        reason: z.string().trim().min(1).optional()
+      }).strict()).min(1),
+      maxApprovals: z.number().int().positive().optional()
+    }).strict().optional(),
     approvals: z.array(z.object({
       occurrence: z.number().int().positive(),
       decision: z.enum(["approve", "deny"]),

@@ -89,10 +89,16 @@ const ProcessFactsSchema = z.object({
   processStillRunning: z.literal(false)
 }).strict();
 const ShellExecuteInputSchema = z.preprocess(normalizePackageManagerCommandInput, z.object({
-  command: z.string().trim().min(1),
-  args: z.array(z.string()).default([]),
-  cwd: z.string().default("."),
-  timeoutMs: z.number().int().positive().max(300_000).default(60_000)
+  command: z.string().trim().min(1).describe(
+    "One native executable name or path only. Do not include arguments, shell operators, redirections, pipelines, built-ins, or shell/script-wrapper entrypoints."
+  ),
+  args: z.array(z.string()).default([]).describe(
+    "Explicit argument tokens passed directly to the executable without shell parsing. Put every argument here as a separate array item."
+  ),
+  cwd: z.string().default(".").describe("Workspace-relative working directory for the process."),
+  timeoutMs: z.number().int().positive().max(300_000).default(60_000).describe(
+    "Maximum synchronous execution time in milliseconds."
+  )
 }).strict());
 
 export function createBuiltInTools(options: { readonly artifactDir?: string } = {}): readonly RuntimeTool[] {
@@ -110,7 +116,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         const path = await workspacePath(context.workspace, input.path, "file");
         const bytes = await readFile(path);
         throwIfAborted(context.signal);
-        const content = bytes.toString("utf8");
+        const content = decodeUtf8Text(bytes, input.path);
         if (input.offset !== undefined || input.limit !== undefined) {
           const offset = Math.min(input.offset ?? 0, content.length);
           const requestedEnd = Math.min(content.length, offset + (input.limit ?? 3_000));
@@ -320,8 +326,8 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     defineTool({
       contract: {
         identity: { name: "shell.execute" },
-        capability: { purpose: "Run one known non-interactive executable that is expected to exit, with explicit arguments in the workspace.", nonGoals: ["Execute shell command strings.", "Discover which command should be run.", "Start a persistent server, watcher, listener, or background service."] },
-        decision: { useWhen: ["The exact executable, arguments, working directory, and expected purpose are known and the command will naturally exit."], avoidWhen: ["A dedicated capability can produce the required facts.", "The command or its necessity is unresolved.", "The requested outcome requires the process to remain running after the Tool call; use process.start."] },
+        capability: { purpose: `Run one known non-interactive native executable that is expected to exit on Host process platform ${process.platform}. Set command to only the executable name/path and put every argument in args; no shell parsing occurs.`, nonGoals: ["Execute shell command strings, pipelines, redirections, compound expressions, shell built-ins, or script-wrapper entrypoints.", "Discover which command should be run.", "Start a persistent server, watcher, listener, or background service."] },
+        decision: { useWhen: [`The exact executable compatible with Host process platform ${process.platform}, arguments, working directory, and expected purpose are known and the command will naturally exit.`], avoidWhen: ["A dedicated capability can produce the required facts.", "The command or its necessity is unresolved.", "The requested outcome requires the process to remain running after the Tool call; use process.start."] },
         execution: { effect: { kind: "execute", description: "Starts a process that may read, modify, or otherwise affect the workspace or external systems." }, idempotent: false, inputSchema: ShellExecuteInputSchema, inputExample: { command: "node", args: ["--test", "test/example.test.js"], cwd: ".", timeoutMs: 60_000 } },
         evidence: { produces: ["The process exit code, bounded stdout/stderr, timeout status, and truncation status."], factsSchema: ProcessFactsSchema }
       },
@@ -354,6 +360,32 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     }),
     ...gitTools(options)
   ];
+}
+
+function decodeUtf8Text(bytes: Buffer, path: string): string {
+  let content: string;
+  try {
+    content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new ToolFailure(
+      "BINARY_FILE_NOT_TEXT",
+      `Workspace file ${path} is not valid UTF-8 text. Use a format-aware read capability instead.`,
+      false
+    );
+  }
+  const sample = content.slice(0, 8_192);
+  const disallowedControls = [...sample].filter((character) => {
+    const code = character.charCodeAt(0);
+    return code === 0 || (code < 0x20 && ![0x09, 0x0a, 0x0c, 0x0d].includes(code));
+  }).length;
+  if (sample.includes("\0") || disallowedControls > Math.max(1, Math.floor(sample.length * 0.01))) {
+    throw new ToolFailure(
+      "BINARY_FILE_NOT_TEXT",
+      `Workspace file ${path} contains binary data. Use a format-aware read capability instead.`,
+      false
+    );
+  }
+  return content;
 }
 
 function boundedUtf8Slice(
@@ -781,11 +813,12 @@ function runProcess(
       };
       rejectPromise(new ToolFailure(
         "PROCESS_START_FAILED",
-        `Process could not be started: ${error.message}. The executable did not run; change the executable or its platform-specific form before retrying.`,
+        `Process could not be started: ${error.message}. No process ran. shell.execute passes command directly to the operating system without shell parsing: choose one installed native executable name or path and put every argument in args; do not use a shell built-in, compound expression, or shell/script wrapper.`,
         false,
         {
           ...identity,
           ...resolution,
+          platform: process.platform,
           causeCode: "code" in error && typeof error.code === "string" ? error.code : null
         }
       ));

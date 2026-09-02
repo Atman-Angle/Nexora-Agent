@@ -88,6 +88,17 @@ describe("E049 built-in Tool Runtime", () => {
     expect(rebuilt).toBe(content);
   });
 
+  it("rejects binary and OOXML package bytes instead of projecting them as UTF-8 text", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "reference.docx"), Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0xff, 0x00, 0x01]));
+    const result = await execute(tool(createBuiltInTools(), "filesystem.read"), root, { path: "reference.docx" });
+    expect(result).toEqual(expect.objectContaining({
+      status: "failure",
+      error: expect.objectContaining({ code: "BINARY_FILE_NOT_TEXT", retryable: false })
+    }));
+    expect(JSON.stringify(result)).not.toContain("PK");
+  });
+
   it("rejects read and write paths that escape through a directory symlink", async () => {
     const root = workspace();
     const outside = workspace();

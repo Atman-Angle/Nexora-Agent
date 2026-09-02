@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-29T16:07:47.365Z",
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true,
+    "worktreeDigest": "sha256:d510ccecb83d1cd0cc3031c370b215b060f5f86f06395fcbf73ca0b9578708e1"
+  },
+  "repeatsRequested": 1,
+  "repeatsCompleted": 1,
+  "taskIds": [
+    "NB-CONVERGE-001"
+  ],
+  "reportPaths": [
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\harness\\nexora-bench\\reliability-reports\\calibration-converge-v13\\repeat-01\\report.json"
+  ]
+}

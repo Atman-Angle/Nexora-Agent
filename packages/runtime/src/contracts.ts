@@ -30,6 +30,45 @@ export const InputEntrySchema = z.object({
   receivedAt: IsoDateTime
 }).strict();
 
+export const TaskScopeSourceSchema = z.enum([
+  "user_explicit",
+  "agent_inferred",
+  "workspace_fact"
+]);
+export type TaskScopeSource = z.infer<typeof TaskScopeSourceSchema>;
+
+export const TaskScopeOutcomeSchema = z.object({
+  id: NonEmptyString,
+  description: NonEmptyString,
+  source: TaskScopeSourceSchema
+}).strict();
+export type TaskScopeOutcome = z.infer<typeof TaskScopeOutcomeSchema>;
+
+export const TaskScopeAssumptionSchema = z.object({
+  description: NonEmptyString,
+  source: TaskScopeSourceSchema
+}).strict();
+
+const UniqueScopeOutcomesSchema = z.array(TaskScopeOutcomeSchema).min(1).superRefine((outcomes, context) => {
+  const ids = new Set<string>();
+  for (const outcome of outcomes) {
+    if (ids.has(outcome.id)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate Task Scope outcome id: ${outcome.id}` });
+    }
+    ids.add(outcome.id);
+  }
+});
+
+export const PlanTaskScopeSchema = z.object({
+  taskShape: z.enum(["greenfield", "feature", "bug_fix", "refactor"]),
+  requiredOutcomes: UniqueScopeOutcomesSchema,
+  assumptions: z.array(TaskScopeAssumptionSchema),
+  excludedScope: z.array(NonEmptyString),
+  completionCriteria: z.array(NonEmptyString).min(1),
+  resolutionMode: z.enum(["pass_through", "normalize", "shape"])
+}).strict();
+export type PlanTaskScope = z.infer<typeof PlanTaskScopeSchema>;
+
 /**
  * The model-side Task Contract proposal: only semantic fields. The Runtime
  * derives and injects the mechanical fields (workspace / version / inputVersion)
@@ -38,7 +77,8 @@ export const InputEntrySchema = z.object({
 export const PlanTaskContractSchema = z.object({
   goal: NonEmptyString,
   constraints: z.array(NonEmptyString),
-  acceptanceCriteria: z.array(NonEmptyString)
+  acceptanceCriteria: z.array(NonEmptyString),
+  scope: PlanTaskScopeSchema.optional()
 }).strict();
 export type PlanTaskContract = z.infer<typeof PlanTaskContractSchema>;
 
@@ -106,6 +146,8 @@ export type AcceptanceCheck = z.infer<typeof AcceptanceCheckSchema>;
 export const PlanStepSchema = z.object({
   id: NonEmptyString,
   objective: NonEmptyString,
+  kind: z.enum(["required_outcome", "supporting"]).optional(),
+  scopeRefs: z.array(NonEmptyString).min(1).optional(),
   acceptanceChecks: z.array(AcceptanceCheckSchema)
 }).strict().superRefine((step, context) => {
   const ids = new Set<string>();
@@ -163,7 +205,8 @@ const ExecuteStepActionSchema = z.object({
 const RequestInputActionSchema = z.object({
   type: z.literal("request_input"),
   question: NonEmptyString,
-  reason: NonEmptyString
+  reason: NonEmptyString,
+  basis: z.enum(["user_exclusive", "workspace", "tool", "context", "persisted_fact"]).optional()
 }).strict();
 
 const ProposeFinishActionSchema = z.object({
@@ -255,6 +298,37 @@ export const RuntimeBudgetExtensionSchema = z.object({
 );
 export type RuntimeBudgetExtension = z.infer<typeof RuntimeBudgetExtensionSchema>;
 
+const SoftBudgetStopReasonSchema = z.enum([
+  "ITERATION_BUDGET_EXCEEDED",
+  "MODEL_CALL_BUDGET_EXCEEDED",
+  "TOOL_CALL_BUDGET_EXCEEDED",
+  "RETRY_BUDGET_EXCEEDED"
+]);
+
+export const ResumePredicateSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("provider_reconnect"),
+    providerCode: z.enum(["PROVIDER_UNAVAILABLE", "CONTEXT_CAPACITY_EXCEEDED"]),
+    remainingRecoverySegments: z.number().int().positive(),
+    verification: z.literal("bounded_provider_probe")
+  }).strict(),
+  z.object({
+    kind: z.literal("budget_extension"),
+    stopReason: SoftBudgetStopReasonSchema,
+    allowedDimensions: z.array(z.enum(["iterations", "modelCalls", "toolCalls", "retries"])).min(1),
+    minimumPositiveExtension: z.literal(true)
+  }).strict(),
+  z.object({
+    kind: z.literal("tool_recovery_decision"),
+    invocationIds: z.array(NonEmptyString).min(1)
+  }).strict(),
+  z.object({
+    kind: z.literal("worker_recovery_decision"),
+    childRunIds: z.array(NonEmptyString).min(1)
+  }).strict()
+]);
+export type ResumePredicate = z.infer<typeof ResumePredicateSchema>;
+
 export const CompletionRequirementsSchema = z.object({
   evidence: z.enum(["auto", "optional", "required"]),
   requiredToolNames: z.array(NonEmptyString).default([])
@@ -319,6 +393,8 @@ export const RunSnapshotSchema = z.object({
   revision: z.number().int().nonnegative(),
   status: RunStatusSchema,
   stopReason: NonEmptyString.nullable(),
+  // Missing values are legacy persisted Runs, never a valid new blocked state.
+  resumePredicate: ResumePredicateSchema.nullable().optional().default(null),
   continuation: RunContinuationSchema.optional(),
   inputHistory: z.array(InputEntrySchema).min(1),
   taskContract: TaskContractSchema.nullable(),
@@ -355,6 +431,8 @@ export const AuditRecordTypeSchema = z.enum([
   "context.rehydrate_requested",
   "context.rehydrated",
   "execute_step.completed",
+  "execution.unit.completed",
+  "execution.unit.started",
   "input.received",
   "input.required",
   "model.response_rejected",
@@ -391,6 +469,7 @@ export const AuditRecordTypeSchema = z.enum([
   "tool.batch.prepared",
   "tool.failed",
   "tool.result_unknown",
+  "tool.reconciled",
   "tool.retried",
   "tool.started",
   "tool.succeeded",
@@ -533,6 +612,12 @@ export const ContextManifestSourceSchema = z.object({
   trust: z.enum(["authority", "untrusted_external", "untrusted_memory_data"])
 }).strict();
 
+const ContextManifestSectionSchema = z.object({
+  bytes: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
+  digest: NonEmptyString
+}).strict();
+
 export const ContextManifestSchema = z.object({
   schemaVersion: z.literal(1),
   projectionDigest: NonEmptyString,
@@ -540,7 +625,21 @@ export const ContextManifestSchema = z.object({
   measuredInputTokens: z.number().int().nonnegative(),
   measurementMethod: z.enum(["exact", "estimated"]),
   meter: NonEmptyString,
-  strategy: JsonValueSchema.optional()
+  strategy: JsonValueSchema.optional(),
+  sections: z.object({
+    stablePolicy: ContextManifestSectionSchema,
+    currentState: ContextManifestSectionSchema,
+    recentTrajectory: ContextManifestSectionSchema,
+    workingSet: ContextManifestSectionSchema,
+    olderContext: ContextManifestSectionSchema,
+    toolSchema: ContextManifestSectionSchema
+  }).strict().optional(),
+  quality: z.object({
+    currentStateRatio: z.number().min(0).max(1),
+    staleContextRatio: z.number().min(0).max(1),
+    repeatedPolicyRatio: z.number().min(0).max(1),
+    trajectoryContinuityCoverage: z.boolean()
+  }).strict().optional()
 }).strict();
 export type ContextManifest = z.infer<typeof ContextManifestSchema>;
 

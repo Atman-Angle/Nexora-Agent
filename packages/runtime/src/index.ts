@@ -89,6 +89,9 @@ export type {
   RuntimeBudgetExtension,
   CompletionRequirements,
   StructuredPlan,
+  PlanTaskScope,
+  TaskScopeOutcome,
+  TaskScopeSource,
   TaskContract,
   ToolAttempt
 } from "./contracts.js";

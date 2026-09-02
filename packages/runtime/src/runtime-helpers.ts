@@ -92,7 +92,7 @@ export function responseRejectionDiagnostic(error: z.ZodError | ActionRejectedEr
   // as instanceof so schema rejections cannot be misclassified as state
   // errors across package boundaries.
   if (error instanceof z.ZodError || isZodErrorLike(error)) {
-    const issues = error.issues.slice(0, 4).map(responseRepairIssue);
+    const issues = expandResponseRepairIssues(error.issues).slice(0, 4).map(responseRepairIssue);
     return {
       kind: "schema" as const,
       responseType,
@@ -100,10 +100,11 @@ export function responseRejectionDiagnostic(error: z.ZodError | ActionRejectedEr
       recovery: schemaRejectionRecovery(issues)
     };
   }
+  const stateCode = /^([A-Z][A-Z0-9_]+):/.exec(error.message)?.[1] ?? "response_rejected";
   return {
     kind: "state" as const,
     responseType,
-    issues: [{ path: "$", code: "response_rejected", message: error.message.slice(0, 500) }],
+    issues: [{ path: "$", code: stateCode, message: error.message.slice(0, 500) }],
     recovery: stateRejectionRecovery(error.message)
   };
 }
@@ -133,11 +134,18 @@ function stateRejectionRecovery(message: string): {
       nextAction: "The protected mutation batch was rejected as a whole; no mutation was executed. Submit exactly one protected mutation or one complete write, and do not resend the rejected batch."
     };
   }
+  if (message.includes("MUTATION_VERIFICATION_REQUIRED") || message.includes("PLAN_AFTER_UNPLANNED_MUTATION")) {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "A successful mutation is already persisted. Verify the current result or finish it. Only a later authoritative verification failure or new user input can authorize another mutation; a Plan cannot be added retroactively."
+    };
+  }
   if (message.includes("FINAL_CONTROL_REQUIRED")) {
     return {
       sideEffect: "none",
       doNotRepeat: true,
-      nextAction: "The text was not accepted as a task result. Preserve completed Tool effects and submit the user-facing answer once through nexora_respond."
+      nextAction: "The text was not accepted as a task result. Preserve all completed Tool effects and do not call workspace Tools again. Submit exactly one Provider-native nexora_respond control call containing the user-facing answer; ordinary assistant text cannot complete this Run."
     };
   }
   return {
@@ -187,6 +195,23 @@ function schemaRejectionRecovery(
 function responseRepairIssue(issue: z.ZodIssue): { path: string; code: string; message: string } {
   const path = issue.path.length === 0 ? "$" : issue.path.join(".").slice(0, 200);
   return { path, code: issue.code, message: issue.message.slice(0, 500) };
+}
+
+function expandResponseRepairIssues(issues: readonly z.ZodIssue[]): z.ZodIssue[] {
+  return issues.flatMap((issue) => {
+    if (issue.code !== z.ZodIssueCode.invalid_union) return [issue];
+    const branches = issue.unionErrors.map((error) => expandResponseRepairIssues(error.issues));
+    if (branches.length === 0) return [issue];
+    return [...branches].sort((left, right) => repairBranchScore(left) - repairBranchScore(right))[0] ?? [issue];
+  });
+}
+
+function repairBranchScore(issues: readonly z.ZodIssue[]): number {
+  return issues.reduce((score, issue) => {
+    const discriminantMismatch = issue.code === z.ZodIssueCode.invalid_literal
+      && issue.path.at(-1) === "type";
+    return score + (discriminantMismatch ? 1_000 : 1) + Math.max(0, 12 - issue.path.length);
+  }, 0);
 }
 export function serializeRejectedResponse(rawResponse: unknown): string { try { const serialized = JSON.stringify(rawResponse); return serialized ?? JSON.stringify({ unsupportedValueType: typeof rawResponse }); } catch (error) { return JSON.stringify({ serializationError: errorMessage(error), receivedType: typeof rawResponse }); } }
 export function toRunResult(run: RunSnapshot): RunResult { return { runId: run.runId, status: run.status, stopReason: run.stopReason, summary: run.result?.summary ?? run.delivery?.summary ?? null, resultArtifact: run.result?.resultArtifact ?? null, evidence: run.evidence, lastError: run.lastError, delivery: run.delivery, failureHandoff: deriveFailureHandoff(run) }; }

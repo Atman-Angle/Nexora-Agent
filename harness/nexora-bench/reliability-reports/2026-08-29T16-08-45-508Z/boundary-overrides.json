@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "basis": "Manual first-broken-boundary review of the persisted Event, Invocation, Plan, grader and Authority traces for every failed Run.",
+  "overrides": {
+    "1:NB-ARTIFACT-001": "TASK_CONTRACT",
+    "1:NB-EXTENDED-001": "TASK_CONTRACT",
+    "2:NB-LONG-001": "PROVIDER_EXTERNAL",
+    "2:NB-ARTIFACT-001": "TASK_CONTRACT",
+    "2:NB-EXTENDED-001": "TASK_CONTRACT",
+    "3:NB-LONG-001": "COMPLETION_CONTRACT",
+    "3:NB-CONVERGE-001": "PLAN",
+    "3:NB-BATCH-001": "MODEL_CAPABILITY",
+    "3:NB-RETRY-001": "MODEL_CAPABILITY",
+    "3:NB-ARTIFACT-001": "TASK_CONTRACT",
+    "3:NB-EXTENDED-001": "TASK_CONTRACT",
+    "4:NB-CONVERGE-001": "PROVIDER_EXTERNAL",
+    "4:NB-BATCH-001": "MODEL_CAPABILITY",
+    "4:NB-ARTIFACT-001": "TASK_CONTRACT",
+    "4:NB-EXTENDED-001": "TASK_CONTRACT",
+    "4:QB-MAXSUM-001": "COMPLETION_CONTRACT",
+    "5:NB-LONG-001": "PROVIDER_EXTERNAL",
+    "5:NB-CONVERGE-001": "PLAN",
+    "5:NB-ARTIFACT-001": "TASK_CONTRACT",
+    "5:NB-EXTENDED-001": "TASK_CONTRACT"
+  }
+}

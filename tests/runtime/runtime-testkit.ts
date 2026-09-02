@@ -8,6 +8,7 @@ import type {
 } from "../../packages/harness/src/index.js";
 import {
   DIRECT_RESPONSE_CONTROL,
+  ModelPlanUpdateSchema,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL
 } from "../../packages/harness/src/index.js";
@@ -40,7 +41,23 @@ export function taskContract() {
   return {
     goal: "Inspect the target and return verified evidence",
     constraints: [],
-    acceptanceCriteria: ["The target was read successfully"]
+    acceptanceCriteria: ["The target was read successfully"],
+    scope: taskScope()
+  };
+}
+
+export function taskScope() {
+  return {
+    taskShape: "feature" as const,
+    requiredOutcomes: [{
+      id: "inspect-target",
+      description: "The requested target is inspected with verified evidence.",
+      source: "user_explicit" as const
+    }],
+    assumptions: [],
+    excludedScope: ["Unrequested target changes"],
+    completionCriteria: ["A successful target read provides verification evidence."],
+    resolutionMode: "normalize" as const
   };
 }
 
@@ -48,6 +65,8 @@ export function readStep(id = "inspect") {
   return {
     id,
     objective: "Read the target",
+    kind: "required_outcome" as const,
+    scopeRefs: ["inspect-target"],
     acceptanceChecks: [{
       id: "read-target",
       kind: "tool_result" as const,
@@ -115,13 +134,13 @@ export function materializeTestResponse(value: unknown, context: ModelDecisionCo
   if (value === null || typeof value !== "object") return value as ModelResponse;
   const command = value as Record<string, unknown>;
   if ("text" in command && "toolCalls" in command && "finishReason" in command) {
-    return value as ModelResponse;
+    return normalizeLegacyTestPlanResponse(value as ModelResponse, context);
   }
   if (command.type === "request_context") {
     return responseText("Continue using the deterministically restored context.");
   }
   if (command.type === "request_input") {
-    return responseInput(String(command.question), String(command.reason));
+    return responseInput(String(command.question), String(command.reason), typeof command.basis === "string" ? command.basis as any : undefined);
   }
   if (command.type === "delegate_workers") {
     return responseCall("nexora_delegate_workers", { assignments: command.assignments });
@@ -148,8 +167,9 @@ export function materializeTestResponse(value: unknown, context: ModelDecisionCo
   });
   const sourceSteps = remaining.length === 0 ? command.orderedSteps : remaining;
   const taskContractValue = command.taskContract as Record<string, unknown> | undefined;
-  return responsePlan({
+  return normalizeLegacyTestPlanResponse(responsePlan({
       ...(typeof taskContractValue?.goal === "string" ? { goal: taskContractValue.goal } : {}),
+      ...(taskContractValue?.scope !== undefined ? { scope: taskContractValue.scope } : {}),
       tasks: sourceSteps.map((item) => {
         const step = item as Record<string, unknown>;
         const acceptanceChecks = Array.isArray(step.acceptanceChecks)
@@ -164,7 +184,67 @@ export function materializeTestResponse(value: unknown, context: ModelDecisionCo
           ))
         };
       })
+  }), context);
+}
+
+function normalizeLegacyTestPlanResponse(response: ModelResponse, context: ModelDecisionContext): ModelResponse {
+  const requiresContract = context.run.currentPlan === null
+    || context.run.taskContract === null
+    || context.run.taskContract.inputVersion < context.run.inputHistory.length;
+  const calls = response.toolCalls.map((call) => {
+    if (call.name !== UPDATE_PLAN_CONTROL) return call;
+    const parsed = ModelPlanUpdateSchema.safeParse(call.arguments);
+    if (!parsed.success) return call;
+    const explicitScope = parsed.data.scope;
+    const existingScope = context.run.taskContract?.scope;
+    const shouldSynthesizeScope = context.strategyRouting?.strategyProfile === "coding"
+      && requiresContract
+      && existingScope === undefined
+      && explicitScope === undefined;
+    const synthesizedScope = shouldSynthesizeScope ? {
+      taskShape: context.strategyRouting!.codingTaskShape!,
+      requiredOutcomes: [{
+        id: "test-scope-outcome",
+        description: parsed.data.goal ?? context.run.inputHistory.at(-1)!.text,
+        source: "agent_inferred" as const
+      }],
+      assumptions: [],
+      excludedScope: [],
+      completionCriteria: parsed.data.tasks.map((task) => task.objective),
+      resolutionMode: "normalize" as const
+    } : undefined;
+    const effectiveScope = explicitScope ?? existingScope ?? synthesizedScope;
+    const defaultScopeRef = effectiveScope?.requiredOutcomes[0]?.id;
+    const tasks = parsed.data.tasks.map((task, index) => {
+      if (task.kind !== undefined || task.supports !== undefined || defaultScopeRef === undefined) return task;
+      const existing = context.run.currentPlan?.orderedSteps.find((step) => (
+        normalizeTestObjective(step.objective) === normalizeTestObjective(task.objective)
+      ));
+      return {
+        ...task,
+        kind: existing?.kind ?? (
+          context.run.currentPlan === null && index === 0
+            ? "required_outcome" as const
+            : "supporting" as const
+        ),
+        supports: existing?.scopeRefs ?? [defaultScopeRef]
+      };
+    });
+    return {
+      ...call,
+      arguments: {
+        ...(parsed.data.goal === undefined ? {} : { goal: parsed.data.goal }),
+        ...(!requiresContract || effectiveScope === undefined ? {} : { scope: effectiveScope }),
+        tasks,
+        ...(parsed.data.removeSteps.length === 0 ? {} : { removeSteps: parsed.data.removeSteps })
+      }
+    };
   });
+  return { ...response, toolCalls: calls };
+}
+
+function normalizeTestObjective(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s\p{P}\p{S}]+/gu, " ").trim();
 }
 
 let testCallSequence = 0;
@@ -206,8 +286,8 @@ export function responsePlanAndTools(
   ]);
 }
 
-export function responseInput(question: string, reason: string): ModelResponse {
-  return responseCall(REQUEST_INPUT_CONTROL, { question, reason });
+export function responseInput(question: string, reason: string, basis?: "user_exclusive" | "workspace" | "tool" | "context" | "persisted_fact"): ModelResponse {
+  return responseCall(REQUEST_INPUT_CONTROL, { question, reason, ...(basis === undefined ? {} : { basis }) });
 }
 
 export function responseDirect(text: string): ModelResponse {

@@ -6,7 +6,8 @@ import { join } from "node:path";
 import {
   createBuiltInTools,
   type ModelDecisionContext,
-  type RuntimeProvider
+  type RuntimeProvider,
+  type RuntimeTool
 } from "@nexora/harness";
 
 import type { ScenarioFactory } from "../../../../src/scenario.js";
@@ -70,8 +71,43 @@ export const createScenario: ScenarioFactory = ({ workspace }) => {
       return modelResponses.input({ question: "Verification state is inconsistent.", reason: "The deterministic scenario cannot prove success." });
     }
   };
-  return { provider, tools: createBuiltInTools() };
+  return { provider, tools: toolsWithInjectedVerifierFailure() };
 };
+
+function toolsWithInjectedVerifierFailure(): readonly RuntimeTool[] {
+  const tools = createBuiltInTools();
+  const shell = tools.find((tool) => tool.contract.identity.name === "shell.execute");
+  if (shell === undefined) throw new Error("NB-CONVERGE-001 requires shell.execute.");
+  let injected = false;
+  const wrappedShell: RuntimeTool = {
+    contract: shell.contract,
+    async execute(input, context) {
+      if (!injected && isVerifierInvocation(input)) {
+        injected = true;
+        return {
+          status: "failure",
+          subjectRef: "verify.mjs",
+          error: {
+            code: "TRANSIENT_VERIFIER_UNAVAILABLE",
+            message: "The verifier encountered a transient fixture fault before producing a result. Submit a fresh verifier invocation.",
+            retryable: false
+          }
+        };
+      }
+      return shell.execute(input, context);
+    },
+    ...(shell.dispose === undefined ? {} : { dispose: () => shell.dispose!() })
+  };
+  return tools.map((tool) => tool === shell ? wrappedShell : tool);
+}
+
+function isVerifierInvocation(input: unknown): boolean {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) return false;
+  const value = input as { readonly command?: unknown; readonly args?: unknown };
+  return value.command === "node"
+    && Array.isArray(value.args)
+    && value.args.some((argument) => argument === "verify.mjs");
+}
 
 function digest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;

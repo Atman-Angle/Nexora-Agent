@@ -1,0 +1,2268 @@
+{
+  "runId": "3d59d5b8-b2cb-4a41-a8cd-6fcdc53267d0",
+  "status": "succeeded",
+  "modelCalls": 44,
+  "toolCalls": 37,
+  "transitions": 450,
+  "checkpoints": [
+    {
+      "modelCall": 5,
+      "completed": [
+        "read file-1.txt op-1",
+        "write file-2.txt op-2",
+        "read file-3.txt op-3"
+      ],
+      "active": "write file-4.txt op-4",
+      "unfinished": [
+        "write file-4.txt op-4",
+        "read file-5.txt op-5",
+        "validate file-6.txt op-6",
+        "read file-7.txt op-7"
+      ],
+      "latestObservation": {
+        "kind": "tool_result",
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "digest": "sha256:93cf011557659a374e2990457dacb5b5a641bb43dbb6430738c54bd79a770344",
+        "sourceRefs": [
+          "invocation:1438553f-a21a-40b5-beb1-b0a96d479469",
+          "evidence:a1f68177-4125-4619-86b8-e9d535a7b466"
+        ]
+      },
+      "recentTrajectoryLength": 3,
+      "workingFiles": [
+        {
+          "path": "file-1.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-2.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-3.txt",
+          "source": "read"
+        }
+      ],
+      "olderObservationRefs": 0,
+      "contextBytes": 10332,
+      "hybridBytes": 2394,
+      "sections": {
+        "recentTrajectory": {
+          "bytes": 1281,
+          "tokens": 321,
+          "digest": "sha256:27beedb050a98dcd5a06fc511c0421c3f2a22464d9956964bd159823ab858a84"
+        },
+        "workingSet": {
+          "bytes": 221,
+          "tokens": 56,
+          "digest": "sha256:55ad11f210ad1e7aa79160d63f857c5773f5583a4c294cdf4aac05b5b5a5201d"
+        },
+        "currentState": {
+          "bytes": 735,
+          "tokens": 184,
+          "digest": "sha256:bd5b057ec1b0c5b70d675c9381b7bfa5153d22dde2aa023bae059346290074c9"
+        },
+        "olderObservationRefs": {
+          "bytes": 2,
+          "tokens": 1,
+          "digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      }
+    },
+    {
+      "modelCall": 10,
+      "completed": [
+        "read file-1.txt op-1",
+        "write file-2.txt op-2",
+        "read file-3.txt op-3",
+        "write file-4.txt op-4",
+        "read file-5.txt op-5",
+        "validate file-6.txt op-6",
+        "read file-7.txt op-7"
+      ],
+      "active": null,
+      "unfinished": [],
+      "latestObservation": {
+        "kind": "tool_result",
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "digest": "sha256:980e164c48666ebf92f25b8ee3db5d5057dc34deda34db440c4d1985f469a563",
+        "sourceRefs": [
+          "invocation:23d5d116-8f84-427b-854d-276f8670f2df",
+          "evidence:fb9e70d7-d919-41fc-a6fe-b99c755780a6"
+        ]
+      },
+      "recentTrajectoryLength": 3,
+      "workingFiles": [
+        {
+          "path": "file-1.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-2.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-3.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-4.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-5.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-7.txt",
+          "source": "read"
+        }
+      ],
+      "olderObservationRefs": 5,
+      "contextBytes": 17406,
+      "hybridBytes": 4371,
+      "sections": {
+        "recentTrajectory": {
+          "bytes": 1339,
+          "tokens": 335,
+          "digest": "sha256:0c130442b2382aaa18c3b2bcf8d26051e1f0279b99e8d393a7f9d5d73e9f5ab7"
+        },
+        "workingSet": {
+          "bytes": 362,
+          "tokens": 91,
+          "digest": "sha256:35d4d9b6d28bfd5815396f348df9ae7c5762dbc60f864b32726caec01ce02f25"
+        },
+        "currentState": {
+          "bytes": 718,
+          "tokens": 180,
+          "digest": "sha256:67dc2a77c2ecfe079b80c255fdff839e7b574c7df5d2fa8a9616b6d0d9eb2154"
+        },
+        "olderObservationRefs": {
+          "bytes": 991,
+          "tokens": 248,
+          "digest": "sha256:f282282f2ee223d068bad400dae4b98f125be61156be461848d7656cff129f52"
+        }
+      }
+    },
+    {
+      "modelCall": 20,
+      "completed": [
+        "read file-1.txt op-1",
+        "write file-2.txt op-2",
+        "read file-3.txt op-3",
+        "write file-4.txt op-4",
+        "read file-5.txt op-5",
+        "validate file-6.txt op-6",
+        "read file-7.txt op-7",
+        "write file-8.txt op-8",
+        "read file-1.txt op-9",
+        "write file-2.txt op-10",
+        "read file-3.txt op-11",
+        "validate file-4.txt op-12",
+        "read file-5.txt op-13",
+        "write file-6.txt op-14",
+        "read file-7.txt op-15"
+      ],
+      "active": "write file-8.txt op-16",
+      "unfinished": [
+        "write file-8.txt op-16",
+        "read file-1.txt op-17",
+        "validate file-2.txt op-18",
+        "read file-3.txt op-19",
+        "write file-4.txt op-20",
+        "read file-5.txt op-21"
+      ],
+      "latestObservation": {
+        "kind": "tool_result",
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "digest": "sha256:980e164c48666ebf92f25b8ee3db5d5057dc34deda34db440c4d1985f469a563",
+        "sourceRefs": [
+          "invocation:74754a5a-f924-4c6e-9fcb-1a95fe6973dd",
+          "evidence:6fe38d9d-27ee-4c84-af6d-35181a409cb0"
+        ]
+      },
+      "recentTrajectoryLength": 3,
+      "workingFiles": [
+        {
+          "path": "file-1.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-2.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-3.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-4.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-5.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-7.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-8.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-6.txt",
+          "source": "write"
+        }
+      ],
+      "olderObservationRefs": 13,
+      "contextBytes": 33433,
+      "hybridBytes": 7057,
+      "sections": {
+        "recentTrajectory": {
+          "bytes": 1287,
+          "tokens": 322,
+          "digest": "sha256:9a7296fd6261565611bade67e608296ad4d3deb058beb52d61edc771e4ad13ac"
+        },
+        "workingSet": {
+          "bytes": 440,
+          "tokens": 110,
+          "digest": "sha256:6351887239a2d8bb4e4b1bbdbd3dc195bb051e6093e70b2171b15de16edf63cc"
+        },
+        "currentState": {
+          "bytes": 1083,
+          "tokens": 271,
+          "digest": "sha256:45bfc54d82fb9494220b975dad0b198f53013ac558944255c357d402e40effb1"
+        },
+        "olderObservationRefs": {
+          "bytes": 2527,
+          "tokens": 632,
+          "digest": "sha256:fdf8d8d81e08914e82c6c8bdc2b5ac02a86d9092168b07f90f5bb47482987cdf"
+        }
+      }
+    },
+    {
+      "modelCall": 30,
+      "completed": [
+        "read file-1.txt op-1",
+        "write file-2.txt op-2",
+        "read file-3.txt op-3",
+        "write file-4.txt op-4",
+        "read file-5.txt op-5",
+        "validate file-6.txt op-6",
+        "read file-7.txt op-7",
+        "write file-8.txt op-8",
+        "read file-1.txt op-9",
+        "write file-2.txt op-10",
+        "read file-3.txt op-11",
+        "validate file-4.txt op-12",
+        "read file-5.txt op-13",
+        "write file-6.txt op-14",
+        "read file-7.txt op-15",
+        "write file-8.txt op-16",
+        "read file-1.txt op-17",
+        "validate file-2.txt op-18",
+        "read file-3.txt op-19",
+        "write file-4.txt op-20",
+        "read file-5.txt op-21",
+        "write file-6.txt op-22",
+        "read file-7.txt op-23",
+        "validate file-8.txt op-24"
+      ],
+      "active": "read file-1.txt op-25",
+      "unfinished": [
+        "read file-1.txt op-25",
+        "write file-2.txt op-26",
+        "read file-3.txt op-27",
+        "write file-4.txt op-28"
+      ],
+      "latestObservation": {
+        "kind": "tool_result",
+        "toolName": "fixture.validate",
+        "status": "succeeded",
+        "digest": "sha256:5b94f15edb3dfce016cec0d8bbffc4b13cd187b1c20ccc54665232e019bdb14f",
+        "sourceRefs": [
+          "invocation:1fe7655a-66c3-4af5-ab73-173b4e327482",
+          "evidence:dd2ca1a3-8857-4fc6-9e2b-73259bc66b0f"
+        ]
+      },
+      "recentTrajectoryLength": 3,
+      "workingFiles": [
+        {
+          "path": "file-1.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-2.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-3.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-4.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-5.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-7.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-8.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-6.txt",
+          "source": "write"
+        }
+      ],
+      "olderObservationRefs": 22,
+      "contextBytes": 47674,
+      "hybridBytes": 9629,
+      "sections": {
+        "recentTrajectory": {
+          "bytes": 1292,
+          "tokens": 323,
+          "digest": "sha256:bcc1e32fdbfb7f2b3a1b867773e6dd367ad7ce366a8ddf7cf9f7be7210f1ef7c"
+        },
+        "workingSet": {
+          "bytes": 440,
+          "tokens": 110,
+          "digest": "sha256:6351887239a2d8bb4e4b1bbdbd3dc195bb051e6093e70b2171b15de16edf63cc"
+        },
+        "currentState": {
+          "bytes": 1258,
+          "tokens": 315,
+          "digest": "sha256:0aad35442a3f232e63ad19dec98f667ebc8468952d6b082c30718092b16931ae"
+        },
+        "olderObservationRefs": {
+          "bytes": 4309,
+          "tokens": 1078,
+          "digest": "sha256:2e109081e35b9b3d420ebd423418de57988f3b40ee70c28048924cfed1fb44e9"
+        }
+      }
+    },
+    {
+      "modelCall": 44,
+      "completed": [
+        "read file-1.txt op-1",
+        "write file-2.txt op-2",
+        "read file-3.txt op-3",
+        "write file-4.txt op-4",
+        "read file-5.txt op-5",
+        "validate file-6.txt op-6",
+        "read file-7.txt op-7",
+        "write file-8.txt op-8",
+        "read file-1.txt op-9",
+        "write file-2.txt op-10",
+        "read file-3.txt op-11",
+        "validate file-4.txt op-12",
+        "read file-5.txt op-13",
+        "write file-6.txt op-14",
+        "read file-7.txt op-15",
+        "write file-8.txt op-16",
+        "read file-1.txt op-17",
+        "validate file-2.txt op-18",
+        "read file-3.txt op-19",
+        "write file-4.txt op-20",
+        "read file-5.txt op-21",
+        "write file-6.txt op-22",
+        "read file-7.txt op-23",
+        "validate file-8.txt op-24",
+        "read file-1.txt op-25",
+        "write file-2.txt op-26",
+        "read file-3.txt op-27",
+        "write file-4.txt op-28",
+        "read file-5.txt op-29",
+        "validate file-6.txt op-30",
+        "read file-7.txt op-31",
+        "write file-8.txt op-32",
+        "read file-1.txt op-33",
+        "write file-2.txt op-34",
+        "read file-3.txt op-35",
+        "validate file-4.txt op-36"
+      ],
+      "active": null,
+      "unfinished": [],
+      "latestObservation": {
+        "kind": "tool_result",
+        "toolName": "fixture.validate",
+        "status": "succeeded",
+        "digest": "sha256:783ecbd1abb242f45d31349f2dc3863bc38180ea35eb916d18e1c8cd0f5c965a",
+        "sourceRefs": [
+          "invocation:32bc37dc-411a-4b54-936b-dd2fecb0e011",
+          "evidence:28fc98c6-75fc-428e-bf29-b8a9ced45503"
+        ]
+      },
+      "recentTrajectoryLength": 3,
+      "workingFiles": [
+        {
+          "path": "file-1.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-2.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-3.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-4.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-5.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-7.txt",
+          "source": "read"
+        },
+        {
+          "path": "file-8.txt",
+          "source": "write"
+        },
+        {
+          "path": "file-6.txt",
+          "source": "write"
+        }
+      ],
+      "olderObservationRefs": 24,
+      "contextBytes": 65141,
+      "hybridBytes": 10254,
+      "sections": {
+        "recentTrajectory": {
+          "bytes": 1292,
+          "tokens": 323,
+          "digest": "sha256:de8ada405023be8866e90af7c9ffe69edde8b9a165d0090271ca27cda7d22506"
+        },
+        "workingSet": {
+          "bytes": 440,
+          "tokens": 110,
+          "digest": "sha256:6351887239a2d8bb4e4b1bbdbd3dc195bb051e6093e70b2171b15de16edf63cc"
+        },
+        "currentState": {
+          "bytes": 1443,
+          "tokens": 361,
+          "digest": "sha256:1d7ddaa289623b2d7fd825e4cd9a4ce77c0ab32a993aaabfdc17e5827f2dc216"
+        },
+        "olderObservationRefs": {
+          "bytes": 4753,
+          "tokens": 1189,
+          "digest": "sha256:9fa8a7a044675d1ce541d6d35adb72f940cb04b334475e10c923f71915efc3f3"
+        }
+      }
+    }
+  ],
+  "validationAttempts": 7,
+  "eventTypes": [
+    "run.created",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "plan.set",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.failed",
+    "tool.failed",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "plan.set",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "plan.set",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "plan.set",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "plan.set",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "plan.set",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "tool.started",
+    "tool.batch.prepared",
+    "tool.attempt.started",
+    "tool.attempt.succeeded",
+    "tool.succeeded",
+    "tool.batch.finalized",
+    "model.requested",
+    "provider.attempt.started",
+    "provider.attempt.succeeded",
+    "model.completed",
+    "model.turn",
+    "run.succeeded"
+  ],
+  "eventPayloads": [],
+  "finalSnapshot": {
+    "schemaVersion": 1,
+    "runId": "3d59d5b8-b2cb-4a41-a8cd-6fcdc53267d0",
+    "revision": 125,
+    "status": "succeeded",
+    "stopReason": "COMPLETED",
+    "inputHistory": [
+      {
+        "id": "a27c303c-07a4-4159-881e-6af14c34c160",
+        "sequence": 1,
+        "text": "Perform the deterministic multi-file coding task.",
+        "receivedAt": "2026-08-31T13:02:03.140Z"
+      }
+    ],
+    "taskContract": {
+      "goal": "Execute a long deterministic multi-file change with verified evidence",
+      "constraints": [],
+      "acceptanceCriteria": [
+        "read file-1.txt op-1",
+        "write file-2.txt op-2",
+        "read file-3.txt op-3",
+        "write file-4.txt op-4",
+        "read file-5.txt op-5",
+        "validate file-6.txt op-6",
+        "read file-7.txt op-7"
+      ],
+      "version": 1,
+      "inputVersion": 1,
+      "workspace": "C:\\Users\\李子睿~1\\AppData\\Local\\Temp\\nexora-hybrid-deterministic-V8jAU1\\workspace"
+    },
+    "currentPlan": {
+      "version": 6,
+      "basedOnVersion": 5,
+      "goalDigest": "sha256:61cb8a9608c98da5dcdbaa84fd5dda801007496b16acac2b892f5407dfa98b26",
+      "orderedSteps": [
+        {
+          "id": "step-a04b357a-3cc4-463b-80a1-9be669784d76",
+          "objective": "read file-1.txt op-1",
+          "acceptanceChecks": [
+            {
+              "id": "check-04cdb5ce-ac21-4aae-b081-36aeb68618e5",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-90d8d290-2554-4354-b2c9-681bbdc76ba5",
+          "objective": "write file-2.txt op-2",
+          "acceptanceChecks": [
+            {
+              "id": "check-98d846a4-6d01-4b5c-8d39-c6a6030eb2e4",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-175854bc-6df5-4d7a-9db3-639572d9b188",
+          "objective": "read file-3.txt op-3",
+          "acceptanceChecks": [
+            {
+              "id": "check-9adc861a-5af5-42db-9108-a684872d87d0",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-3c63cbeb-d036-431c-94a2-235fd45274d0",
+          "objective": "write file-4.txt op-4",
+          "acceptanceChecks": [
+            {
+              "id": "check-f25fec61-7de1-4aaf-92d2-ddb54fe2a594",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-00ee9d6d-4ddd-4c82-b248-b479dc2ad4d8",
+          "objective": "read file-5.txt op-5",
+          "acceptanceChecks": [
+            {
+              "id": "check-579c3d71-0b44-4da1-b568-748334293e1a",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-d4be4b01-f3fd-40ba-8e80-20ac95060a9c",
+          "objective": "validate file-6.txt op-6",
+          "acceptanceChecks": [
+            {
+              "id": "check-45da94ce-e1ae-42f0-8775-e26126b40c33",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "fixture.validate",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-6b703847-55bc-4621-abc7-482ba2123cd6",
+          "objective": "read file-7.txt op-7",
+          "acceptanceChecks": [
+            {
+              "id": "check-fdb86670-c6dd-4425-8a29-530d4d6f09c2",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-86fefadb-341a-43d5-9b5a-3d54c6188ac9",
+          "objective": "write file-8.txt op-8",
+          "acceptanceChecks": [
+            {
+              "id": "check-5c47a0c4-cd28-4699-882d-0e78924a03a7",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-4e7782cb-399a-4f0b-bf5b-512c68f8bd5b",
+          "objective": "read file-1.txt op-9",
+          "acceptanceChecks": [
+            {
+              "id": "check-8dd24587-d9e2-4771-85cd-361cf4158ba5",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-3ed39960-25e5-460d-98df-85684b046043",
+          "objective": "write file-2.txt op-10",
+          "acceptanceChecks": [
+            {
+              "id": "check-a0033162-2b4f-4d39-8109-ca0f90b3ee3b",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-1256da60-08c6-42cd-adda-808fd8acc02e",
+          "objective": "read file-3.txt op-11",
+          "acceptanceChecks": [
+            {
+              "id": "check-b2e7df1f-7b07-4147-be7f-f20ede5d7754",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-87b5e06d-f359-47b0-b3dc-961f7363a62e",
+          "objective": "validate file-4.txt op-12",
+          "acceptanceChecks": [
+            {
+              "id": "check-2ed4e8e3-6079-4712-9613-c5efcef1c4ac",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "fixture.validate",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-2d50c8d4-8a5d-47f3-a7b4-2d49d176857f",
+          "objective": "read file-5.txt op-13",
+          "acceptanceChecks": [
+            {
+              "id": "check-cb04f10b-04cf-422a-a633-d2b90117f8b0",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-ab5e15cb-c611-47eb-b297-26ed0ae8daf0",
+          "objective": "write file-6.txt op-14",
+          "acceptanceChecks": [
+            {
+              "id": "check-d5296d5b-977a-440a-8b4f-b4e5cb406813",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-8f65bbeb-d7bd-4743-bf77-72b6784b5f63",
+          "objective": "read file-7.txt op-15",
+          "acceptanceChecks": [
+            {
+              "id": "check-07de90c2-2e32-424c-a6de-1537e9966040",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-6b918bd5-792b-4294-b61a-8e0d9babdaa5",
+          "objective": "write file-8.txt op-16",
+          "acceptanceChecks": [
+            {
+              "id": "check-f8195529-3ea8-410d-886b-5b51e3b9547d",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-8a656b43-a2f3-4de7-8cd6-f17a53f8ffdb",
+          "objective": "read file-1.txt op-17",
+          "acceptanceChecks": [
+            {
+              "id": "check-aa5d3e16-ed96-4648-8dc8-918c53fa17b3",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-3004fbb1-be74-4738-9763-d34a48a2c763",
+          "objective": "validate file-2.txt op-18",
+          "acceptanceChecks": [
+            {
+              "id": "check-e61edf12-c3e7-4d99-ad28-a28b357be785",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "fixture.validate",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-ef22945f-b81a-4719-ba08-1be2961cc637",
+          "objective": "read file-3.txt op-19",
+          "acceptanceChecks": [
+            {
+              "id": "check-00a88109-f22c-4a60-b187-61fca866a30c",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-0d24696b-460a-4080-bf47-2638dc081a32",
+          "objective": "write file-4.txt op-20",
+          "acceptanceChecks": [
+            {
+              "id": "check-1432c28c-d809-4148-bb30-4376007390b7",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-adee989a-f197-46a4-a275-ca8717622845",
+          "objective": "read file-5.txt op-21",
+          "acceptanceChecks": [
+            {
+              "id": "check-43c3fb6a-a240-4862-8cb5-eda10b304f9a",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-90ecfa89-ceaa-4bc2-aba3-9c1190256b2d",
+          "objective": "write file-6.txt op-22",
+          "acceptanceChecks": [
+            {
+              "id": "check-b05d6e98-3af6-4404-bea9-819f093605bd",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-1363c45c-3c2d-4bc5-bc69-cd5d503c12b7",
+          "objective": "read file-7.txt op-23",
+          "acceptanceChecks": [
+            {
+              "id": "check-e1037384-76b2-4624-b2d0-d0188026511d",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-c8315736-332d-44e4-aa8f-fa06caa9d537",
+          "objective": "validate file-8.txt op-24",
+          "acceptanceChecks": [
+            {
+              "id": "check-2e8a2679-22c9-4789-ba77-b59b48a1f410",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "fixture.validate",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-df859d84-4ec4-4494-8f13-89c343680d10",
+          "objective": "read file-1.txt op-25",
+          "acceptanceChecks": [
+            {
+              "id": "check-a9469963-dca9-4e9a-8315-653ca5d556e7",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-6303aac5-3368-4b7a-a0dd-153d23b52a91",
+          "objective": "write file-2.txt op-26",
+          "acceptanceChecks": [
+            {
+              "id": "check-87e83557-5f28-4c25-9cac-916bf27b9b4e",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-9a5f9fb6-34bf-4cb8-9d37-982768473038",
+          "objective": "read file-3.txt op-27",
+          "acceptanceChecks": [
+            {
+              "id": "check-8e2a95bd-b235-47dc-b9e6-9f988aa2c5fa",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-3a2acb95-bd1b-45fc-b269-2b5e9fb118ba",
+          "objective": "write file-4.txt op-28",
+          "acceptanceChecks": [
+            {
+              "id": "check-5e3c0d5e-dc53-45bb-b20c-4fdf3822a130",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-6018b48d-e172-4f0d-95ed-4cb4513eb21f",
+          "objective": "read file-5.txt op-29",
+          "acceptanceChecks": [
+            {
+              "id": "check-0a815956-a972-45fa-9891-e984634b437c",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-c5ed1100-ebff-437e-921a-83dd5d92c9b9",
+          "objective": "validate file-6.txt op-30",
+          "acceptanceChecks": [
+            {
+              "id": "check-dd8b6657-a42b-4cb9-983f-6beaa2d7995c",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "fixture.validate",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-6fe1d33f-d0cf-4930-9d7c-0832e16a8df9",
+          "objective": "read file-7.txt op-31",
+          "acceptanceChecks": [
+            {
+              "id": "check-5abe1a5e-938f-445b-bd75-c9d227d9f661",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-311538a1-1546-4945-8cc8-17261425cc0e",
+          "objective": "write file-8.txt op-32",
+          "acceptanceChecks": [
+            {
+              "id": "check-98707f5b-6ec4-4d5b-bd2e-b3bfaafb7873",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-71ec72d3-e133-472d-a2c3-db403427e087",
+          "objective": "read file-1.txt op-33",
+          "acceptanceChecks": [
+            {
+              "id": "check-38568576-9aa2-446c-a2e7-a885ef82b616",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-7d9b95bc-adcd-4905-bd0e-276927464c86",
+          "objective": "write file-2.txt op-34",
+          "acceptanceChecks": [
+            {
+              "id": "check-64c6c982-15c6-475c-9d78-f0e071c138f8",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.write",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-a0cc1ec0-8563-4fbf-85cb-c4ddc7383a7b",
+          "objective": "read file-3.txt op-35",
+          "acceptanceChecks": [
+            {
+              "id": "check-6f374511-8e8b-4acf-90f3-344e32b03eae",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "filesystem.read",
+              "expectedStatus": "success"
+            }
+          ]
+        },
+        {
+          "id": "step-23f6b451-a438-4262-9b2c-47c9e0146328",
+          "objective": "validate file-4.txt op-36",
+          "acceptanceChecks": [
+            {
+              "id": "check-d5c71f93-868c-4fc2-bca0-ed1029c8e16d",
+              "required": true,
+              "kind": "tool_result",
+              "toolName": "fixture.validate",
+              "expectedStatus": "success"
+            }
+          ]
+        }
+      ]
+    },
+    "stepProgress": [
+      {
+        "stepId": "step-a04b357a-3cc4-463b-80a1-9be669784d76",
+        "status": "completed",
+        "evidenceIds": [
+          "16a97147-736e-42b2-8753-87b53e8afafd"
+        ]
+      },
+      {
+        "stepId": "step-90d8d290-2554-4354-b2c9-681bbdc76ba5",
+        "status": "completed",
+        "evidenceIds": [
+          "3ca58736-1850-4acd-bcde-68d15d421893"
+        ]
+      },
+      {
+        "stepId": "step-175854bc-6df5-4d7a-9db3-639572d9b188",
+        "status": "completed",
+        "evidenceIds": [
+          "a1f68177-4125-4619-86b8-e9d535a7b466"
+        ]
+      },
+      {
+        "stepId": "step-3c63cbeb-d036-431c-94a2-235fd45274d0",
+        "status": "completed",
+        "evidenceIds": [
+          "4bf15d63-8058-4b98-8251-e349d799f309"
+        ]
+      },
+      {
+        "stepId": "step-00ee9d6d-4ddd-4c82-b248-b479dc2ad4d8",
+        "status": "completed",
+        "evidenceIds": [
+          "ac7fbceb-b5b6-4b6f-bbe4-d7e93b0d0a3e"
+        ]
+      },
+      {
+        "stepId": "step-d4be4b01-f3fd-40ba-8e80-20ac95060a9c",
+        "status": "completed",
+        "evidenceIds": [
+          "9ae9c646-5e12-48b3-aac7-a00f068131c2"
+        ]
+      },
+      {
+        "stepId": "step-6b703847-55bc-4621-abc7-482ba2123cd6",
+        "status": "completed",
+        "evidenceIds": [
+          "fb9e70d7-d919-41fc-a6fe-b99c755780a6"
+        ]
+      },
+      {
+        "stepId": "step-86fefadb-341a-43d5-9b5a-3d54c6188ac9",
+        "status": "completed",
+        "evidenceIds": [
+          "3e59538e-8e3d-4128-9f4d-eb6a6bbcfd7d"
+        ]
+      },
+      {
+        "stepId": "step-4e7782cb-399a-4f0b-bf5b-512c68f8bd5b",
+        "status": "completed",
+        "evidenceIds": [
+          "954d6ecd-076c-4d30-84ae-60daa5cb1d22"
+        ]
+      },
+      {
+        "stepId": "step-3ed39960-25e5-460d-98df-85684b046043",
+        "status": "completed",
+        "evidenceIds": [
+          "90ea2a52-94e0-4929-a893-cc89f6138715"
+        ]
+      },
+      {
+        "stepId": "step-1256da60-08c6-42cd-adda-808fd8acc02e",
+        "status": "completed",
+        "evidenceIds": [
+          "e08bc71b-7b47-408e-956a-cc742c64828a"
+        ]
+      },
+      {
+        "stepId": "step-87b5e06d-f359-47b0-b3dc-961f7363a62e",
+        "status": "completed",
+        "evidenceIds": [
+          "fbd06e70-d926-4fe9-b8aa-bf044ca6af5d"
+        ]
+      },
+      {
+        "stepId": "step-2d50c8d4-8a5d-47f3-a7b4-2d49d176857f",
+        "status": "completed",
+        "evidenceIds": [
+          "85ad749e-bf8f-4af8-ba9d-b7bff835135f"
+        ]
+      },
+      {
+        "stepId": "step-ab5e15cb-c611-47eb-b297-26ed0ae8daf0",
+        "status": "completed",
+        "evidenceIds": [
+          "da732577-344b-404c-b0ad-b991a289322f"
+        ]
+      },
+      {
+        "stepId": "step-8f65bbeb-d7bd-4743-bf77-72b6784b5f63",
+        "status": "completed",
+        "evidenceIds": [
+          "6fe38d9d-27ee-4c84-af6d-35181a409cb0"
+        ]
+      },
+      {
+        "stepId": "step-6b918bd5-792b-4294-b61a-8e0d9babdaa5",
+        "status": "completed",
+        "evidenceIds": [
+          "5e1143a3-66d2-45d3-a548-2cae7d5d667f"
+        ]
+      },
+      {
+        "stepId": "step-8a656b43-a2f3-4de7-8cd6-f17a53f8ffdb",
+        "status": "completed",
+        "evidenceIds": [
+          "4a864fd2-120f-42a7-be9d-b92394a629ae"
+        ]
+      },
+      {
+        "stepId": "step-3004fbb1-be74-4738-9763-d34a48a2c763",
+        "status": "completed",
+        "evidenceIds": [
+          "3d7b5214-dc3f-4c3e-8349-9176c58d1457"
+        ]
+      },
+      {
+        "stepId": "step-ef22945f-b81a-4719-ba08-1be2961cc637",
+        "status": "completed",
+        "evidenceIds": [
+          "75f569da-7cb3-4aea-8fb8-740d71d456a4"
+        ]
+      },
+      {
+        "stepId": "step-0d24696b-460a-4080-bf47-2638dc081a32",
+        "status": "completed",
+        "evidenceIds": [
+          "02472972-1092-4ecc-a76c-61e58b21f2f1"
+        ]
+      },
+      {
+        "stepId": "step-adee989a-f197-46a4-a275-ca8717622845",
+        "status": "completed",
+        "evidenceIds": [
+          "19dee748-4b6d-4275-898a-dc973eca48f1"
+        ]
+      },
+      {
+        "stepId": "step-90ecfa89-ceaa-4bc2-aba3-9c1190256b2d",
+        "status": "completed",
+        "evidenceIds": [
+          "0726698d-8d3c-4dc1-8ee8-e6dd3b0e3473"
+        ]
+      },
+      {
+        "stepId": "step-1363c45c-3c2d-4bc5-bc69-cd5d503c12b7",
+        "status": "completed",
+        "evidenceIds": [
+          "b2f6f942-f474-4147-9769-a3f1486edcc2"
+        ]
+      },
+      {
+        "stepId": "step-c8315736-332d-44e4-aa8f-fa06caa9d537",
+        "status": "completed",
+        "evidenceIds": [
+          "dd2ca1a3-8857-4fc6-9e2b-73259bc66b0f"
+        ]
+      },
+      {
+        "stepId": "step-df859d84-4ec4-4494-8f13-89c343680d10",
+        "status": "completed",
+        "evidenceIds": [
+          "341d34f8-a4e5-4095-a035-2119119d61e1"
+        ]
+      },
+      {
+        "stepId": "step-6303aac5-3368-4b7a-a0dd-153d23b52a91",
+        "status": "completed",
+        "evidenceIds": [
+          "2881d66b-5d24-4f32-9f78-7cbcd9e57768"
+        ]
+      },
+      {
+        "stepId": "step-9a5f9fb6-34bf-4cb8-9d37-982768473038",
+        "status": "completed",
+        "evidenceIds": [
+          "f90322ff-b81e-4006-a1ec-c9400d9492cd"
+        ]
+      },
+      {
+        "stepId": "step-3a2acb95-bd1b-45fc-b269-2b5e9fb118ba",
+        "status": "completed",
+        "evidenceIds": [
+          "fc5b747c-c9cb-492f-a954-f140cd29c9a4"
+        ]
+      },
+      {
+        "stepId": "step-6018b48d-e172-4f0d-95ed-4cb4513eb21f",
+        "status": "completed",
+        "evidenceIds": [
+          "feb4ad39-a23e-4073-a6d8-c3d5abd957a6"
+        ]
+      },
+      {
+        "stepId": "step-c5ed1100-ebff-437e-921a-83dd5d92c9b9",
+        "status": "completed",
+        "evidenceIds": [
+          "4bcdfdd8-611a-415f-ada3-3dff43384d84"
+        ]
+      },
+      {
+        "stepId": "step-6fe1d33f-d0cf-4930-9d7c-0832e16a8df9",
+        "status": "completed",
+        "evidenceIds": [
+          "b56d56a3-952a-4268-815c-dd68ec0f3386"
+        ]
+      },
+      {
+        "stepId": "step-311538a1-1546-4945-8cc8-17261425cc0e",
+        "status": "completed",
+        "evidenceIds": [
+          "0b47ec59-8cc6-4bca-9f11-7cc369ab2ad7"
+        ]
+      },
+      {
+        "stepId": "step-71ec72d3-e133-472d-a2c3-db403427e087",
+        "status": "completed",
+        "evidenceIds": [
+          "164eb0eb-b3bc-4041-a0fe-827023b27a53"
+        ]
+      },
+      {
+        "stepId": "step-7d9b95bc-adcd-4905-bd0e-276927464c86",
+        "status": "completed",
+        "evidenceIds": [
+          "6ff21e09-7be0-4a77-98bf-38202da85653"
+        ]
+      },
+      {
+        "stepId": "step-a0cc1ec0-8563-4fbf-85cb-c4ddc7383a7b",
+        "status": "completed",
+        "evidenceIds": [
+          "2f43c373-4c13-47c7-a2cb-f6975b77114e"
+        ]
+      },
+      {
+        "stepId": "step-23f6b451-a438-4262-9b2c-47c9e0146328",
+        "status": "completed",
+        "evidenceIds": [
+          "28fc98c6-75fc-428e-bf29-b8a9ced45503"
+        ]
+      }
+    ],
+    "pendingRequest": null,
+    "completionRequirements": {
+      "evidence": "auto",
+      "requiredToolNames": []
+    },
+    "budgets": {
+      "maxIterations": 50,
+      "maxModelCalls": 50,
+      "maxToolCalls": 50,
+      "maxRetries": 10,
+      "maxDurationMs": 300000
+    },
+    "budgetsUsed": {
+      "iterations": 44,
+      "modelCalls": 44,
+      "toolCalls": 37,
+      "retries": 0,
+      "startedAt": "2026-08-31T13:02:03.140Z"
+    },
+    "result": {
+      "summary": "All deterministic operations completed and validated.",
+      "resultArtifact": null,
+      "evidenceIds": [
+        "16a97147-736e-42b2-8753-87b53e8afafd",
+        "3ca58736-1850-4acd-bcde-68d15d421893",
+        "a1f68177-4125-4619-86b8-e9d535a7b466",
+        "4bf15d63-8058-4b98-8251-e349d799f309",
+        "ac7fbceb-b5b6-4b6f-bbe4-d7e93b0d0a3e",
+        "9ae9c646-5e12-48b3-aac7-a00f068131c2",
+        "fb9e70d7-d919-41fc-a6fe-b99c755780a6",
+        "3e59538e-8e3d-4128-9f4d-eb6a6bbcfd7d",
+        "954d6ecd-076c-4d30-84ae-60daa5cb1d22",
+        "90ea2a52-94e0-4929-a893-cc89f6138715",
+        "e08bc71b-7b47-408e-956a-cc742c64828a",
+        "fbd06e70-d926-4fe9-b8aa-bf044ca6af5d",
+        "85ad749e-bf8f-4af8-ba9d-b7bff835135f",
+        "da732577-344b-404c-b0ad-b991a289322f",
+        "6fe38d9d-27ee-4c84-af6d-35181a409cb0",
+        "5e1143a3-66d2-45d3-a548-2cae7d5d667f",
+        "4a864fd2-120f-42a7-be9d-b92394a629ae",
+        "3d7b5214-dc3f-4c3e-8349-9176c58d1457",
+        "75f569da-7cb3-4aea-8fb8-740d71d456a4",
+        "02472972-1092-4ecc-a76c-61e58b21f2f1",
+        "19dee748-4b6d-4275-898a-dc973eca48f1",
+        "0726698d-8d3c-4dc1-8ee8-e6dd3b0e3473",
+        "b2f6f942-f474-4147-9769-a3f1486edcc2",
+        "dd2ca1a3-8857-4fc6-9e2b-73259bc66b0f",
+        "341d34f8-a4e5-4095-a035-2119119d61e1",
+        "2881d66b-5d24-4f32-9f78-7cbcd9e57768",
+        "f90322ff-b81e-4006-a1ec-c9400d9492cd",
+        "fc5b747c-c9cb-492f-a954-f140cd29c9a4",
+        "feb4ad39-a23e-4073-a6d8-c3d5abd957a6",
+        "4bcdfdd8-611a-415f-ada3-3dff43384d84",
+        "b56d56a3-952a-4268-815c-dd68ec0f3386",
+        "0b47ec59-8cc6-4bca-9f11-7cc369ab2ad7",
+        "164eb0eb-b3bc-4041-a0fe-827023b27a53",
+        "6ff21e09-7be0-4a77-98bf-38202da85653",
+        "2f43c373-4c13-47c7-a2cb-f6975b77114e",
+        "28fc98c6-75fc-428e-bf29-b8a9ced45503"
+      ]
+    },
+    "delivery": {
+      "outcome": "succeeded",
+      "summary": "All deterministic operations completed and validated.",
+      "producedArtifacts": [],
+      "confirmedFacts": [
+        "tool_result: file-1.txt",
+        "tool_result: file-2.txt",
+        "tool_result: file-3.txt",
+        "tool_result: file-4.txt",
+        "tool_result: file-5.txt",
+        "tool_result: file-6.txt",
+        "tool_result: file-7.txt",
+        "tool_result: file-8.txt",
+        "tool_result: file-1.txt",
+        "tool_result: file-2.txt",
+        "tool_result: file-3.txt",
+        "tool_result: file-4.txt",
+        "tool_result: file-5.txt",
+        "tool_result: file-6.txt",
+        "tool_result: file-7.txt",
+        "tool_result: file-8.txt",
+        "tool_result: file-1.txt",
+        "tool_result: file-2.txt",
+        "tool_result: file-3.txt",
+        "tool_result: file-4.txt",
+        "tool_result: file-5.txt",
+        "tool_result: file-6.txt",
+        "tool_result: file-7.txt",
+        "tool_result: file-8.txt",
+        "tool_result: file-1.txt",
+        "tool_result: file-2.txt",
+        "tool_result: file-3.txt",
+        "tool_result: file-4.txt",
+        "tool_result: file-5.txt",
+        "tool_result: file-6.txt",
+        "tool_result: file-7.txt",
+        "tool_result: file-8.txt",
+        "tool_result: file-1.txt",
+        "tool_result: file-2.txt",
+        "tool_result: file-3.txt",
+        "tool_result: file-4.txt"
+      ],
+      "unfinishedWork": [],
+      "exactCause": {
+        "code": "COMPLETED",
+        "message": "The deterministic completion gate accepted the persisted Evidence.",
+        "stopReason": "COMPLETED"
+      },
+      "nextAction": "Use the delivered result and cited Evidence.",
+      "generatedBy": "model",
+      "createdAt": "2026-08-31T13:02:17.017Z"
+    },
+    "evidence": [
+      {
+        "id": "16a97147-736e-42b2-8753-87b53e8afafd",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:03.338Z",
+        "planVersion": 1,
+        "stepId": "step-a04b357a-3cc4-463b-80a1-9be669784d76",
+        "checkId": "check-04cdb5ce-ac21-4aae-b081-36aeb68618e5",
+        "subjectRef": "file-1.txt",
+        "invocationId": "883d2b4b-22a4-4c9e-aae7-316d557bdaec",
+        "artifactRef": null,
+        "digest": "sha256:e593eb8d86328cc5696131390ac0850b159ee6bea4c77cbfcd8233573dae16e8"
+      },
+      {
+        "id": "3ca58736-1850-4acd-bcde-68d15d421893",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:03.459Z",
+        "planVersion": 1,
+        "stepId": "step-90d8d290-2554-4354-b2c9-681bbdc76ba5",
+        "checkId": "check-98d846a4-6d01-4b5c-8d39-c6a6030eb2e4",
+        "subjectRef": "file-2.txt",
+        "invocationId": "707b833f-7fb9-4c56-94e8-a02522f72515",
+        "artifactRef": null,
+        "digest": "sha256:fa5e5a0064b4ff015bbac9047c3a7f7894ddb3f41debcfe4892b48be2fbdce7b"
+      },
+      {
+        "id": "a1f68177-4125-4619-86b8-e9d535a7b466",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:03.555Z",
+        "planVersion": 1,
+        "stepId": "step-175854bc-6df5-4d7a-9db3-639572d9b188",
+        "checkId": "check-9adc861a-5af5-42db-9108-a684872d87d0",
+        "subjectRef": "file-3.txt",
+        "invocationId": "1438553f-a21a-40b5-beb1-b0a96d479469",
+        "artifactRef": null,
+        "digest": "sha256:93cf011557659a374e2990457dacb5b5a641bb43dbb6430738c54bd79a770344"
+      },
+      {
+        "id": "4bf15d63-8058-4b98-8251-e349d799f309",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:03.668Z",
+        "planVersion": 1,
+        "stepId": "step-3c63cbeb-d036-431c-94a2-235fd45274d0",
+        "checkId": "check-f25fec61-7de1-4aaf-92d2-ddb54fe2a594",
+        "subjectRef": "file-4.txt",
+        "invocationId": "fb521769-8b19-4147-8b66-ab06e839ab3e",
+        "artifactRef": null,
+        "digest": "sha256:0a53e0cd3ce16697cbe94902b74e6bbe8f35f3631bb4b6cfc8eba255fd53383f"
+      },
+      {
+        "id": "ac7fbceb-b5b6-4b6f-bbe4-d7e93b0d0a3e",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:03.776Z",
+        "planVersion": 1,
+        "stepId": "step-00ee9d6d-4ddd-4c82-b248-b479dc2ad4d8",
+        "checkId": "check-579c3d71-0b44-4da1-b568-748334293e1a",
+        "subjectRef": "file-5.txt",
+        "invocationId": "97f8cc3d-ba4f-4ec6-813d-67c790270754",
+        "artifactRef": null,
+        "digest": "sha256:beeb542c7cdd23e73c27e8900226d1a8114be04463b7d11506deaea4adfed7ae"
+      },
+      {
+        "id": "9ae9c646-5e12-48b3-aac7-a00f068131c2",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:04.033Z",
+        "planVersion": 1,
+        "stepId": "step-d4be4b01-f3fd-40ba-8e80-20ac95060a9c",
+        "checkId": "check-45da94ce-e1ae-42f0-8775-e26126b40c33",
+        "subjectRef": "file-6.txt",
+        "invocationId": "723caddb-300e-4d60-88ff-00ca3db0955e",
+        "artifactRef": null,
+        "digest": "sha256:03beb2f3191b10c33a17c16a8f79c8016ebbf382e214cb84cd907bd9bd8448e4"
+      },
+      {
+        "id": "fb9e70d7-d919-41fc-a6fe-b99c755780a6",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:04.170Z",
+        "planVersion": 1,
+        "stepId": "step-6b703847-55bc-4621-abc7-482ba2123cd6",
+        "checkId": "check-fdb86670-c6dd-4425-8a29-530d4d6f09c2",
+        "subjectRef": "file-7.txt",
+        "invocationId": "23d5d116-8f84-427b-854d-276f8670f2df",
+        "artifactRef": null,
+        "digest": "sha256:980e164c48666ebf92f25b8ee3db5d5057dc34deda34db440c4d1985f469a563"
+      },
+      {
+        "id": "3e59538e-8e3d-4128-9f4d-eb6a6bbcfd7d",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:04.491Z",
+        "planVersion": 2,
+        "stepId": "step-86fefadb-341a-43d5-9b5a-3d54c6188ac9",
+        "checkId": "check-5c47a0c4-cd28-4699-882d-0e78924a03a7",
+        "subjectRef": "file-8.txt",
+        "invocationId": "7ef5b50e-ce63-4e4d-8e0b-d53b957bbb90",
+        "artifactRef": null,
+        "digest": "sha256:169e659450b83812e8a31c33195ba626b48d95499346118f072fcc6fc5ff8748"
+      },
+      {
+        "id": "954d6ecd-076c-4d30-84ae-60daa5cb1d22",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:04.680Z",
+        "planVersion": 2,
+        "stepId": "step-4e7782cb-399a-4f0b-bf5b-512c68f8bd5b",
+        "checkId": "check-8dd24587-d9e2-4771-85cd-361cf4158ba5",
+        "subjectRef": "file-1.txt",
+        "invocationId": "992880c8-3fbb-4627-8156-c02823560a95",
+        "artifactRef": null,
+        "digest": "sha256:e593eb8d86328cc5696131390ac0850b159ee6bea4c77cbfcd8233573dae16e8"
+      },
+      {
+        "id": "90ea2a52-94e0-4929-a893-cc89f6138715",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:04.887Z",
+        "planVersion": 2,
+        "stepId": "step-3ed39960-25e5-460d-98df-85684b046043",
+        "checkId": "check-a0033162-2b4f-4d39-8109-ca0f90b3ee3b",
+        "subjectRef": "file-2.txt",
+        "invocationId": "171a2e7b-d7a7-462e-ad49-2350921a8847",
+        "artifactRef": null,
+        "digest": "sha256:ed490a4a41c07035e6cdd9f9ce4c69d83b53bb1943964e28bec65c6fa5eff348"
+      },
+      {
+        "id": "e08bc71b-7b47-408e-956a-cc742c64828a",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:05.072Z",
+        "planVersion": 2,
+        "stepId": "step-1256da60-08c6-42cd-adda-808fd8acc02e",
+        "checkId": "check-b2e7df1f-7b07-4147-be7f-f20ede5d7754",
+        "subjectRef": "file-3.txt",
+        "invocationId": "54abe5ad-bd8d-483b-948d-0ed46fdce5b5",
+        "artifactRef": null,
+        "digest": "sha256:93cf011557659a374e2990457dacb5b5a641bb43dbb6430738c54bd79a770344"
+      },
+      {
+        "id": "fbd06e70-d926-4fe9-b8aa-bf044ca6af5d",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:05.281Z",
+        "planVersion": 2,
+        "stepId": "step-87b5e06d-f359-47b0-b3dc-961f7363a62e",
+        "checkId": "check-2ed4e8e3-6079-4712-9613-c5efcef1c4ac",
+        "subjectRef": "file-4.txt",
+        "invocationId": "2a3f4b4b-037c-485a-a700-f42be6c5f3e7",
+        "artifactRef": null,
+        "digest": "sha256:783ecbd1abb242f45d31349f2dc3863bc38180ea35eb916d18e1c8cd0f5c965a"
+      },
+      {
+        "id": "85ad749e-bf8f-4af8-ba9d-b7bff835135f",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:05.502Z",
+        "planVersion": 2,
+        "stepId": "step-2d50c8d4-8a5d-47f3-a7b4-2d49d176857f",
+        "checkId": "check-cb04f10b-04cf-422a-a633-d2b90117f8b0",
+        "subjectRef": "file-5.txt",
+        "invocationId": "f38e10e2-f090-421a-8123-38f20ad63e1c",
+        "artifactRef": null,
+        "digest": "sha256:beeb542c7cdd23e73c27e8900226d1a8114be04463b7d11506deaea4adfed7ae"
+      },
+      {
+        "id": "da732577-344b-404c-b0ad-b991a289322f",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:05.708Z",
+        "planVersion": 2,
+        "stepId": "step-ab5e15cb-c611-47eb-b297-26ed0ae8daf0",
+        "checkId": "check-d5296d5b-977a-440a-8b4f-b4e5cb406813",
+        "subjectRef": "file-6.txt",
+        "invocationId": "70b521e9-92c9-4f67-b84a-7943fca1a13a",
+        "artifactRef": null,
+        "digest": "sha256:19565a736e3ae6d0e8ee2488bbc14af0d99effccf09358d3a0385961c2af688d"
+      },
+      {
+        "id": "6fe38d9d-27ee-4c84-af6d-35181a409cb0",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:06.160Z",
+        "planVersion": 3,
+        "stepId": "step-8f65bbeb-d7bd-4743-bf77-72b6784b5f63",
+        "checkId": "check-07de90c2-2e32-424c-a6de-1537e9966040",
+        "subjectRef": "file-7.txt",
+        "invocationId": "74754a5a-f924-4c6e-9fcb-1a95fe6973dd",
+        "artifactRef": null,
+        "digest": "sha256:980e164c48666ebf92f25b8ee3db5d5057dc34deda34db440c4d1985f469a563"
+      },
+      {
+        "id": "5e1143a3-66d2-45d3-a548-2cae7d5d667f",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:06.457Z",
+        "planVersion": 3,
+        "stepId": "step-6b918bd5-792b-4294-b61a-8e0d9babdaa5",
+        "checkId": "check-f8195529-3ea8-410d-886b-5b51e3b9547d",
+        "subjectRef": "file-8.txt",
+        "invocationId": "f2fe74f0-c452-4d87-9bba-848661e43316",
+        "artifactRef": null,
+        "digest": "sha256:27df45f3d88cb9154da7259c77ccf7db13aa469202d850a13ceadf06498dfb4c"
+      },
+      {
+        "id": "4a864fd2-120f-42a7-be9d-b92394a629ae",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:06.751Z",
+        "planVersion": 3,
+        "stepId": "step-8a656b43-a2f3-4de7-8cd6-f17a53f8ffdb",
+        "checkId": "check-aa5d3e16-ed96-4648-8dc8-918c53fa17b3",
+        "subjectRef": "file-1.txt",
+        "invocationId": "f8010e19-edc7-4381-b548-a0ed46b5c4e8",
+        "artifactRef": null,
+        "digest": "sha256:e593eb8d86328cc5696131390ac0850b159ee6bea4c77cbfcd8233573dae16e8"
+      },
+      {
+        "id": "3d7b5214-dc3f-4c3e-8349-9176c58d1457",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:07.031Z",
+        "planVersion": 3,
+        "stepId": "step-3004fbb1-be74-4738-9763-d34a48a2c763",
+        "checkId": "check-e61edf12-c3e7-4d99-ad28-a28b357be785",
+        "subjectRef": "file-2.txt",
+        "invocationId": "66652238-5e8f-4c1e-a26d-fe4710e1576a",
+        "artifactRef": null,
+        "digest": "sha256:4df84a12c938a976bbf6ca330a57b82686b4266ff728158a1480bc4afb9dde1c"
+      },
+      {
+        "id": "75f569da-7cb3-4aea-8fb8-740d71d456a4",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:07.344Z",
+        "planVersion": 3,
+        "stepId": "step-ef22945f-b81a-4719-ba08-1be2961cc637",
+        "checkId": "check-00a88109-f22c-4a60-b187-61fca866a30c",
+        "subjectRef": "file-3.txt",
+        "invocationId": "c7e857f0-19a8-4d98-a0b4-b2c3fc528d90",
+        "artifactRef": null,
+        "digest": "sha256:93cf011557659a374e2990457dacb5b5a641bb43dbb6430738c54bd79a770344"
+      },
+      {
+        "id": "02472972-1092-4ecc-a76c-61e58b21f2f1",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:07.719Z",
+        "planVersion": 3,
+        "stepId": "step-0d24696b-460a-4080-bf47-2638dc081a32",
+        "checkId": "check-1432c28c-d809-4148-bb30-4376007390b7",
+        "subjectRef": "file-4.txt",
+        "invocationId": "a8d49ca9-8fbe-4d70-b13e-675da42bb0c4",
+        "artifactRef": null,
+        "digest": "sha256:7f7f432898ae1e42c9f858980b6e1787202c04965d22aaf93541326131cc76c5"
+      },
+      {
+        "id": "19dee748-4b6d-4275-898a-dc973eca48f1",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:08.121Z",
+        "planVersion": 3,
+        "stepId": "step-adee989a-f197-46a4-a275-ca8717622845",
+        "checkId": "check-43c3fb6a-a240-4862-8cb5-eda10b304f9a",
+        "subjectRef": "file-5.txt",
+        "invocationId": "eada5472-ca75-4789-8594-c097e4603a65",
+        "artifactRef": null,
+        "digest": "sha256:beeb542c7cdd23e73c27e8900226d1a8114be04463b7d11506deaea4adfed7ae"
+      },
+      {
+        "id": "0726698d-8d3c-4dc1-8ee8-e6dd3b0e3473",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:08.932Z",
+        "planVersion": 4,
+        "stepId": "step-90ecfa89-ceaa-4bc2-aba3-9c1190256b2d",
+        "checkId": "check-b05d6e98-3af6-4404-bea9-819f093605bd",
+        "subjectRef": "file-6.txt",
+        "invocationId": "b4aaaac5-99f2-444c-8971-05bc5f678d78",
+        "artifactRef": null,
+        "digest": "sha256:d23eefee0c0478971593236bbf144b6df1d50c13d19e0bd18322bc53b51bac84"
+      },
+      {
+        "id": "b2f6f942-f474-4147-9769-a3f1486edcc2",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:09.295Z",
+        "planVersion": 4,
+        "stepId": "step-1363c45c-3c2d-4bc5-bc69-cd5d503c12b7",
+        "checkId": "check-e1037384-76b2-4624-b2d0-d0188026511d",
+        "subjectRef": "file-7.txt",
+        "invocationId": "7846a238-62cf-4269-870f-a94a25fac85a",
+        "artifactRef": null,
+        "digest": "sha256:980e164c48666ebf92f25b8ee3db5d5057dc34deda34db440c4d1985f469a563"
+      },
+      {
+        "id": "dd2ca1a3-8857-4fc6-9e2b-73259bc66b0f",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:09.686Z",
+        "planVersion": 4,
+        "stepId": "step-c8315736-332d-44e4-aa8f-fa06caa9d537",
+        "checkId": "check-2e8a2679-22c9-4789-ba77-b59b48a1f410",
+        "subjectRef": "file-8.txt",
+        "invocationId": "1fe7655a-66c3-4af5-ab73-173b4e327482",
+        "artifactRef": null,
+        "digest": "sha256:5b94f15edb3dfce016cec0d8bbffc4b13cd187b1c20ccc54665232e019bdb14f"
+      },
+      {
+        "id": "341d34f8-a4e5-4095-a035-2119119d61e1",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:10.056Z",
+        "planVersion": 4,
+        "stepId": "step-df859d84-4ec4-4494-8f13-89c343680d10",
+        "checkId": "check-a9469963-dca9-4e9a-8315-653ca5d556e7",
+        "subjectRef": "file-1.txt",
+        "invocationId": "e791d142-b430-42e7-bac3-379131e606e1",
+        "artifactRef": null,
+        "digest": "sha256:e593eb8d86328cc5696131390ac0850b159ee6bea4c77cbfcd8233573dae16e8"
+      },
+      {
+        "id": "2881d66b-5d24-4f32-9f78-7cbcd9e57768",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:10.459Z",
+        "planVersion": 4,
+        "stepId": "step-6303aac5-3368-4b7a-a0dd-153d23b52a91",
+        "checkId": "check-87e83557-5f28-4c25-9cac-916bf27b9b4e",
+        "subjectRef": "file-2.txt",
+        "invocationId": "45dfdae1-1773-4521-801e-0abd13887dc3",
+        "artifactRef": null,
+        "digest": "sha256:224b69a32ae3045b0f95da2a5ce05211aafa74c9f7ea938798a41fc6aee0a7d5"
+      },
+      {
+        "id": "f90322ff-b81e-4006-a1ec-c9400d9492cd",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:10.852Z",
+        "planVersion": 4,
+        "stepId": "step-9a5f9fb6-34bf-4cb8-9d37-982768473038",
+        "checkId": "check-8e2a95bd-b235-47dc-b9e6-9f988aa2c5fa",
+        "subjectRef": "file-3.txt",
+        "invocationId": "1f8cd92e-ee3b-45a0-8d2f-049bbbfad49a",
+        "artifactRef": null,
+        "digest": "sha256:93cf011557659a374e2990457dacb5b5a641bb43dbb6430738c54bd79a770344"
+      },
+      {
+        "id": "fc5b747c-c9cb-492f-a954-f140cd29c9a4",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:11.280Z",
+        "planVersion": 4,
+        "stepId": "step-3a2acb95-bd1b-45fc-b269-2b5e9fb118ba",
+        "checkId": "check-5e3c0d5e-dc53-45bb-b20c-4fdf3822a130",
+        "subjectRef": "file-4.txt",
+        "invocationId": "345fe74c-ab3e-477a-9049-89b24c335a79",
+        "artifactRef": null,
+        "digest": "sha256:da6754bb7c3a365fa89032886cad3d4a5993d19c63b8e6f10a67ecbc6b0da3f3"
+      },
+      {
+        "id": "feb4ad39-a23e-4073-a6d8-c3d5abd957a6",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:12.237Z",
+        "planVersion": 5,
+        "stepId": "step-6018b48d-e172-4f0d-95ed-4cb4513eb21f",
+        "checkId": "check-0a815956-a972-45fa-9891-e984634b437c",
+        "subjectRef": "file-5.txt",
+        "invocationId": "b1e0a227-d601-48d1-bbbb-502970404541",
+        "artifactRef": null,
+        "digest": "sha256:beeb542c7cdd23e73c27e8900226d1a8114be04463b7d11506deaea4adfed7ae"
+      },
+      {
+        "id": "4bcdfdd8-611a-415f-ada3-3dff43384d84",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:12.720Z",
+        "planVersion": 5,
+        "stepId": "step-c5ed1100-ebff-437e-921a-83dd5d92c9b9",
+        "checkId": "check-dd8b6657-a42b-4cb9-983f-6beaa2d7995c",
+        "subjectRef": "file-6.txt",
+        "invocationId": "a7c04316-602e-496a-8457-f6e0b95ef10d",
+        "artifactRef": null,
+        "digest": "sha256:03beb2f3191b10c33a17c16a8f79c8016ebbf382e214cb84cd907bd9bd8448e4"
+      },
+      {
+        "id": "b56d56a3-952a-4268-815c-dd68ec0f3386",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:13.198Z",
+        "planVersion": 5,
+        "stepId": "step-6fe1d33f-d0cf-4930-9d7c-0832e16a8df9",
+        "checkId": "check-5abe1a5e-938f-445b-bd75-c9d227d9f661",
+        "subjectRef": "file-7.txt",
+        "invocationId": "9f4bc52d-ac24-48ac-a3ea-f2436889c3d2",
+        "artifactRef": null,
+        "digest": "sha256:980e164c48666ebf92f25b8ee3db5d5057dc34deda34db440c4d1985f469a563"
+      },
+      {
+        "id": "0b47ec59-8cc6-4bca-9f11-7cc369ab2ad7",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:13.703Z",
+        "planVersion": 5,
+        "stepId": "step-311538a1-1546-4945-8cc8-17261425cc0e",
+        "checkId": "check-98707f5b-6ec4-4d5b-bd2e-b3bfaafb7873",
+        "subjectRef": "file-8.txt",
+        "invocationId": "a3a624eb-f459-47b5-93f2-044182891eb8",
+        "artifactRef": null,
+        "digest": "sha256:462219a2faf3fe613fde461d44c2966eb1611ebe7d510baf1a5f4c5e48c2328d"
+      },
+      {
+        "id": "164eb0eb-b3bc-4041-a0fe-827023b27a53",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:14.204Z",
+        "planVersion": 5,
+        "stepId": "step-71ec72d3-e133-472d-a2c3-db403427e087",
+        "checkId": "check-38568576-9aa2-446c-a2e7-a885ef82b616",
+        "subjectRef": "file-1.txt",
+        "invocationId": "88f3efb0-26a3-4aec-906b-e657e0dd4efa",
+        "artifactRef": null,
+        "digest": "sha256:e593eb8d86328cc5696131390ac0850b159ee6bea4c77cbfcd8233573dae16e8"
+      },
+      {
+        "id": "6ff21e09-7be0-4a77-98bf-38202da85653",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:14.711Z",
+        "planVersion": 5,
+        "stepId": "step-7d9b95bc-adcd-4905-bd0e-276927464c86",
+        "checkId": "check-64c6c982-15c6-475c-9d78-f0e071c138f8",
+        "subjectRef": "file-2.txt",
+        "invocationId": "019c374b-2c52-427c-a7ce-5b8df9d0a6d4",
+        "artifactRef": null,
+        "digest": "sha256:6abe866e719c0125cb7426198a62300d7ca3667bd1feadb3ceb86d9755e23382"
+      },
+      {
+        "id": "2f43c373-4c13-47c7-a2cb-f6975b77114e",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:15.238Z",
+        "planVersion": 5,
+        "stepId": "step-a0cc1ec0-8563-4fbf-85cb-c4ddc7383a7b",
+        "checkId": "check-6f374511-8e8b-4acf-90f3-344e32b03eae",
+        "subjectRef": "file-3.txt",
+        "invocationId": "95211bf1-50ea-4093-8f45-d9d6d434e95d",
+        "artifactRef": null,
+        "digest": "sha256:93cf011557659a374e2990457dacb5b5a641bb43dbb6430738c54bd79a770344"
+      },
+      {
+        "id": "28fc98c6-75fc-428e-bf29-b8a9ced45503",
+        "kind": "tool_result",
+        "source": "tool",
+        "producedAt": "2026-08-31T13:02:16.381Z",
+        "planVersion": 6,
+        "stepId": "step-23f6b451-a438-4262-9b2c-47c9e0146328",
+        "checkId": "check-d5c71f93-868c-4fc2-bca0-ed1029c8e16d",
+        "subjectRef": "file-4.txt",
+        "invocationId": "32bc37dc-411a-4b54-936b-dd2fecb0e011",
+        "artifactRef": null,
+        "digest": "sha256:783ecbd1abb242f45d31349f2dc3863bc38180ea35eb916d18e1c8cd0f5c965a"
+      }
+    ],
+    "lastError": null,
+    "createdAt": "2026-08-31T13:02:03.140Z",
+    "updatedAt": "2026-08-31T13:02:17.017Z"
+  }
+}

@@ -42,6 +42,34 @@ function recoveryTool(idempotent: boolean, counter: { calls: number }): RuntimeT
   };
 }
 
+function reconcilingTool(
+  outcome: "confirmed_succeeded" | "confirmed_no_effect" | "indeterminate",
+  counter: { calls: number },
+  replay: "never" | "after_no_effect" = "never"
+): RuntimeTool {
+  return {
+    contract: {
+      identity: { name: "external.apply" }, capability: { purpose: "Apply a known external change.", nonGoals: ["Choose whether the change is required."] },
+      decision: { useWhen: ["The external change is required."], avoidWhen: ["The change is not required."] },
+      execution: {
+        effect: { kind: "execute", description: "Changes external state." },
+        idempotent: false,
+        reconciliation: { risk: outcome === "indeterminate" ? "high" : "low", replay },
+        inputSchema: z.object({ value: z.string() }).strict(), inputExample: { value: "example" }
+      },
+      evidence: { produces: ["Application result."], factsSchema: z.object({ applied: z.boolean() }).strict() }
+    },
+    async execute() {
+      counter.calls += 1;
+      return { status: "success", subjectRef: "external:item-1", facts: { applied: true } };
+    },
+    async reconcile() {
+      if (outcome === "indeterminate") return { status: outcome, subjectRef: "external:item-1", reason: "External operation cannot be queried." };
+      return { status: outcome, subjectRef: "external:item-1", facts: { applied: outcome === "confirmed_succeeded" } };
+    }
+  };
+}
+
 function seedInterruptedInvocation(root: string, idempotent: boolean): { run: RunSnapshot; invocationId: string } {
   const databasePath = join(root, ".nexora", "runtime-v1.1.db");
   const store = openRunStore({ databasePath });
@@ -119,6 +147,82 @@ function seedInterruptedInvocation(root: string, idempotent: boolean): { run: Ru
 }
 
 describe("E049 Tool recovery", () => {
+  it("automatically reconciles an unknown effect as succeeded and resumes the same Run", async () => {
+    const workspace = tempRoot();
+    const seeded = seedInterruptedInvocation(workspace, false);
+    const counter = { calls: 0 };
+    const provider = new ScriptedRuntimeProvider([finishFromEvidence("Reconciled")]);
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider,
+      tools: [reconcilingTool("confirmed_succeeded", counter)],
+      now: () => "2026-07-22T00:00:02.000Z"
+    });
+
+    const result = await runtime.resume({ runId: seeded.run.runId });
+    const view = await runtime.inspect(seeded.run.runId);
+
+    expect(result).toMatchObject({ runId: seeded.run.runId, status: "succeeded" });
+    expect(counter.calls).toBe(0);
+    expect(view.toolInvocations[0]).toEqual(expect.objectContaining({ status: "succeeded" }));
+    expect(view.snapshot.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: "tool", kind: "tool_result", invocationId: seeded.invocationId })
+    ]));
+    expect(view.events.some((event) => event.type === "tool.reconciled")).toBe(true);
+    await runtime.close();
+  });
+
+  it("replays only after a declared confirmed_no_effect policy", async () => {
+    const workspace = tempRoot();
+    const seeded = seedInterruptedInvocation(workspace, false);
+    const counter = { calls: 0 };
+    const provider = new ScriptedRuntimeProvider([
+      finishFromEvidence("Reconciled"),
+      finishFromEvidence("Final result verified")
+    ]);
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider,
+      tools: [reconcilingTool("confirmed_no_effect", counter, "after_no_effect")],
+      now: () => "2026-07-22T00:00:02.000Z"
+    });
+
+    const result = await runtime.resume({ runId: seeded.run.runId });
+    const view = await runtime.inspect(seeded.run.runId);
+
+    expect(result.status).toBe("succeeded");
+    expect(counter.calls).toBe(1);
+    expect(view.toolInvocations).toHaveLength(2);
+    expect(view.toolInvocations[0]).toEqual(expect.objectContaining({ status: "failed" }));
+    expect(view.toolInvocations[1]).toEqual(expect.objectContaining({ status: "succeeded" }));
+    expect(view.events.some((event) => event.type === "tool.reconciled" && event.payload.replay === true)).toBe(true);
+    expect(view.events.some((event) => event.type === "tool.succeeded")).toBe(true);
+    await runtime.close();
+  });
+
+  it("keeps a high-risk indeterminate effect on the existing confirmation-only path", async () => {
+    const workspace = tempRoot();
+    const seeded = seedInterruptedInvocation(workspace, false);
+    const counter = { calls: 0 };
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: new ScriptedRuntimeProvider([]),
+      tools: [reconcilingTool("indeterminate", counter)],
+      now: () => "2026-07-22T00:00:02.000Z"
+    });
+
+    const result = await runtime.resume({ runId: seeded.run.runId });
+    const view = await runtime.inspect(seeded.run.runId);
+
+    expect(result).toMatchObject({ status: "blocked", stopReason: "TOOL_RESULT_UNKNOWN" });
+    expect(counter.calls).toBe(0);
+    expect(view.events.some((event) => event.type === "tool.reconciled")).toBe(false);
+    expect(view.toolInvocations[0]?.status).toBe("unknown");
+    await runtime.close();
+  });
   it("retries an interrupted idempotent invocation with the same record and input", async () => {
     const workspace = tempRoot();
     const seeded = seedInterruptedInvocation(workspace, true);

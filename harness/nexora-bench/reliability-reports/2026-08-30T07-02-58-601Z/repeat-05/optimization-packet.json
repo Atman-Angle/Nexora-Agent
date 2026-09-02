@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "primaryCluster": {
+    "boundary": "PLAN",
+    "affectedTasks": [
+      "NB-BATCH-001"
+    ],
+    "expected": "The remaining Plan distinguishes source observations, output verification and unfinished outcomes.",
+    "observed": [
+      "NB-BATCH-001: expected_terminal; codes=TOOL_CALL_BUDGET_EXCEEDED"
+    ],
+    "authorityRefs": [
+      {
+        "invocationIds": [
+          "82337648-ca47-4bf8-8b78-ce15b07ae795",
+          "8f8a2a8d-0c4b-4c11-9a80-740c45d55e12",
+          "e8656130-1e0a-4d0a-9208-42c6964eac2a",
+          "98d864ad-1e3c-4d42-a5ca-cb1cb9c34eda",
+          "53c78f6b-f68e-4e33-b397-945c38c768b4",
+          "9d9b2d8a-2474-4d21-8a32-4894da17e39a",
+          "63aa9bbd-4bfc-4e1c-95e9-aa0700d5c0fb",
+          "8556b6cb-4808-4de3-b38d-9549f6714e47"
+        ],
+        "evidenceIds": [
+          "68d15b08-8209-4003-9a48-170d8738dbb2",
+          "418561dc-2e6f-45ec-bd71-9ff5817e6c01",
+          "b3b0a31e-7e52-44ff-9ea9-a375ae9e6c27",
+          "4101a79a-384a-4420-8890-8c7097db7d90",
+          "ce614f8b-58f0-4328-9e1b-57a9151142fd",
+          "e2d87505-0d11-4280-9ab1-dc334697cf92",
+          "3e7eb975-9000-4d14-9ac7-35521afa0fd5",
+          "0b92308c-45a6-4976-818b-6be8bd213b4a"
+        ],
+        "modelCallIds": [
+          "65df7d1c-0437-46fb-bdc6-5b0b025e167b",
+          "62928745-533f-4b14-89c5-dfecf1574050",
+          "a8cff43c-aeca-4fb2-9844-d383e806c722",
+          "294145fe-93f7-49c2-aae6-2f8245c6c90d",
+          "e910e531-bf34-47de-a390-45c99c4f79e2",
+          "90350cb1-f317-42c2-965d-27f75eca5425"
+        ],
+        "lastEventSequence": 74
+      }
+    ],
+    "reproductionCommands": [
+      "pnpm --filter @nexora/bench bench -- --provider real --task NB-BATCH-001"
+    ]
+  },
+  "constraints": [
+    "Do not modify the Eval dataset, fixtures, graders, expected results or holdout configuration.",
+    "Fix the first broken boundary without adding task-specific production branches.",
+    "Do not change public Contracts, State Machine, Plan, Invocation, Evidence or Completion authorities without stopping for a decision.",
+    "Keep all edits inside the current Feature scope and follow AGENTS.md, LOOP.md and TESTS.md."
+  ],
+  "acceptanceCommands": [
+    "pnpm --filter @nexora/bench bench -- --provider real --task NB-BATCH-001",
+    "pnpm --filter @nexora/bench test",
+    "pnpm --filter @nexora/bench typecheck"
+  ]
+}

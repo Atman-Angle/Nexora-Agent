@@ -1,0 +1,403 @@
+{
+  "schemaVersion": 2,
+  "feature": "autonomous-coding-execution-v0.1",
+  "suite": "primary",
+  "createdAt": "2026-08-31T13:07:39.618Z",
+  "model": "Qwen 3.8 Flash",
+  "providerModelId": "qwen3.8-flash",
+  "provider": "openai-compatible",
+  "transport": "native_tools",
+  "invariantInputs": {
+    "runtime": "Nexora Runtime through createAgent",
+    "tools": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search",
+      "filesystem.write",
+      "filesystem.patch",
+      "process.start",
+      "process.inspect",
+      "process.logs",
+      "process.stop",
+      "shell.execute",
+      "git.status",
+      "git.diff",
+      "git.show"
+    ],
+    "budgets": {
+      "maxIterations": 32,
+      "maxModelCalls": 32,
+      "maxToolCalls": 24,
+      "maxRetries": 3,
+      "maxDurationMs": 720000
+    },
+    "codingStrategy": "auto"
+  },
+  "samples": [
+    {
+      "label": "primary",
+      "scenario": "greenfield",
+      "prompt": "请在这个空工作区中创建一个个人探索日志 Web 应用。必须支持添加、编辑、删除记录，按文本搜索，按类别筛选，刷新后通过本地持久化保留数据，并提供基本可用的界面。其他细节由你判断。",
+      "expectedTaskShape": "greenfield",
+      "strategy": "auto",
+      "hybridContext": "on",
+      "strategyRouting": {
+        "sequence": 2,
+        "strategyProfile": "coding",
+        "activationReason": "user_intent_is_software_engineering",
+        "confidence": "high",
+        "codingTaskShape": "greenfield"
+      },
+      "strategyRoutingTurns": [
+        {
+          "sequence": 2,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 13,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 19,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "greenfield"
+        },
+        {
+          "sequence": 28,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 37,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 48,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 59,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        },
+        {
+          "sequence": 68,
+          "strategyProfile": "coding",
+          "activationReason": "user_intent_is_software_engineering",
+          "confidence": "high",
+          "codingTaskShape": "feature"
+        }
+      ],
+      "routingCorrect": true,
+      "runId": "95f9f337-e9d9-45c2-b489-9939bf980119",
+      "status": "succeeded",
+      "stopReason": "COMPLETED",
+      "durationMs": 267558,
+      "modelCalls": 8,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "callId": "5f530228-644c-4c04-83fb-8e98ed8064d6",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 6804,
+          "actualInputTokens": 9817,
+          "actualOutputTokens": 3873,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 2,
+          "callId": "577cdda1-1c93-4f39-98e2-ae4d1c4dd184",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 7221,
+          "actualInputTokens": 10620,
+          "actualOutputTokens": 4793,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 3,
+          "callId": "6aba923b-8f0f-4e0b-998d-cbb3045359b1",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 8562,
+          "actualInputTokens": 12417,
+          "actualOutputTokens": 744,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 4,
+          "callId": "2f206a9f-1c87-49ce-bd5d-e371cc9067e8",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 9906,
+          "actualInputTokens": 14230,
+          "actualOutputTokens": 1727,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 5,
+          "callId": "ad2f6951-a034-4fcf-a15d-4855d84846de",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 12393,
+          "actualInputTokens": 18473,
+          "actualOutputTokens": 5607,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 6,
+          "callId": "4d135bbe-0b54-4ae2-8856-f6123ef0f818",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 19388,
+          "actualInputTokens": 26425,
+          "actualOutputTokens": 251,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 7,
+          "callId": "6e29d4af-b5fb-4728-a544-5c704b8bbdaf",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 19074,
+          "actualInputTokens": 26399,
+          "actualOutputTokens": 311,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        },
+        {
+          "sequence": 8,
+          "callId": "6143fea8-17e3-49ee-b274-49c852132d4a",
+          "status": "succeeded",
+          "errorCode": null,
+          "measuredInputTokens": 18465,
+          "actualInputTokens": 25498,
+          "actualOutputTokens": 1162,
+          "reasoningTokens": {
+            "value": 0,
+            "measurementMethod": "estimated_utf8_bytes_over_4",
+            "publicReasoningBytes": 0
+          },
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "succeeded",
+              "errorCode": null,
+              "errorCategory": null,
+              "retryable": false,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "responseRejections": [],
+      "toolCalls": 6,
+      "failedTools": 0,
+      "effectiveToolRatio": 0.8333333333333334,
+      "toolNames": [
+        "filesystem.list",
+        "filesystem.write",
+        "filesystem.write",
+        "filesystem.write",
+        "filesystem.list",
+        "shell.execute"
+      ],
+      "planOutcomes": 4,
+      "planObjectives": [
+        "创建 index.html：包含记录表单（标题/类别/内容）、搜索框、类别筛选、列表容器与空状态提示",
+        "创建 styles.css：提供基本可用的响应式界面样式",
+        "创建 app.js：实现增删改、按文本搜索、按类别筛选、localStorage 读写持久化与列表渲染",
+        "校验三个文件存在且 app.js 语法正确"
+      ],
+      "optionalOutcomes": [
+        "undo"
+      ],
+      "scopeExpansionRate": 0.14285714285714285,
+      "verificationCalls": 1,
+      "usefulVerificationCalls": 1,
+      "verificationEfficiency": 1,
+      "repeatedStrategy": 1,
+      "repeatedStrategyCount": 1,
+      "planRevisionCount": 0,
+      "sameFileEditCount": 0,
+      "fileEditCounts": {
+        "index.html": 1,
+        "styles.css": 1,
+        "app.js": 1
+      },
+      "noProgress": false,
+      "noProgressCount": 0,
+      "blockedCount": 0,
+      "noProgressRecoverySucceeded": false,
+      "timeToFirstToolMs": 45091,
+      "timeToFirstEditMs": 103254,
+      "timeToFirstVerificationMs": 250894,
+      "firstCoreOutcomeSatisfiedMs": 231896,
+      "allCoreOutcomesSatisfiedMs": 231896,
+      "completionAttempted": true,
+      "completionAttemptCount": 1,
+      "firstCompletionAttemptMs": 267212,
+      "terminalTimeMs": 267224,
+      "approvalsGranted": 4,
+      "approvalsDenied": 0,
+      "files": [
+        "app.js",
+        "index.html",
+        "styles.css"
+      ],
+      "coreRequirements": {
+        "add": true,
+        "edit": true,
+        "delete": true,
+        "search": true,
+        "filter": true,
+        "persistence": true
+      },
+      "coreCompletionRate": 1,
+      "syntaxExitCode": 0,
+      "falseSuccess": false,
+      "lastError": null,
+      "summary": "个人探索日志应用已在工作区创建完成，三个文件均为纯静态资源，直接用浏览器打开 `index.html` 即可使用（无需构建、无需安装依赖）。\n\n## 交付文件\n\n**index.html**（2,211 字节）\n- 记录表单：标题（必填，≤120 字）、类别（可选，带 `datalist` 自动补全）、内容（必填，≤4000 字）\n- 提交按钮在「添加记录 / 保存修改」间切换，附「取消编辑」按钮与表单提示位\n- 工具条：文本搜索框、类别下拉筛选\n- 结果计数、记录列表容器、空状态提示；页脚说明数据存放位置\n\n**styles.css**（3,817 字节）\n- CSS 变量主题 + 双栏 Grid 布局（左表单 / 右列表），≤720px 自动折叠为单栏\n- 卡片式条目、类别徽章、时间戳、编辑中高亮、搜索命中 `<mark>` 样式、焦点可见性\n\n**app.js**（12,881 字节，IIFE + `'use strict'`）\n- **增删改**：新增追加记录；编辑回填表单并更新 `updatedAt`；删除前 `confirm` 二次确认\n- **文本搜索**：对 标题+内容+类别 做不区分大小写匹配，并在列表中对命中片段用 `<mark>` 高亮（关键词经正则转义，输入 `.` `*` 等符号不会报错）\n- **类别筛选**：类别选项从现有数据动态生成并按中文排序，空类别归入「未分类」且可单独筛选；筛选值失效时自动回落到「全部类别」\n- **持久化**：`localStorage` 键 `exploration-log.entries.v1`，JSON 读写；读取时逐条 normalize（字段类型/时间戳校验、脏数据丢弃），解析失败或配额异常时降级为内存模式并明确提示「数据刷新后不会保留」，不会白屏\n- **其他**：列表按最近更新倒序；监听 `storage` 事件，多标签页编辑互相同步；`Esc` 取消编辑；操作后短暂成功提示\n\n## 已验证的事实\n- `filesystem.list` 确认工作区存在 `app.js`、`index.html`、`styles.css`\n- `node --check app.js` 退出码 0、stderr 为空 —— JS 语法有效\n\n## 未验证的部分（如实说明）\n本次按 Host 约束未启动本地服务器、未做浏览器自动化，因此「刷新后数据保留」「点击编辑/删除」等交互行为属于代码实现层面的预期结果，尚未经真实浏览器运行观察。如需我起一个静态服务在浏览器里实测这些路径，请告知。\n\n## 可自行调整的细节（我做的判断）\n类别为自由文本而非固定枚举（更贴合「探索」场景，且已提供历史类别补全）；记录上限未做分页，若单类别记录很多可再加时间分组或分页。"
+    }
+  ],
+  "aggregate": {
+    "sampleCount": 1,
+    "completionRate": 1,
+    "validatedSampleRate": 1,
+    "falseSuccessCount": 0,
+    "routingCorrectRate": 1,
+    "averageTimeToFirstToolMs": 45091,
+    "averagePlanRevisionCount": 0,
+    "averageRepeatedEditCount": 0,
+    "averageEffectiveToolRatio": 0.8333333333333334,
+    "averageScopeExpansionRate": 0.14285714285714285,
+    "noProgressCount": 0,
+    "noProgressRecoverySuccessCount": 0,
+    "blockedCount": 0
+  },
+  "validated": true
+}

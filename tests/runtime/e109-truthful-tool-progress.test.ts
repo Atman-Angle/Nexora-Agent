@@ -59,7 +59,7 @@ describe("E109 truthful Tool progress", () => {
       revisedPlan,
       responseCall("filesystem.read", { path: "missing.txt" }),
       responseCall("filesystem.read", {}),
-      responseInput("Provide a valid path.", "The known path failed.")
+      responseInput("Provide a valid path.", "Only the user can identify the required file after the known path failed.", "user_exclusive")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -128,6 +128,48 @@ describe("E109 truthful Tool progress", () => {
     expect(result.evidence.length).toBeGreaterThan(0);
   });
 
+  it("replans unfinished work after a failed strategy and completes through an alternative Tool", async () => {
+    const root = workspace();
+    writeFileSync(join(root, "target.txt"), "RECOVERED\n", "utf8");
+    const provider = new FailedStrategyReplanProvider();
+    const runtime = createRuntime({
+      workspace: root,
+      dataDir: join(root, ".nexora"),
+      provider,
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({
+      input: "Read the requested target. If its configured location fails, find it using another safe method."
+    });
+    const view = await runtime.inspect(result.runId);
+    await runtime.close();
+
+    expect(result).toMatchObject({ status: "succeeded", stopReason: "COMPLETED" });
+    expect(provider.failureRepair).toEqual(expect.objectContaining({
+      kind: "tool_failure",
+      code: "FILE_NOT_FOUND",
+      failedObjective: "Read the configured target",
+      latestIntent: expect.objectContaining({
+        toolName: "filesystem.read",
+        arguments: { path: "missing/target.txt" }
+      }),
+      latestFailedAttempt: expect.objectContaining({ status: "failed", toolName: "filesystem.read" })
+    }));
+    expect(view.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
+    expect(view.toolInvocations.map((invocation) => [invocation.toolName, invocation.status])).toEqual([
+      ["filesystem.read", "failed"],
+      ["filesystem.search", "succeeded"]
+    ]);
+    expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.objective)).toEqual([
+      "Locate the target through content search"
+    ]);
+    expect(view.snapshot.stepProgress).toEqual([
+      expect.objectContaining({ status: "completed" })
+    ]);
+    expect(view.snapshot.evidence).toHaveLength(1);
+  });
+
   it("rejects an identical patch before Approval, Invocation, Evidence or workspace change", async () => {
     const root = workspace();
     writeFileSync(join(root, "target.txt"), "VALUE\n", "utf8");
@@ -144,7 +186,7 @@ describe("E109 truthful Tool progress", () => {
               find: "VALUE",
               replace: "VALUE"
             }),
-      responseInput("Provide a replacement that changes the file.", "The proposed replacement was identical.")
+      responseInput("Provide a replacement that changes the file.", "Only the user can choose the intended replacement value.", "user_exclusive")
     ]);
     const runtime = createRuntime({
       workspace: root,
@@ -192,13 +234,13 @@ describe("E109 truthful Tool progress", () => {
     const view = await runtime.inspect(result.runId);
     await runtime.close();
 
-    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
     expect(view.events.filter((item) => item.type === "response.rejected")).toHaveLength(2);
     expect(view.snapshot.budgetsUsed.modelCalls).toBe(2);
     expect(contexts[1]?.repair?.recovery).toEqual(expect.objectContaining({
       sideEffect: "none",
       doNotRepeat: true,
-      nextAction: expect.stringContaining("authoritative filesystem.read")
+      nextAction: expect.stringContaining("Correct the request using the rejection details")
     }));
     expect(readFileSync(join(root, "target.txt"), "utf8")).toBe("VALUE\n");
   });
@@ -287,4 +329,37 @@ function scriptedProvider(
       return materializeTestResponse(decision, context);
     }
   };
+}
+
+class FailedStrategyReplanProvider implements RuntimeProvider {
+  #calls = 0;
+  failureRepair: ModelDecisionContext["repair"] = null;
+
+  async decide(context: ModelDecisionContext) {
+    this.#calls += 1;
+    if (this.#calls === 1) {
+      return responsePlan({
+        goal: "Read the requested target through a valid available path.",
+        tasks: [{
+          objective: "Read the configured target",
+          checks: [{ toolName: "filesystem.read" }]
+        }]
+      });
+    }
+    if (this.#calls === 2) return responseCall("filesystem.read", { path: "missing/target.txt" });
+    if (this.#calls === 3) {
+      this.failureRepair = context.repair;
+      const failedStep = context.run.currentPlan?.orderedSteps.find((step) => step.objective === "Read the configured target");
+      if (failedStep === undefined) throw new Error("Expected the failed unfinished Plan step.");
+      return responsePlan({
+        tasks: [{
+          objective: "Locate the target through content search",
+          checks: [{ toolName: "filesystem.search" }]
+        }],
+        removeSteps: [{ stepId: failedStep.id, reason: "The configured path was disproved by filesystem.read." }]
+      });
+    }
+    if (this.#calls === 4) return responseCall("filesystem.search", { query: "RECOVERED", path: "." });
+    return responseDirect("The target was found through the alternative search strategy.");
+  }
 }

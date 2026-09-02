@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-08-29T16:45:15.121Z",
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true,
+    "worktreeDigest": "sha256:0ed02a133de7c81cc8ec666ec7d4fb8090a76a74b5227b709760c645ee587b26"
+  },
+  "repeatsRequested": 1,
+  "repeatsCompleted": 1,
+  "taskIds": [
+    "NB-LONG-001",
+    "QB-MAXSUM-001"
+  ],
+  "reportPaths": [
+    "D:\\Nexora-1.1\\harness\\nexora-bench\\reliability-reports\\2026-08-29T16-45-15-121Z\\repeat-01\\report.json"
+  ]
+}

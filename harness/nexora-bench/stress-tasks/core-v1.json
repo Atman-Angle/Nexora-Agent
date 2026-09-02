@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "nexora-stress-core-v1",
+  "selectionBasis": "Real Provider calibration report 2026-08-29T05-19-11-743Z",
+  "tasks": [
+    "NB-CODE-001",
+    "NB-LONG-001",
+    "NB-CONVERGE-001",
+    "NB-BATCH-001",
+    "NB-RETRY-001",
+    "NB-ARTIFACT-001",
+    "NB-EXTENDED-001",
+    "QB-MAXSUM-001",
+    "NB-RECOVERY-001",
+    "NB-CANCEL-001"
+  ],
+  "productPathStatus": "partial",
+  "productPathEvidence": [".tmp/desktop-recovery-uat.json", ".tmp/desktop-document-uat.json"],
+  "note": "The existing Desktop UAT is a real renderer/preload/IPC/worker path but is currently scenario-driven. It does not yet parameterize arbitrary NexoraBench scenario factories; unqualified product parity is therefore reported as uncovered rather than inferred."
+}

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "primaryCluster": {
+    "boundary": "PROVIDER_EXTERNAL",
+    "affectedTasks": [
+      "NB-LONG-001",
+      "NB-ARTIFACT-001"
+    ],
+    "expected": "Provider availability failures remain classified and recoverable without false success.",
+    "observed": [
+      "NB-LONG-001: task_grader_passed, expected_terminal; codes=PROVIDER_UNAVAILABLE,PROVIDER_ERROR",
+      "NB-ARTIFACT-001: task_grader_passed, expected_terminal, scenario_authority; codes=NO_PROGRESS_DETECTED"
+    ],
+    "authorityRefs": [
+      {
+        "invocationIds": [
+          "7238a487-7286-44c7-9de9-ce7e54e66dbf",
+          "d8b322b2-56cc-4b8d-80ab-a3a045feebec",
+          "0ff6a64a-70fe-46dc-8064-ec1beafca781",
+          "7d6acda8-35fd-4df2-b93c-5a7b56e2329a"
+        ],
+        "evidenceIds": [
+          "080973ff-fa87-4f2b-88f3-3d47baa7869b",
+          "18dbcdbb-59c8-478c-8212-74d6cf304d8c",
+          "8a7c3f11-34ae-4cd6-85d2-e0e01ab90c90",
+          "14ea3c47-6d4e-4fdd-97f1-713bfc8a01ef"
+        ],
+        "modelCallIds": [
+          "b3684420-b744-4f30-9673-ca9da1c9e642",
+          "cd4f2279-53df-4036-8834-2917d710f9d3",
+          "150be6c8-31c8-4e11-b756-c5793b553bf2"
+        ],
+        "lastEventSequence": 37
+      },
+      {
+        "invocationIds": [
+          "b2cf34c8-dc0d-478d-bcee-db36c4fb9302",
+          "23478103-16b4-4dab-8fb0-f1d6356506fe"
+        ],
+        "evidenceIds": [
+          "6d9fbeca-5b8a-4e36-9e6f-10565c0e86df",
+          "8e50d501-75a8-4113-a85c-7893f350e14d"
+        ],
+        "modelCallIds": [
+          "38384060-ac33-4922-8877-92ec27f9edc8",
+          "63cd6aef-d961-400e-9d60-07c48b218bf8",
+          "8697cb4d-7474-43de-9561-a3fe99930ea3",
+          "c4762ec3-6e24-4cd3-ad17-608c266a09da"
+        ],
+        "lastEventSequence": 34
+      }
+    ],
+    "reproductionCommands": [
+      "pnpm --filter @nexora/bench bench -- --provider real --task NB-LONG-001",
+      "pnpm --filter @nexora/bench bench -- --provider real --task NB-ARTIFACT-001"
+    ]
+  },
+  "constraints": [
+    "Do not modify the Eval dataset, fixtures, graders, expected results or holdout configuration.",
+    "Fix the first broken boundary without adding task-specific production branches.",
+    "Do not change public Contracts, State Machine, Plan, Invocation, Evidence or Completion authorities without stopping for a decision.",
+    "Keep all edits inside the current Feature scope and follow AGENTS.md, LOOP.md and TESTS.md."
+  ],
+  "acceptanceCommands": [
+    "pnpm --filter @nexora/bench bench -- --provider real --task NB-LONG-001",
+    "pnpm --filter @nexora/bench bench -- --provider real --task NB-ARTIFACT-001",
+    "pnpm --filter @nexora/bench test",
+    "pnpm --filter @nexora/bench typecheck"
+  ]
+}

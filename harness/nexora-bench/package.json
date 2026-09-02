@@ -11,6 +11,9 @@
     "bench:dev": "pnpm --filter @nexora/harness build && node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/cli.ts run --split dev",
     "optimize": "node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/cli.ts optimize",
     "bench:real": "pnpm --filter @nexora/harness build && node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/cli.ts run --provider real",
+    "reliability:real": "pnpm --filter @nexora/harness build && node --env-file-if-exists=../../.env --env-file-if-exists=.env --import tsx src/reliability-eval.mjs",
+    "stress:report": "node src/stress-report.mjs",
+    "completion:audit": "node src/completion-audit.mjs",
     "test": "vitest run tests --no-file-parallelism",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

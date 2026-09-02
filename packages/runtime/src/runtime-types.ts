@@ -13,6 +13,32 @@ export const ToolResultSchema = z.discriminatedUnion("status", [
 ]);
 export type RuntimeToolResult = z.infer<typeof ToolResultSchema>;
 
+export const ToolReconciliationResultSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("confirmed_succeeded"),
+    subjectRef: z.string().trim().min(1),
+    facts: JsonValueSchema
+  }).strict(),
+  z.object({
+    status: z.literal("confirmed_no_effect"),
+    subjectRef: z.string().trim().min(1),
+    facts: JsonValueSchema
+  }).strict(),
+  z.object({
+    status: z.literal("indeterminate"),
+    subjectRef: z.string().trim().min(1),
+    reason: z.string().trim().min(1)
+  }).strict()
+]);
+export type RuntimeToolReconciliationResult = z.infer<typeof ToolReconciliationResultSchema>;
+
+export type RuntimeToolExecutionContext = {
+  readonly workspace: string;
+  readonly runId: string;
+  readonly invocationId: string;
+  readonly signal: AbortSignal;
+};
+
 export type RuntimeTool = {
   readonly contract: {
     readonly identity: { readonly name: string };
@@ -21,18 +47,22 @@ export type RuntimeTool = {
     readonly execution: {
       readonly effect: { readonly kind: "read" | "write" | "execute"; readonly description: string };
       readonly idempotent: boolean;
+      /** Optional authoritative recovery capability. Missing means confirmation-only recovery. */
+      readonly reconciliation?: {
+        readonly risk: "low" | "high";
+        readonly replay: "never" | "after_no_effect";
+      };
       readonly readCache?: { readonly mode: "until_mutation" };
       readonly inputSchema: z.ZodType<unknown>;
       readonly inputExample: unknown;
     };
     readonly evidence: { readonly produces: readonly string[]; readonly factsSchema: z.ZodType<unknown> };
   };
-  execute(input: unknown, context: {
-    readonly workspace: string;
-    readonly runId: string;
-    readonly invocationId: string;
-    readonly signal: AbortSignal;
-  }): Promise<RuntimeToolResult>;
+  execute(input: unknown, context: RuntimeToolExecutionContext): Promise<RuntimeToolResult>;
+  reconcile?(
+    input: unknown,
+    context: RuntimeToolExecutionContext
+  ): Promise<RuntimeToolReconciliationResult>;
   dispose?(): void | Promise<void>;
 };
 
@@ -209,6 +239,7 @@ export type RunInspection = {
   readonly revision: number;
   readonly status: PublicRunStatus;
   readonly stopReason: string | null;
+  readonly resumePredicate: DeepReadonly<RunSnapshot["resumePredicate"]>;
   readonly completion: DeepReadonly<CompletionRequirements>;
   readonly budgets: DeepReadonly<RuntimeBudgets>;
   readonly budgetsUsed: DeepReadonly<RunSnapshot["budgetsUsed"]>;
@@ -307,6 +338,7 @@ export type RuntimeEvent =
         | "tool.started"
         | "tool.succeeded"
         | "tool.failed"
+        | "tool.reconciled"
         | "tool.retried"
         | "validation.started"
         | "validation.passed"

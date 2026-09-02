@@ -38,6 +38,12 @@ import {
   resolveRehydratedFact
 } from "./rehydration.js";
 import type { SkillDecisionContext } from "../skills.js";
+import {
+  compactCodingToolObservations,
+  projectCodingContext,
+  projectStrategyRouting,
+  type CodingStrategyMode
+} from "../coding-strategy.js";
 
 export type DecisionContextResult = {
   readonly context: ModelDecisionContext;
@@ -69,6 +75,8 @@ export function buildDecisionContext(args: {
   readonly workerObservations?: readonly WorkerObservation[];
   readonly delegationPolicyMode?: "forbidden" | "allowed" | "required";
   readonly skills?: SkillDecisionContext;
+  readonly hostTaskMode?: "infer" | "inquiry" | "diagnose" | "change" | "review" | "research" | "monitor";
+  readonly codingStrategy?: CodingStrategyMode;
 }): DecisionContextResult {
   const { run, store, workspace, tools, artifacts } = args;
   const invocations = store.listToolInvocations(run.runId);
@@ -77,6 +85,25 @@ export function buildDecisionContext(args: {
     event.type === "model.requested" && event.payload.compacted === true
   ));
   const observations = projectRelevantToolObservations(run, invocations);
+  const coding = projectCodingContext({
+    workspace,
+    userInputs: run.inputHistory.map((entry) => entry.text),
+    taskMode: args.hostTaskMode ?? "infer",
+    mode: args.codingStrategy ?? "auto",
+    observations,
+    ...(run.taskContract === null ? {} : { ongoingTaskGoal: run.taskContract.goal })
+  });
+  const strategyRouting = projectStrategyRouting({
+    workspace,
+    userInputs: run.inputHistory.map((entry) => entry.text),
+    taskMode: args.hostTaskMode ?? "infer",
+    mode: args.codingStrategy ?? "auto",
+    observations,
+    ...(run.taskContract === null ? {} : { ongoingTaskGoal: run.taskContract.goal })
+  });
+  const projectedObservations = coding === undefined
+    ? observations
+    : compactCodingToolObservations(observations);
   const continuation = projectContinuationTurns(store, run.runId);
   const inherited = args.forkContext === undefined || args.forkContext === null
     ? undefined
@@ -204,7 +231,7 @@ export function buildDecisionContext(args: {
         stepId: invocation.stepId,
         idempotent: invocation.idempotent
       })),
-    toolObservations: observations,
+    toolObservations: projectedObservations,
     workerObservations: (args.workerObservations ?? []).map((observation) => ({
       childRunId: observation.childRunId,
       branchId: observation.branchId,
@@ -224,6 +251,8 @@ export function buildDecisionContext(args: {
     ...(hasPriorAutomaticCompaction ? {} : { sessionArchive: projectSessionArchive({ run, events }) }),
     repair: projectRepairContext(run, invocations, store.listToolAttempts(run.runId), artifacts, events)
       ?? projectContinuationRecoveryRepair(continuation),
+    ...(coding === undefined ? {} : { coding }),
+    strategyRouting,
     ...(nativeToolContinuation === undefined ? {} : { nativeToolContinuation }),
     tools: [...tools.values()].map((tool) => ({
       identity: tool.contract.identity,
@@ -264,6 +293,8 @@ export function buildDecisionContext(args: {
     memoryCandidates: projection.memoryCandidates,
     ...(projection.sessionArchive === undefined ? {} : { sessionArchive: projection.sessionArchive }),
     repair: projection.repair,
+    ...(projection.coding === undefined ? {} : { coding: projection.coding }),
+    strategyRouting: projection.strategyRouting,
     ...(projection.nativeToolContinuation === undefined
       ? {}
       : { nativeToolContinuation: projection.nativeToolContinuation }),
@@ -378,7 +409,22 @@ function toolFailureRecovery(invocation: ToolInvocation | null): RepairContext["
     return {
       sideEffect: "none",
       doNotRepeat: true,
-      nextAction: "The process did not start. Use the returned executable facts, such as the platform-specific command form (for example npm.cmd), and retry only with a changed executable or arguments."
+      nextAction: "The process did not start. Use the returned Host platform fact. The command field is passed directly to that operating system and must contain exactly one installed native executable name or path. It cannot be a shell built-in, compound expression, or shell/script wrapper. Put every argument in the args array and retry only with a genuinely changed executable or arguments; use a dedicated discovery capability if the executable is not known.",
+      fields: [
+        { path: "$.command", code: "NATIVE_EXECUTABLE_REQUIRED", expectedFormat: "One installed native executable name or path only." },
+        { path: "$.args", code: "EXPLICIT_ARGUMENTS_REQUIRED", expectedFormat: "An array containing each argument as a separate string." }
+      ]
+    };
+  }
+  if (code === "COMMAND_REJECTED") {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The command structure violates shell.execute. Do not route through a shell or script wrapper and do not place a compound command, pipeline, redirection, or shell built-in in command. Select one known native executable and place each argument in args, or choose a dedicated capability for the intended fact.",
+      fields: [
+        { path: "$.command", code: "NATIVE_EXECUTABLE_REQUIRED", expectedFormat: "One known native executable name or path; no shell syntax." },
+        { path: "$.args", code: "EXPLICIT_ARGUMENTS_REQUIRED", expectedFormat: "An array containing each argument as a separate string." }
+      ]
     };
   }
   if (code === "PROTECTED_MUTATION_BATCH_REQUIRES_ONE_AT_A_TIME") {
@@ -442,18 +488,63 @@ function projectNoProgressRepair(
 function projectContinuationRecoveryRepair(
   continuation: readonly ContinuationTurn[]
 ): RepairContext | null {
-  const blocked = [...continuation].reverse().find((turn) => turn.status === "blocked");
-  if (blocked?.outcome?.exactCause?.code !== "NO_PROGRESS_DETECTED") return null;
+  const exhausted = [...continuation].reverse().find((turn) => (
+    turn.outcome?.exactCause?.code === "NO_PROGRESS_DETECTED"
+  ));
+  if (exhausted === undefined) return null;
+  const latestRejection = [...exhausted.events].reverse().find((event) => event.type === "response.rejected");
+  const recovery = continuationRejectionRecovery(latestRejection?.data);
+  const fieldSummary = recovery?.fields?.map((field) => `${field.path}:${field.code}`).join(", ");
   return {
     kind: "runtime_error",
     code: "NO_PROGRESS_RECOVERY",
     issues: [{
       kind: "recovery_guidance",
-      message: "The previous Run was blocked after repeating a strategy without new authoritative facts. Use its confirmed facts and choose a materially different action; do not replay the previous read/mutation cycle."
+      message: `The previous Run exhausted bounded recovery after repeating a strategy without new authoritative facts.${fieldSummary === undefined || fieldSummary.length === 0 ? "" : ` The rejected fields were ${fieldSummary}.`} Use its confirmed facts and choose a materially different action; the Runtime will fail the continuation if the same failure signature appears again.`
     }],
     failedObjective: null,
     latestIntent: null,
-    latestFailedAttempt: null
+    latestFailedAttempt: null,
+    ...(recovery === undefined ? {} : { recovery })
+  };
+}
+
+function continuationRejectionRecovery(
+  data: ContinuationTurn["events"][number]["data"] | undefined
+): RepairContext["recovery"] | undefined {
+  if (data === null || data === undefined || typeof data !== "object" || Array.isArray(data)) return undefined;
+  const diagnostic = (data as { readonly diagnostic?: unknown }).diagnostic;
+  if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return undefined;
+  const recovery = (diagnostic as { readonly recovery?: unknown }).recovery;
+  if (recovery === null || typeof recovery !== "object" || Array.isArray(recovery)) return undefined;
+  const value = recovery as {
+    readonly sideEffect?: unknown;
+    readonly doNotRepeat?: unknown;
+    readonly nextAction?: unknown;
+    readonly fields?: unknown;
+  };
+  if (
+    (value.sideEffect !== "none" && value.sideEffect !== "unknown" && value.sideEffect !== "possible")
+    || typeof value.doNotRepeat !== "boolean"
+    || typeof value.nextAction !== "string"
+  ) return undefined;
+  const fields = Array.isArray(value.fields)
+    ? value.fields.flatMap((field) => {
+        if (field === null || typeof field !== "object" || Array.isArray(field)) return [];
+        const item = field as { readonly path?: unknown; readonly code?: unknown; readonly expectedFormat?: unknown };
+        if (typeof item.path !== "string" || typeof item.code !== "string") return [];
+        return [{
+          path: item.path,
+          code: item.code,
+          ...(typeof item.expectedFormat === "string" ? { expectedFormat: item.expectedFormat } : {})
+        }];
+      })
+    : undefined;
+  return {
+    sideEffect: value.sideEffect,
+    doNotRepeat: value.doNotRepeat,
+    nextAction: value.nextAction,
+    ...(fields === undefined ? {} : { fields })
   };
 }
 

@@ -1,10 +1,11 @@
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { DesktopRuntimeService, desktopToolApprovalPolicy } from "../../apps/desktop/src/runtime-service.js";
+import { projectRuntimeControls } from "../../apps/desktop/src/renderer/ui-projection.js";
 import { createAgent, createBuiltInTools, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import { responseCall, responseText } from "./runtime-testkit.js";
 
@@ -172,6 +173,37 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(migrated.projects[0]).not.toHaveProperty("modelProfiles");
     expect(JSON.stringify(snapshot)).not.toContain("legacy-secret");
     expect(JSON.stringify(migrated)).not.toContain("legacy-secret");
+    await service.close();
+  });
+
+  it("restores the explicitly opened Workspace when a stale removal marker remains", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-restore-workspace-"));
+    roots.push(workspace);
+    mkdirSync(join(workspace, ".nexora"), { recursive: true });
+    writeFileSync(join(workspace, ".env"), [
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_BASE_URL=https://provider.example/v1",
+      "NEXORA_MODEL_NAME=restore-workspace-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096"
+    ].join("\n"), "utf8");
+    writeFileSync(join(workspace, ".nexora", "desktop-host.json"), JSON.stringify({
+      version: 2,
+      modelProfiles: [],
+      projects: [],
+      removedPaths: [workspace]
+    }), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const snapshot = await service.snapshot();
+    expect(snapshot.workspace.path).toBe(workspace);
+    expect(snapshot.workspace.projects.some(({ path }) => path === workspace)).toBe(true);
+    const stored = JSON.parse(readFileSync(join(workspace, ".nexora", "desktop-host.json"), "utf8")) as {
+      projects: Array<{ path: string }>;
+      removedPaths: string[];
+    };
+    expect(stored.projects.some(({ path }) => path === workspace)).toBe(true);
+    expect(stored.removedPaths).not.toContain(workspace);
     await service.close();
   });
 
@@ -369,9 +401,9 @@ describe("E130 Desktop Project and continuous Session", () => {
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
     const started = await service.startSession("Reject and hide an oversized streamed response.");
     const sessionId = started.session!.id;
-    const blocked = await waitForStatus(service, "blocked");
-    expect(blocked.session?.inspection.stopReason).toBe("NO_PROGRESS_DETECTED");
-    expect(blocked.session?.runs[0]?.publicOutputs).toEqual([]);
+    const failed = await waitForStatus(service, "failed");
+    expect(failed.session?.inspection.stopReason).toBe("NO_PROGRESS_DETECTED");
+    expect(failed.session?.runs[0]?.publicOutputs).toEqual([]);
     await service.close();
 
     const reopened = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -611,8 +643,12 @@ describe("E130 Desktop Project and continuous Session", () => {
       for await (const _chunk of request) { /* consume request */ }
       calls += 1;
       const content = calls === 1
-        ? { text: null, toolCalls: [{ name: "filesystem.write", arguments: { path: "result.txt", content: "approved by Desktop policy\n" } }], finishReason: "tool_calls" }
-        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Created result.txt." } }], finishReason: "tool_calls" };
+        ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Create and verify result.txt in this Workspace.", tasks: [{ objective: "Create result.txt and verify its content.", checks: [{ toolName: "filesystem.write" }, { toolName: "filesystem.read" }] }] } }], finishReason: "tool_calls" }
+        : calls === 2
+          ? { text: null, toolCalls: [{ name: "filesystem.write", arguments: { path: "result.txt", content: "approved by Desktop policy\n" } }], finishReason: "tool_calls" }
+          : calls === 3
+            ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "result.txt" } }], finishReason: "tool_calls" }
+            : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Created and verified result.txt." } }], finishReason: "tool_calls" };
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     });
@@ -633,7 +669,8 @@ describe("E130 Desktop Project and continuous Session", () => {
     const completed = await waitForStatus(service, "succeeded");
     expect(readFileSync(join(workspace, "result.txt"), "utf8")).toBe("approved by Desktop policy\n");
     expect(completed.session?.inspection.invocations).toEqual([
-      expect.objectContaining({ toolName: "filesystem.write", status: "succeeded" })
+      expect.objectContaining({ toolName: "filesystem.write", status: "succeeded" }),
+      expect.objectContaining({ toolName: "filesystem.read", status: "succeeded" })
     ]);
     expect(completed.session?.history.records.filter(({ type }) => type === "approval.requested")).toHaveLength(1);
     expect(completed.session?.history.records.filter(({ type }) => type === "approval.granted")).toHaveLength(1);
@@ -641,7 +678,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     await service.close();
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-    expect(calls).toBe(2);
+    expect(calls).toBe(4);
   });
 
   it("does not auto-approve shell execution without an OS sandbox", async () => {
@@ -651,11 +688,9 @@ describe("E130 Desktop Project and continuous Session", () => {
     const server = createServer(async (request, response) => {
       for await (const _chunk of request) { /* consume request */ }
       calls += 1;
-      const content = {
-        text: null,
-        toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "process.exit(0)"], cwd: ".", timeoutMs: 60_000 } }],
-        finishReason: "tool_calls"
-      };
+      const content = calls === 1
+        ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Run the requested process only after Approval.", tasks: [{ objective: "Run the requested process.", checks: [{ toolName: "shell.execute" }] }] } }], finishReason: "tool_calls" }
+        : { text: null, toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "process.exit(0)"], cwd: ".", timeoutMs: 60_000 } }], finishReason: "tool_calls" };
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
     });
@@ -683,8 +718,116 @@ describe("E130 Desktop Project and continuous Session", () => {
     await service.close();
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
   });
+
+  it("persists the Desktop Session as running immediately after approval is granted", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-approval-status-"));
+    roots.push(workspace);
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const content = calls === 1
+        ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Run the requested delayed command.", tasks: [{ objective: "Run and verify the requested delayed command.", checks: [{ toolName: "shell.execute" }] }] } }], finishReason: "tool_calls" }
+        : calls === 2
+          ? { text: null, toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "setTimeout(() => process.exit(0), 1200)"], cwd: ".", timeoutMs: 10_000 } }], finishReason: "tool_calls" }
+          : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Approved command completed." } }], finishReason: "tool_calls" };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=desktop-approval-status-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    try {
+      await service.startSession("Run the requested delayed command.");
+      const waiting = await waitForStatus(service, "waiting_for_approval");
+      const request = waiting.session!.inspection.pendingRequest!;
+      service.control(waiting.session!.inspection.runId, { type: "approve", requestId: request.id });
+      const deadline = Date.now() + 5_000;
+      let storedStatus = "waiting_for_approval";
+      let storedPending: unknown = "approval";
+      while (Date.now() < deadline) {
+        const host = JSON.parse(readFileSync(join(workspace, ".nexora", "desktop-host.json"), "utf8")) as { projects: Array<{ sessions: Array<{ status: string; pendingRequestKind: unknown }> }> };
+        storedStatus = host.projects[0]!.sessions[0]!.status;
+        storedPending = host.projects[0]!.sessions[0]!.pendingRequestKind;
+        if (storedStatus === "running") break;
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+      }
+      expect(storedStatus).toBe("running");
+      expect(storedPending).toBeNull();
+      const completed = await waitForStatus(service, "succeeded");
+      expect(completed.session?.inspection.runId).toBe(waiting.session?.inspection.runId);
+      expect(completed.session?.inspection.invocations).toEqual([
+        expect.objectContaining({ toolName: "shell.execute", status: "succeeded" })
+      ]);
+      expect(calls).toBe(3);
+    } finally {
+      await service.close();
+      server.closeAllConnections();
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
+  }, 15_000);
+
+  it("restores the same pending Approval projection after Desktop reopen and denial does not execute the protected action", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-approval-reopen-deny-"));
+    roots.push(workspace);
+    const protectedOutput = join(workspace, "must-not-exist.txt");
+    let calls = 0;
+    const server = createServer(async (request, response) => {
+      for await (const _chunk of request) { /* consume request */ }
+      calls += 1;
+      const content = calls === 1
+        ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Request a protected write through shell execution.", tasks: [{ objective: "Run the protected command only if approved.", checks: [{ toolName: "shell.execute" }] }] } }], finishReason: "tool_calls" }
+        : { text: null, toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync('must-not-exist.txt','executed')"], cwd: ".", timeoutMs: 10_000 } }], finishReason: "tool_calls" };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("Server did not bind.");
+    writeFileSync(join(workspace, ".env"), [
+      `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${address.port}/v1`,
+      "NEXORA_MODEL_API_KEY=test-key",
+      "NEXORA_MODEL_NAME=desktop-approval-reopen-deny-test",
+      "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
+      "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
+      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
+    ].join("\n"), "utf8");
+
+    const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const started = await service.startSession("Request the protected command.");
+    const sessionId = started.session!.id;
+    const waiting = await waitForStatus(service, "waiting_for_approval");
+    const projection = projectRuntimeControls(waiting.session!.inspection);
+    expect(projection).toEqual({ kind: "approval", requestId: waiting.session!.inspection.pendingRequest!.id });
+    await service.close();
+
+    const reopened = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
+    const restored = await reopened.openSession(workspace, sessionId);
+    expect(projectRuntimeControls(restored.session!.inspection)).toEqual(projection);
+    expect(restored.session!.inspection.invocations).toHaveLength(0);
+    const request = restored.session!.inspection.pendingRequest!;
+    await reopened.control(restored.session!.inspection.runId, { type: "deny", requestId: request.id, reason: "Do not execute this protected action." });
+    const denied = await waitForStatus(reopened, "waiting_for_input");
+    expect(denied.session!.inspection.invocations).toHaveLength(0);
+    expect(existsSync(protectedOutput)).toBe(false);
+    expect(calls).toBe(2);
+
+    await reopened.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+  }, 15_000);
 
   it("auto-approves a bounded shell verification command and records the approval audit", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-bounded-shell-"));
@@ -694,6 +837,12 @@ describe("E130 Desktop Project and continuous Session", () => {
       for await (const _chunk of request) { /* consume request */ }
       calls += 1;
       const content = calls === 1
+        ? {
+            text: null,
+            toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Verify the installed Node version.", tasks: [{ objective: "Run the bounded Node version verification.", checks: [{ toolName: "shell.execute" }] }] } }],
+            finishReason: "tool_calls"
+          }
+        : calls === 2
         ? {
             text: null,
             toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["--version"], cwd: ".", timeoutMs: 60_000 } }],
@@ -728,7 +877,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     ]);
     expect(completed.session?.history.records.filter(({ type }) => type === "approval.requested")).toHaveLength(1);
     expect(completed.session?.history.records.filter(({ type }) => type === "approval.granted")).toHaveLength(1);
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     await service.close();
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
@@ -742,6 +891,8 @@ describe("E130 Desktop Project and continuous Session", () => {
       for await (const _chunk of request) { /* consume request */ }
       calls += 1;
       const content = calls === 1
+        ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Start and verify one persistent local service.", tasks: [{ objective: "Start the persistent local service and verify readiness.", checks: [{ toolName: "process.start" }] }] } }], finishReason: "tool_calls" }
+        : calls === 2
         ? { text: null, toolCalls: [{ name: "process.start", arguments: {
             command: process.execPath,
             args: ["-e", "process.stdout.write('READY\\n'); setInterval(() => {}, 1000)"],
@@ -787,7 +938,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(restored.session?.managedProcesses).toEqual([
       expect.objectContaining({ processHandle, status: "ready", heartbeatFresh: true })
     ]);
-    expect(calls).toBe(2);
+    expect(calls).toBe(3);
     await reopened.close();
 
     const stop = createBuiltInTools().find((tool) => tool.contract.identity.name === "process.stop")!;
@@ -840,7 +991,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(calls).toBe(3);
   });
 
-  it("continues an exhausted Provider recovery as a new bounded Run instead of replaying the blocked Run", async () => {
+  it("continues an exhausted Provider failure as a new bounded Run instead of resuming its terminal parent", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-provider-continuation-"));
     roots.push(workspace);
     let failedDecisions = 0;
@@ -858,7 +1009,13 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(parent.stopReason).toBe("PROVIDER_UNAVAILABLE");
     await seeded.openRun(parent.runId).resume();
     expect(failedDecisions).toBe(2);
-    await expect(seeded.openRun(parent.runId).resume()).rejects.toThrow(/Provider recovery is exhausted/);
+    const exhausted = await seeded.inspect(parent.runId);
+    expect(exhausted.snapshot).toMatchObject({
+      status: "failed",
+      stopReason: "PROVIDER_UNAVAILABLE",
+      resumePredicate: null
+    });
+    await expect(seeded.openRun(parent.runId).resume()).rejects.toThrow(/Run is failed/);
     await seeded.close();
 
     const server = createServer(async (request, response) => {
@@ -893,7 +1050,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     expect(completed.session?.runs).toHaveLength(2);
     expect(completed.session?.runs[0]?.inspection).toMatchObject({
       runId: parent.runId,
-      status: "blocked",
+      status: "failed",
       stopReason: "PROVIDER_UNAVAILABLE"
     });
     expect(completed.session?.runs[1]?.inspection.result?.summary).toBe("Recovered in a continuation Run.");
@@ -955,12 +1112,14 @@ class DesktopDelegationProvider implements RuntimeProvider {
 
 async function waitForStatus(service: DesktopRuntimeService, status: string) {
   const deadline = Date.now() + 10_000;
+  let latest: Awaited<ReturnType<DesktopRuntimeService["snapshot"]>> | null = null;
   while (Date.now() < deadline) {
-    const snapshot = await service.snapshot();
-    if (snapshot.session?.inspection.status === status) return snapshot;
+    latest = await service.snapshot();
+    if (latest.session?.inspection.status === status) return latest;
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
   }
-  throw new Error(`Desktop Session did not reach ${status}.`);
+  const rejected = latest?.session?.history.records.filter((record) => record.type === "response.rejected") ?? [];
+  throw new Error(`Desktop Session did not reach ${status}: ${JSON.stringify({ inspection: latest?.session?.inspection ?? null, rejected })}.`);
 }
 
 function currentProject(snapshot: Awaited<ReturnType<DesktopRuntimeService["snapshot"]>>) {

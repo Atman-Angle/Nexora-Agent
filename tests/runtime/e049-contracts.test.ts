@@ -64,6 +64,18 @@ describe("E049 authoritative runtime contracts", () => {
     expect(() => createInitialRunSnapshot({ runId: "run-2", input: "   ", workspace: "D:\\fixture", now })).toThrow();
   });
 
+  it("reads snapshots predating resume predicates as explicit legacy null", () => {
+    const snapshot = createInitialRunSnapshot({
+      runId: "legacy-resume-predicate",
+      input: "Inspect the persisted run.",
+      workspace: "D:\\fixture",
+      now
+    });
+    const { resumePredicate: _legacyField, ...legacy } = snapshot;
+
+    expect(RunSnapshotSchema.parse(legacy).resumePredicate).toBeNull();
+  });
+
   it("accepts one sequential structured plan including navigation-only steps", () => {
     expect(StructuredPlanSchema.parse(plan()).orderedSteps).toHaveLength(1);
     expect(StructuredPlanSchema.parse({

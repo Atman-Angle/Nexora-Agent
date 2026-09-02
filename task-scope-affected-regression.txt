@@ -1,0 +1,398 @@
+
+ RUN  v3.2.6 D:/Nexora-1.1
+
+ × tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > repairs one invalid Plan control call and preserves the rejected normalized response 430ms
+   → expected 4 to be 3 // Object.is equality
+ × tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > executes a strict structured Tool call without an Action envelope 212ms
+   → expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ × tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > executes a native Tool call and treats coexisting content as audit-only text 156ms
+   → expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > accepts a unique registered canonical Tool name when a native Provider echoes the prompt name instead of its safe alias 175ms
+ × tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > repairs only schema-declared composite fields double-encoded by a native Provider 195ms
+   → expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ × tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > normalizes schema-declared structured arguments for structured_output before Tool validation 212ms
+   → expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > rejects ambiguous or invalid structured argument encodings without Tool side effects 992ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > preserves JSON-looking text when the Tool Schema declares a string 131ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > continues native Plan controls with an accepted Tool result 299ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > continues rejected native control calls as protocol Tool errors 263ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > preserves call/result association for native Tool batches 218ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > continues a native human-input control after resume 142ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > continues native Tool failures as bounded error results 150ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > contracts native continuation payloads under the Provider input budget 157ms
+ × tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > continues denied native effects without inventing an Invocation 135ms
+   → Expected a pending Approval request.
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > never interprets ordinary native content as a Tool call 54ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > rejects an unknown structured Tool at the Provider boundary 64ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > retries empty native assistant responses with finish-reason diagnostics 862ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > retries malformed native function arguments before exposing a Model response 321ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > rejects Runtime Tools that collide with reserved Harness controls 4ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > projects bounded Observation provenance in the dynamic Prompt payload 254ms
+ × tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > projects the current Plan version and updated Task Contract after new user input 282ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > rejects a Tool input example that does not satisfy the Tool input Schema 3ms
+ ✓ tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > fails one malformed strict Provider response without an Agent repair loop 53ms
+ ✓ tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > removes an explicitly identified unfinished duplicate Step while preserving the stable Step 242ms
+ ✓ tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > rejects removal of a completed Step 180ms
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > compiles the semantic Provider plan and completes from bound Tool evidence 145ms
+   → expected '{"snapshot":{"schemaVersion":1,"runId…' not to match /profileState|builderState|strategy|le…/
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > rejects the first equivalent Plan immediately without writing another Plan version 166ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > does not assign a new Runtime Plan version to a repeated semantic proposal 160ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > preserves unfinished work when a revision proposes a different objective 165ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > rejects Plan growth beyond the bounded unfinished outcome limit and identifies removable Steps 187ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > keeps the unfinished Plan bounded when a Provider explicitly replaces a rephrased Step 167ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > preserves Invocation Evidence across an explicit Plan revision 231ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > derives the mechanical Task Contract fields from a semantic model proposal 107ms
+   → expected 'blocked' to be 'waiting' // Object.is equality
+ × tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > increments inputVersion on a revision after new user input 162ms
+   → expected 'failed' to be 'waiting' // Object.is equality
+ ✓ tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > rejects a model proposal that carries mechanical Task Contract fields 114ms
+ ✓ tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > rejects final verification Evidence that predates a later source mutation 400ms
+ ✓ tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > does not let one mutation check prove a final implementation objective 241ms
+ ✓ tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > derives Result provenance from the Tool Evidence produced before finish 70ms
+ ✓ tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > allows a direct answer without a Plan and does not fabricate Evidence 33ms
+ × tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > pauses honestly when invalid actions exhaust the ordinary loop budget 81ms
+   → expected 'failed' to be 'blocked' // Object.is equality
+ ✓ tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > cannot succeed when a planned Step has no required verification 122ms
+ ✓ tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > cannot succeed while a verifiable planned Step remains incomplete 116ms
+ ✓ tests/runtime/e049-run-store.test.ts > E049 authoritative Run Store > creates the authoritative tables and the separate Model Call Ledger 31ms
+ ✓ tests/runtime/e049-run-store.test.ts > E049 authoritative Run Store > persists one current snapshot and append-only events 22ms
+ × tests/runtime/e049-run-store.test.ts > E049 authoritative Run Store > does not append an event when optimistic revision validation fails 13ms
+   → A new blocked Run requires a typed resume predicate.
+ ✓ tests/runtime/e049-run-store.test.ts > E049 authoritative Run Store > records Tool invocation intent separately from Run status 23ms
+ ✓ tests/runtime/e049-run-store.test.ts > E049 authoritative Run Store > persists a read batch, contiguous attempts, ordered finalization and cancellation 34ms
+ ✓ tests/runtime/e049-run-store.test.ts > E049 authoritative Run Store > stores large content by digest and returns the exact bytes 97ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > reads, lists, and searches real workspace files while rejecting path escape 56ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > reconstructs a large UTF-8 file through bounded read ranges 33ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > rejects binary and OOXML package bytes instead of projecting them as UTF-8 text 3ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > rejects read and write paths that escape through a directory symlink 8ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > writes and patches deterministically and keeps both operations idempotent 13ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > bounds shell execution and exposes read-only Git evidence 1056ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > rejects shell entrypoints and kills descendant processes on timeout 2463ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > starts, reuses, inspects, reads, and stops one managed persistent process 1261ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > fails closed when a managed process exits or times out before readiness 2181ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > rejects an HTTP readiness endpoint that was already served by an unrelated process 54ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > runs npm package scripts through the JavaScript CLI without a cmd supervisor child 1352ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > rejects tampered managed process descriptor paths 722ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > uses the detached watchdog to contain a supervisor crash 371ms
+ ✓ tests/runtime/e049-tool-runtime.test.ts > E049 built-in Tool Runtime > rejects a conflicting live service generation and reports shell timeout termination facts 1571ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > shapes a broad greenfield goal once and persists explicit defaults and exclusions 4ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > preserves a precise feature spec as pass-through requirements with user-explicit provenance 0ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > allows bug-fix root-cause and supporting work replans without revising Scope 2ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > rejects silent user-facing expansion and accepts it only after an explicit input-bound Scope revision 3ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > keeps legacy persisted contracts readable and makes completion check resolved Scope outcomes 1ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > persists Scope through the real Runtime path and rejects an unauthorized replan before completion 308ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > requires a complete Scope revision after new user input before accepting a new Coding Plan 265ms
+ ✓ tests/runtime/e144-task-scope-authority.test.ts > E144 Task Scope Authority v0.1 > restores the persisted Scope after closing and reopening Runtime 209ms
+ ✓ tests/runtime/e049-runtime-loop.test.ts > E049 one persisted Runtime loop > executes a registered safe Tool before a Plan without bypassing Invocation authority 118ms
+ ✓ tests/runtime/e049-runtime-loop.test.ts > E049 one persisted Runtime loop > resumes user input through the same Run and loop 170ms
+ ✓ tests/runtime/e049-runtime-loop.test.ts > E049 one persisted Runtime loop > rejects non-exclusive input basis while allowing a user-exclusive request 59ms
+ ✓ tests/runtime/e049-runtime-loop.test.ts > E049 one persisted Runtime loop > does not let a legacy post-plan request bypass admissibility 98ms
+ ✓ tests/runtime/e049-recovery.test.ts > E049 Tool recovery > automatically reconciles an unknown effect as succeeded and resumes the same Run 104ms
+ ✓ tests/runtime/e049-recovery.test.ts > E049 Tool recovery > replays only after a declared confirmed_no_effect policy 60ms
+ ✓ tests/runtime/e049-recovery.test.ts > E049 Tool recovery > keeps a high-risk indeterminate effect on the existing confirmation-only path 23ms
+ ✓ tests/runtime/e049-recovery.test.ts > E049 Tool recovery > retries an interrupted idempotent invocation with the same record and input 50ms
+ ✓ tests/runtime/e049-recovery.test.ts > E049 Tool recovery > blocks an interrupted non-idempotent invocation without executing it 38ms
+ ✓ tests/runtime/e049-recovery.test.ts > E049 Tool recovery > requires a matching Recovery Decision and can accept explicit user confirmation 50ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > creates a running snapshot from immutable natural-language input 4ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > reads snapshots predating resume predicates as explicit legacy null 0ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > accepts one sequential structured plan including navigation-only steps 1ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > accepts context_ref checks and Runtime-owned Context Evidence 1ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > exposes only the four model actions and rejects legacy progress actions 2ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > rejects mechanical Task Contract fields from the model-side proposal 1ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > does not reject navigation-only steps with empty acceptanceChecks 0ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > explains schema rejection recovery without implying a Tool side effect 1ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > requires every evidence record to bind to a plan check and real subject 0ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > rejects duplicate step and check identifiers 0ms
+ ✓ tests/runtime/e049-contracts.test.ts > E049 authoritative runtime contracts > does not accept Profile, Builder, Strategy, Ledger or Checkpoint state in a Run 1ms
+ ✓ tests/runtime/e049-state-machine.test.ts > E049 Run status authority > permits only the six designed statuses 5ms
+ ✓ tests/runtime/e049-state-machine.test.ts > E049 Run status authority > requires a pending request when entering waiting 1ms
+ ✓ tests/runtime/e049-state-machine.test.ts > E049 Run status authority > does not permit success without a persisted Result and Delivery 1ms
+ ✓ tests/runtime/e049-state-machine.test.ts > E049 Run status authority > requires a reason for cancellation and keeps every terminal state terminal 2ms
+ ✓ tests/runtime/e049-state-machine.test.ts > E049 Run status authority > requires a typed predicate for blocked Runs and clears it on resume or failure 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 18 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/runtime/e049-completion-integrity.test.ts > E049 deterministic completion integrity > pauses honestly when invalid actions exhaust the ordinary loop budget
+AssertionError: expected 'failed' to be 'blocked' // Object.is equality
+
+Expected: "blocked"
+Received: "failed"
+
+ ❯ tests/runtime/e049-completion-integrity.test.ts:174:27
+    172|     });
+    173| 
+    174|     expect(result.status).toBe("blocked");
+       |                           ^
+    175|     expect(result.stopReason).toBe("NO_PROGRESS_DETECTED");
+    176|     expect(result.lastError?.code).toBe("NO_PROGRESS_DETECTED");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > compiles the semantic Provider plan and completes from bound Tool evidence
+AssertionError: expected '{"snapshot":{"schemaVersion":1,"runId…' not to match /profileState|builderState|strategy|le…/
+
+- Expected: 
+/profileState|builderState|strategy|ledger|checkpoint/
+
++ Received: 
+"{\"snapshot\":{\"schemaVersion\":1,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"revision\":7,\"status\":\"succeeded\",\"stopReason\":\"COMPLETED\",\"resumePredicate\":null,\"inputHistory\":[{\"id\":\"9e07deb4-a8ff-464b-8a03-9d3515778db6\",\"sequence\":1,\"text\":\"Inspect src/index.ts and prove it was read.\",\"receivedAt\":\"2026-09-02T04:02:29.533Z\"}],\"taskContract\":{\"goal\":\"Inspect the target and return verified evidence\",\"constraints\":[],\"acceptanceCriteria\":[\"Read the target\"],\"scope\":{\"taskShape\":\"greenfield\",\"requiredOutcomes\":[{\"id\":\"test-scope-outcome\",\"description\":\"Inspect the target and return verified evidence\",\"source\":\"agent_inferred\"}],\"assumptions\":[],\"excludedScope\":[],\"completionCriteria\":[\"Read the target\"],\"resolutionMode\":\"normalize\"},\"version\":1,\"inputVersion\":1,\"workspace\":\"C:\\\\Users\\\\李子睿~1\\\\AppData\\\\Local\\\\Temp\\\\nexora-e049-plan-6V96zK\"},\"currentPlan\":{\"version\":1,\"basedOnVersion\":null,\"goalDigest\":\"sha256:12d6f931c6e4d1277aa1c2ed0b6c94566ac166e2d957fa9c8dc5780085c44850\",\"orderedSteps\":[{\"id\":\"step-cc19d7be-e437-4181-bcdc-9ef64de7d47a\",\"objective\":\"Read the target\",\"kind\":\"required_outcome\",\"scopeRefs\":[\"test-scope-outcome\"],\"acceptanceChecks\":[{\"id\":\"check-874f20b4-9b7f-4703-a895-b8cbdc8cbc61\",\"required\":true,\"kind\":\"tool_result\",\"toolName\":\"filesystem.read\",\"expectedStatus\":\"success\"}]}]},\"stepProgress\":[{\"stepId\":\"step-cc19d7be-e437-4181-bcdc-9ef64de7d47a\",\"status\":\"completed\",\"evidenceIds\":[\"6db387ea-f1a4-4480-b5d2-ab2e83164e2f\"]}],\"pendingRequest\":null,\"completionRequirements\":{\"evidence\":\"auto\",\"requiredToolNames\":[]},\"budgets\":{\"maxIterations\":50,\"maxModelCalls\":50,\"maxToolCalls\":50,\"maxRetries\":10,\"maxDurationMs\":300000},\"budgetsUsed\":{\"iterations\":3,\"modelCalls\":3,\"toolCalls\":1,\"retries\":0,\"startedAt\":\"2026-09-02T04:02:29.533Z\"},\"result\":{\"summary\":\"Target inspected\",\"resultArtifact\":null,\"evidenceIds\":[\"6db387ea-f1a4-4480-b5d2-ab2e83164e2f\"]},\"delivery\":{\"outcome\":\"succeeded\",\"summary\":\"Target inspected\",\"producedArtifacts\":[],\"confirmedFacts\":[\"tool_result: src/index.ts\"],\"unfinishedWork\":[],\"exactCause\":{\"code\":\"COMPLETED\",\"message\":\"The deterministic completion gate accepted the persisted Evidence.\",\"stopReason\":\"COMPLETED\"},\"nextAction\":\"Use the delivered result and cited Evidence.\",\"generatedBy\":\"model\",\"createdAt\":\"2026-09-02T04:02:29.648Z\"},\"evidence\":[{\"id\":\"6db387ea-f1a4-4480-b5d2-ab2e83164e2f\",\"kind\":\"tool_result\",\"source\":\"tool\",\"producedAt\":\"2026-09-02T04:02:29.602Z\",\"planVersion\":1,\"stepId\":\"step-cc19d7be-e437-4181-bcdc-9ef64de7d47a\",\"checkId\":\"check-874f20b4-9b7f-4703-a895-b8cbdc8cbc61\",\"subjectRef\":\"src/index.ts\",\"invocationId\":\"f0d95dfc-c071-4657-82e9-55b2c9356467\",\"artifactRef\":null,\"digest\":\"sha256:786923ffda9db2449243f0c3b0ddb40852d195d81df999035eb2527b70c51206\"}],\"lastError\":null,\"createdAt\":\"2026-09-02T04:02:29.533Z\",\"updatedAt\":\"2026-09-02T04:02:29.648Z\"},\"events\":[{\"type\":\"run.created\",\"occurredAt\":\"2026-09-02T04:02:29.533Z\",\"payload\":{\"inputSequence\":1,\"inputId\":\"9e07deb4-a8ff-464b-8a03-9d3515778db6\",\"inputDigest\":\"sha256:88abb5743d6555ce7cca8e5788a9126624837d313ea1e96f38aeb8b76f3b6d44\"},\"actorType\":\"host\",\"causationRef\":\"input:9e07deb4-a8ff-464b-8a03-9d3515778db6\",\"correlationRef\":\"run:d974cab0-8018-4c65-820b-635d8a981bd0\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":1,\"schemaVersion\":1,\"payloadDigest\":\"sha256:0e46feee3e97c06b6404839bdcd0f26a7f0c07e652dc78f5d9dab8f647932dda\",\"previousRecordDigest\":null,\"recordDigest\":\"sha256:579a2d10ef5c80d0748bc7999c2a5cdff27b5e853539e5d1d977ca388a790abd\",\"completeness\":\"complete\"},{\"type\":\"model.requested\",\"occurredAt\":\"2026-09-02T04:02:29.545Z\",\"payload\":{\"callId\":\"6ab146ee-f045-45aa-989d-3391bb39c98e\",\"providerContractVersion\":6,\"strategyProfile\":\"coding\",\"activationReason\":\"user_named_code_path_or_command\",\"confidence\":\"high\",\"codingTaskShape\":\"greenfield\",\"controlState\":{\"phase\":\"INITIAL_PLANNING\",\"completedOutcomes\":[],\"unfinishedOutcomes\":[],\"invalidatedOutcomes\":[],\"guidance\":[\"Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes.\"]},\"planRevision\":null,\"requestDecisionStartedAt\":\"2026-09-02T04:02:29.542Z\",\"promptCompiledAt\":\"2026-09-02T04:02:29.544Z\",\"budgetDecision\":\"within_budget\",\"measuredInputTokens\":584,\"inputTokensBeforeCompaction\":584,\"tokenEvictionCount\":0,\"compacted\":false,\"compactionMode\":\"none\",\"continuationProjection\":[]},\"actorType\":\"harness\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":2,\"schemaVersion\":1,\"payloadDigest\":\"sha256:884f9a784bda51b8541c65281436f99ed2f338469e554e7699b12813c54e8f45\",\"previousRecordDigest\":\"sha256:579a2d10ef5c80d0748bc7999c2a5cdff27b5e853539e5d1d977ca388a790abd\",\"recordDigest\":\"sha256:2fc04c0c7dcd7c21514c8c8b31d70bea226a5ee09981c16b2b45e5c35e831b82\",\"completeness\":\"complete\"},{\"type\":\"provider.attempt.started\",\"occurredAt\":\"2026-09-02T04:02:29.547Z\",\"payload\":{\"callId\":\"6ab146ee-f045-45aa-989d-3391bb39c98e\",\"attemptId\":\"97895832-052c-4544-ba98-f68471422b7a\",\"attemptNumber\":1,\"provider\":\"custom\",\"model\":\"unspecified\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:6ab146ee-f045-45aa-989d-3391bb39c98e\",\"correlationRef\":\"provider-attempt:97895832-052c-4544-ba98-f68471422b7a\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":3,\"schemaVersion\":1,\"payloadDigest\":\"sha256:55482372e0d6fe544c77798daacfa5c9cd857e008a1dcc5412ed3bdb51e15ff6\",\"previousRecordDigest\":\"sha256:2fc04c0c7dcd7c21514c8c8b31d70bea226a5ee09981c16b2b45e5c35e831b82\",\"recordDigest\":\"sha256:e8086beb49f58c44545daef4b5a969365beca527c8bafb56688eb882e972adb9\",\"completeness\":\"complete\"},{\"type\":\"provider.attempt.succeeded\",\"occurredAt\":\"2026-09-02T04:02:29.549Z\",\"payload\":{\"callId\":\"6ab146ee-f045-45aa-989d-3391bb39c98e\",\"attemptId\":\"97895832-052c-4544-ba98-f68471422b7a\",\"attemptNumber\":1,\"status\":\"succeeded\",\"errorCategory\":null,\"retryable\":false,\"partialResponse\":false,\"responseDigest\":\"sha256:32c14ddbcad6ddfce76696f5307576e5560ecfaa4d41aecad37af7472daa9c36\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:6ab146ee-f045-45aa-989d-3391bb39c98e\",\"correlationRef\":\"provider-attempt:97895832-052c-4544-ba98-f68471422b7a\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":4,\"schemaVersion\":1,\"payloadDigest\":\"sha256:dbd8c221cfff93543ead1890450a418b9a912be303665b0954e56306a7f7a05a\",\"previousRecordDigest\":\"sha256:e8086beb49f58c44545daef4b5a969365beca527c8bafb56688eb882e972adb9\",\"recordDigest\":\"sha256:db182edd465f7300f80ffd8e213224232d503aaf341b305b7b1772418d7cecd3\",\"completeness\":\"complete\"},{\"type\":\"model.completed\",\"occurredAt\":\"2026-09-02T04:02:29.550Z\",\"payload\":{\"callId\":\"6ab146ee-f045-45aa-989d-3391bb39c98e\",\"status\":\"succeeded\",\"outputDigest\":\"sha256:32c14ddbcad6ddfce76696f5307576e5560ecfaa4d41aecad37af7472daa9c36\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:6ab146ee-f045-45aa-989d-3391bb39c98e\",\"correlationRef\":\"model-call:6ab146ee-f045-45aa-989d-3391bb39c98e\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":5,\"schemaVersion\":1,\"payloadDigest\":\"sha256:9c76ea4d677069532bc365718bd797e10f41c401d2c4898093c61292c9979c61\",\"previousRecordDigest\":\"sha256:db182edd465f7300f80ffd8e213224232d503aaf341b305b7b1772418d7cecd3\",\"recordDigest\":\"sha256:a2e6847f66900670fcc1bbdb3bdd7bf8ae115f8bc71ed94d161ae97b6829092b\",\"completeness\":\"complete\"},{\"type\":\"model.turn\",\"occurredAt\":\"2026-09-02T04:02:29.550Z\",\"payload\":{\"modelDecisionId\":\"06ca1688-afb8-4654-8f8a-d0024fa7b42d\",\"executionUnitId\":null,\"hasText\":false,\"finishReason\":\"tool_calls\",\"toolCallCount\":1,\"controlCallCount\":1,\"compiledActionTypes\":[\"set_plan\"],\"toolCalls\":[{\"callId\":\"test-call-9\",\"name\":\"nexora_update_plan\",\"arguments\":{\"goal\":\"Inspect the target and return verified evidence\",\"scope\":{\"taskShape\":\"greenfield\",\"requiredOutcomes\":[{\"id\":\"test-scope-outcome\",\"description\":\"Inspect the target and return verified evidence\",\"source\":\"agent_inferred\"}],\"assumptions\":[],\"excludedScope\":[],\"completionCriteria\":[\"Read the target\"],\"resolutionMode\":\"normalize\"},\"tasks\":[{\"objective\":\"Read the target\",\"checks\":[{\"toolName\":\"filesystem.read\"}],\"kind\":\"required_outcome\",\"supports\":[\"test-scope-outcome\"]}]}}]},\"actorType\":\"harness\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":6,\"schemaVersion\":1,\"payloadDigest\":\"sha256:ad9e3f676c5eb8b123b718e35b5692ab49548fbb3499f9dd5aef909c3db4b8fb\",\"previousRecordDigest\":\"sha256:a2e6847f66900670fcc1bbdb3bdd7bf8ae115f8bc71ed94d161ae97b6829092b\",\"recordDigest\":\"sha256:a8716e337922a00ffd2d697b2c481947d1ad86cc0306b8af2ec31e3b92760972\",\"completeness\":\"complete\"},{\"type\":\"plan.set\",\"occurredAt\":\"2026-09-02T04:02:29.553Z\",\"payload\":{\"version\":1,\"basedOnVersion\":null,\"inputVersion\":1,\"goalDigest\":\"sha256:12d6f931c6e4d1277aa1c2ed0b6c94566ac166e2d957fa9c8dc5780085c44850\",\"taskContract\":{\"goal\":\"Inspect the target and return verified evidence\",\"constraints\":[],\"acceptanceCriteria\":[\"Read the target\"],\"scope\":{\"taskShape\":\"greenfield\",\"requiredOutcomes\":[{\"id\":\"test-scope-outcome\",\"description\":\"Inspect the target and return verified evidence\",\"source\":\"agent_inferred\"}],\"assumptions\":[],\"excludedScope\":[],\"completionCriteria\":[\"Read the target\"],\"resolutionMode\":\"normalize\"},\"version\":1,\"inputVersion\":1,\"workspace\":\"C:\\\\Users\\\\李子睿~1\\\\AppData\\\\Local\\\\Temp\\\\nexora-e049-plan-6V96zK\"},\"plan\":{\"version\":1,\"basedOnVersion\":null,\"goalDigest\":\"sha256:12d6f931c6e4d1277aa1c2ed0b6c94566ac166e2d957fa9c8dc5780085c44850\",\"orderedSteps\":[{\"id\":\"step-cc19d7be-e437-4181-bcdc-9ef64de7d47a\",\"objective\":\"Read the target\",\"kind\":\"required_outcome\",\"scopeRefs\":[\"test-scope-outcome\"],\"acceptanceChecks\":[{\"id\":\"check-874f20b4-9b7f-4703-a895-b8cbdc8cbc61\",\"required\":true,\"kind\":\"tool_result\",\"toolName\":\"filesystem.read\",\"expectedStatus\":\"success\"}]}]}},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":7,\"schemaVersion\":1,\"payloadDigest\":\"sha256:75d4e584c03a46bda1017003086a0a0e2c6dad6a06b2938ebb98dc94420a277d\",\"previousRecordDigest\":\"sha256:a8716e337922a00ffd2d697b2c481947d1ad86cc0306b8af2ec31e3b92760972\",\"recordDigest\":\"sha256:a01362d6ce63e9089b98c875d760b3d10bde902a9fb980ed0afd3cac75061248\",\"completeness\":\"complete\"},{\"type\":\"model.requested\",\"occurredAt\":\"2026-09-02T04:02:29.589Z\",\"payload\":{\"callId\":\"140aaae9-6da9-48b2-9b74-194479dcf552\",\"providerContractVersion\":6,\"strategyProfile\":\"coding\",\"activationReason\":\"user_named_code_path_or_command\",\"confidence\":\"high\",\"codingTaskShape\":\"greenfield\",\"controlState\":{\"phase\":\"EXECUTION\",\"completedOutcomes\":[],\"unfinishedOutcomes\":[\"Read the target\"],\"invalidatedOutcomes\":[],\"guidance\":[\"Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated.\"]},\"planRevision\":1,\"requestDecisionStartedAt\":\"2026-09-02T04:02:29.579Z\",\"promptCompiledAt\":\"2026-09-02T04:02:29.588Z\",\"budgetDecision\":\"within_budget\",\"measuredInputTokens\":1020,\"inputTokensBeforeCompaction\":1020,\"tokenEvictionCount\":0,\"compacted\":false,\"compactionMode\":\"none\",\"continuationProjection\":[]},\"actorType\":\"harness\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":8,\"schemaVersion\":1,\"payloadDigest\":\"sha256:ff8d73764024ebc5ac927beca522d20a492a15fe1b0895b855a85a52bbc3f8da\",\"previousRecordDigest\":\"sha256:a01362d6ce63e9089b98c875d760b3d10bde902a9fb980ed0afd3cac75061248\",\"recordDigest\":\"sha256:753870aab8c5612e7cbf844503d0cc5a76edeebed73d04a47cd0ccc01cd849c8\",\"completeness\":\"complete\"},{\"type\":\"provider.attempt.started\",\"occurredAt\":\"2026-09-02T04:02:29.591Z\",\"payload\":{\"callId\":\"140aaae9-6da9-48b2-9b74-194479dcf552\",\"attemptId\":\"d4b53643-09ba-43c8-9f2d-92417fc5839e\",\"attemptNumber\":1,\"provider\":\"custom\",\"model\":\"unspecified\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:140aaae9-6da9-48b2-9b74-194479dcf552\",\"correlationRef\":\"provider-attempt:d4b53643-09ba-43c8-9f2d-92417fc5839e\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":9,\"schemaVersion\":1,\"payloadDigest\":\"sha256:ba14925c8223de4a08bf2ece5ff298eff6b47f16dfe6d7b48f3459050afe44cb\",\"previousRecordDigest\":\"sha256:753870aab8c5612e7cbf844503d0cc5a76edeebed73d04a47cd0ccc01cd849c8\",\"recordDigest\":\"sha256:7a5bdd25cddfaca4aff9a9edc554eb45815878bb838d9ec79e822783700f0549\",\"completeness\":\"complete\"},{\"type\":\"provider.attempt.succeeded\",\"occurredAt\":\"2026-09-02T04:02:29.592Z\",\"payload\":{\"callId\":\"140aaae9-6da9-48b2-9b74-194479dcf552\",\"attemptId\":\"d4b53643-09ba-43c8-9f2d-92417fc5839e\",\"attemptNumber\":1,\"status\":\"succeeded\",\"errorCategory\":null,\"retryable\":false,\"partialResponse\":false,\"responseDigest\":\"sha256:bb40d485a2f83d84d578ae7780ebbf1fdea06250751a220e316d224ffa35302f\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:140aaae9-6da9-48b2-9b74-194479dcf552\",\"correlationRef\":\"provider-attempt:d4b53643-09ba-43c8-9f2d-92417fc5839e\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":10,\"schemaVersion\":1,\"payloadDigest\":\"sha256:349e922a5fe7982ec47255961d55efae401599a92a899af4a614d3740b4df06f\",\"previousRecordDigest\":\"sha256:7a5bdd25cddfaca4aff9a9edc554eb45815878bb838d9ec79e822783700f0549\",\"recordDigest\":\"sha256:50f00f487457f3ed78c0d48ce4b5a39485ac42f0d21b91515323ba1f5d11930f\",\"completeness\":\"complete\"},{\"type\":\"model.completed\",\"occurredAt\":\"2026-09-02T04:02:29.594Z\",\"payload\":{\"callId\":\"140aaae9-6da9-48b2-9b74-194479dcf552\",\"status\":\"succeeded\",\"outputDigest\":\"sha256:bb40d485a2f83d84d578ae7780ebbf1fdea06250751a220e316d224ffa35302f\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:140aaae9-6da9-48b2-9b74-194479dcf552\",\"correlationRef\":\"model-call:140aaae9-6da9-48b2-9b74-194479dcf552\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":11,\"schemaVersion\":1,\"payloadDigest\":\"sha256:5426361a443b7083b61d635daf5f8978fccdd65fafefe1376f70eb5b2f1f5899\",\"previousRecordDigest\":\"sha256:50f00f487457f3ed78c0d48ce4b5a39485ac42f0d21b91515323ba1f5d11930f\",\"recordDigest\":\"sha256:ed57ac220a3e481c340747927b892612cb04c893382d3e679026be4e37ebb93a\",\"completeness\":\"complete\"},{\"type\":\"model.turn\",\"occurredAt\":\"2026-09-02T04:02:29.596Z\",\"payload\":{\"modelDecisionId\":\"cec8be11-c64e-4537-99a6-5ec559424576\",\"executionUnitId\":null,\"hasText\":false,\"finishReason\":\"tool_calls\",\"toolCallCount\":1,\"controlCallCount\":0,\"compiledActionTypes\":[\"call_tool\"],\"toolCalls\":[{\"callId\":\"test-call-10\",\"name\":\"filesystem.read\",\"arguments\":{\"path\":\"src/index.ts\"}}]},\"actorType\":\"harness\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":12,\"schemaVersion\":1,\"payloadDigest\":\"sha256:6ceaba941613be2838ba26d34c081c24531f747a5783781b6d6cb62b6aac6953\",\"previousRecordDigest\":\"sha256:ed57ac220a3e481c340747927b892612cb04c893382d3e679026be4e37ebb93a\",\"recordDigest\":\"sha256:51203e83bab9c51b8355d62ad3eda72938ababad22db01c245fc164477eb67d7\",\"completeness\":\"complete\"},{\"type\":\"tool.started\",\"occurredAt\":\"2026-09-02T04:02:29.598Z\",\"payload\":{\"invocationId\":\"f0d95dfc-c071-4657-82e9-55b2c9356467\",\"toolName\":\"filesystem.read\",\"stepId\":\"step-cc19d7be-e437-4181-bcdc-9ef64de7d47a\",\"batchId\":\"c344fdce-56ec-48e9-bcf3-b23202d0f0d8\",\"batchOrdinal\":0},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":13,\"schemaVersion\":1,\"payloadDigest\":\"sha256:1b820ecf6701622b0493351912220a0190d10369b8c1fb61f7999f79685da669\",\"previousRecordDigest\":\"sha256:51203e83bab9c51b8355d62ad3eda72938ababad22db01c245fc164477eb67d7\",\"recordDigest\":\"sha256:b58b6ce6bb06ec58b63edf1122a7ac003df29215b485f65d8279a0e5616833f1\",\"completeness\":\"complete\"},{\"type\":\"tool.batch.prepared\",\"occurredAt\":\"2026-09-02T04:02:29.598Z\",\"payload\":{\"batchId\":\"c344fdce-56ec-48e9-bcf3-b23202d0f0d8\",\"size\":1,\"concurrency\":1},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":14,\"schemaVersion\":1,\"payloadDigest\":\"sha256:2f7f291417687e30e650e46cd829db41501ea3f4951db82f554fbd6bda587610\",\"previousRecordDigest\":\"sha256:b58b6ce6bb06ec58b63edf1122a7ac003df29215b485f65d8279a0e5616833f1\",\"recordDigest\":\"sha256:84c9523eb76857d6d274708eeb357388a9851ddee0e3cb6e263c6bcc34809252\",\"completeness\":\"complete\"},{\"type\":\"tool.attempt.started\",\"occurredAt\":\"2026-09-02T04:02:29.599Z\",\"payload\":{\"invocationId\":\"f0d95dfc-c071-4657-82e9-55b2c9356467\",\"attemptId\":\"a6073b58-dc64-422e-928d-c06f9c7292f9\",\"attemptNumber\":1,\"toolName\":\"filesystem.read\"},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":15,\"schemaVersion\":1,\"payloadDigest\":\"sha256:1aaa3bda098c048f9b59127150f7c8b25123060ef3a10c46517fce8838c375b1\",\"previousRecordDigest\":\"sha256:84c9523eb76857d6d274708eeb357388a9851ddee0e3cb6e263c6bcc34809252\",\"recordDigest\":\"sha256:7860f80e48c53b64552d56617997b80fe5b94edddec1cee13ed2e6022ea6cda9\",\"completeness\":\"complete\"},{\"type\":\"tool.attempt.succeeded\",\"occurredAt\":\"2026-09-02T04:02:29.601Z\",\"payload\":{\"invocationId\":\"f0d95dfc-c071-4657-82e9-55b2c9356467\",\"attemptId\":\"a6073b58-dc64-422e-928d-c06f9c7292f9\",\"attemptNumber\":1,\"toolName\":\"filesystem.read\",\"physicalExecution\":true,\"payloadDigest\":\"sha256:786923ffda9db2449243f0c3b0ddb40852d195d81df999035eb2527b70c51206\",\"payloadArtifactRef\":null},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":16,\"schemaVersion\":1,\"payloadDigest\":\"sha256:192eeff3549906a83388e416806b5e0d7bf2f7baeb643111361cb5fdb4e294a9\",\"previousRecordDigest\":\"sha256:7860f80e48c53b64552d56617997b80fe5b94edddec1cee13ed2e6022ea6cda9\",\"recordDigest\":\"sha256:272d2ff27b724543d3cda31fc34cfd3d32ecad09ad3433b728887773ec359647\",\"completeness\":\"complete\"},{\"type\":\"tool.succeeded\",\"occurredAt\":\"2026-09-02T04:02:29.602Z\",\"payload\":{\"invocationId\":\"f0d95dfc-c071-4657-82e9-55b2c9356467\",\"evidenceIds\":[\"6db387ea-f1a4-4480-b5d2-ab2e83164e2f\"],\"payloadDigest\":\"sha256:786923ffda9db2449243f0c3b0ddb40852d195d81df999035eb2527b70c51206\",\"payloadArtifactRef\":null,\"attemptCount\":1},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":17,\"schemaVersion\":1,\"payloadDigest\":\"sha256:71aca48883f6281e8549f1699e80b536d74ac02acee517933364573fcec32b8d\",\"previousRecordDigest\":\"sha256:272d2ff27b724543d3cda31fc34cfd3d32ecad09ad3433b728887773ec359647\",\"recordDigest\":\"sha256:bc959a49256fd38f0cd93a23cfd46ca1945ca734523746a13b1136010288a70c\",\"completeness\":\"complete\"},{\"type\":\"tool.batch.finalized\",\"occurredAt\":\"2026-09-02T04:02:29.602Z\",\"payload\":{\"batchId\":\"c344fdce-56ec-48e9-bcf3-b23202d0f0d8\",\"size\":1,\"retriesUsed\":0},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":18,\"schemaVersion\":1,\"payloadDigest\":\"sha256:1b51300eadc7a8f413f0ff6a67b581a2d596c5af04b5fb52f297301e570c2b2b\",\"previousRecordDigest\":\"sha256:bc959a49256fd38f0cd93a23cfd46ca1945ca734523746a13b1136010288a70c\",\"recordDigest\":\"sha256:589fa70c932c181d0bd08dd47f9521e3e3912de37601084c6b957c685d2c8550\",\"completeness\":\"complete\"},{\"type\":\"model.requested\",\"occurredAt\":\"2026-09-02T04:02:29.640Z\",\"payload\":{\"callId\":\"9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"providerContractVersion\":6,\"strategyProfile\":\"coding\",\"activationReason\":\"user_named_code_path_or_command\",\"confidence\":\"high\",\"codingTaskShape\":\"feature\",\"controlState\":{\"phase\":\"VALIDATION\",\"completedOutcomes\":[\"Read the target\"],\"unfinishedOutcomes\":[],\"invalidatedOutcomes\":[],\"guidance\":[\"All current Plan outcomes are marked complete. Check that required validation facts are present; if they are, stop Plan maintenance and submit the completion control.\"]},\"planRevision\":1,\"requestDecisionStartedAt\":\"2026-09-02T04:02:29.629Z\",\"promptCompiledAt\":\"2026-09-02T04:02:29.640Z\",\"budgetDecision\":\"within_budget\",\"measuredInputTokens\":1324,\"inputTokensBeforeCompaction\":1324,\"tokenEvictionCount\":0,\"compacted\":false,\"compactionMode\":\"none\",\"continuationProjection\":[]},\"actorType\":\"harness\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":19,\"schemaVersion\":1,\"payloadDigest\":\"sha256:d9c49c9e73fa5ef74919605bd0fba489bebe962e2f41402797230b3dad16cf27\",\"previousRecordDigest\":\"sha256:589fa70c932c181d0bd08dd47f9521e3e3912de37601084c6b957c685d2c8550\",\"recordDigest\":\"sha256:225a3c65babda662fae9728160808b74f0e4afa9a78f71a2e91f716b5cd501eb\",\"completeness\":\"complete\"},{\"type\":\"provider.attempt.started\",\"occurredAt\":\"2026-09-02T04:02:29.642Z\",\"payload\":{\"callId\":\"9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"attemptId\":\"291d2558-8fd2-46f6-b3e8-a8b676a768a6\",\"attemptNumber\":1,\"provider\":\"custom\",\"model\":\"unspecified\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"correlationRef\":\"provider-attempt:291d2558-8fd2-46f6-b3e8-a8b676a768a6\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":20,\"schemaVersion\":1,\"payloadDigest\":\"sha256:2793c02d9881de58e8f174a38165288565810a006fe7eb523500fa0937e1fd90\",\"previousRecordDigest\":\"sha256:225a3c65babda662fae9728160808b74f0e4afa9a78f71a2e91f716b5cd501eb\",\"recordDigest\":\"sha256:5c16b063d5c0765dcc5e32b1b41f39b22e758d5fc46b2a6a316f7c0b4301e600\",\"completeness\":\"complete\"},{\"type\":\"provider.attempt.succeeded\",\"occurredAt\":\"2026-09-02T04:02:29.644Z\",\"payload\":{\"callId\":\"9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"attemptId\":\"291d2558-8fd2-46f6-b3e8-a8b676a768a6\",\"attemptNumber\":1,\"status\":\"succeeded\",\"errorCategory\":null,\"retryable\":false,\"partialResponse\":false,\"responseDigest\":\"sha256:ba9c1c146e768ecd6da2c2fe68372225a439673752ca6f83cba21ec96478aca8\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"correlationRef\":\"provider-attempt:291d2558-8fd2-46f6-b3e8-a8b676a768a6\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":21,\"schemaVersion\":1,\"payloadDigest\":\"sha256:66905c0cf10bc2c03f5cd710136da8506918271810eb428ca982b5cc0ef60ece\",\"previousRecordDigest\":\"sha256:5c16b063d5c0765dcc5e32b1b41f39b22e758d5fc46b2a6a316f7c0b4301e600\",\"recordDigest\":\"sha256:939b34b932a9e1551598b9ced5c7df2fa8567acfe5471914aa286f1664dd5479\",\"completeness\":\"complete\"},{\"type\":\"model.completed\",\"occurredAt\":\"2026-09-02T04:02:29.646Z\",\"payload\":{\"callId\":\"9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"status\":\"succeeded\",\"outputDigest\":\"sha256:ba9c1c146e768ecd6da2c2fe68372225a439673752ca6f83cba21ec96478aca8\"},\"actorType\":\"harness\",\"causationRef\":\"model-call:9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"correlationRef\":\"model-call:9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":22,\"schemaVersion\":1,\"payloadDigest\":\"sha256:a28947da84da7ba2935e4d8c7e890572a606982fa39bbf686a198759836319e1\",\"previousRecordDigest\":\"sha256:939b34b932a9e1551598b9ced5c7df2fa8567acfe5471914aa286f1664dd5479\",\"recordDigest\":\"sha256:fb5c968a5874188d5e4cb28e31f413749ff44ccd71d0b8f501fec2c684238ad7\",\"completeness\":\"complete\"},{\"type\":\"model.turn\",\"occurredAt\":\"2026-09-02T04:02:29.647Z\",\"payload\":{\"modelDecisionId\":\"a2e7acb4-2db0-4db6-9021-dc10eee62b56\",\"executionUnitId\":null,\"hasText\":false,\"finishReason\":\"tool_calls\",\"toolCallCount\":1,\"controlCallCount\":1,\"compiledActionTypes\":[\"propose_finish\"],\"toolCalls\":[{\"callId\":\"test-call-11\",\"name\":\"nexora_respond\",\"arguments\":{\"text\":\"Target inspected\"}}]},\"actorType\":\"harness\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":23,\"schemaVersion\":1,\"payloadDigest\":\"sha256:8ef9accb097743bab26d7902d10faad787a7d1dfbd6814521ead317e36ceee3b\",\"previousRecordDigest\":\"sha256:fb5c968a5874188d5e4cb28e31f413749ff44ccd71d0b8f501fec2c684238ad7\",\"recordDigest\":\"sha256:615762395671e99d546c765259d66201ba0f2fcce0b5f09194820038104068bd\",\"completeness\":\"complete\"},{\"type\":\"run.succeeded\",\"occurredAt\":\"2026-09-02T04:02:29.648Z\",\"payload\":{\"evidenceIds\":[\"6db387ea-f1a4-4480-b5d2-ab2e83164e2f\"],\"completionGate\":\"deterministic\",\"completionMode\":\"task_result\"},\"actorType\":\"runtime\",\"causationRef\":null,\"correlationRef\":null,\"payloadArtifactRef\":null,\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":24,\"schemaVersion\":1,\"payloadDigest\":\"sha256:1cc96e35921fb3278b50f6daf5d72ee0d68a54da19b953dd61f3e731eac1066d\",\"previousRecordDigest\":\"sha256:615762395671e99d546c765259d66201ba0f2fcce0b5f09194820038104068bd\",\"recordDigest\":\"sha256:689f8bc55bbd178c4e8cdfeaa7dc168a63283e182eba63f4d6559eb8caa7a6bc\",\"completeness\":\"complete\"}],\"toolInvocations\":[{\"id\":\"f0d95dfc-c071-4657-82e9-55b2c9356467\",\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"planVersion\":1,\"stepId\":\"step-cc19d7be-e437-4181-bcdc-9ef64de7d47a\",\"checkIds\":[\"check-874f20b4-9b7f-4703-a895-b8cbdc8cbc61\"],\"toolName\":\"filesystem.read\",\"inputJson\":{\"path\":\"src/index.ts\"},\"inputDigest\":\"sha256:be25f3f85c5b85e95514080872ba0bca69acd8e1cec464b632945e79fed1d5b6\",\"idempotencyKey\":\"d974cab0-8018-4c65-820b-635d8a981bd0:1:step-cc19d7be-e437-4181-bcdc-9ef64de7d47a:filesystem.read:sha256:be25f3f85c5b85e95514080872ba0bca69acd8e1cec464b632945e79fed1d5b6\",\"idempotent\":true,\"batchId\":\"c344fdce-56ec-48e9-bcf3-b23202d0f0d8\",\"batchOrdinal\":0,\"fencingToken\":1,\"status\":\"succeeded\",\"startedAt\":\"2026-09-02T04:02:29.598Z\",\"completedAt\":\"2026-09-02T04:02:29.601Z\",\"resultJson\":{\"content\":\"export const value = 1;\"},\"errorJson\":null,\"payloadDigest\":\"sha256:786923ffda9db2449243f0c3b0ddb40852d195d81df999035eb2527b70c51206\",\"payloadArtifactRef\":null}],\"toolAttempts\":[{\"id\":\"a6073b58-dc64-422e-928d-c06f9c7292f9\",\"invocationId\":\"f0d95dfc-c071-4657-82e9-55b2c9356467\",\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"attemptNumber\":1,\"status\":\"succeeded\",\"startedAt\":\"2026-09-02T04:02:29.599Z\",\"completedAt\":\"2026-09-02T04:02:29.601Z\",\"backoffUntil\":null,\"subjectRef\":\"src/index.ts\",\"resultJson\":{\"content\":\"export const value = 1;\"},\"errorJson\":null,\"payloadDigest\":\"sha256:786923ffda9db2449243f0c3b0ddb40852d195d81df999035eb2527b70c51206\",\"payloadArtifactRef\":null}],\"modelCalls\":[{\"id\":\"6ab146ee-f045-45aa-989d-3391bb39c98e\",\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":1,\"phase\":\"decision\",\"provider\":\"custom\",\"model\":\"unspecified\",\"projectionDigest\":\"sha256:bbc3a5c470925df8e8aca738c2deb6f7e1fb56765770ba9d0c21d20d02409e8a\",\"contextWindowTokens\":1000000000,\"reservedOutputTokens\":1024,\"softInputLimitTokens\":799999180,\"hardInputLimitTokens\":999998976,\"measuredInputTokens\":584,\"measurementMethod\":\"estimated\",\"meter\":\"nexora:utf8-bytes/4:v1\",\"budgetDecision\":\"within_budget\",\"status\":\"succeeded\",\"actualInputTokens\":null,\"actualOutputTokens\":null,\"actualTotalTokens\":null,\"errorCode\":null,\"startedAt\":\"2026-09-02T04:02:29.544Z\",\"completedAt\":\"2026-09-02T04:02:29.550Z\"},{\"id\":\"140aaae9-6da9-48b2-9b74-194479dcf552\",\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":2,\"phase\":\"decision\",\"provider\":\"custom\",\"model\":\"unspecified\",\"projectionDigest\":\"sha256:ef1163194ce85c243000ea32384dd0a19f00837e37b86c5c6a7ad29d4f1907bc\",\"contextWindowTokens\":1000000000,\"reservedOutputTokens\":1024,\"softInputLimitTokens\":799999180,\"hardInputLimitTokens\":999998976,\"measuredInputTokens\":1020,\"measurementMethod\":\"estimated\",\"meter\":\"nexora:utf8-bytes/4:v1\",\"budgetDecision\":\"within_budget\",\"status\":\"succeeded\",\"actualInputTokens\":null,\"actualOutputTokens\":null,\"actualTotalTokens\":null,\"errorCode\":null,\"startedAt\":\"2026-09-02T04:02:29.588Z\",\"completedAt\":\"2026-09-02T04:02:29.594Z\"},{\"id\":\"9d3cb7aa-94bc-4bb3-8a4e-e0aeb46c7325\",\"runId\":\"d974cab0-8018-4c65-820b-635d8a981bd0\",\"sequence\":3,\"phase\":\"decision\",\"provider\":\"custom\",\"model\":\"unspecified\",\"projectionDigest\":\"sha256:6adb38b554e893ed5dc7ffe9510a58348ab172e3a348fdfbca2b318c835514bd\",\"contextWindowTokens\":1000000000,\"reservedOutputTokens\":1024,\"softInputLimitTokens\":799999180,\"hardInputLimitTokens\":999998976,\"measuredInputTokens\":1324,\"measurementMethod\":\"estimated\",\"meter\":\"nexora:utf8-bytes/4:v1\",\"budgetDecision\":\"within_budget\",\"status\":\"succeeded\",\"actualInputTokens\":null,\"actualOutputTokens\":null,\"actualTotalTokens\":null,\"errorCode\":null,\"startedAt\":\"2026-09-02T04:02:29.640Z\",\"completedAt\":\"2026-09-02T04:02:29.646Z\"}]}"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:112:38
+    110|       "run.succeeded"
+    111|     ]));
+    112|     expect(JSON.stringify(view)).not.toMatch(/profileState|builderStat…
+       |                                      ^
+    113|     runtime.close();
+    114|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > rejects the first equivalent Plan immediately without writing another Plan version
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:128:27
+    126|     const view = await runtime.inspect(result.runId);
+    127| 
+    128|     expect(result.status).toBe("waiting");
+       |                           ^
+    129|     expect(view.snapshot.currentPlan?.version).toBe(1);
+    130|     expect(view.snapshot.currentPlan?.orderedSteps[0]?.id).toMatch(/^s…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > does not assign a new Runtime Plan version to a repeated semantic proposal
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:151:27
+    149|     const view = await runtime.inspect(result.runId);
+    150| 
+    151|     expect(result.status).toBe("waiting");
+       |                           ^
+    152|     expect(view.snapshot.currentPlan?.version).toBe(1);
+    153|     expect(view.events.filter((event) => event.type === "plan.set")).t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > preserves unfinished work when a revision proposes a different objective
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:172:27
+    170|     const view = await runtime.inspect(result.runId);
+    171| 
+    172|     expect(result.status).toBe("waiting");
+       |                           ^
+    173|     expect(view.snapshot.currentPlan?.version).toBe(2);
+    174|     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > rejects Plan growth beyond the bounded unfinished outcome limit and identifies removable Steps
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:208:27
+    206|     const view = await runtime.inspect(result.runId);
+    207| 
+    208|     expect(result.status).toBe("waiting");
+       |                           ^
+    209|     expect(view.snapshot.currentPlan?.version).toBe(1);
+    210|     expect(view.snapshot.currentPlan?.orderedSteps).toHaveLength(7);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > keeps the unfinished Plan bounded when a Provider explicitly replaces a rephrased Step
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:247:27
+    245|     const view = await runtime.inspect(result.runId);
+    246| 
+    247|     expect(result.status).toBe("waiting");
+       |                           ^
+    248|     expect(view.snapshot.currentPlan?.version).toBe(2);
+    249|     expect(view.snapshot.currentPlan?.orderedSteps.map((step) => step.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > preserves Invocation Evidence across an explicit Plan revision
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:277:27
+    275|     const view = await runtime.inspect(result.runId);
+    276| 
+    277|     expect(result.status).toBe("waiting");
+       |                           ^
+    278|     expect(view.snapshot.currentPlan?.version).toBe(2);
+    279|     expect(view.snapshot.evidence).toHaveLength(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > derives the mechanical Task Contract fields from a semantic model proposal
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:309:27
+    307|     const view = await runtime.inspect(result.runId);
+    308| 
+    309|     expect(result.status).toBe("waiting");
+       |                           ^
+    310|     expect(view.snapshot.taskContract).toEqual({
+    311|       version: 1,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/18]⎯
+
+ FAIL  tests/runtime/e049-plan-authority.test.ts > E049 single Structured Plan authority > increments inputVersion on a revision after new user input
+AssertionError: expected 'failed' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "failed"
+
+ ❯ tests/runtime/e049-plan-authority.test.ts:337:26
+    335| 
+    336|     const first = await runtime.start({ input: "Inspect the target." }…
+    337|     expect(first.status).toBe("waiting");
+       |                          ^
+    338|     const resumed = await runtime.resume({ runId: first.runId, input: …
+    339|     const view = await runtime.inspect(first.runId);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/18]⎯
+
+ FAIL  tests/runtime/e049-run-store.test.ts > E049 authoritative Run Store > does not append an event when optimistic revision validation fails
+Error: A new blocked Run requires a typed resume predicate.
+ ❯ transitionRunStatus packages/runtime/src/state-machine.ts:46:11
+     44|   }
+     45|   if (nextStatus === "blocked" && options.resumePredicate === undefine…
+     46|     throw new Error("A new blocked Run requires a typed resume predica…
+       |           ^
+     47|   }
+     48|   if (nextStatus === "succeeded") {
+ ❯ tests/runtime/e049-run-store.test.ts:82:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/18]⎯
+
+ FAIL  tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > repairs one invalid Plan control call and preserves the rejected normalized response
+AssertionError: expected 4 to be 3 // Object.is equality
+
+- Expected
++ Received
+
+- 3
++ 4
+
+ ❯ tests/runtime/e121-provider-native-tool-protocol.test.ts:104:23
+    102| 
+    103|     expect(result.status).toBe("waiting");
+    104|     expect(decisions).toBe(3);
+       |                       ^
+    105|     const decisionRequests = requests.map(
+    106|       (request) => JSON.parse(request.messages.at(-1)!.content!) as De…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/18]⎯
+
+ FAIL  tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > executes a strict structured Tool call without an Action envelope
+AssertionError: expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ ❯ tests/runtime/e121-provider-native-tool-protocol.test.ts:171:56
+    169|       inputJson: { path: "target.txt" }
+    170|     });
+    171|     expect(view.events.map((event) => event.type)).not.toContain("resp…
+       |                                                        ^
+    172|     expect(view.events.filter((event) => event.type === "model.turn"))…
+    173|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/18]⎯
+
+ FAIL  tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > executes a native Tool call and treats coexisting content as audit-only text
+AssertionError: expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ ❯ tests/runtime/e121-provider-native-tool-protocol.test.ts:230:56
+    228|       inputJson: { path: "target.txt" }
+    229|     });
+    230|     expect(view.events.map((event) => event.type)).not.toContain("resp…
+       |                                                        ^
+    231|     expect(requests[0]?.parallel_tool_calls).toBe(true);
+    232|     expect(requests[1]?.messages.map((message) => message.role)).toEqu…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/18]⎯
+
+ FAIL  tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > repairs only schema-declared composite fields double-encoded by a native Provider
+AssertionError: expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ ❯ tests/runtime/e121-provider-native-tool-protocol.test.ts:345:56
+    343|       }
+    344|     });
+    345|     expect(view.events.map((event) => event.type)).not.toContain("resp…
+       |                                                        ^
+    346|   });
+    347| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/18]⎯
+
+ FAIL  tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > normalizes schema-declared structured arguments for structured_output before Tool validation
+AssertionError: expected [ 'run.created', …(23) ] to not include 'response.rejected'
+ ❯ tests/runtime/e121-provider-native-tool-protocol.test.ts:398:56
+    396|       inputJson: executed[0]
+    397|     })]);
+    398|     expect(view.events.map((event) => event.type)).not.toContain("resp…
+       |                                                        ^
+    399|     expect(view.events.find((event) => event.type === "model.turn")?.p…
+    400|       toolCalls: [{
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/18]⎯
+
+ FAIL  tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > continues denied native effects without inventing an Invocation
+Error: Expected a pending Approval request.
+ ❯ tests/runtime/e121-provider-native-tool-protocol.test.ts:948:40
+    946|     const approvalView = await runtime.inspect(approval.runId);
+    947|     const requestId = approvalView.snapshot.pendingRequest?.id;
+    948|     if (requestId === undefined) throw new Error("Expected a pending A…
+       |                                        ^
+    949|     const denied = await runtime.resume({
+    950|       runId: approval.runId,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/18]⎯
+
+ FAIL  tests/runtime/e121-provider-native-tool-protocol.test.ts > E050 Provider response contract convergence > projects the current Plan version and updated Task Contract after new user input
+AssertionError: expected 'blocked' to be 'waiting' // Object.is equality
+
+Expected: "waiting"
+Received: "blocked"
+
+ ❯ tests/runtime/e121-provider-native-tool-protocol.test.ts:1183:28
+    1181|     runtime.close();
+    1182| 
+    1183|     expect(resumed.status).toBe("waiting");
+       |                            ^
+    1184|     expect(provider.contexts[2]).toMatchObject({
+    1185|       providerContractVersion: 6,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/18]⎯
+
+
+ Test Files  4 failed | 6 passed (10)
+      Tests  18 failed | 79 passed (97)
+   Start at  12:02:19
+   Duration  29.56s (transform 855ms, setup 0ms, collect 5.21s, tests 21.81s, environment 1ms, prepare 863ms)
+

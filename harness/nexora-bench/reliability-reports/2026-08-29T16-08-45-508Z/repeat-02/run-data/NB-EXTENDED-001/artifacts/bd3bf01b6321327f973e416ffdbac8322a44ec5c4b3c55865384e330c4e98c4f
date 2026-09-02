@@ -1,0 +1,1 @@
+{"text":null,"toolCalls":[{"callId":"call_d938642b14474269a1356e2b","name":"filesystem.write","arguments":{"path":"summary.txt","content":"count: 24\ntotal: 300"}},{"callId":"call_29b5c4b5de124764902a28c5","name":"fixture.sequence_validate","arguments":{"expectedCount":24,"expectedTotal":300,"path":"summary.txt"}}],"finishReason":"tool_calls"}

@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "feature": "coding-strategy-v0.1",
+  "createdAt": "2026-08-31T05:52:36.538Z",
+  "model": "Qwen 3.8 Flash",
+  "providerModelId": "qwen3.8-flash",
+  "provider": "openai-compatible",
+  "transport": "native_tools",
+  "prompt": "请在这个空工作区中创建一个个人探索日志 Web 应用。必须支持添加、编辑、删除记录，按文本搜索，按类别筛选，刷新后通过本地持久化保留数据，并提供基本可用的界面。其他细节由你判断。",
+  "invariantInputs": {
+    "runtime": "Nexora Runtime through createAgent",
+    "tools": [
+      "filesystem.read",
+      "filesystem.list",
+      "filesystem.search",
+      "filesystem.write",
+      "filesystem.patch",
+      "process.start",
+      "process.inspect",
+      "process.logs",
+      "process.stop",
+      "shell.execute",
+      "git.status",
+      "git.diff",
+      "git.show"
+    ],
+    "budgets": {
+      "maxIterations": 32,
+      "maxModelCalls": 32,
+      "maxToolCalls": 24,
+      "maxRetries": 3,
+      "maxDurationMs": 720000
+    },
+    "workspace": "fresh empty temporary directory per variant",
+    "differingInput": "codingStrategy only"
+  },
+  "baselineReference": {
+    "status": "blocked",
+    "duration": "11m47s",
+    "filesEdited": 4,
+    "scopeExpansion": "large",
+    "noProgress": true,
+    "source": "docs/nexora-coding-strategy-v0.1-spec-updated.md"
+  },
+  "variants": {
+    "general": null,
+    "coding": {
+      "label": "coding",
+      "strategy": "auto",
+      "runId": "e174522f-9e8c-4f74-aa5f-bf0cb1feee67",
+      "status": "blocked",
+      "stopReason": "PROVIDER_UNAVAILABLE",
+      "durationMs": 180863,
+      "modelCalls": 1,
+      "modelCallDiagnostics": [
+        {
+          "sequence": 1,
+          "status": "failed",
+          "errorCode": "PROVIDER_ERROR",
+          "attempts": [
+            {
+              "attemptNumber": 1,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 2,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            },
+            {
+              "attemptNumber": 3,
+              "status": "failed",
+              "errorCode": "PROVIDER_ERROR",
+              "errorCategory": "PROVIDER_CONNECT_TIMEOUT",
+              "retryable": true,
+              "partialResponse": false
+            }
+          ]
+        }
+      ],
+      "toolCalls": 0,
+      "failedTools": 0,
+      "toolNames": [],
+      "planOutcomes": 0,
+      "planObjectives": [],
+      "optionalOutcomes": [],
+      "scopeExpansionRate": 0,
+      "verificationCalls": 0,
+      "usefulVerificationCalls": 0,
+      "verificationEfficiency": null,
+      "repeatedStrategy": 0,
+      "noProgress": false,
+      "timeToFirstEditMs": null,
+      "timeToFirstVerificationMs": null,
+      "approvalsGranted": 0,
+      "approvalsDenied": 0,
+      "files": [],
+      "coreRequirements": {
+        "add": false,
+        "edit": false,
+        "delete": false,
+        "search": false,
+        "filter": false,
+        "persistence": false
+      },
+      "coreCompletionRate": 0,
+      "syntaxExitCode": 1,
+      "falseSuccess": false,
+      "lastError": {
+        "code": "PROVIDER_UNAVAILABLE",
+        "message": "Provider did not return response headers for 60000ms.",
+        "retryable": true
+      },
+      "summary": "No task result was confirmed before PROVIDER_UNAVAILABLE."
+    }
+  },
+  "comparison": null
+}

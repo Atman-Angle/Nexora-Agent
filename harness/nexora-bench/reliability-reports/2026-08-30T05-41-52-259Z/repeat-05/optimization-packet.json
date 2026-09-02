@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "dataset": {
+    "id": "nexora-core-v1",
+    "version": 13,
+    "digest": "sha256:c9d3709bf8f85f44cc72f992eca7c15dab6e1094265791e74275c5a30f005e84"
+  },
+  "source": {
+    "commit": "74787fdb5e62721b25a3e6ecfe574adbdb4357e8",
+    "dirty": true
+  },
+  "primaryCluster": {
+    "boundary": "TOOL_EXECUTION",
+    "affectedTasks": [
+      "NB-EXTENDED-001"
+    ],
+    "expected": "Tool execution produces the expected external state and persisted result.",
+    "observed": [
+      "NB-EXTENDED-001: task_grader_passed, expected_terminal, scenario_authority; codes=APPROVAL_DENIED,INVALID_SUMMARY"
+    ],
+    "authorityRefs": [
+      {
+        "invocationIds": [
+          "c1b13a98-796a-423d-b64a-5936491869bb",
+          "a45cea91-825c-4b97-bbce-1b3385f7c56c",
+          "dd584963-254c-4583-933e-3244b0c28d59",
+          "92f045ea-31e2-4cab-8a1a-0fd130a680e6",
+          "5bd95c07-111b-442d-80b3-6efc9e3d3e5c",
+          "0047dfc5-6268-4c47-b2ba-c5a8fe86fc1f",
+          "dd326b42-ea85-47ad-954c-929cd565afd6",
+          "171c68a9-f05e-4e09-8bdd-ea57beee0999",
+          "40542bd5-9f69-46fe-a09d-a2e19f8152e5",
+          "1843b30b-937c-499d-a2d1-bff41fae74ab",
+          "b2419605-56fa-4b5f-a27d-48e7c7ba171d",
+          "d4f9c197-26a0-4046-8501-940df9c152ec",
+          "4a5bfae5-c3c9-43b2-9aa1-696f4eb7a58c",
+          "d0d409b5-b215-4a9b-a595-66020093ce71",
+          "cea92ce2-a194-4730-890c-67d7e4845dc5",
+          "d26fd3b1-ef26-4458-8b7c-f1258a71d3f2",
+          "52c889ba-285b-450a-b4fc-aee7dc228ce3",
+          "8e79d696-c8d8-43a1-ac47-14fbc0881c11",
+          "c2523315-90d5-4c8f-b0ee-6fdd7b59ac19",
+          "5256c260-f351-45d7-8729-9a44d302c52a",
+          "11b7ce26-4dc1-4841-ade2-1edf42e9d913",
+          "7692ef8e-abdd-4e1f-90a3-9e243c794dd1",
+          "b52870e6-edbb-459e-9a4e-e985a49d4f11",
+          "55425568-2054-43c4-ab3b-3276c0bca40f",
+          "984a6c08-eb13-4f51-9628-99e9a0e1d993",
+          "82fc434d-9e1e-498f-85d6-71377ed6f6d2",
+          "d06ee346-ebf4-4d8f-b16c-d8f35b67751f",
+          "cb9540d1-67bd-470e-b683-94ac1fbf9886"
+        ],
+        "evidenceIds": [
+          "e917420d-89ef-4200-9bdd-ae96c3e79b38",
+          "bf8b8130-ccea-496f-a1ef-7f9d89d57c4f",
+          "22e163e9-6853-4121-b654-9d97295194a4",
+          "fa08de85-9ceb-4e28-a45b-ac05d41ec8e8",
+          "f9393e28-fa07-4588-976a-dddb9f4338e8",
+          "571fb3a2-8c7f-4c73-be4e-f81d5aa5ed4d",
+          "f89ede52-51ae-4bbf-bad6-60ce7eea7c01",
+          "c7187039-7b63-470b-93df-f1e77711ebd9",
+          "6a47b3a4-3ccc-491e-8c93-549a901d2fb1",
+          "faf23b8d-d57a-495f-a7eb-066987febf9a",
+          "e7d2899d-746d-4c93-bf68-8a036dc34427",
+          "e2fde6dc-e6b4-46a5-8968-63d7c82c3b96",
+          "90901982-6b9b-4cca-a82d-65698c8940c5",
+          "0db77dcb-020c-40c8-ad22-2e8afc2ce0ab",
+          "d9591cb6-1bde-4cb6-8650-61c900a51dd8",
+          "e6b2d78d-3276-492b-948c-8ea764117d6a",
+          "f6b536e4-934f-42da-bf7b-6b66fe64362e",
+          "f3f03825-43bc-427d-af62-56313e2b6541",
+          "6a68cbb4-c7af-4916-84e8-89fbaee07e91",
+          "5237a1f6-a491-4df5-a8b1-052f088f4fa4",
+          "d1c602da-0782-454b-869b-ddf125a9e807",
+          "1e7b62b6-93e5-46af-ab11-1dd2062c9c67",
+          "63e91864-bc35-46e4-8a41-3132c4943e1f",
+          "60501a1d-6199-45ec-bee9-df1ddafca284",
+          "2e631634-9706-44b1-a11c-3dedbefd5986",
+          "e860d125-14a5-4aa9-8ba0-b252c94cc5d7"
+        ],
+        "modelCallIds": [
+          "e98e41bd-4cf1-4edc-b607-e03cdd9104b8",
+          "c90e6e73-5b01-4cda-ab14-07d7330706b5",
+          "e8d2c092-389f-47e5-ad79-18980196fe9b",
+          "ad229688-1621-463a-9e53-6fd104895ef3",
+          "440f4cfa-3797-4054-9692-aa003010d41a",
+          "f1ca0f90-4f37-4d1e-938e-9f59a503411a",
+          "91062203-835f-4cf6-a55a-81ab14d83a60",
+          "2858320f-56a5-4f53-8d2c-15407ec22100",
+          "9868b371-9173-46d7-a7ea-4247b107c202",
+          "f0ddfdd1-4f7e-4a48-933b-f797d6845430",
+          "2f916e4d-193b-4d56-b485-a9d6ba6c5acd"
+        ],
+        "lastEventSequence": 183
+      }
+    ],
+    "reproductionCommands": [
+      "pnpm --filter @nexora/bench bench -- --provider real --task NB-EXTENDED-001"
+    ]
+  },
+  "constraints": [
+    "Do not modify the Eval dataset, fixtures, graders, expected results or holdout configuration.",
+    "Fix the first broken boundary without adding task-specific production branches.",
+    "Do not change public Contracts, State Machine, Plan, Invocation, Evidence or Completion authorities without stopping for a decision.",
+    "Keep all edits inside the current Feature scope and follow AGENTS.md, LOOP.md and TESTS.md."
+  ],
+  "acceptanceCommands": [
+    "pnpm --filter @nexora/bench bench -- --provider real --task NB-EXTENDED-001",
+    "pnpm --filter @nexora/bench test",
+    "pnpm --filter @nexora/bench typecheck"
+  ]
+}

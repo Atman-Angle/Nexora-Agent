@@ -132,7 +132,7 @@ describe("E065 Provider transient failure recovery", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("uses the existing blocked Run path after retries are exhausted", async () => {
+  it("blocks a recoverable Provider boundary with a persisted bounded probe predicate", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e065-"));
     const fetch = vi.fn().mockImplementation(async () => new Response("unavailable", { status: 503 }));
     const provider = createOpenAICompatibleProvider({
@@ -159,6 +159,12 @@ describe("E065 Provider transient failure recovery", () => {
         outcome: "blocked",
         generatedBy: "deterministic"
       }));
+      expect(view.snapshot.resumePredicate).toEqual({
+        kind: "provider_reconnect",
+        providerCode: "PROVIDER_UNAVAILABLE",
+        remainingRecoverySegments: 1,
+        verification: "bounded_provider_probe"
+      });
       expect(fetch).toHaveBeenCalledTimes(3);
       expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
     } finally {
@@ -191,13 +197,14 @@ describe("E065 Provider transient failure recovery", () => {
       expect((await handle.inspect()).stopReason).toBe("PROVIDER_UNAVAILABLE");
       expect(fetch).toHaveBeenCalledTimes(6);
 
-      await expect(handle.resume()).rejects.toThrow(/Provider recovery is exhausted/);
+      await expect(handle.resume()).rejects.toThrow(/Run is failed/);
       expect(fetch).toHaveBeenCalledTimes(6);
       const publicInspection = await handle.inspect();
       const inspection = await runtime.inspect(handle.id);
-      expect(publicInspection.status).toBe("blocked");
+      expect(publicInspection.status).toBe("failed");
+      expect(publicInspection.resumePredicate).toBeNull();
       expect(publicInspection.error?.retryable).toBe(false);
-      expect(publicInspection.delivery?.nextAction).toContain("continuation Run");
+      expect(publicInspection.delivery?.nextAction).toContain("new Run");
       expect(publicInspection.executionMetrics.modelCalls).toBe(2);
       expect(inspection.events.filter((event) => (
         event.type === "run.resumed" && event.payload.reason === "provider_retry"
@@ -236,7 +243,7 @@ describe("E065 Provider transient failure recovery", () => {
     try {
       const result = await runtime.start({ input: "Keep the structured Tool batch bounded." });
       const inspection = await runtime.inspect(result.runId);
-      expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+      expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
       expect(fetch).toHaveBeenCalledTimes(2);
       expect(effect.calls).toBe(0);
       expect(inspection.events.filter((event) => event.type === "provider.attempt.succeeded")).toHaveLength(2);
@@ -323,6 +330,7 @@ describe("E065 Provider transient failure recovery", () => {
 
       const resumed = await runtime.resume({ runId: blocked.runId });
       const completedView = await runtime.inspect(blocked.runId);
+      expect(resumed.runId).toBe(blocked.runId);
       expect(resumed.status, JSON.stringify({
         decisions,
         transientFailures,
@@ -334,6 +342,9 @@ describe("E065 Provider transient failure recovery", () => {
       expect(completedView.toolInvocations).toHaveLength(1);
       expect(completedView.events.some((event) => event.type === "response.rejected")).toBe(false);
       expect(completedView.events.filter((event) => event.type === "tool.succeeded")).toHaveLength(1);
+      expect(completedView.events.filter((event) => (
+        event.type === "run.resumed" && event.payload.reason === "provider_retry"
+      ))).toHaveLength(1);
       expect(completedView.events.filter((event) => event.type === "run.succeeded")).toHaveLength(1);
       expect(completedView.modelCalls.every((call) => call.phase === "decision")).toBe(true);
     } finally {

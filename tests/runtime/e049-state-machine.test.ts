@@ -94,17 +94,24 @@ describe("E049 Run status authority", () => {
     expect(() => transitionRunStatus(succeeded, "running", { now: later })).toThrow();
   });
 
-  it("allows a blocked Run to resume or fail with an explicit reason", () => {
+  it("requires a typed predicate for blocked Runs and clears it on resume or failure", () => {
+    expect(() => transitionRunStatus(runningRun(), "blocked", {
+      now: later,
+      stopReason: "TOOL_RESULT_UNKNOWN"
+    })).toThrow(/typed resume predicate/);
     const blocked = transitionRunStatus(runningRun(), "blocked", {
       now: later,
       stopReason: "TOOL_RESULT_UNKNOWN",
+      resumePredicate: { kind: "tool_recovery_decision", invocationIds: ["invocation-1"] },
       delivery: deriveRunDelivery({ run: runningRun(), outcome: "blocked", now: later, stopReason: "TOOL_RESULT_UNKNOWN" })
     });
-    expect(transitionRunStatus(blocked, "running", { now: later }).status).toBe("running");
-    expect(transitionRunStatus(blocked, "failed", {
+    const resumed = transitionRunStatus(blocked, "running", { now: later });
+    expect(resumed).toMatchObject({ status: "running", resumePredicate: null });
+    const failed = transitionRunStatus(blocked, "failed", {
       now: later,
       stopReason: "RECOVERY_ABANDONED",
       delivery: deriveRunDelivery({ run: blocked, outcome: "failed", now: later, stopReason: "RECOVERY_ABANDONED" })
-    }).status).toBe("failed");
+    });
+    expect(failed).toMatchObject({ status: "failed", resumePredicate: null });
   });
 });

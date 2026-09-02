@@ -1,0 +1,1 @@
+{"text":"The value from `source.txt` is `transient-service-value=ready\\n`. I will now write this to `result.txt` and then verify it.","toolCalls":[{"callId":"call_24582fcb0c8a417f89297249","name":"filesystem.write","arguments":{"content":"transient-service-value=ready\n","path":"result.txt"}}],"finishReason":"tool_calls"}
