@@ -112,6 +112,8 @@ export {
 
 export type {
   AgentWorkingContext,
+  CompletionBlocker,
+  CompletionProjection,
   HistoryCandidate,
   HistoryCandidateReason,
   MemoryCandidate,

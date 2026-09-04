@@ -2353,7 +2353,35 @@ export class RuntimeEngine {
           item.status === "succeeded"
           && this.#tools.get(item.toolName)?.contract.execution.effect.kind === "write"
         ));
-      if (duplicate !== undefined && !invalidatedByWrite) {
+      const stateChangedAfterDuplicate = duplicateIndex >= 0
+        && persistedInvocations.slice(duplicateIndex + 1).some((item) => (
+          item.status === "succeeded"
+          && this.#tools.get(item.toolName)?.contract.execution.effect.kind !== "read"
+        ));
+      // Mirror the single-action verification replay rule in
+      // execution/runtime-execution.ts: an identical verification execute that
+      // the active Step requires is admitted to the serial approval/execution
+      // loop, where callTool replays the persisted result without a second
+      // physical execution.  The batch is still rejected when the duplicate
+      // cannot satisfy a verification check of the active Step.
+      const verificationReplayCheck = duplicate !== undefined
+        && duplicate.status === "succeeded"
+        && tool.contract.execution.effect.kind === "execute"
+        && step !== undefined
+        && !invalidatedByWrite
+        && !stateChangedAfterDuplicate
+        ? step.acceptanceChecks.find((check) => (
+            check.required
+            && check.kind === "tool_result"
+            && check.toolName === tool.contract.identity.name
+            && check.role === "verification"
+          ))
+        : undefined;
+      if (
+        duplicate !== undefined
+        && !invalidatedByWrite
+        && verificationReplayCheck === undefined
+      ) {
         throw new ActionRejectedError(
           `execute_step duplicates an existing persisted Invocation with status ${duplicate.status}; do not repeat it.`
         );
@@ -3110,12 +3138,28 @@ export class RuntimeEngine {
     const segmentBoundary = [lastInputResume, probationResolved]
       .filter((event): event is RunEvent => event !== undefined)
       .sort((left, right) => right.sequence - left.sequence)[0];
-    const inputSegmentRejections = allEvents.filter((event) => (
-      event.type === "response.rejected"
-      && isStateRejection(event)
-      && (lastInputResume === undefined || event.sequence > lastInputResume.sequence)
+    const inputSegmentEvents = allEvents.filter((event) => (
+      lastInputResume === undefined || event.sequence > lastInputResume.sequence
+    ));
+    const inputSegmentRejections = inputSegmentEvents.filter((event) => (
+      event.type === "response.rejected" && isStateRejection(event)
     )).slice(-8);
-    const repeatedStateBoundary = repeatedRejectionIssue(inputSegmentRejections);
+    // Authoritative progress re-opens the repeated-state window: the same
+    // state-rejection code that recurs after a successful Tool outcome or
+    // validation is a different local situation, not proof that the earlier
+    // invalid action is looping. The per-input-segment total cap below still
+    // bounds alternation between a rejection and a single new fact, so the
+    // repair opportunity stays bounded instead of reopening forever.
+    const progressAnchorSequence = inputSegmentEvents.reduce(
+      (sequence, event) => (
+        isAuthoritativeProgressEvent(event) ? event.sequence : sequence
+      ),
+      lastInputResume?.sequence ?? 0
+    );
+    const repeatedStateBoundary = repeatedStateIssueWithinSegments(
+      inputSegmentRejections,
+      progressAnchorSequence
+    );
     if (repeatedStateBoundary !== null) {
       return {
         fingerprint: digestCanonicalJson({
@@ -4160,6 +4204,51 @@ function hasAuthoritativeProgressBeyondStrategy(
     const observation = invocationObservationFingerprint(invocation);
     return observation !== null && !priorObservations.includes(observation);
   });
+}
+
+function isAuthoritativeProgressEvent(event: RunEvent): boolean {
+  return event.type === "tool.succeeded"
+    || event.type === "tool.failed"
+    || event.type === "tool.recovered"
+    || event.type === "validation.passed"
+    || event.type === "recovery.confirmed_succeeded"
+    || event.type === "recovery.confirmed_failed"
+    || event.type === "branch.merged";
+}
+
+/**
+ * Repeated-state detection over one user-input segment.
+ *
+ * Two identical state rejections are treated as one no-progress loop only
+ * when no authoritative progress occurred between them. An authoritative
+ * outcome re-opens the window so a run that legitimately advanced is not
+ * terminated on the second same-code rejection. A total cap of three
+ * occurrences per segment still bounds rejection/progress alternation.
+ */
+function repeatedStateIssueWithinSegments(
+  rejections: readonly RunEvent[],
+  progressAnchorSequence: number
+): { readonly fingerprint: string; readonly repeatCount: number } | null {
+  const totalCounts = new Map<string, number>();
+  const windowCounts = new Map<string, number>();
+  for (const rejection of rejections) {
+    for (const fingerprint of rejectionIssueFingerprints(rejection)) {
+      totalCounts.set(fingerprint, (totalCounts.get(fingerprint) ?? 0) + 1);
+      if (rejection.sequence > progressAnchorSequence) {
+        windowCounts.set(fingerprint, (windowCounts.get(fingerprint) ?? 0) + 1);
+      }
+    }
+  }
+  let best: { readonly fingerprint: string; readonly repeatCount: number } | null = null;
+  const fingerprints = new Set([...totalCounts.keys(), ...windowCounts.keys()]);
+  for (const fingerprint of fingerprints) {
+    const inWindow = windowCounts.get(fingerprint) ?? 0;
+    const total = totalCounts.get(fingerprint) ?? 0;
+    if (inWindow < 2 && total < 3) continue;
+    const repeatCount = inWindow >= 2 ? inWindow : total;
+    if (best === null || repeatCount > best.repeatCount) best = { fingerprint, repeatCount };
+  }
+  return best;
 }
 
 function repeatedRejectionIssue(

@@ -841,6 +841,80 @@ describe("bounded execution convergence", () => {
     expect(runtime.listWorkerObservations(blocked.runId).some((item) => item.branchStatus === "discarded")).toBe(true);
     await runtime.close();
   });
+
+  it("does not terminate a repeated state rejection that is separated by an authoritative Tool outcome, then bounds the identical repeat", async () => {
+    const provider = new InterleavedStateRejectionProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readSubjectTool(), writeSubjectTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await runtime.start({
+      input: "Change the report only inside a structured Plan.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 12, maxModelCalls: 12, maxToolCalls: 8, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(provider.repairTurnObserved).toBe(true);
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(inspection.modelCalls).toHaveLength(4);
+    expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(3);
+    expect(inspection.toolInvocations.map((invocation) => invocation.toolName)).toEqual(["test.read-subject"]);
+    expect(inspection.events.find((event) => event.type === "run.failed")?.payload.diagnostic)
+      .toEqual(expect.objectContaining({ kind: "repeated_invalid_response" }));
+    await runtime.close();
+  });
+
+  it("bounds rejection/progress alternation by the per-segment state-rejection cap", async () => {
+    const provider = new AlternatingStateRejectionProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readSubjectTool(), writeSubjectTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await runtime.start({
+      input: "Change the report only inside a structured Plan.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 12, maxModelCalls: 12, maxToolCalls: 8, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(provider.repairTurnsObserved).toBeGreaterThanOrEqual(2);
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(inspection.modelCalls).toHaveLength(5);
+    expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(3);
+    expect(inspection.toolInvocations).toHaveLength(2);
+    await runtime.close();
+  });
+
+  it("still terminates an adjacent repeated state rejection on its second occurrence", async () => {
+    const provider = new AdjacentStateRejectionProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [writeSubjectTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await runtime.start({
+      input: "Change the report only inside a structured Plan.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 12, maxModelCalls: 12, maxToolCalls: 8, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(inspection.modelCalls).toHaveLength(2);
+    expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(2);
+    expect(inspection.events.find((event) => event.type === "run.failed")?.payload.diagnostic)
+      .toEqual(expect.objectContaining({ kind: "repeated_invalid_response", repeatCount: 2 }));
+    await runtime.close();
+  });
 });
 
 class LateDelegationProvider implements RuntimeProvider {
@@ -1579,6 +1653,38 @@ async function approveUntilTerminal(
     });
   }
   return result;
+}
+
+class InterleavedStateRejectionProvider implements RuntimeProvider {
+  #call = 0;
+  repairTurnObserved = false;
+  async decide() {
+    this.#call += 1;
+    if (this.#call === 2) return responseCall("test.read-subject", { mode: "summary" });
+    if (this.#call === 4) this.repairTurnObserved = true;
+    return responseCall("test.write-subject", { revision: this.#call, target: "summary", value: `revision-${this.#call}` });
+  }
+}
+
+class AlternatingStateRejectionProvider implements RuntimeProvider {
+  #call = 0;
+  repairTurnsObserved = 0;
+  async decide() {
+    this.#call += 1;
+    if (this.#call % 2 === 0) {
+      this.repairTurnsObserved += 1;
+      return responseCall("test.read-subject", { mode: "summary" });
+    }
+    return responseCall("test.write-subject", { revision: this.#call, target: "summary", value: `revision-${this.#call}` });
+  }
+}
+
+class AdjacentStateRejectionProvider implements RuntimeProvider {
+  #call = 0;
+  async decide() {
+    this.#call += 1;
+    return responseCall("test.write-subject", { revision: this.#call, target: "summary", value: `revision-${this.#call}` });
+  }
 }
 
 function workspace(): string {

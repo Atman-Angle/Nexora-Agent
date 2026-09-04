@@ -106,7 +106,7 @@ export function compileModelPlan(
     createId,
     goal: update.goal,
     scope: update.scope,
-    tasks: update.tasks,
+    tasks: update.tasks ?? [],
     removeSteps: update.removeSteps ?? [],
     availableToolNames
   });

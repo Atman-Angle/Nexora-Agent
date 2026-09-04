@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import { canonicalJson, digestCanonicalJson } from "@nexora/runtime/internal";
 
 import type { PromptHostConfiguration } from "./profile.js";
-import type { ModelDecisionContext, ProviderTokenMeasurement } from "./providers/model-client.js";
+import type { CompletionBlocker, ModelDecisionContext, ProviderTokenMeasurement } from "./providers/model-client.js";
 import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
@@ -133,7 +133,7 @@ Follow this protocol, Host Policy, host-authorized Project Policy and current us
 6. After changing state, verify the resulting state proportionately.
 7. Finish only when every requirement is satisfied, explicitly unresolved, or impossible for a stated evidence-backed reason.
 
-The dynamic controlState is a derived navigation summary, not a new authority. Use its phase to choose the protocol action: INITIAL_PLANNING establishes any required Plan before an effect; EXECUTION advances only unfinished outcomes; FAILURE_REPAIR incorporates the failure and avoids unchanged actions; VALIDATION checks required facts; COMPLETION submits ${DIRECT_RESPONSE_CONTROL}. When no outcomes remain, do not emit a formal or remove-only Plan just to maintain structure.
+The dynamic controlState is a derived navigation summary, not a new authority. Use its phase to choose the protocol action: INITIAL_PLANNING establishes any required Plan before an effect; EXECUTION advances only unfinished outcomes; FAILURE_REPAIR incorporates the failure and avoids unchanged actions; VALIDATION checks required facts; COMPLETION submits ${DIRECT_RESPONSE_CONTROL}. When no outcomes remain, inspect controlState.completionBlockers: refresh or execute the named blockers in order, then submit completion only when completionReady is true; do not emit a formal Plan just to maintain structure. A remove-only Plan is a constrained repair patch for explicitly removable unfinished Steps.
 
 A Plan is navigation plus the Runtime-owned Task Contract, not permission or a Tool whitelist. On the first complex coding Plan, resolve scope and plan together: use pass_through for a detailed spec, normalize for a clear task with small execution gaps, and shape for a broad goal. Required outcomes describe user-visible or acceptance outcomes, never files or implementation steps. When Host Policy classifies the taskMode as change, create it after any minimal read-only discovery and before the first write, execute or task-result completion. Preserve every user requirement as a verifiable outcome; if authoritative exploration proves no mutation is needed, plan and verify that already-satisfied state. For other task modes, create a Plan when known work spans multiple files or components, has multiple dependent outcomes plus verification, or is likely to need more than three Tool calls. Plan tasks are the current ordered remaining work. Every task must support an existing scope requirement; mark newly discovered schema, migration, serializer, fixture or regression work as supporting. For a resolved Task Scope, create exactly one required_outcome task for every still-unfinished required Scope outcome and bind it with supports containing that one outcome id; do not merge multiple required Scope outcomes into one task. Supporting tasks may bind one or more existing required Scope outcomes, but never satisfy their required-outcome coverage. Keep two to seven independently verifiable remaining outcomes, not Tool calls; a later Plan may have one. Omitted unfinished Steps persist on revision. Replace, consolidate or delete one via its currentPlanAndChecks.removableSteps stepId in removeSteps; never leave a rewritten duplicate active. Skip a Plan only for a direct answer or one read-only observation that fully resolves a non-change task.
 
@@ -285,7 +285,6 @@ export function compilePrompt(input: {
       activeDigest: skills.activeDigest
     },
     availableControls: tools.filter((tool) => tool.kind === "control").map((tool) => tool.name),
-    latestUserInput: input.context.run.inputHistory.at(-1) ?? null
   };
   const system = stablePrefix;
   const providerInput = canonicalJson(dynamic);
@@ -423,19 +422,31 @@ export function planRevisionAllowed(context: ModelDecisionContext): boolean {
  * planner. It makes the next protocol choice explicit while retaining the
  * underlying facts above for auditability.
  */
-export function planControlState(context: ModelDecisionContext): {
+export type PlanControlState = {
   readonly phase: "INITIAL_PLANNING" | "EXECUTION" | "FAILURE_REPAIR" | "VALIDATION" | "COMPLETION";
   readonly completedOutcomes: readonly string[];
   readonly unfinishedOutcomes: readonly string[];
   readonly invalidatedOutcomes: readonly string[];
   readonly guidance: readonly string[];
-} {
+  /** First Plan step that is not marked completed, in ordered-step order. Derived navigation, not a Runtime-authored active/ready marker. */
+  readonly nextUnfinishedStep: { readonly stepId: string; readonly objective: string } | null;
+  /** Deterministic per-turn protected (write/execute) effect budget derived from phase and Tool catalog. */
+  readonly protectedEffectsThisTurn: 0 | 1;
+  readonly repairCode?: string;
+  readonly repairDirective?: string;
+  /** Proactive read-only Completion Gate projection; never an approval or completion authority. */
+  readonly completionReady: boolean | null;
+  readonly completionBlockers: readonly CompletionBlocker[];
+};
+
+export function planControlState(context: ModelDecisionContext): PlanControlState {
   const plan = context.run.currentPlan;
   const progressById = new Map(context.run.stepProgress.map((item) => [item.stepId, item]));
-  const completedOutcomes = (plan?.orderedSteps ?? [])
+  const orderedSteps = plan?.orderedSteps ?? [];
+  const completedOutcomes = orderedSteps
     .filter((step) => progressById.get(step.id)?.status === "completed")
     .map((step) => step.objective);
-  const unfinishedOutcomes = (plan?.orderedSteps ?? [])
+  const unfinishedOutcomes = orderedSteps
     .filter((step) => progressById.get(step.id)?.status !== "completed")
     .map((step) => step.objective);
   const invalidatedOutcomes = context.repair?.failedObjective === null || context.repair?.failedObjective === undefined
@@ -461,8 +472,84 @@ export function planControlState(context: ModelDecisionContext): {
         : phase === "COMPLETION"
           ? ["Submit the formal completion control only; ordinary text or a remove-only Plan is not completion."]
           : ["Execute only unfinished outcomes. Completed outcomes remain facts and must not be reactivated or repeated."];
-  return { phase, completedOutcomes, unfinishedOutcomes, invalidatedOutcomes, guidance };
+  const firstUnfinished = orderedSteps.find((step) => progressById.get(step.id)?.status !== "completed");
+  const nextUnfinishedStep = plan === null || firstUnfinished === undefined
+    ? null
+    : { stepId: firstUnfinished.id, objective: firstUnfinished.objective };
+  const hasEffectfulTool = context.tools.some((tool) => (
+    tool.execution.effect.kind === "write" || tool.execution.effect.kind === "execute"
+  ));
+  const protectedEffectsThisTurn = (phase === "COMPLETION" || phase === "INITIAL_PLANNING" || !hasEffectfulTool)
+    ? 0
+    : 1;
+  const repairCode = primaryRepairCode(context);
+  return {
+    phase,
+    completedOutcomes,
+    unfinishedOutcomes,
+    invalidatedOutcomes,
+    guidance,
+    nextUnfinishedStep,
+    protectedEffectsThisTurn,
+    ...(repairCode === null ? {} : { repairCode, repairDirective: repairDirectiveFor(repairCode) }),
+    completionReady: context.completionProjection?.ready ?? null,
+    completionBlockers: context.completionProjection?.blockers ?? []
+  };
 }
+
+const REPAIR_DIRECTIVES: Readonly<Record<string, string>> = Object.freeze({
+  CHECK_EVIDENCE_STALE: "Do not resubmit completion. Refresh the named checks in legal order: run any pending write/execute first, then re-run each listed read/verification check, then propose completion once via nexora_respond.",
+  CHECK_UNSATISFIED: "Do not submit completion. Execute the still-unfinished Step or re-run the checks named in the rejection, then propose completion once.",
+  FINAL_CONTROL_REQUIRED: "Submit exactly one nexora_respond control containing the user-facing final answer; do not call more Tools and do not resend ordinary text.",
+  TASK_CONTRACT_REQUIRED: "Call nexora_update_plan to establish the Plan before any further write/execute/completion; keep required outcomes verbatim.",
+  MUTATION_VERIFICATION_REQUIRED: "A declared mutation needs fresh same-subject verification before the next mutation or completion.",
+  PROTECTED_MUTATION_BATCH_REQUIRES_ONE_AT_A_TIME: "Submit exactly one protected mutation/execute this Provider turn; never batch protected effects. Reads may be batched.",
+  EXECUTION_UNIT_OBSERVATION_BARRIER: "Do not batch actions that depend on an earlier observation; submit the dependent action only after its observation is persisted.",
+  TASK_SCOPE_REVISION_REQUIRES_NEW_USER_INPUT: "Scope changes require new user input. Do not resubmit a scope-changing Plan; finish the current scope or call nexora_request_input.",
+  PLAN_SCOPE_REQUIRED_OUTCOME_DUPLICATED: "The Plan revision duplicated an already-required outcome. Do not resubmit the full Plan; either continue the current Plan or repair one Step via removeSteps with its exact stepId from currentPlanAndChecks.removableSteps.",
+  PLAN_SCOPE_RELATION_INVALID: "The Plan revision violated required-outcome relations. Do not resubmit the full Plan; repair one Step/check via removeSteps with its exact stepId, or continue the current Plan.",
+  PLAN_SCOPE_REQUIRED_OUTCOME_UNCOVERED: "The Plan no longer covers a required outcome. Restore coverage by keeping the Step that binds that outcome instead of rewriting the whole Plan.",
+  PLAN_REMOVE_INVALID: "That Step cannot be removed. Use only a stepId listed in currentPlanAndChecks.removableSteps, or keep the Step and continue execution.",
+  PLAN_UNCHANGED: "The Plan was unchanged and was not re-accepted. Do not resubmit the same Plan; continue executing the current accepted Plan.",
+  response_rejected: "The Tool effect already succeeded. Use its persisted result; do not resend the same Tool name and arguments. Continue to the next remaining Step or completion.",
+  NO_PROGRESS_WARNING: "The Runtime warned about no progress. Do not repeat the same strategy; choose a genuinely different executable action or stop Plan maintenance and complete."
+});
+
+function primaryRepairCode(context: ModelDecisionContext): string | null {
+  const repair = context.repair;
+  if (repair === undefined || repair === null) return null;
+  const issues = Array.isArray(repair.issues) ? repair.issues : [];
+  // Runtime state rejection codes are the primary protocol. Generic Provider
+  // schema codes such as `custom` or `too_big` are diagnostic fields, not
+  // repair directives, and must not shadow a Runtime-owned code.
+  for (const issue of issues) {
+    if (isRuntimeRepairCode(issue.code)) return issue.code;
+  }
+  // The top-level Runtime code is the next structured source. The generic
+  // INVALID_MODEL_RESPONSE envelope is intentionally skipped: its nested
+  // schema issues are not Runtime action codes.
+  if (repair.code !== "INVALID_MODEL_RESPONSE" && isRuntimeRepairCode(repair.code)) {
+    return repair.code;
+  }
+  // Compatibility fallback only for legacy adapters that do not project code.
+  for (const issue of issues) {
+    if (typeof issue.message !== "string") continue;
+    const match = /^([A-Z][A-Z0-9_]+|response_rejected):/.exec(issue.message);
+    if (match !== null) return match[1]!;
+  }
+  return null;
+}
+
+function isRuntimeRepairCode(value: unknown): value is string {
+  return value === "response_rejected"
+    || (typeof value === "string" && /^[A-Z][A-Z0-9_]+$/.test(value));
+}
+
+function repairDirectiveFor(code: string): string {
+  return REPAIR_DIRECTIVES[code] ?? "Do not repeat the rejected response unchanged. Use the rejection message and recovery.nextAction, then choose a genuinely different legal action.";
+}
+
+
 
 export function runtimeDirective(context: ModelDecisionContext): RuntimeDirective {
   if (context.finalization !== undefined) {
@@ -684,7 +771,7 @@ function controlToolContracts(includeDelegation = true, includeSkills = false): 
             }
           }
         },
-        required: ["tasks"],
+        anyOf: [{ required: ["tasks"] }, { required: ["removeSteps"] }],
         additionalProperties: false
       },
       decision: {

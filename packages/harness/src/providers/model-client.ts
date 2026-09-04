@@ -67,6 +67,20 @@ export type ProjectedRunContext = {
   };
 };
 
+export type CompletionBlocker = {
+  readonly code: string;
+  readonly stepId: string | null;
+  readonly checkId: string | null;
+  readonly subject: string | null;
+  readonly nextAction: "plan" | "execute" | "refresh" | "resolve" | "collect" | "complete";
+  readonly detail: string;
+};
+
+export type CompletionProjection = {
+  readonly ready: boolean;
+  readonly blockers: readonly CompletionBlocker[];
+};
+
 export type ContinuationTurn = {
   readonly sourceRunId: string;
   readonly status: "succeeded" | "failed" | "cancelled" | "blocked";
@@ -116,6 +130,8 @@ export type ModelDecisionContext = {
   readonly workerRun?: boolean;
   readonly delegationSatisfied?: boolean;
   readonly run: ProjectedRunContext;
+  /** Proactive read-only projection of Completion Gate blockers before a finish proposal. */
+  readonly completionProjection?: CompletionProjection;
   /** Bounded projection of verified continuation ancestors, oldest to newest. */
   readonly continuation?: readonly ContinuationTurn[];
   readonly projection: {
@@ -381,6 +397,15 @@ export type RehydratedFact = {
 export type RepairIssue = {
   readonly kind: string;
   readonly message: string;
+  /**
+   * Runtime-owned structured rejection code/path when available (e.g.
+   * CHECK_EVIDENCE_STALE or PLAN_SCOPE_REQUIRED_OUTCOME_DUPLICATED).  Legacy
+   * adapters without structured codes leave these absent; consumers must then
+   * fall back to the message prefix only for compatibility, never as the
+   * primary protocol.
+   */
+  readonly code?: string;
+  readonly path?: string;
 };
 
 export type ModelCallPhase = "decision";

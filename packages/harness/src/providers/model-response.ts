@@ -49,9 +49,16 @@ export const ModelPlanUpdateSchema = z.object({
     completionCriteria: z.array(NonEmptyString).min(1).max(32),
     resolutionMode: z.enum(["pass_through", "normalize", "shape"])
   }).strict().optional(),
-  tasks: z.array(ModelPlanTaskSchema).min(1).max(MAX_MODEL_PLAN_TASKS),
+  tasks: z.array(ModelPlanTaskSchema).min(1).max(MAX_MODEL_PLAN_TASKS).optional(),
   removeSteps: z.array(ModelPlanRemovalSchema).max(32).optional().default([])
-}).strict();
+}).strict().superRefine((value, context) => {
+  if ((value.tasks?.length ?? 0) === 0 && value.removeSteps.length === 0) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "A Plan update must include tasks or a constrained removeSteps patch." });
+  }
+  if ((value.tasks?.length ?? 0) === 0 && (value.goal !== undefined || value.scope !== undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "A remove-only Plan patch cannot change goal or scope." });
+  }
+});
 export type ModelPlanUpdate = z.input<typeof ModelPlanUpdateSchema>;
 
 export const ModelInputRequestSchema = z.object({
@@ -137,7 +144,8 @@ export const modelResponses = Object.freeze({
       {
         ...(input.goal === undefined ? {} : { goal: input.goal }),
         ...(input.scope === undefined ? {} : { scope: input.scope }),
-        tasks: input.tasks
+        ...(input.tasks === undefined ? {} : { tasks: input.tasks }),
+        ...(input.removeSteps === undefined ? {} : { removeSteps: input.removeSteps })
       },
       input.callId
     );
@@ -155,7 +163,8 @@ export const modelResponses = Object.freeze({
       arguments: {
         ...(input.goal === undefined ? {} : { goal: input.goal }),
         ...(input.scope === undefined ? {} : { scope: input.scope }),
-        tasks: input.tasks
+        ...(input.tasks === undefined ? {} : { tasks: input.tasks }),
+        ...(input.removeSteps === undefined ? {} : { removeSteps: input.removeSteps })
       },
       ...(input.callId === undefined ? {} : { callId: input.callId })
     }, ...input.calls]);
