@@ -189,7 +189,7 @@ Runtime API、Provider/Tool 扩展和恢复语义详见 [Build with Nexora Runti
 | `process.stop` | execute | 停止 exact managed process generation 及其子进程并确认退出，必须批准 |
 | `git.status/diff/show` | read | 只读 Git 信息 |
 
-上表描述 Runtime 的默认保护边界，CLI 和第三方 Host 仍要求显式批准。官方 Desktop Host 会自动批准被 Workspace 路径约束的内建 `filesystem.write` / `filesystem.patch`，但仍通过同一个持久化 Approval、Invocation、Evidence 和 Completion 路径执行；没有 OS sandbox 的 `shell.execute`、`process.start` 和 `process.stop` 始终需要用户批准。长期服务不得通过扩大 `shell.execute` timeout 实现；它必须使用 generation-bound managed process，并在 readiness 通过后才可声称可用。详细边界见 [Managed Process Execution](MANAGED_PROCESS_EXECUTION_SPEC.md) 与 [Risk-based Tool Approval](RISK_BASED_TOOL_APPROVAL_SPEC.md)。
+上表描述 Runtime 的默认保护边界，CLI 和第三方 Host 仍要求显式批准。官方 Desktop Host 会自动批准被 Workspace 路径约束的内建 `filesystem.write` / `filesystem.patch`，但仍通过同一个持久化 Approval、Invocation、Evidence 和 Completion 路径执行；没有 OS sandbox 的 `shell.execute`、`process.start` 和 `process.stop` 始终需要用户批准。长期服务不得通过扩大 `shell.execute` timeout 实现；它必须使用 generation-bound managed process，并在 readiness 通过后才可声称可用。这些边界由 Runtime Contract、工具风险声明和当前 Approval Policy 共同决定。
 
 所有路径必须是 workspace-relative，越界和符号链接逃逸会失败。`shell.execute` 不接受 `cmd`、PowerShell、Bash 等交互式 Shell 入口。
 

@@ -258,7 +258,7 @@ Run 状态       → State Machine + persisted Run
 
 完成标准：真实应用通过同一 Runtime 完成执行、交互、失败或恢复和验证；接入成本主要来自应用领域，而不是重建 Agent 基础设施；应用之间的差异没有进入 Core 特判。
 
-当前授权的官方 Desktop Agent Workspace 是一个真实 Host Application：它用于验证公开 Runtime Contract 能否支持长期可用的 Workspace / Session 交互，但不得以 UI 需求为理由绕过 Authority 或向 Core 加入宿主特判。具体范围见 `docs/NEXORA_DESKTOP_WORKSPACE_SPEC.md`。
+当前授权的官方 Desktop Agent Workspace 是一个真实 Host Application：它用于验证公开 Runtime Contract 能否支持长期可用的 Workspace / Session 交互，但不得以 UI 需求为理由绕过 Authority 或向 Core 加入宿主特判。具体范围以公开 Runtime Contract、`ARCHITECTURE.md` 和 `DATA_FLOW.md` 为准。
 
 ### 1.4 — 基于证据的能力演进
 
