@@ -11,7 +11,7 @@ import {
   TaskContractSchema,
   createInitialRunSnapshot
 } from "../../packages/runtime/src/contracts.js";
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   RunControlError,
   createRuntime,
   type ModelDecisionContext,
@@ -207,7 +207,7 @@ describe("D2 RunHandle interaction", () => {
     const firstRuntime = createRuntime({
       workspace,
       dataDir,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           throw new Error("provider offline");
         }

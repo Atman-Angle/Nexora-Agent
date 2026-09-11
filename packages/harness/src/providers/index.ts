@@ -36,7 +36,6 @@ export {
   type ProviderAdapterDefinition,
   type ProviderCompletionOperation,
   type ProviderCompletionRequest,
-  type ProviderResponseFormat,
   type ProviderRequestTokenMeter
 } from "./adapter.js";
 
@@ -46,8 +45,6 @@ export {
   ModelPlanTaskSchema,
   ProviderToolCallSchema,
   ModelInputRequestSchema,
-  ModelDirectResponseSchema,
-  DIRECT_RESPONSE_CONTROL,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
@@ -56,8 +53,7 @@ export {
   type ModelPlanUpdate,
   type ModelPlanTask,
   type ProviderToolCall,
-  type ModelInputRequest,
-  type ModelDirectResponse
+  type ModelInputRequest
 } from "./model-response.js";
 
 export {

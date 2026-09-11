@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createAgent } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createAgent } from "../../packages/harness/src/index.js";
 import type { ModelDecisionContext, ModelResponse, RuntimeOperationContext, RuntimeProvider } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider, responseCall, responseDirect, responseInput, responseTools, successfulReadTool } from "./runtime-testkit.js";
 
@@ -237,6 +237,7 @@ describe("Phase 0 Nexora Fit Spike", () => {
 });
 
 class ExactReplayProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly #repeated: ModelResponse;
   #parentCalls = 0;
 
@@ -253,6 +254,7 @@ class ExactReplayProvider implements RuntimeProvider {
 }
 
 class ChildDelegationProbeProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly childContexts: ModelDecisionContext[] = [];
   readonly childPromptTools: string[][] = [];
   readonly childPromptSystems: string[] = [];
@@ -277,6 +279,7 @@ class ChildDelegationProbeProvider implements RuntimeProvider {
 }
 
 class WorkerObservationPromptProbeProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   parentPromptAfterJoin: string | null = null;
 
   async decide(context: ModelDecisionContext, operation: RuntimeOperationContext): Promise<ModelResponse> {

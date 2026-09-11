@@ -1,0 +1,3 @@
+Incident INC-2047: checkout-service timeouts began 2026-08-28T08:40Z and were
+mitigated at 08:52Z by the on-call owner team-orders. Status is mitigated;
+customer-facing impact was approximately 12 minutes.

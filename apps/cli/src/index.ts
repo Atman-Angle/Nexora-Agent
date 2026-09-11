@@ -10,6 +10,7 @@ import {
   createBuiltInTools,
   createAgent,
   createAgentProfileSnapshot,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   openAICompatibleProviderFromEnv,
   type ApprovalDecision,
   type CompletionRequirements,
@@ -292,6 +293,8 @@ function toCliResult(inspection: RunInspection): {
     | "succeeded";
   readonly stopReason: string | null;
   readonly summary: string | null;
+  readonly nextAction: string | null;
+  readonly exactCause: { readonly code: string; readonly message: string } | null;
   readonly resultArtifact: string | null;
   readonly evidence: RunInspection["evidence"];
   readonly lastError: RunInspection["error"];
@@ -304,7 +307,13 @@ function toCliResult(inspection: RunInspection): {
     runId: inspection.runId,
     status,
     stopReason: inspection.stopReason,
-    summary: inspection.result?.summary ?? null,
+    // A stopped Run has no result summary; its persisted Delivery is the only
+    // explanation of why it stopped and what the operator should do next.
+    summary: inspection.result?.summary ?? inspection.delivery?.summary ?? null,
+    nextAction: inspection.delivery?.nextAction ?? null,
+    exactCause: inspection.delivery === null
+      ? null
+      : { code: inspection.delivery.exactCause.code, message: inspection.delivery.exactCause.message },
     resultArtifact: inspection.result?.resultArtifact ?? null,
     evidence: inspection.evidence,
     lastError: inspection.error
@@ -314,6 +323,7 @@ function toCliResult(inspection: RunInspection): {
 function exitCode(status: ReturnType<typeof toCliResult>["status"]): number { return status === "succeeded" ? 0 : status === "waiting" ? 2 : status === "blocked" ? 3 : 4; }
 
 const inspectionProvider: RuntimeProvider = {
+  nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
   async decide() { throw new Error("Provider is unavailable in inspect mode."); }
 };
 

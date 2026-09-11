@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   type ModelDecisionContext,
   type ModelResponse,
@@ -132,6 +132,7 @@ describe("E145 Autonomous Execution Contract feature chain", () => {
 });
 
 class FeatureChainProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #decision = 0;
 
   async decide(context: ModelDecisionContext, _operation: RuntimeOperationContext): Promise<ModelResponse> {

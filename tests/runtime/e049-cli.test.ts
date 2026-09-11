@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { openAIChatCompletionBody, responseText } from "./runtime-testkit.js";
+
 const roots: string[] = [];
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -31,10 +33,10 @@ describe("E049 natural-language CLI", () => {
       } else if (calls === 2) {
         content = structuredTool("filesystem.read", { path: "target.txt" });
       } else {
-        content = structuredTool("nexora_respond", { text: "Read target.txt with verified evidence." });
+        content = structuredText("Read target.txt with verified evidence.");
       }
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(openAIChatCompletionBody(content as { text: string | null; toolCalls: readonly { callId?: string; name: string; arguments: unknown }[]; finishReason: string | null }));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -45,7 +47,6 @@ describe("E049 natural-language CLI", () => {
       NEXORA_MODEL_BASE_URL: `http://127.0.0.1:${address.port}/v1`,
       NEXORA_MODEL_API_KEY: "test-key",
       NEXORA_MODEL_NAME: "qwen3.7-flash",
-      NEXORA_MODEL_TOOL_TRANSPORT: "structured_output",
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
     });
     server.close();
@@ -83,9 +84,7 @@ describe("E049 natural-language CLI", () => {
       for await (const _chunk of request) { /* consume the request */ }
       calls += 1;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(
-        structuredTool("nexora_respond", { text: "I am Nexora." })
-      ) } }] }));
+      response.end(openAIChatCompletionBody(structuredText("I am Nexora.")));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -111,11 +110,7 @@ describe("E049 natural-language CLI", () => {
       for await (const _chunk of request) { /* consume the request */ }
       calls += 1;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
-        text: "No Tool was used.",
-        toolCalls: [],
-        finishReason: "stop"
-      }) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: { content: "No Tool was used." } }] }));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -147,9 +142,9 @@ describe("E049 natural-language CLI", () => {
       calls += 1;
       const content = calls === 1
         ? structuredTool("filesystem.read", { path: "target.txt" })
-        : structuredTool("nexora_respond", { text: "The persisted read completed the task." });
+        : structuredText("The persisted read completed the task.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(openAIChatCompletionBody(content as { text: string | null; toolCalls: readonly { callId?: string; name: string; arguments: unknown }[]; finishReason: string | null }));
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
@@ -186,13 +181,16 @@ function structuredTool(name: string, argumentsValue: unknown): unknown {
   return { text: null, toolCalls: [{ name, arguments: argumentsValue }], finishReason: "tool_calls" };
 }
 
+function structuredText(text: string): ReturnType<typeof responseText> {
+  return responseText(text);
+}
+
 function providerEnvironment(port: number): Record<string, string> {
   return {
     NEXORA_MODEL_PROVIDER: "openai-compatible",
     NEXORA_MODEL_BASE_URL: `http://127.0.0.1:${port}/v1`,
     NEXORA_MODEL_API_KEY: "test-key",
     NEXORA_MODEL_NAME: "qwen3.7-flash",
-    NEXORA_MODEL_TOOL_TRANSPORT: "structured_output",
     NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
   };
 }

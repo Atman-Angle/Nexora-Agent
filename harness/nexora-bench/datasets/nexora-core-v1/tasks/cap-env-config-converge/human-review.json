@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "taskId": "cap-env-config-converge",
+  "reviewStatus": "PENDING_HUMAN_REVIEW",
+  "reviewer": null,
+  "reviewedAt": null,
+  "decision": null,
+  "qualificationEvidence": ".tmp/cohort-b-env-config-qualification/report.json",
+  "reviewNotes": []
+}

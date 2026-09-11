@@ -112,7 +112,7 @@ Conversation 是按实际发生顺序生成的用户投影，不是 Runtime 原�
 
 Provider reasoning 默认显示为一条 `Think · 摘要` 紧凑活动，单行截断并随真实增量更新，避免长 reasoning 淹没 Conversation；用户可以在原位置展开查看该次 Provider 实际返回的完整 Markdown，再次点击收起。折叠状态只属于 Renderer 展示偏好，不成为 Runtime 状态。Renderer 必须合并高频 token delta；折叠时只挂载有界纯文本摘要，展开后才节流渲染完整 Markdown，不能让 Provider 流阻塞 Composer 或停止操作。
 
-Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的 `content` 与 `reasoning_content` 增量。`reasoning_content` 只进入临时展示通道，不并入最终 `ModelResponse.text`。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。`native_tools` 可使用 SSE；`structured_output` 未完成的 JSON 不作为 Markdown 展示。
+Harness 可以通过 Provider-neutral 的临时观察接口转发 Provider 实际返回的 `content` 与 `reasoning_content` 增量。`reasoning_content` 只进入临时展示通道，不并入最终 `ModelResponse.text`。增量携带 Run、Model Call、Attempt 和 sequence，只用于当前 Desktop 渲染，不写入 Run、Event Store、Evidence 或 Context；失败 Attempt 的增量必须丢弃。重启后从持久 Runtime 事实恢复，不恢复未完成 token。Agent 只使用 Provider-native Function Calling；无 Function Call 的普通文本只能作为 Completion Gate 候选。
 
 Agent 公开输出和正式 Result 使用经过转义的 Markdown 渲染。原始 HTML 和非 `http`、`https`、`mailto` 链接不得成为可执行内容。
 

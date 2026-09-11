@@ -1,0 +1,259 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-08T14:53:42.421Z",
+  "source": "current Pure Native Function Calling Prompt Compiler and OpenAI-compatible wire projection",
+  "toolSet": {
+    "controlCount": 3,
+    "runtimeCount": 13,
+    "totalCount": 16,
+    "providerExposedCount": 16,
+    "names": [
+      "nexora_update_plan",
+      "nexora_request_input",
+      "nexora_delegate_workers",
+      "filesystem.list",
+      "filesystem.patch",
+      "filesystem.read",
+      "filesystem.search",
+      "filesystem.write",
+      "git.diff",
+      "git.show",
+      "git.status",
+      "process.inspect",
+      "process.logs",
+      "process.start",
+      "process.stop",
+      "shell.execute"
+    ]
+  },
+  "measurements": {
+    "stablePrefix": {
+      "bytes": 27065,
+      "estimatedTokens": 6767
+    },
+    "promptToolCatalogSegment": {
+      "bytes": 17553,
+      "estimatedTokens": 4389,
+      "controlBytes": 5255,
+      "runtimeBytes": 12307
+    },
+    "providerFunctionSchemas": {
+      "bytes": 17529,
+      "estimatedTokens": 4383
+    },
+    "representativeNativeRequest": {
+      "withCatalogBytes": 46733,
+      "withoutCatalogBytes": 27383,
+      "exactByteDeltaFromRemovingPromptToolCatalog": 19350,
+      "estimatedTokenDelta": 4838
+    }
+  },
+  "duplicationBoundary": {
+    "duplicatedSourceFacts": [
+      "canonical Tool name is represented by the Provider function alias",
+      "description is repeated in the Provider function description",
+      "inputSchema is repeated as Provider parameters",
+      "decision.useWhen is repeated in the Provider description",
+      "decision.avoidWhen is repeated in the Provider description",
+      "decision.nonGoals is repeated in the Provider description",
+      "effect kind is repeated in the Provider description",
+      "evidence.produces is repeated in the Provider description"
+    ],
+    "promptOnlyFacts": [
+      "ProviderToolContract.kind",
+      "canonical runtime Tool name in the Prompt catalog"
+    ],
+    "providerOnlyFacts": [
+      "Provider-safe function alias",
+      "OpenAI function wrapper and type field",
+      "parameters field name"
+    ],
+    "globalPromptContentThatMustRemain": [
+      "kernel authority and safety rules",
+      "native transport/control guidance",
+      "control names and batch limits",
+      "Host Policy",
+      "Agent Profile",
+      "Project Instructions",
+      "Skills catalog"
+    ]
+  },
+  "perToolAudit": [
+    {
+      "name": "nexora_update_plan",
+      "providerAlias": "nexora_update_plan",
+      "kind": "control",
+      "promptBytes": 3087,
+      "providerBytes": 3088,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "nexora_request_input",
+      "providerAlias": "nexora_request_input",
+      "kind": "control",
+      "promptBytes": 802,
+      "providerBytes": 807,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "nexora_delegate_workers",
+      "providerAlias": "nexora_delegate_workers",
+      "kind": "control",
+      "promptBytes": 1354,
+      "providerBytes": 1360,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "filesystem.list",
+      "providerAlias": "filesystem_list",
+      "kind": "runtime",
+      "promptBytes": 765,
+      "providerBytes": 765,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "filesystem.patch",
+      "providerAlias": "filesystem_patch",
+      "kind": "runtime",
+      "promptBytes": 1176,
+      "providerBytes": 1174,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "filesystem.read",
+      "providerAlias": "filesystem_read",
+      "kind": "runtime",
+      "promptBytes": 839,
+      "providerBytes": 838,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "filesystem.search",
+      "providerAlias": "filesystem_search",
+      "kind": "runtime",
+      "promptBytes": 872,
+      "providerBytes": 874,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "filesystem.write",
+      "providerAlias": "filesystem_write",
+      "kind": "runtime",
+      "promptBytes": 769,
+      "providerBytes": 769,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "git.diff",
+      "providerAlias": "git_diff",
+      "kind": "runtime",
+      "promptBytes": 571,
+      "providerBytes": 565,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "git.show",
+      "providerAlias": "git_show",
+      "kind": "runtime",
+      "promptBytes": 680,
+      "providerBytes": 674,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "git.status",
+      "providerAlias": "git_status",
+      "kind": "runtime",
+      "promptBytes": 513,
+      "providerBytes": 509,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "process.inspect",
+      "providerAlias": "process_inspect",
+      "kind": "runtime",
+      "promptBytes": 676,
+      "providerBytes": 677,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "process.logs",
+      "providerAlias": "process_logs",
+      "kind": "runtime",
+      "promptBytes": 831,
+      "providerBytes": 828,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "process.start",
+      "providerAlias": "process_start",
+      "kind": "runtime",
+      "promptBytes": 2049,
+      "providerBytes": 2046,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "process.stop",
+      "providerAlias": "process_stop",
+      "kind": "runtime",
+      "promptBytes": 712,
+      "providerBytes": 710,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    },
+    {
+      "name": "shell.execute",
+      "providerAlias": "shell_execute",
+      "kind": "runtime",
+      "promptBytes": 1832,
+      "providerBytes": 1828,
+      "descriptionDuplicated": true,
+      "parametersDeepEqual": true,
+      "decisionGuidanceDuplicated": true,
+      "effectAndProducesDuplicated": true
+    }
+  ]
+}

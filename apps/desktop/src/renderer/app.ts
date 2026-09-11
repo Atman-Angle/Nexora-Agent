@@ -49,7 +49,7 @@ type ModelSettingsDraft = {
   decisionOutput: string;
   decisionOutputTokens: number;
   decisionOutputEdited: boolean;
-  transport: "native_tools" | "structured_output";
+  transport: "native_tools";
   reasoning: "off" | "dynamic" | "on";
   thinkingToggleParam: string;
 };
@@ -143,7 +143,9 @@ function render(): void {
     ? emptyState()
     : mode === "conversation"
       ? conversation(snapshot.session)
-      : outputView(snapshot.session);
+      : mode === "activity"
+        ? activity(snapshot.session)
+        : outputView(snapshot.session);
   const nextContentKey = contentViewportKey(snapshot.workspace.path, snapshot.session?.id ?? null, mode);
   const persistentContent = root.querySelector<HTMLElement>(".content-scroll");
   const previousContentKey = persistentContent?.dataset.contentKey ?? null;
@@ -256,6 +258,7 @@ function header(state: DesktopSnapshot): string {
       ${session === null ? "" : `
         <nav class="view-switch" aria-label="会话视图">
           <button class="${mode === "conversation" ? "active" : ""}" data-view="conversation">对话</button>
+          <button class="${mode === "activity" ? "active" : ""}" data-view="activity">活动</button>
           ${hasOutput ? `<button class="${mode === "output" ? "active" : ""}" data-view="output">产物</button>` : ""}
         </nav>
       `}
@@ -339,9 +342,10 @@ function conversation(session: SessionView): string {
         resultSummary: run.inspection.result?.summary ?? null
       });
         if (segment.channel !== "content") continue;
-        // Live deltas are visible before completion; completed non-formal output stays hidden.
+        // Live deltas are visible before completion; completed formal Result text stays rendered.
         if (segment.completed && !formalResult) continue; // if (!formalResult) continue
-        const liveProjection = publicOutputs.has(segment.key);
+        const completedFormalResult = segment.completed && formalResult;
+        const liveProjection = publicOutputs.has(segment.key) && !completedFormalResult;
         const projectionClass = liveProjection ? "streaming" : (segment.completed ? "completed" : "streaming");
         items.push({ at: segment.occurredAt, order: runIndex * 1_000_000 + 501, html: `
           <article class="message agent-message public-content ${projectionClass}" data-public-output="${escapeAttr(segment.key)}">
@@ -392,7 +396,7 @@ function conversation(session: SessionView): string {
       const unfinished = delivery.unfinishedWork.slice(0, 6);
       const presentation = deliveryPresentation(run.inspection.status, delivery.exactCause.code);
       items.push({ at: delivery.createdAt, order: runIndex * 1_000_000 + 999_999, html: `
-      ${resultMeta(firstInput, processedUntil)}<article class="result ${escapeAttr(run.inspection.status)}"><div><p class="result-guidance">${escapeHtml(presentation.message)}</p>${unfinished.length === 0 ? "" : `<p><strong>尚未完成</strong></p><ul>${unfinished.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`}<details><summary>查看技术详情</summary><p>${escapeHtml(delivery.exactCause.code)} · ${escapeHtml(delivery.exactCause.message)}</p><div class="technical-summary">${renderMarkdown(delivery.summary)}</div></details>${artifactSummary(artifacts)}</div></article>
+      ${resultMeta(firstInput, processedUntil)}<article class="result ${escapeAttr(run.inspection.status)}"><div><p class="result-guidance">${escapeHtml(presentation.message)}</p><p class="result-guidance"><strong>下一步</strong> ${escapeHtml(delivery.nextAction)}</p>${unfinished.length === 0 ? "" : `<p><strong>尚未完成</strong></p><ul>${unfinished.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`}<details><summary>查看技术详情</summary><p>${escapeHtml(delivery.exactCause.code)} · ${escapeHtml(delivery.exactCause.message)}</p><div class="technical-summary">${renderMarkdown(delivery.summary)}</div></details>${artifactSummary(artifacts)}</div></article>
     ` });
     } else if (run.inspection.error !== null) {
       const artifacts = session.deliverables.filter((deliverable) => deliverable.sourceRunId === run.inspection.runId);
@@ -411,6 +415,15 @@ function conversation(session: SessionView): string {
   return `<section class="conversation">${turns}${sessionItems}</section>`;
 }
 
+function activity(session: SessionView): string {
+  const records = session.runs.flatMap((run, runIndex) => [
+    ...run.history.records.map((record) => ({ runIndex, at: record.occurredAt, sequence: record.sequence, kind: record.type, payload: record.payload, runId: record.runId, actor: record.actorType ?? "unknown" })),
+    ...run.inspection.evidence.map((item) => ({ runIndex, at: item.producedAt, sequence: `E${item.id.slice(0, 6)}`, kind: item.kind, payload: item, runId: run.inspection.runId, actor: "validator" }))
+  ]).sort((a, b) => a.at.localeCompare(b.at));
+  if (records.length === 0) return `<section class="activity-page"><header><span class="eyebrow">SESSION ACTIVITY</span><h2>活动</h2><p>暂无持久化运行记录。</p></header></section>`;
+  const rows = records.map((record) => `<article class="activity-record"><div class="activity-record-index">${escapeHtml(String(record.sequence))}</div><div class="activity-record-main"><div class="activity-record-heading"><strong>${escapeHtml(record.kind)}</strong><time>${escapeHtml(formatTime(record.at))}</time></div><details><summary>查看详情</summary><pre>${escapeHtml(pretty({ runId: record.runId, actor: record.actor, payload: record.payload }))}</pre></details></div></article>`).join("");
+  return `<section class="activity-page"><header><span class="eyebrow">SESSION ACTIVITY</span><h2>活动</h2><p>查看此会话的完整持久化 Runtime 轨迹；这里不创建第二套状态。</p><div class="activity-summary"><strong>${records.length}</strong><span>条记录</span><i></i><strong>${session.runs.length}</strong><span>次运行</span></div></header><div class="activity-records">${rows}</div></section>`;
+}
 function executionTranscript(run: SessionView["runs"][number], services: SessionView["managedProcesses"]): string {
   type Entry = { at: string; html: string };
   const entries: Entry[] = [];
@@ -498,7 +511,13 @@ function resultMeta(firstInput: SessionView["inspection"]["inputs"][number] | un
 
 function deliveryPresentation(status: string, code: string): { label: string; message: string } {
   if (status === "cancelled") return { label: "本回合已暂停", message: "已完成和确认的内容仍然保留。你可以调整要求后继续这个任务。" };
-  if (code === "NO_PROGRESS_DETECTED") return { label: "运行已失败", message: "Nexora 已耗尽当前可观察策略空间。可以基于交接信息创建新的后续运行。" };
+  if (code === "NO_PROGRESS_DETECTED") return { label: "运行已停止", message: "Nexora 连续多轮没有产生新的进展，已停止当前策略。已完成的事实与产物都已保留，换一个方向后可以继续这个任务。" };
+  if (code === "PROVIDER_UNAVAILABLE" || code === "CONTEXT_CAPACITY_EXCEEDED") return { label: "模型服务暂时不可用", message: "模型服务没有正常响应，当前执行段已停止。请检查网络与 Provider 配置后继续；已完成的事实与产物都已保留。" };
+  if (code === "TOOL_RESULT_UNKNOWN") return { label: "工具结果待确认", message: "有一个非幂等工具调用的结果无法自动确认，为避免重复副作用，Nexora 暂停在这里。请确认该工具是成功还是失败，然后继续。" };
+  if (code === "TOOL_CONFIRMED_FAILED") return { label: "工具执行失败", message: "关键工具调用已确认失败。修正输入后可以重试该步骤，或基于已确认的事实创建新的后续运行。" };
+  if (code === "WORKER_RECOVERY_REQUIRED") return { label: "协作运行待恢复", message: "有协作 Worker 运行处于暂停状态。恢复或放弃对应分支后，这个任务会继续执行。" };
+  if (code === "INVALID_MODEL_RESPONSE") return { label: "模型输出未通过校验", message: "模型连续返回了无法接受的响应，当前策略已停止。被拒绝的响应已保留用于诊断，可以换一个方向继续。" };
+  if (code.endsWith("BUDGET_EXCEEDED")) return { label: "执行预算用尽", message: "当前执行段用尽了配置的预算边界。可以扩展预算后继续，已完成的事实与产物都已保留。" };
   if (status === "blocked") return { label: "需要你的帮助", message: "Nexora 暂时缺少继续所需的条件。补充信息或调整任务方向后即可继续。" };
   return { label: "本回合未完成", message: "这次处理没有完整结束。已经确认的内容仍然保留，你可以补充要求后继续。" };
 }
@@ -533,16 +552,20 @@ function composer(session: SessionView | null): string {
   const run = session.inspection;
   const projection = projectRuntimeControls(run);
   if (projection.kind === "input") {
-    return inputReplyComposer(run.pendingRequest?.kind === "input" ? run.pendingRequest.prompt : null);
+    return inputReplyComposer(
+      run.pendingRequest?.kind === "input" ? run.pendingRequest.prompt : null,
+      pauseExplanation(run)
+    );
   }
   if (projection.kind === "approval" && run.pendingRequest?.kind === "approval") {
-    return statusComposer(session, "approval", `<small>需要你的批准</small><p>${escapeHtml(run.pendingRequest.prompt)}</p><span class="request-impact">将执行：${escapeHtml(run.pendingRequest.toolName)}</span><details><summary>查看操作详情</summary><pre>${escapeHtml(pretty(run.pendingRequest.input))}</pre></details>`, `<button data-action="deny" ${busy ? "disabled" : ""}>拒绝</button><button class="primary" data-action="approve" ${busy ? "disabled" : ""}>批准</button>`);
+    return statusComposer(session, "approval", `<small>需要你的批准</small><p>${escapeHtml(run.pendingRequest.prompt)}</p><span class="request-impact">将执行：${escapeHtml(run.pendingRequest.toolName)}</span>${pauseExplanation(run)}<details><summary>查看操作详情</summary><pre>${escapeHtml(pretty(run.pendingRequest.input))}</pre></details>`, `<button data-action="deny" ${busy ? "disabled" : ""}>拒绝</button><button class="primary" data-action="approve" ${busy ? "disabled" : ""}>批准</button>`);
   }
   if (projection.kind === "running") {
     return followUpComposer(session, true);
   }
   if (projection.kind === "provider_reconnecting") {
-    return statusComposer(session, "blocked", `<small>等待 Runtime Provider 恢复探测</small><p>${escapeHtml(run.delivery?.summary ?? "Runtime 将在满足已持久化的恢复条件后继续。")}</p><span class="request-impact">验证：bounded provider probe</span>`, `<button data-action="cancel" ${busy ? "disabled" : ""}>结束任务</button>`);
+    const guidance = run.delivery?.nextAction ?? "连接恢复后即可继续，已完成的事实与产物都会保留。";
+    return statusComposer(session, "blocked", `<small>等待 Runtime Provider 恢复探测</small><p>${escapeHtml(run.delivery?.summary ?? "Runtime 将在满足已持久化的恢复条件后继续。")}</p><span class="request-impact">Nexora 会自动重试连接，也可以立即重试。${escapeHtml(guidance)}</span>`, `<button data-action="cancel" ${busy ? "disabled" : ""}>结束任务</button><button class="primary" data-action="resume" ${busy ? "disabled" : ""}>立即重试连接</button>`);
   }
   if (projection.kind === "budget_extension") {
     return statusComposer(session, "blocked", `<small>需要扩展执行预算</small><p>${escapeHtml(run.delivery?.summary ?? "Runtime 要求扩展指定预算后才能继续。")}</p><span class="request-impact">允许维度：${projection.allowedDimensions.map(escapeHtml).join("、")}</span>${projection.allowedDimensions.map((dimension) => `<label><input type="checkbox" data-budget-dimension="${dimension}" checked />${dimension}</label>`).join("")}`, `<button class="primary" data-action="extend-budget" ${busy ? "disabled" : ""}>扩展所选预算</button>`);
@@ -554,7 +577,9 @@ function composer(session: SessionView | null): string {
     const handoff = run.result?.failureHandoff;
     const completed = handoff?.completedWork.length ? handoff.completedWork.join("；") : "尚无可确认的已完成工作";
     const remaining = handoff?.unfinishedRequirements.length ? handoff.unfinishedRequirements.join("；") : handoff?.nextAction ?? "没有 Runtime 声明的恢复条件";
-    return `<div class="recovery-stack"><div class="recovery-hint"><span class="recovery-dot"></span><div><strong>运行已失败</strong><span>${escapeHtml(run.delivery?.summary ?? "Runtime 已终止当前 Run。")} 当前原因：${escapeHtml(run.stopReason ?? "unknown")}</span><details><summary>查看交接信息</summary><p>已完成：${escapeHtml(completed)}</p><p>未完成：${escapeHtml(remaining)}</p></details></div></div>${followUpComposer(session, false)}</div>`;
+    const presentation = deliveryPresentation("failed", run.delivery?.exactCause.code ?? run.stopReason ?? "unknown");
+    const nextAction = run.delivery?.nextAction ?? handoff?.nextAction ?? null;
+    return `<div class="recovery-stack"><div class="recovery-hint"><span class="recovery-dot"></span><div><strong>${escapeHtml(presentation.label)}</strong><span>${escapeHtml(presentation.message)}</span>${nextAction === null ? "" : `<span class="request-impact">下一步：${escapeHtml(nextAction)}</span>`}<details><summary>查看交接信息</summary><p>原因：${escapeHtml(run.delivery?.exactCause.code ?? run.stopReason ?? "unknown")} · ${escapeHtml(run.delivery?.exactCause.message ?? "Runtime 已终止当前 Run。")}</p><p>已完成：${escapeHtml(completed)}</p><p>未完成：${escapeHtml(remaining)}</p>${run.delivery === null ? "" : `<div class="technical-summary">${renderMarkdown(run.delivery.summary)}</div>`}</details></div></div>${followUpComposer(session, false)}</div>`;
   }
   if (run.status === "blocked") {
     if (projection.kind === "worker_recovery") {
@@ -579,7 +604,7 @@ function composer(session: SessionView | null): string {
     const budget = run.stopReason?.endsWith("BUDGET_EXCEEDED") === true;
     const metrics = run.executionMetrics;
     const quality = budget ? ` · ${metrics.modelCalls} model / ${metrics.toolCalls} tool calls · ${metrics.repeatedToolCalls} repeated` : "";
-    return statusComposer(session, "blocked", `<small>任务已暂停${quality}</small><p>${escapeHtml(run.delivery?.summary ?? "当前执行需要你的介入。")}</p>`, `<button class="${budget && metrics.repeatedToolCalls === 0 ? "primary" : ""}" data-action="${budget ? "extend-budget" : "resume"}" ${busy ? "disabled" : ""}>${budget ? "延长预算并继续" : "继续运行"}</button>`);
+    return statusComposer(session, "blocked", `<small>任务已暂停${quality}</small><p>${escapeHtml(run.delivery?.summary ?? "当前执行需要你的介入。")}</p>${run.delivery === null ? "" : `<p>${escapeHtml(run.delivery.nextAction)}</p>`}`, `<button class="${budget && metrics.repeatedToolCalls === 0 ? "primary" : ""}" data-action="${budget ? "extend-budget" : "resume"}" ${busy ? "disabled" : ""}>${budget ? "延长预算并继续" : "继续运行"}</button>`);
   }
   return followUpComposer(session, false);
 }
@@ -588,9 +613,19 @@ function statusComposer(session: SessionView, variant: string, content: string, 
   return `<section class="composer status-composer ${variant}"><div class="status-composer-copy">${content}</div>${composerToolbar(actions, "", false, session)}</section>`;
 }
 
-function inputReplyComposer(prompt: string | null): string {
+/**
+ * A paused Run must state why it stopped and what resolves it, instead of only
+ * showing the raw request the Runtime is waiting on.
+ */
+function pauseExplanation(run: SessionView["inspection"]): string {
+  const delivery = run.delivery;
+  if (delivery === null || delivery.outcome !== "paused") return "";
+  return `<p>${escapeHtml(delivery.summary)}</p><span class="request-impact">下一步：${escapeHtml(delivery.nextAction)}</span>`;
+}
+
+function inputReplyComposer(prompt: string | null, explanation = ""): string {
   return `<section class="composer follow-up">
-    ${prompt === null ? "" : `<div class="status-composer-copy"><small>需要你的信息</small><p>${escapeHtml(prompt)}</p></div>`}
+    ${prompt === null ? "" : `<div class="status-composer-copy"><small>需要你的信息</small><p>${escapeHtml(prompt)}</p>${explanation}</div>`}
     <form data-form="input">
       <textarea name="text" placeholder="回复 Nexora…" required>${escapeHtml(draft)}</textarea>
       ${composerToolbar(`<button class="send-button" aria-label="发送回复" ${busy || draft.trim() === "" ? "disabled" : ""}>↑</button>`, "", true)}
@@ -681,8 +716,8 @@ function settings(state: DesktopSnapshot): string {
             </div>
             <fieldset class="settings-field active-context"><legend>Active Context Target</legend><div class="segmented"><label><input type="radio" name="activeMode" value="auto" ${draft.activeMode === "auto" ? "checked" : ""} /><span>自动</span></label><label><input type="radio" name="activeMode" value="custom" ${draft.activeMode === "custom" ? "checked" : ""} /><span>自定义</span></label></div>${draft.activeMode === "custom" ? `${settingsField("自定义上限", "activeTarget", `<input name="activeTarget" inputmode="decimal" value="${escapeAttr(draft.activeTarget)}" placeholder="800K" />`)}` : `<small>由系统根据模型上下文窗口自动确定</small>`}</fieldset>
           </section>
-          <details class="advanced-settings" ${settingsAdvancedOpen ? "open" : ""}><summary>高级设置 <span>Tool transport、推理与 Provider 参数</span></summary><div class="advanced-content">
-            <label class="settings-field"><span>Tool transport</span><select name="transport"><option value="native_tools" ${draft.transport === "native_tools" ? "selected" : ""}>Native tools · streaming</option><option value="structured_output" ${draft.transport === "structured_output" ? "selected" : ""}>Structured output</option></select></label>
+          <details class="advanced-settings" ${settingsAdvancedOpen ? "open" : ""}><summary>高级设置 <span>Native Tool、推理与 Provider 参数</span></summary><div class="advanced-content">
+            <div class="settings-field"><span>Tool transport</span><strong>Native tools</strong></div>
             <div class="settings-grid"><label class="settings-field"><span>Reasoning</span><select name="reasoning"><option value="dynamic" ${draft.reasoning === "dynamic" ? "selected" : ""}>动态</option><option value="off" ${draft.reasoning === "off" ? "selected" : ""}>关闭</option><option value="on" ${draft.reasoning === "on" ? "selected" : ""}>开启</option></select></label>${settingsField("Thinking parameter", "thinkingToggleParam", `<input name="thinkingToggleParam" value="${escapeAttr(draft.thinkingToggleParam)}" placeholder="enable_thinking" />`)}</div>
           </div></details>
           <div class="danger-zone"><div><strong>删除模型</strong><small>模型删除后，使用它的工作区会切换到其他可用模型。</small></div><button type="button" class="danger-action" data-profile-delete="${escapeAttr(profile.id)}">删除</button></div>
@@ -807,7 +842,7 @@ function updateSettingsDraft(target: EventTarget | null): void {
     case "activeMode":
       if (value === "auto" || value === "custom") { settingsDraft.activeMode = value; settingsErrors = {}; render(); }
       return;
-    case "transport": settingsDraft.transport = value === "structured_output" ? "structured_output" : "native_tools"; break;
+    case "transport": settingsDraft.transport = "native_tools"; break;
     case "reasoning": settingsDraft.reasoning = value === "off" || value === "on" ? value : "dynamic"; break;
     case "thinkingToggleParam": settingsDraft.thinkingToggleParam = value; break;
     default: return;
@@ -964,7 +999,7 @@ function bindActions(): void {
   document.onclick = () => { if (workspaceMenuKey !== null || sessionMenuKey !== null || composerAddOpen || modelMenuOpen) { workspaceMenuKey = null; sessionMenuKey = null; composerAddOpen = false; modelMenuOpen = false; render(); } };
   document.onkeydown = (event) => { if (event.key === "Escape" && (workspaceMenuKey !== null || sessionMenuKey !== null || composerAddOpen || modelMenuOpen)) { workspaceMenuKey = null; sessionMenuKey = null; composerAddOpen = false; modelMenuOpen = false; render(); } };
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((element) => element.addEventListener("click", () => {
-    const nextMode = element.dataset.view === "output" ? "output" : "conversation";
+    const nextMode = element.dataset.view === "output" ? "output" : element.dataset.view === "activity" ? "activity" : "conversation";
     if (nextMode === "output" && snapshot?.session !== null && snapshot?.session !== undefined) {
       const selected = activeDeliverable(snapshot.session);
       if (selected !== null) {
@@ -1651,6 +1686,10 @@ function processingEnd(run: SessionView["runs"][number]): string | null {
 function processingDuration(start: string, end: string | null): string {
   const elapsed = Math.max(0, Date.parse(end ?? new Date().toISOString()) - Date.parse(start));
   return `${end === null ? "已处理" : "处理耗时"} ${formatElapsed(elapsed)}`;
+}
+function formatTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 function formatElapsed(milliseconds: number): string {
   const seconds = Math.floor(milliseconds / 1_000);

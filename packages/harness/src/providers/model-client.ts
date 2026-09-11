@@ -67,6 +67,20 @@ export type ProjectedRunContext = {
   };
 };
 
+export type CompletionBlocker = {
+  readonly code: string;
+  readonly stepId: string | null;
+  readonly checkId: string | null;
+  readonly subject: string | null;
+  readonly nextAction: "plan" | "execute" | "refresh" | "resolve" | "collect" | "complete";
+  readonly detail: string;
+};
+
+export type CompletionProjection = {
+  readonly ready: boolean;
+  readonly blockers: readonly CompletionBlocker[];
+};
+
 export type ContinuationTurn = {
   readonly sourceRunId: string;
   readonly status: "succeeded" | "failed" | "cancelled" | "blocked";
@@ -116,6 +130,8 @@ export type ModelDecisionContext = {
   readonly workerRun?: boolean;
   readonly delegationSatisfied?: boolean;
   readonly run: ProjectedRunContext;
+  /** Proactive read-only projection of Completion Gate blockers before a finish proposal. */
+  readonly completionProjection?: CompletionProjection;
   /** Bounded projection of verified continuation ancestors, oldest to newest. */
   readonly continuation?: readonly ContinuationTurn[];
   readonly projection: {
@@ -148,7 +164,7 @@ export type ModelDecisionContext = {
     readonly branchStatus: "creating" | "active" | "merged" | "discarded" | "failed";
     readonly summary: string | null;
     readonly resultArtifact: string | null;
-    readonly deliveryOutcome: "succeeded" | "failed" | "cancelled" | "blocked" | null;
+    readonly deliveryOutcome: "succeeded" | "failed" | "cancelled" | "blocked" | "paused" | null;
     readonly evidenceRefs: readonly string[];
   }[];
   readonly rehydratedFacts: readonly RehydratedFact[];
@@ -381,6 +397,15 @@ export type RehydratedFact = {
 export type RepairIssue = {
   readonly kind: string;
   readonly message: string;
+  /**
+   * Runtime-owned structured rejection code/path when available (e.g.
+   * CHECK_EVIDENCE_STALE or PLAN_SCOPE_REQUIRED_OUTCOME_DUPLICATED).  Legacy
+   * adapters without structured codes leave these absent; consumers must then
+   * fall back to the message prefix only for compatibility, never as the
+   * primary protocol.
+   */
+  readonly code?: string;
+  readonly path?: string;
 };
 
 export type ModelCallPhase = "decision";
@@ -432,6 +457,131 @@ export type ProviderCacheUsage = {
   readonly cacheEligibleInputTokens?: number;
 };
 
+export type ProviderWireSectionTelemetry = {
+  /** Exact UTF-8 bytes of the compact JSON value used for this logical section; not a tokenizer-exact count. */
+  readonly bytes: number;
+  /** Deterministic byte/4 estimate for comparison only; Provider usage remains authoritative for input tokens. */
+  readonly estimatedTokens: number;
+  readonly digest: string;
+  readonly sourceRefs: readonly string[];
+  readonly substantivePayloadKeys: readonly string[];
+  readonly fullExpansionCount: number;
+  readonly metadataOccurrenceCount: number;
+  readonly references: readonly {
+    readonly ref: string;
+    readonly digest: string;
+    readonly fullExpansionCount: number;
+    readonly metadataOccurrenceCount: number;
+  }[];
+};
+
+export type ProviderWireTransportTelemetry = {
+  readonly schemaVersion: 1;
+  /** Exact UTF-8 bytes and digest of the serialized body passed to fetch(). */
+  readonly finalRequest: {
+    readonly bytes: number;
+    readonly digest: string;
+  };
+  readonly providerSections: Readonly<Record<string, ProviderWireSectionTelemetry>>;
+  /** Attribution view for the body only; HTTP headers and socket/protocol cost are outside this phase. */
+  readonly transportOverhead: {
+    readonly providerWrapperBytes: number;
+    readonly providerWrapperEstimatedTokens: number;
+    readonly messageEnvelopeBytes: number;
+    readonly messageEnvelopeEstimatedTokens: number;
+    readonly transportOverheadBytes: number;
+    readonly transportOverheadEstimatedTokens: number;
+  };
+};
+
+export type ProviderWireTelemetry = {
+  readonly schemaVersion: 1;
+  readonly transport: {
+    readonly kind: "native_tools";
+    readonly promptCacheMode: "disabled" | "automatic" | "explicit_breakpoints" | "unknown";
+  };
+  /** Exact serialized Provider body measurement inherited from the transport instrumentation. */
+  readonly finalRequest: {
+    readonly bytes: number;
+    readonly digest: string;
+  };
+  /**
+   * Prompt/context content sections only; provider protocol sections are
+   * separate. These are logical attribution views, not byte slices of the
+   * final body and must not be summed as an exact request total.
+   */
+  readonly businessSections: Readonly<Record<string, ProviderWireSectionTelemetry>>;
+  /**
+   * Provider-native continuation and schema payloads, not business context
+   * sections. These are also attribution views over the final body.
+   */
+  readonly providerSections: Readonly<Record<string, ProviderWireSectionTelemetry>>;
+  /** Provider-native Tool exposure in the actual request; response calls are reported by model.turn. */
+  readonly toolCountExposed: number;
+  readonly exposedToolNames: readonly string[];
+  readonly transportOverhead: ProviderWireTransportTelemetry["transportOverhead"];
+  readonly duplicateSubstantivePayloads: readonly {
+    readonly ref: string;
+    readonly digest: string;
+    readonly fullExpansionCount: number;
+    readonly metadataOccurrenceCount: number;
+    readonly sections: readonly string[];
+  }[];
+};
+
+export type NativeFunctionCallingCapabilities =
+  | {
+      readonly supported: true;
+      readonly functionDefinitions: true;
+      readonly functionCallResponses: true;
+      readonly stableCallIds: true;
+      readonly functionResultContinuation: true;
+      readonly multiTurn: true;
+      readonly nullTextWithFunctionCall: true;
+      readonly maxBatchSize: number;
+      readonly aliasPreservation: true;
+      readonly argumentPreservation: true;
+    }
+  | {
+      readonly supported: false;
+      readonly reason: string;
+    };
+
+export const NATIVE_FUNCTION_CALLING_CAPABILITIES: NativeFunctionCallingCapabilities = Object.freeze({
+  supported: true,
+  functionDefinitions: true,
+  functionCallResponses: true,
+  stableCallIds: true,
+  functionResultContinuation: true,
+  multiTurn: true,
+  nullTextWithFunctionCall: true,
+  maxBatchSize: 8,
+  aliasPreservation: true,
+  argumentPreservation: true
+});
+
+export function validateNativeFunctionCallingCapabilities(
+  capabilities: NativeFunctionCallingCapabilities
+): void {
+  if (capabilities.supported === false) {
+    throw new Error(`Provider does not support native Function Calling: ${capabilities.reason}`);
+  }
+  if (
+    capabilities.functionDefinitions !== true
+    || capabilities.functionCallResponses !== true
+    || capabilities.stableCallIds !== true
+    || capabilities.functionResultContinuation !== true
+    || capabilities.multiTurn !== true
+    || capabilities.nullTextWithFunctionCall !== true
+    || capabilities.aliasPreservation !== true
+    || capabilities.argumentPreservation !== true
+    || !Number.isInteger(capabilities.maxBatchSize)
+    || capabilities.maxBatchSize < 1
+  ) {
+    throw new Error("Provider native Function Calling capability declaration is incomplete.");
+  }
+}
+
 export type ProviderTokenUsage = {
   readonly inputTokens: number;
   readonly outputTokens: number;
@@ -450,6 +600,7 @@ export type ProviderTokenMeter = (
 export type RuntimeOperationContext = {
   readonly signal: AbortSignal;
   readonly reportTokenUsage?: (usage: ProviderTokenUsage) => void;
+  readonly reportWireTelemetry?: (telemetry: ProviderWireTelemetry) => void;
   readonly reportPublicTextDelta?: (text: string, channel?: PublicTextChannel) => void;
   readonly compiledPrompt?: CompiledPrompt;
 };
@@ -457,6 +608,11 @@ export type RuntimeOperationContext = {
 export interface RuntimeProvider {
   readonly modelProfile?: ProviderModelProfile;
   readonly transport?: ProviderTransportProfile;
+  /**
+   * Explicit Agent capability declaration. A negative declaration is terminal
+   * and must never trigger a structured-output or JSON-action fallback.
+   */
+  readonly nativeFunctionCalling: NativeFunctionCallingCapabilities;
   readonly measureTokens?: ProviderTokenMeter;
   decide(
     context: ModelDecisionContext,

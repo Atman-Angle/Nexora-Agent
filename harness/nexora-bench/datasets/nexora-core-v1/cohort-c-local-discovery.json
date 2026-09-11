@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-c-local-discovery",
+  "version": 1,
+  "description": "Harbor capability cohort C: realistic local information discovery and analysis task.",
+  "tasks": [
+    "tasks/cap-local-discovery-handoff/task.json"
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-artifact-production-dev-03",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "artifact_production",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "advanced",
+  "horizon": "long",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Produce a review-ready data stewardship artifact from the supplied records, retain traceable evidence references, and validate the final artifact.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-artifact-production-dev-03/fixture",
+      "digest": "sha256:eebca8a2940d66474b0871c56630b056cbdaa47fef7427017f6b924dfd263bf3"
+    },
+    "scenario": "release-v1/tasks/v1-artifact-production-dev-03/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-artifact-production-dev-03.grader.json",
+    "graderDigest": "sha256:8053fca93438aeb5d712c62aaa7e05ef14dba3f491e3b2e8798added6231d163",
+    "referenceRef": "release-v1/sealed/v1-artifact-production-dev-03.reference.json",
+    "referenceDigest": "sha256:7706b34b8ff2b04b14f09d9f1c89841420d17a348b63e791d743a77da76a552e",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-artifact-production-dev-03.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:08322819a6ef7a8fd58de8394c0fb90a4d2f84029fe510dd4d36bfb6f9dd5b6b",
+    "fixtureDigest": "sha256:eebca8a2940d66474b0871c56630b056cbdaa47fef7427017f6b924dfd263bf3"
+  }
+}

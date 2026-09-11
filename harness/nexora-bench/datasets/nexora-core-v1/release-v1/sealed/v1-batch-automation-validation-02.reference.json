@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-batch-automation-validation-02",
+  "expectedPaths": [
+    "manifest.json"
+  ],
+  "referenceStateDigest": "sha256:57348292191e7923500d32893229da9700375c3e2b3296ba18820335873a6a20"
+}

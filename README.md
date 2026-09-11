@@ -55,7 +55,7 @@ The model proposes decisions. It cannot directly execute tools, rewrite Run stat
 | Layer | Responsibility |
 | --- | --- |
 | **Your application** | User experience, goals, domain data, prompts, tools, and business rules |
-| **Nexora Harness** | Agent loop, model calls, context, planning, profiles, skills, and decision compilation |
+| **Nexora Harness** | Agent loop, model calls, bounded context, planning, convergence, repair navigation, skills, and decision compilation |
 | **Nexora Runtime** | Run state, tool execution, approvals, recovery, Evidence, and completion invariants |
 | **Model provider** | Proposes the next decision from a bounded working context |
 
@@ -110,9 +110,10 @@ try {
 
 - Durable Runs, events, artifacts, Tool Invocations, and Evidence
 - Schema-validated tools with permissions, risk, approval, and recovery semantics
-- OpenAI-compatible model providers with native tool calling and streaming output
-- Bounded context, deterministic eviction, rehydration, and scoped cross-Run Memory
-- Run-owned planning and deterministic completion validation
+- OpenAI-compatible providers with mandatory complete native Function Calling and streaming output
+- Bounded context, deterministic eviction, rehydration, scoped cross-Run Memory, and verified native-continuation projection deduplication
+- Provider-wire telemetry and decision-efficiency accounting for reproducible token and request attribution
+- Run-owned planning, deterministic completion validation, progress-anchored convergence, and bounded repair navigation
 - Human input, approval, cancellation, continuation, and crash recovery
 - Local Agent Skill discovery with model-owned, progressive instruction loading
 - Managed long-running local processes through the same Runtime authority
@@ -121,15 +122,16 @@ try {
 - Task-scope authority that keeps required outcomes, exclusions, and Step bindings explicit across replans
 - Coding-strategy and hybrid decision context for bounded autonomous execution with manifest-diff awareness
 - Editable workspace artifacts, including rich documents and Office-format workflows with persisted links and evidence
-- Execution cadence, liveness, and convergence controls for long-running coding tasks
+- Execution cadence, liveness, protected-action budgets, and proactive Completion Gate blocker projection
+- Harbor 0.22.0 capability and reliability evaluation with isolated trials and composed Runtime grades
 
 ## What is included in this development snapshot?
 
-This snapshot advances Nexora's end-to-end execution surface. The Runtime and Harness now preserve task scope as an authoritative contract, reject unauthorized scope expansion, and require every required outcome to remain planned before completion. Provider-native tool calling, transient recovery, bounded retries, hybrid decision context, and coding-task strategy are integrated into the agent loop.
+This snapshot closes the production Harness optimization baseline. Provider transport is now native Function Calling only: adapters must declare and validate the complete function-definition, call-response, ID, continuation, batching, alias, and argument-fidelity contract instead of falling back to structured output or prompt conventions.
 
-The Desktop workspace now supports richer streaming sessions, workspace links, editable deliverables, and Office-oriented artifacts. The benchmark harness, canaries, and Runtime/Desktop suites were expanded to exercise recovery, liveness, completion authority, document editing, and multi-format delivery paths.
+The Harness adds provider-wire telemetry, scoped native-continuation deduplication, progress-anchored convergence, reactive rejection/repair navigation, derived next-unfinished-step guidance, protected-action budget projection, proactive Completion Gate blocker projection, and a bounded remove-only Plan patch. These changes preserve Runtime authority over Run status, Tool Invocations, Evidence, and completion. The controlled Tool Catalog projection experiment failed its hard correctness/stability gate and remains disabled by default.
 
-The implementation is intentionally accompanied by its specifications, execution plans, reports, and measured canary outputs under [`docs/`](./docs/README.md), so the behavior and remaining verification limits are reviewable alongside the code.
+Evaluation now runs through Harbor 0.22.0 for isolated capability and reliability cohorts, composing external task verification with Runtime integrity, authority, safety, and expected-outcome grades. Specifications, controlled A/B evidence, real-provider probes, and remaining verification limits are retained under [`docs/`](./docs/README.md) and the [evaluation harness](./harness/nexora-bench/README.md).
 
 ## Project status
 
@@ -148,6 +150,9 @@ The current implementation targets local TypeScript applications and OpenAI-comp
 | Follow execution and persistence | [Data flow](./DATA_FLOW.md) |
 | Review product direction and scope | [Project](./PROJECT.md) |
 | Review verification requirements | [Tests](./TESTS.md) |
+| Run capability and reliability evaluation | [Evaluation harness](./harness/nexora-bench/README.md) |
+| Review native Provider protocol | [Native tool protocol](./docs/PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md) |
+| Review Context Phase B evidence | [Context optimization Phase B](./docs/CONTEXT_HARNESS_OPTIMIZATION_PHASE_B.md) |
 | Browse all public documents | [Documentation index](./docs/README.md) |
 
 ## Development

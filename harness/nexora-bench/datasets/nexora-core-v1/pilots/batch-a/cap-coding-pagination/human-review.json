@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "taskId": "cap-coding-pagination",
+  "reviewStatus": "PENDING_HUMAN_REVIEW",
+  "reviewer": null,
+  "reviewedAt": null,
+  "decision": null,
+  "qualificationEvidence": ".tmp/batch-a-qualification-final/report.json",
+  "reviewNotes": []
+}

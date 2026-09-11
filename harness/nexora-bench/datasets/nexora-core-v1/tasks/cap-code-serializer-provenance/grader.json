@@ -1,0 +1,20 @@
+{
+  "files": [],
+  "commands": [
+    {
+      "id": "provenance-tests",
+      "command": "node",
+      "args": ["--test", "tests/verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": ["package.json", "tests/verify.mjs", "src/collector.js"],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": []
+  }
+}

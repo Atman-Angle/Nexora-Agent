@@ -1,0 +1,3 @@
+source=queue/alpha.tmp target=archive/alpha.log
+source=queue/beta.tmp target=archive/beta.log
+source=queue/gamma.tmp target=archive/gamma.log

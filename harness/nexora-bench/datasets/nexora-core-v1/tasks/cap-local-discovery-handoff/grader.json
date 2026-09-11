@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "id": "findings-note",
+      "path": "report.md",
+      "exists": true,
+      "equals": "# checkout-service handoff\n\nowner: team-orders\npriority: high\nevidence-sources: 3\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "independent-verifier",
+      "command": "node",
+      "args": ["verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": ["notes/runbook.md", "notes/incidents.log", "notes/architecture.md", "verify.mjs"],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": []
+  }
+}

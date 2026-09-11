@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-file-data-transformation-validation-02",
+  "expectedPaths": [
+    "report.md"
+  ],
+  "referenceStateDigest": "sha256:08cf828c2b3be0e9f9c9e56f1d107563c16d824edda6b589a55f3bba4db83139"
+}

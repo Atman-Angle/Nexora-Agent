@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   type ModelDecisionContext,
   type RuntimeOperationContext,
@@ -123,6 +123,7 @@ describe("Multi-Agent completion bounds", () => {
 });
 
 class LargeResultProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) return responseDirect("x".repeat(5_000));
     if ((context.workerObservations?.length ?? 0) > 0) return responseDirect("Parent synthesized Artifact-backed results.");
@@ -133,6 +134,7 @@ class LargeResultProvider implements RuntimeProvider {
 }
 
 class TwoBatchProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly parentBatches: string[][] = [];
   #parentCalls = 0;
   async decide(context: ModelDecisionContext) {
@@ -152,6 +154,7 @@ class TwoBatchProvider implements RuntimeProvider {
 }
 
 class CancellationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide(context: ModelDecisionContext, operation: RuntimeOperationContext) {
     if (context.workerRun !== true) return responseCall("nexora_delegate_workers", { assignments: [
       { objective: "Wait A" }, { objective: "Wait B" }
@@ -164,6 +167,7 @@ class CancellationProvider implements RuntimeProvider {
 }
 
 class RequiredOneBatchProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   postBatchPrompt = "";
   async decide(context: ModelDecisionContext, operation: RuntimeOperationContext) {
     if (context.workerRun === true) return responseDirect("Worker completed.");

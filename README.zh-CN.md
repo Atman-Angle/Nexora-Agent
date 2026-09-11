@@ -55,7 +55,7 @@ Nexora 不是聊天机器人、托管式 Agent 服务、工作流搭建器，也
 | 层级 | 职责 |
 | --- | --- |
 | **你的应用** | 用户体验、目标、领域数据、Prompt、工具和业务规则 |
-| **Nexora Harness** | Agent Loop、模型调用、上下文、计划、Profile、Skill 和决策编译 |
+| **Nexora Harness** | Agent Loop、模型调用、有界上下文、计划、收敛、修复导航、Skill 和决策编译 |
 | **Nexora Runtime** | Run 状态、工具执行、批准、恢复、Evidence 和完成不变量 |
 | **模型 Provider** | 根据有界工作上下文提出下一步决策 |
 
@@ -110,14 +110,25 @@ try {
 
 - 持久化 Run、Event、Artifact、Tool Invocation 和 Evidence
 - 具备 Schema、权限、风险、批准和恢复语义的工具执行
-- 支持原生 Tool Calling 和流式输出的 OpenAI-compatible Provider
-- 有界上下文、确定性收缩、事实恢复和跨 Run 作用域 Memory
-- Run-owned Plan 和确定性完成验证
+- 强制完整原生 Function Calling 并支持流式输出的 OpenAI-compatible Provider
+- 有界上下文、确定性收缩、事实恢复、跨 Run 作用域 Memory，以及经验证的原生 continuation 投影去重
+- Provider wire telemetry 与决策效率计量，用于可复现的 Token 和请求归因
+- Run-owned Plan、确定性完成验证、进度锚定收敛和有界修复导航
 - 人工输入、操作批准、取消、Session 延续和故障恢复
 - 本地 Agent Skill 发现与模型自主渐进加载
 - 通过同一 Runtime Authority 管理长期本地进程
 - 具备隔离工作区的有界 Supervisor 与 Child Run 协作
 - Desktop、CLI、公开 TypeScript API 和 Runtime 测试工具
+- 执行节奏、存活判断、受保护操作预算和 Completion Gate 阻塞项主动投影
+- 基于 Harbor 0.22.0 的隔离能力与可靠性评估，并组合 Runtime 分级结果
+
+## 本次开发快照
+
+本快照完成生产 Harness 优化基线。Provider 传输现在只支持原生 Function Calling：Adapter 必须声明并校验完整的函数定义、原生调用响应、稳定 ID、逐调用 continuation、批处理、alias 和参数保真 Contract，不能再降级到 structured output 或 Prompt 约定。
+
+Harness 新增 Provider wire telemetry、作用域内原生 continuation 去重、进度锚定收敛、拒绝/修复导航、派生的下一未完成 Step 指引、受保护操作预算投影、Completion Gate 阻塞项主动投影，以及有界的 remove-only Plan patch。这些改动不改变 Runtime 对 Run Status、Tool Invocation、Evidence 和完成判定的 Authority。受控 Tool Catalog 投影实验未通过硬性正确性/稳定性门禁，因此默认保持关闭。
+
+评估流程已迁移到 Harbor 0.22.0，以隔离方式运行能力与可靠性 Cohort，并将外部任务验证与 Runtime Integrity、Authority、Safety 和 Expected Outcome 分级组合。规格、受控 A/B 证据、真实 Provider 探针和剩余验证边界保留在 [`docs/`](./docs/README.md) 与[评估工具说明](./harness/nexora-bench/README.md)中。
 
 ## 项目状态
 
@@ -136,6 +147,9 @@ Nexora 当前版本为 `0.1.0`，尚未发布到 npm。项目正在积极开发�
 | 理解执行与持久化流程 | [数据流](./DATA_FLOW.md) |
 | 查看产品方向与范围 | [项目说明](./PROJECT.md) |
 | 查看验证要求 | [测试策略](./TESTS.md) |
+| 运行能力与可靠性评估 | [评估工具说明](./harness/nexora-bench/README.md) |
+| 查看原生 Provider 协议 | [原生 Tool 协议](./docs/PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md) |
+| 查看 Context Phase B 证据 | [Context 优化 Phase B](./docs/CONTEXT_HARNESS_OPTIMIZATION_PHASE_B.md) |
 | 浏览全部公开文档 | [文档索引](./docs/README.md) |
 
 ## 开发验证

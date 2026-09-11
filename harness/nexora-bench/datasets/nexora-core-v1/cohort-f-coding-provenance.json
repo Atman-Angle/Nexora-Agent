@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-f-coding-provenance",
+  "version": 1,
+  "description": "Harbor capability cohort F: realistic coding task (event timestamp provenance through a serializer).",
+  "tasks": [
+    "tasks/cap-code-serializer-provenance/task.json"
+  ]
+}

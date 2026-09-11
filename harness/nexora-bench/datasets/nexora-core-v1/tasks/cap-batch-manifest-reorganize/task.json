@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-batch-manifest-reorganize",
+  "revision": 1,
+  "datasetVersion": "0.1.0-cohort-d",
+  "family": "batch_automation",
+  "secondaryCoverage": [
+    "validation",
+    "side_effect"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Reorganise the queued records into the archive exactly as the manifest specifies, preserve record contents, update the archive index, and run the provided verifier.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "environmentFacts": [
+      "The manifest lists every move that must be applied.",
+      "The archive index must list the archived records after the move."
+    ]
+  },
+  "execution": {
+    "fixture": {
+      "path": "tasks/cap-batch-manifest-reorganize/fixture",
+      "digest": "sha256:791f5c1b000ba2693a976afdfcfcb22b3be7e6733ab1116955f31dad2c1bf78f"
+    },
+    "scenario": "tasks/cap-batch-manifest-reorganize/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 3,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 4,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 5,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": [],
+      "approvalPolicy": {
+        "mode": "unattended",
+        "maxApprovals": 40,
+        "rules": [
+          {
+            "toolName": "filesystem.patch",
+            "decision": "approve",
+            "maxApprovals": 10
+          },
+          {
+            "toolName": "shell.execute",
+            "decision": "approve",
+            "maxApprovals": 30
+          }
+        ]
+      }
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "manifest.txt",
+      "verify.mjs",
+      "archive/.keep"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "tasks/cap-batch-manifest-reorganize/grader.json",
+    "graderDigest": "sha256:ba925ad0606e0f8959fb2ecbd126e6c6865787fac281a17a1806e487f2fa1b4d"
+  },
+  "humanReviewRef": "tasks/cap-batch-manifest-reorganize/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:8b784daf9235a1103fe9d1737ca071d78f73b1c571804f73d6aeae439ea6338f",
+    "fixtureDigest": "sha256:791f5c1b000ba2693a976afdfcfcb22b3be7e6733ab1116955f31dad2c1bf78f"
+  }
+}

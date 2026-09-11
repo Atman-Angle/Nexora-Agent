@@ -43,7 +43,7 @@ describe("E052 Provider observation closure", () => {
         baseUrl: stub.baseUrl,
         apiKey: "test-key",
         model: "test-model",
-        transport: "structured_output"
+        transport: "native_tools"
       }),
       tools: createBuiltInTools()
     });
@@ -122,7 +122,12 @@ describe("E052 Provider observation closure", () => {
     const provider = new ScriptedRuntimeProvider([
       singleStepPlan(workspace, "fail", "test.fail"),
       { type: "call_tool", stepId: "fail", checkIds: ["failed-check"], toolName: "test.fail", input: {} },
-      () => ({ type: "request_input", question: "The Tool failed. What should change?", reason: "Tool failure observed" })
+      () => ({
+        type: "request_input",
+        question: "The Tool failed. What should change?",
+        reason: "Tool failure observed",
+        basis: "user_exclusive"
+      })
     ]);
     const tool: RuntimeTool = {
       contract: testContract("test.fail", z.object({}).strict(), {}, z.object({}).strict()),
@@ -174,7 +179,12 @@ describe("E052 Provider observation closure", () => {
         toolName: "test.large",
         input: { sequence: index + 1, secret: secretInputs[index] }
       })),
-      () => ({ type: "request_input", question: "Stop after projection.", reason: "Projection captured" })
+      () => ({
+        type: "request_input",
+        question: "Stop after projection.",
+        reason: "Projection captured",
+        basis: "user_exclusive"
+      })
     ]);
     const largeTool: RuntimeTool = {
       contract: testContract("test.large", z.object({ sequence: z.number().int(), secret: z.string() }).strict(), { sequence: 1, secret: "example" }, z.object({ sequence: z.number().int(), payload: z.string() }).strict()),
@@ -297,8 +307,10 @@ async function observationProviderStub(workspace: string): Promise<ProviderStub>
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
-      const payload = JSON.parse(body.messages.at(-1)!.content) as {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        messages: Array<{ role: string; content: string | null }>;
+      };
+      const payload = JSON.parse(body.messages.filter((message) => message.role === "user").at(-1)!.content!) as {
         observationsAndRepair: {
           toolObservations: ObservationContext extends ModelDecisionContext
             ? ModelDecisionContext["toolObservations"]
@@ -308,13 +320,14 @@ async function observationProviderStub(workspace: string): Promise<ProviderStub>
       const index = decisionContexts.length;
       const context = {
         workingSet: {
-          observations: payload.observationsAndRepair.toolObservations
+          observations: restoreNativeObservations(body.messages, payload.observationsAndRepair.toolObservations)
         }
       } satisfies ObservationContext;
       decisionContexts.push(structuredClone(context));
       const content = observationDecision(workspace, context, index);
+      const message = nativeMessage(content, index);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message }] }));
     } catch (error) {
       response.writeHead(500, { "content-type": "text/plain" });
       response.end(error instanceof Error ? error.message : String(error));
@@ -371,11 +384,58 @@ function structuredTool(name: string, argumentsValue: unknown): unknown {
 }
 
 function structuredInput(question: string, reason: string): unknown {
-  return structuredTool("nexora_request_input", { question, reason });
+  return structuredTool("nexora_request_input", { question, reason, basis: "user_exclusive" });
+}
+
+function restoreNativeObservations(
+  messages: readonly { role: string; content: string | null }[],
+  observations: readonly ToolObservation[]
+): readonly ToolObservation[] {
+  const restored = new Map<string, Record<string, unknown>>();
+  for (const message of messages) {
+    if (message.role !== "tool" || message.content === null) continue;
+    const result = JSON.parse(message.content) as { observation?: Record<string, unknown> };
+    const observation = result.observation;
+    if (observation === undefined || typeof observation.invocationId !== "string") continue;
+    restored.set(observation.invocationId, observation);
+  }
+  return observations.map((observation) => {
+    const update = restored.get(observation.invocationId);
+    return update === undefined ? observation : { ...observation, ...update } as ToolObservation;
+  });
 }
 
 function structuredText(text: string): unknown {
-  return structuredTool("nexora_respond", { text });
+  return { text, toolCalls: [], finishReason: "stop" };
+}
+
+function nativeMessage(value: unknown, decisionIndex: number): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, callIndex) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${decisionIndex}-${callIndex}`,
+      type: "function" as const,
+      function: {
+        name: String(call.name),
+        arguments: JSON.stringify(call.arguments ?? null)
+      }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
 }
 
 function closeServer(server: Server): Promise<void> {

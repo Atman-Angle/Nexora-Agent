@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-artifact-incident-handoff",
+  "revision": 1,
+  "datasetVersion": "0.1.0-cohort-e",
+  "family": "artifact_production",
+  "secondaryCoverage": [
+    "validation",
+    "artifact"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Produce a review-ready INC-2047 handoff artifact from the local incident records, retaining traceable references to every source, without changing source material.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "environmentFacts": [
+      "The sources directory contains the incident summary, resolution note and customer impact record."
+    ]
+  },
+  "execution": {
+    "fixture": {
+      "path": "tasks/cap-artifact-incident-handoff/fixture",
+      "digest": "sha256:8e414f3e20b518b859e9aa036ecee12f01cea7c175e85268b396adced0d67179"
+    },
+    "scenario": "tasks/cap-artifact-incident-handoff/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "sources/incident-summary.txt",
+      "sources/resolution.txt",
+      "sources/customer-impact.csv",
+      "verify.mjs"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "tasks/cap-artifact-incident-handoff/grader.json",
+    "graderDigest": "sha256:b1547c2b5e0573ee80e8fb8fb9ee8082b0741a534dd41dfccb3728b90fe477ae"
+  },
+  "humanReviewRef": "tasks/cap-artifact-incident-handoff/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:9300d9147779c51ad4fb153bf3891d1a01186f04bfc90283151304b683942b3e",
+    "fixtureDigest": "sha256:8e414f3e20b518b859e9aa036ecee12f01cea7c175e85268b396adced0d67179"
+  }
+}

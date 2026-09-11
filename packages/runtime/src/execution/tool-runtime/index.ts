@@ -44,6 +44,7 @@ const MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS = 2048;
 const MAX_SEARCH_MATCHES = 100;
 const MAX_LIST_ENTRIES = 2_000;
 const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"]);
+const IGNORED_FILES = new Set([".env", ".env.local", ".env.production", ".env.development", "desktop-secrets.env"]);
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const ReadFactsSchema = z.union([
   z.object({ path: z.string(), content: z.string(), digest: DigestSchema, byteLength: z.number().int().nonnegative() }).strict(),
@@ -71,6 +72,25 @@ const SearchFactsSchema = z.object({
   offset: z.number().int().nonnegative(),
   nextOffset: z.number().int().nonnegative().nullable(),
   truncated: z.boolean()
+}).strict();
+const HttpRequestInputSchema = z.object({
+  url: z.string().url(),
+  method: z.enum(["GET", "HEAD"]).default("GET"),
+  timeoutMs: z.number().int().positive().max(30_000).default(10_000),
+  maxResponseBytes: z.number().int().positive().max(64 * 1024).default(16 * 1024),
+  expectedStatus: z.number().int().min(100).max(599).default(200),
+  expectedContentType: z.string().trim().min(1).optional()
+}).strict();
+const HttpFactsSchema = z.object({
+  url: z.string(),
+  method: z.enum(["GET", "HEAD"]),
+  status: z.number().int(),
+  statusText: z.string(),
+  contentType: z.string().nullable(),
+  body: z.string(),
+  byteLength: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  elapsedMs: z.number().int().nonnegative()
 }).strict();
 const WriteFactsSchema = z.object({ path: z.string(), digest: DigestSchema, byteLength: z.number().int().nonnegative() }).strict();
 const PatchFactsSchema = z.object({ path: z.string(), digest: DigestSchema, replayed: z.boolean() }).strict();
@@ -113,6 +133,9 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       },
       async execute(input, context) {
         throwIfAborted(context.signal);
+        if (isSecretFilePath(input.path)) {
+          throw new ToolFailure("SECRET_FILE_READ_BLOCKED", "Workspace secret files are not readable by the Agent.");
+        }
         const path = await workspacePath(context.workspace, input.path, "file");
         const bytes = await readFile(path);
         throwIfAborted(context.signal);
@@ -181,6 +204,72 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
             context.signal
           )
         };
+      }
+    }),
+    defineTool({
+      contract: {
+        identity: { name: "http.request" },
+        capability: { purpose: "Read one bounded HTTP response from a loopback development server for verification.", nonGoals: ["Call arbitrary external hosts.", "Modify server state.", "Send request bodies."] },
+        decision: { useWhen: ["A local development server has a known loopback URL and its status or content must be verified."], avoidWhen: ["The server is not bound to loopback.", "A dedicated file or process capability already answers the question."] },
+        execution: { effect: { kind: "read", description: "Performs one bounded GET or HEAD request against a loopback HTTP URL." }, idempotent: true, inputSchema: HttpRequestInputSchema, inputExample: { url: "http://127.0.0.1:4173/health", method: "GET", expectedStatus: 200, timeoutMs: 10_000 } },
+        evidence: { produces: ["The loopback URL, HTTP status, content type, bounded response body, byte length, truncation state, and elapsed time."], factsSchema: HttpFactsSchema }
+      },
+      async execute(input, context) {
+        const parsed = HttpRequestInputSchema.parse(input);
+        const url = parseLoopbackHttpUrl(parsed.url);
+        const startedAt = Date.now();
+        const controller = new AbortController();
+        const abort = (): void => controller.abort(context.signal.reason);
+        const timer = setTimeout(() => controller.abort(new Error(`HTTP request timed out after ${parsed.timeoutMs}ms.`)), parsed.timeoutMs);
+        if (context.signal.aborted) abort();
+        else context.signal.addEventListener("abort", abort, { once: true });
+        try {
+          const response = await fetch(url, { method: parsed.method, signal: controller.signal, redirect: "manual" });
+          if (response.status !== parsed.expectedStatus) {
+            throw new ToolFailure(
+              "HTTP_STATUS_MISMATCH",
+              `Expected HTTP ${parsed.expectedStatus}, received ${response.status}.`,
+              false,
+              { url: url.toString(), status: response.status, expectedStatus: parsed.expectedStatus }
+            );
+          }
+          const contentType = response.headers.get("content-type");
+          if (parsed.expectedContentType !== undefined && !contentType?.toLowerCase().startsWith(parsed.expectedContentType.toLowerCase())) {
+            throw new ToolFailure(
+              "HTTP_CONTENT_TYPE_MISMATCH",
+              `Expected content type ${parsed.expectedContentType}, received ${contentType ?? "none"}.`,
+              false,
+              { url: url.toString(), contentType, expectedContentType: parsed.expectedContentType }
+            );
+          }
+          const responseBody = await readBoundedResponseBody(response, parsed.maxResponseBytes);
+          return {
+            subjectRef: url.toString(),
+            facts: {
+              url: url.toString(),
+              method: parsed.method,
+              status: response.status,
+              statusText: response.statusText,
+              contentType,
+              body: responseBody.body,
+              byteLength: responseBody.byteLength,
+              truncated: responseBody.truncated,
+              elapsedMs: Date.now() - startedAt
+            }
+          };
+        } catch (error) {
+          if (context.signal.aborted) throw new ToolFailure("CANCELLED", "HTTP verification was cancelled.");
+          if (error instanceof ToolFailure) throw error;
+          throw new ToolFailure(
+            "HTTP_REQUEST_FAILED",
+            error instanceof Error ? error.message : String(error),
+            true,
+            { url: url.toString() }
+          );
+        } finally {
+          clearTimeout(timer);
+          context.signal.removeEventListener("abort", abort);
+        }
       }
     }),
     defineTool({
@@ -445,7 +534,10 @@ async function searchWithRipgrep(
   nextOffset: number | null;
   truncated: boolean;
 }> {
-  const ignoredGlobs = [...IGNORED].sort().flatMap((name) => ["--glob", `!${name}/**`]);
+  const ignoredGlobs = [
+    ...[...IGNORED].sort().flatMap((name) => ["--glob", `!${name}/**`]),
+    ...[...IGNORED_FILES].sort().flatMap((name) => ["--glob", `!${name}`])
+  ];
   return new Promise((resolvePromise, rejectPromise) => {
     throwIfAborted(signal);
     const child = spawn(rgPath, [
@@ -663,7 +755,11 @@ async function listFilesPage(
 async function* walkFiles(root: string, signal: AbortSignal): AsyncGenerator<string> {
   throwIfAborted(signal);
   const entries = (await readdir(root, { withFileTypes: true }))
-    .filter((entry) => !entry.isSymbolicLink() && !IGNORED.has(entry.name))
+    .filter((entry) => (
+      !entry.isSymbolicLink()
+      && !IGNORED.has(entry.name)
+      && !(entry.isFile() && isSecretFilePath(entry.name))
+    ))
     .sort((left, right) => left.name.localeCompare(right.name, "en"));
   for (const entry of entries) {
     throwIfAborted(signal);
@@ -686,6 +782,61 @@ async function atomicWrite(
     await rename(temporary, path);
   }
   catch (error) { await rm(temporary, { force: true }); throw error; }
+}
+
+function isSecretFilePath(path: string): boolean {
+  const name = basename(path).toLowerCase();
+  return IGNORED_FILES.has(name) || /^\.env(?:\..+)?$/u.test(name);
+}
+
+function parseLoopbackHttpUrl(value: string): URL {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ToolFailure("HTTP_URL_INVALID", "HTTP verification requires an absolute URL.");
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "::1", "[::1]"].includes(hostname)) {
+    throw new ToolFailure("HTTP_URL_NOT_LOOPBACK", "HTTP verification is limited to loopback HTTP URLs.");
+  }
+  return url;
+}
+
+async function readBoundedResponseBody(
+  response: Response,
+  maxBytes: number
+): Promise<{ readonly body: string; readonly byteLength: number; readonly truncated: boolean }> {
+  if (response.body === null) return { body: "", byteLength: 0, truncated: false };
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
+  let truncated = false;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      const chunk = Buffer.from(value);
+      const remaining = maxBytes - byteLength;
+      if (chunk.byteLength > remaining) {
+        if (remaining > 0) chunks.push(chunk.subarray(0, remaining));
+        byteLength = maxBytes;
+        truncated = true;
+        await reader.cancel().catch(() => { /* best effort */ });
+        break;
+      }
+      chunks.push(chunk);
+      byteLength += chunk.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return {
+    body: Buffer.concat(chunks).toString("utf8").replace(/\uFFFD$/u, ""),
+    byteLength,
+    truncated
+  };
 }
 
 function runProcess(

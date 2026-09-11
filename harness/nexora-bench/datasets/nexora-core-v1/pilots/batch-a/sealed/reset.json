@@ -1,0 +1,1 @@
+{"before":"fixture directory digest must match task identity","after":"runner temporary workspace and runtime data directory are removed","leakage":"sealed directory is not copied into workspace or prompt"}

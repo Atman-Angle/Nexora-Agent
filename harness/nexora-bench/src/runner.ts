@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   createAgent,
@@ -17,10 +17,13 @@ import {
   type RuntimeTool
 } from "@nexora/harness";
 
-import type { EvalSplit, EvalTask } from "./contracts.js";
+import { stableDigest, type EvalSplit, type EvalDatasetManifest, type NormalizedEvalTask } from "./contracts.js";
+type EvalTask = NormalizedEvalTask;
 import { loadDataset, selectTasks, type LoadedDataset } from "./dataset.js";
+import { createOpenTask } from "./open-task.js";
 import { copyDirectoryTree, copyVerifiedFixture, resolveInside, snapshotPaths } from "./filesystem.js";
 import { gradeAuthority, gradeTask } from "./grader.js";
+import { gradeSuite } from "./suite-grader.js";
 import {
   createEvalReport,
   createOptimizationPacket,
@@ -52,6 +55,7 @@ export type RunBenchOptions = {
   readonly outputRoot?: string;
   readonly split?: EvalSplit;
   readonly taskIds?: readonly string[];
+  readonly repetition?: number;
   readonly keepWorkspaces?: boolean;
   readonly telemetry?: BenchTelemetry;
   readonly providerMode?: "deterministic" | "real";
@@ -64,6 +68,132 @@ export type RunBenchResult = {
   readonly report: EvalReport;
 };
 
+export type RunHarborRuntimeTrialOptions = {
+  readonly manifestPath: string;
+  readonly taskId: string;
+  readonly instruction: string;
+  readonly workspace: string;
+  readonly dataDir: string;
+  readonly factBundlePath: string;
+  readonly providerMode?: "deterministic" | "real";
+  /** When the task id is not present in the Nexora manifest, execute it as an
+   * open Terminal-Bench style task instead of failing the trial. */
+  readonly openFallback?: boolean;
+  readonly openBudgets?: OpenTrialBudgets;
+};
+
+export type OpenTrialBudgets = {
+  readonly maxIterations: number;
+  readonly maxModelCalls: number;
+  readonly maxToolCalls: number;
+  readonly maxRetries: number;
+  readonly maxDurationMs: number;
+};
+
+/** Nexora-owned half of a Harbor trial. Harbor has already created and seeded
+ * the workspace, and remains the authority for external verification and job
+ * results. This function executes Runtime and exports only Runtime facts. */
+export async function runHarborRuntimeTrial(
+  options: RunHarborRuntimeTrialOptions
+): Promise<TaskReport> {
+  const dataset = loadDataset(resolve(options.manifestPath));
+  const task = dataset.tasks.find((candidate) => candidate.id === options.taskId);
+  if (task === undefined) {
+    if (options.openFallback !== true) {
+      throw new Error(`Harbor Runtime trial requires exactly one task: ${options.taskId}`);
+    }
+    return runOpenHarborRuntimeTrial(options);
+  }
+  return exportRuntimeTrial({
+    dataset,
+    task,
+    instruction: options.instruction,
+    workspace: options.workspace,
+    dataDir: options.dataDir,
+    factBundlePath: options.factBundlePath,
+    providerMode: options.providerMode ?? "deterministic"
+  });
+}
+
+/** Open-ended Terminal-Bench style Harbor trial. The task id is not part of a
+ * committed Nexora Eval Dataset; the Runtime executes Harbor's instruction
+ * against the Harbor-owned workspace with the full built-in Tool catalog and
+ * an unattended approval policy, and only Runtime facts are exported. Task
+ * correctness remains owned by the official external verifier. */
+export async function runOpenHarborRuntimeTrial(
+  options: RunHarborRuntimeTrialOptions
+): Promise<TaskReport> {
+  const openRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const task = createOpenTask({
+    taskId: options.taskId,
+    instruction: options.instruction,
+    ...(options.openBudgets === undefined ? {} : { budgets: options.openBudgets })
+  });
+  const manifest: EvalDatasetManifest = Object.freeze({
+    schemaVersion: 1,
+    id: "nexora-open-v1",
+    version: 1,
+    description: "Open Harbor Runtime task adapter for Terminal-Bench style external-verifier tasks.",
+    tasks: []
+  });
+  const dataset: LoadedDataset = Object.freeze({
+    root: openRoot,
+    manifest,
+    tasks: Object.freeze([task]),
+    digest: stableDigest({ dataset: manifest, taskId: options.taskId })
+  });
+  return exportRuntimeTrial({
+    dataset,
+    task,
+    instruction: options.instruction,
+    workspace: options.workspace,
+    dataDir: options.dataDir,
+    factBundlePath: options.factBundlePath,
+    providerMode: options.providerMode ?? "real"
+  });
+}
+
+async function exportRuntimeTrial(input: {
+  readonly dataset: LoadedDataset;
+  readonly task: NormalizedEvalTask;
+  readonly instruction: string;
+  readonly workspace: string;
+  readonly dataDir: string;
+  readonly factBundlePath: string;
+  readonly providerMode: "deterministic" | "real";
+}): Promise<TaskReport> {
+  const bundlePath = resolve(input.factBundlePath);
+  mkdirSync(dirname(bundlePath), { recursive: true });
+  const telemetry = createBenchTelemetry({
+    jsonlPath: join(dirname(bundlePath), "nexora-runtime-telemetry.jsonl")
+  });
+  let report: TaskReport;
+  try {
+    report = await runTask({
+      dataset: input.dataset,
+      task: input.task,
+      outputDirectory: dirname(bundlePath),
+      telemetry,
+      keepWorkspace: false,
+      providerMode: input.providerMode,
+      instruction: input.instruction,
+      workspace: resolve(input.workspace),
+      dataDir: resolve(input.dataDir),
+      prepareFixture: false
+    });
+  } finally {
+    await telemetry.shutdown();
+  }
+  writeJson(bundlePath, {
+    schemaVersion: 1,
+    kind: "nexora-runtime-fact-bundle",
+    exportedAt: new Date().toISOString(),
+    task: report
+  });
+  return report;
+}
+
+/** @deprecated Internal parity-test helper. Harbor owns production batch/job execution. */
 export async function runBench(options: RunBenchOptions): Promise<RunBenchResult> {
   const dataset = loadDataset(resolve(options.manifestPath));
   const selected = selectTasks(dataset, {
@@ -91,7 +221,8 @@ export async function runBench(options: RunBenchOptions): Promise<RunBenchResult
           outputDirectory,
           telemetry,
           keepWorkspace: options.keepWorkspaces ?? false,
-          providerMode: options.providerMode ?? "deterministic"
+          providerMode: options.providerMode ?? "deterministic",
+          instruction: task.instruction
         }));
       } catch (error) {
         reports.push(infrastructureFailure(task, error, options.providerMode ?? "deterministic"));
@@ -112,7 +243,8 @@ export async function runBench(options: RunBenchOptions): Promise<RunBenchResult
     tasks: reports,
     telemetryErrors,
     createdAt,
-    providerMode: options.providerMode ?? "deterministic"
+    providerMode: options.providerMode ?? "deterministic",
+    repetition: options.repetition ?? 1
   });
   const packet = createOptimizationPacket(report);
   const reportPath = join(outputDirectory, "report.json");
@@ -133,15 +265,19 @@ export async function runBench(options: RunBenchOptions): Promise<RunBenchResult
 
 async function runTask(input: {
   readonly dataset: LoadedDataset;
-  readonly task: EvalTask;
+  readonly task: NormalizedEvalTask;
   readonly outputDirectory: string;
   readonly telemetry: BenchTelemetry;
   readonly keepWorkspace: boolean;
   readonly providerMode: "deterministic" | "real";
+  readonly instruction: string;
+  readonly workspace?: string;
+  readonly dataDir?: string;
+  readonly prepareFixture?: boolean;
 }): Promise<TaskReport> {
   const taskRoot = mkdtempSync(join(tmpdir(), `nexora-bench-${input.task.id}-`));
-  const workspace = join(taskRoot, "workspace");
-  const dataDir = join(taskRoot, ".nexora");
+  const workspace = input.workspace ?? join(taskRoot, "workspace");
+  const dataDir = input.dataDir ?? join(taskRoot, ".nexora");
   const started = performance.now();
   let runtime: RuntimeEngine | null = null;
   let scenario: EvalScenario | null = null;
@@ -149,8 +285,10 @@ async function runTask(input: {
   let cancellationSubscription: RuntimeSubscription | null = null;
   const modelObservations: ModelObservation[] = [];
   try {
-    const fixture = resolveInside(input.dataset.root, input.task.fixture.path);
-    copyVerifiedFixture(fixture, input.task.fixture.digest, workspace);
+    if (input.prepareFixture !== false) {
+      const fixture = resolveInside(input.dataset.root, input.task.fixture.path);
+      copyVerifiedFixture(fixture, input.task.fixture.digest, workspace);
+    }
     const initialDigests = snapshotPaths(workspace, input.task.grader.unchangedPaths);
     const scenarioFactory = await loadScenarioFactory(resolveInside(input.dataset.root, input.task.scenario));
     const createExecution = async (): Promise<{ readonly runtime: RuntimeEngine; readonly scenario: EvalScenario }> => {
@@ -171,7 +309,7 @@ async function runTask(input: {
     };
 
     ({ runtime, scenario } = await createExecution());
-    let handle = runtime.run(input.task.instruction, { budgets: input.task.budgets });
+    let handle = runtime.run(input.instruction, { budgets: input.task.budgets });
     taskTelemetry = input.telemetry.startTask({
       datasetId: input.dataset.manifest.id,
       datasetVersion: input.dataset.manifest.version,
@@ -275,10 +413,15 @@ async function runTask(input: {
     const taskGrade = gradeTask({ task: input.task, workspace, initialDigests });
     const tools = allowedTools(input.task, scenario.tools);
     const authorityGrade = gradeAuthority({ task: input.task, inspection, view, tools, taskGrade });
+    // Historical V1 pilots retain their established grading semantics.  The
+    // independent STRICT_PASS bundle is mandatory for V2 task contracts.
+    const suiteGrade = input.task.sourceSchemaVersion === 2
+      ? gradeSuite({ task: input.task, inspection, view, tools, taskGrade })
+      : undefined;
     const falseSuccess = view.snapshot.status === "succeeded" && !taskGrade.passed;
     await taskTelemetry.finish(view, {
       taskPassed: taskGrade.passed,
-      evaluationPassed: authorityGrade.passed,
+      evaluationPassed: suiteGrade?.strictPass ?? authorityGrade.passed,
       falseSuccess
     }, modelObservations, modelCallTraces);
     if (input.keepWorkspace) {
@@ -293,6 +436,7 @@ async function runTask(input: {
       view,
       taskGrade,
       authorityGrade,
+      ...(suiteGrade === undefined ? {} : { suiteGrade }),
       modelCallTraces,
       telemetryErrors: taskTelemetry.errors,
       durationMs: performance.now() - started,
@@ -372,6 +516,7 @@ export function observeProvider(
     }
   };
   return Object.freeze({
+    nativeFunctionCalling: provider.nativeFunctionCalling,
     ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
     ...(provider.transport === undefined ? {} : { transport: provider.transport }),
     ...(provider.measureTokens === undefined ? {} : { measureTokens: provider.measureTokens.bind(provider) }),
@@ -457,7 +602,7 @@ async function loadScenarioFactory(path: string): Promise<ScenarioFactory> {
   return module.createScenario as ScenarioFactory;
 }
 
-function allowedTools(task: EvalTask, tools: readonly RuntimeTool[]): readonly RuntimeTool[] {
+function allowedTools(task: NormalizedEvalTask, tools: readonly RuntimeTool[]): readonly RuntimeTool[] {
   const byName = new Map(tools.map((tool) => [tool.contract.identity.name, tool]));
   const missing = task.allowedCapabilities.filter((name) => !byName.has(name));
   if (missing.length > 0) throw new Error(`Scenario is missing allowed capabilities: ${missing.join(", ")}`);
@@ -466,7 +611,7 @@ function allowedTools(task: EvalTask, tools: readonly RuntimeTool[]): readonly R
 
 function recoveryDecision(
   inspection: RunInspection,
-  action: EvalTask["driver"]["recoveries"][number]
+  action: NormalizedEvalTask["driver"]["recoveries"][number]
 ): RecoveryDecision {
   const recovery = inspection.recovery;
   if (recovery === null) throw new Error("Recovery action requires an unknown Invocation.");
@@ -487,7 +632,7 @@ function copyDirectory(source: string, target: string): void {
 }
 
 function infrastructureFailure(
-  task: EvalTask,
+  task: NormalizedEvalTask,
   error: unknown,
   providerMode: "deterministic" | "real"
 ): TaskReport {
@@ -564,7 +709,7 @@ function infrastructureFailure(
     },
     telemetryErrors: [],
     durationMs: 0,
-    reproductionCommand: `pnpm --filter @nexora/bench bench -- --provider ${providerMode} --task ${task.id}`
+    reproductionCommand: "pnpm --filter @nexora/bench eval"
   };
 }
 

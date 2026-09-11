@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-env-coherent-mapping",
+  "revision": 1,
+  "datasetVersion": "0.1.0-cohort-h",
+  "family": "environment_configuration_operations",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Correct the service configuration so every route and upstream reference points to a declared service, without adding or removing services, and run the provided verifier.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "environmentFacts": [
+      "Two configuration files must agree with the declared service set."
+    ]
+  },
+  "execution": {
+    "fixture": {
+      "path": "tasks/cap-env-coherent-mapping/fixture",
+      "digest": "sha256:d9e6414cee360041d84b915e134028777972379f912af6e1c6c28755795f45d8"
+    },
+    "scenario": "tasks/cap-env-coherent-mapping/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 3,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "requirements.md",
+      "verify.mjs"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "tasks/cap-env-coherent-mapping/grader.json",
+    "graderDigest": "sha256:8e8fb5d67c9b2e94f230a256c563ea31d17ca2e53f45a834c0c18eee4f3b79b9"
+  },
+  "humanReviewRef": "tasks/cap-env-coherent-mapping/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:ad743d55f13f247c6b3335f2bcb9af7d00c96dac3266dc0b341b391cf42f4854",
+    "fixtureDigest": "sha256:d9e6414cee360041d84b915e134028777972379f912af6e1c6c28755795f45d8"
+  }
+}

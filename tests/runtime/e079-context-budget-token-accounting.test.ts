@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   createOpenAICompatibleProvider,
   modelResponses,
@@ -131,7 +131,7 @@ describe("E079 Context Budget and Token Accounting", () => {
     const started = new Promise<void>((resolve) => { measurementStarted = resolve; });
     const pending = new Promise<void>((resolve) => { releaseMeasurement = resolve; });
     let decideCalls = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "test-provider",
         model: "async-meter",
@@ -238,7 +238,7 @@ describe("E079 Context Budget and Token Accounting", () => {
 
     expect(meteredInput).not.toContain('"projection"');
     expect(meteredSystem).toContain('"transport":"native_tools"');
-    expect(meteredSystem).toContain("A Plan is optional navigation, not permission or a Tool whitelist");
+    expect(meteredSystem).toContain("A Plan is navigation plus the Runtime-owned Task Contract, not permission or a Tool whitelist");
     expect(meteredInput).not.toContain('"intentContract"');
     expect(meteredInput).toContain('"currentRuntimeDirective"');
     expect(requestBody).toMatchObject({ model: "provider-model", max_tokens: 500 });
@@ -255,7 +255,7 @@ describe("E079 Context Budget and Token Accounting", () => {
 
   it("uses the documented compatibility fallback when a custom Provider omits model capabilities", async () => {
     const workspace = fixture();
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide() {
         return modelResponses.input({ question: "Which target?", reason: "Target is required." });
       }
@@ -405,7 +405,7 @@ function budgetedProvider(input: {
   readonly measuredTokens: number;
   readonly onDecide?: () => void;
 }): RuntimeProvider {
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     modelProfile: {
       provider: "test-provider",
       model: "test-model",
@@ -433,6 +433,7 @@ function budgetedProvider(input: {
 }
 
 class CompletingBudgetProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly modelProfile = {
     provider: "test-provider",
     model: "completion-model",

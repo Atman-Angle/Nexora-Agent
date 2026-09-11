@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createAgent } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createAgent } from "../../packages/harness/src/index.js";
 import { projectAgentWorkingContext } from "../../packages/harness/src/working-context.js";
 import type {
   ModelDecisionContext,
@@ -17,6 +17,7 @@ import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import {
   responseCall,
   responsePlan,
+  responsePlanAndTools,
   responseDirect
 } from "./runtime-testkit.js";
 
@@ -89,7 +90,7 @@ describe("E122 context working set and read reuse", () => {
     let turn = 0;
     const runtime = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         modelProfile: {
           provider: "test",
           model: "current-file-pressure",
@@ -155,7 +156,10 @@ describe("E122 context working set and read reuse", () => {
       workspace: tempRoot(),
       provider: provider([
         () => responseCall("cached.read", { key: "alpha" }),
-        () => responseCall("cached.write", { key: "alpha", value: "after" }),
+        () => responsePlanAndTools({
+          goal: "Update and verify alpha.",
+          tasks: [{ objective: "Update alpha.", checks: [{ toolName: "cached.write", role: "mutation" }] }]
+        }, [{ name: "cached.write", arguments: { key: "alpha", value: "after" } }]),
         () => responseCall("cached.read", { key: "alpha" }),
         () => responseDirect("Alpha was refreshed after mutation.")
       ]),
@@ -285,7 +289,7 @@ type Decision = (context: ModelDecisionContext) => unknown;
 
 function provider(decisions: readonly Decision[]): RuntimeProvider {
   const queue = [...decisions];
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(context) {
       const decision = queue.shift();
       if (decision === undefined) throw new Error("Decision queue exhausted.");

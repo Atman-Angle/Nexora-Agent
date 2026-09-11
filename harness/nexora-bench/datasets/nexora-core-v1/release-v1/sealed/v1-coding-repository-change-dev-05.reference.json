@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-coding-repository-change-dev-05",
+  "expectedPaths": [
+    "src/transform.js"
+  ],
+  "referenceStateDigest": "sha256:605c3758ab1f5b6a0c8c4c1b2ac5b11b80729f25c70dbf3a29d7b1877c2c17b5"
+}

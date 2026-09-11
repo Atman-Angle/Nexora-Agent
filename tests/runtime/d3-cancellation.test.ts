@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createBuiltInTools,
   createOpenAICompatibleProvider,
   createRuntime,
@@ -26,7 +26,7 @@ describe("D3 persisted cancellation", () => {
   it("aborts Provider decision and returns a persisted cancelled final result", async () => {
     const workspace = temporaryWorkspace();
     const entered = deferred<AbortSignal>();
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide(_context, operation) {
         entered.resolve(operation.signal);
         await aborted(operation.signal);
@@ -219,7 +219,7 @@ describe("D3 persisted cancellation", () => {
     const first = createRuntime({
       workspace,
       dataDir,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide(_context, operation) {
           entered.resolve(operation.signal);
           await aborted(operation.signal);

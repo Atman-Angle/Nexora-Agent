@@ -1,0 +1,24 @@
+schema_version = "1.3"
+
+[task]
+name = "nexora/cap-data-tax-reconcile"
+description = "Reconcile per-region sales with tax rates and write a validated tax report."
+
+[metadata]
+difficulty = "standard"
+category = "file-data-transformation"
+tags = ["nexora", "capability", "validation"]
+
+[agent]
+timeout_sec = 900.0
+
+[verifier]
+timeout_sec = 60.0
+
+[environment]
+network_mode = "public"
+build_timeout_sec = 600.0
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240
+gpus = 0

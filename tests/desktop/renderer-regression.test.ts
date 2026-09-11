@@ -20,6 +20,12 @@ describe("Desktop renderer regression structure", () => {
     expect(source).toContain("深度思考");
     expect(source).not.toContain("liveModelFeedback(");
     expect(source).not.toContain('class="live-model-feedback');
+    expect(source).toContain('data-view="activity"');
+  });
+
+  it("keeps completed formal native text rendered after streaming completes", () => {
+    expect(source).toContain("const completedFormalResult = segment.completed && formalResult;");
+    expect(source).toContain("const liveProjection = publicOutputs.has(segment.key) && !completedFormalResult;");
   });
 
   it("uses the common Composer toolbar for approval and recovery states", () => {

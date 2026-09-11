@@ -41,13 +41,14 @@ const DESKTOP_PROFILE = createAgentProfileSnapshot({
   id: "nexora-desktop-workspace-agent",
   version: "1",
   role: { identity: "General workspace agent", objective: "Complete the user's workspace task and deliver verified, reusable outputs while preserving workspace contracts." },
-  strategy: { principles: ["Inspect workspace facts before changing files.", "Keep changes scoped to the requested outcome.", "Revise an existing Deliverable instead of recreating it when the user requests a modification.", "Verify changed behavior and produced outputs proportionately.", "When a Plan ends with a document write, include document.inspect as its verification check and call it in summary mode after the write; this is a mechanical completion fact, not a semantic reread of the document."] },
+  strategy: { principles: ["Inspect workspace facts before changing files.", "Keep changes scoped to the requested outcome.", "Revise an existing Deliverable instead of recreating it when the user requests a modification.", "Verify changed behavior and produced outputs proportionately.", "Prefer http.request for bounded loopback HTTP verification instead of shell.execute.", "When a Plan ends with a document write, include document.inspect as its verification check and call it in summary mode after the write; this is a mechanical completion fact, not a semantic reread of the document."] },
   communication: { audience: "Workspace users", tone: "Direct and factual" }
 }, { kind: "host", ref: "apps/desktop" });
 
 const AUTO_APPROVED_DESKTOP_TOOLS = new Set([
   "filesystem.write",
   "filesystem.patch",
+  "http.request",
   "document.create",
   "document.import",
   "document.apply_patch",
@@ -106,6 +107,10 @@ const DESKTOP_RUN_BUDGETS = Object.freeze({
   maxDurationMs: 30 * 60 * 1_000
 });
 const ATTACHMENT_LIMITS = Object.freeze({ maxFiles: 8, maxSingleBytes: 50_000_000, maxTotalBytes: 100_000_000, maxDepth: 6, maxVisitedEntries: 512 });
+// A provider-blocked Run persists a typed `provider_reconnect` predicate. The
+// Host is the only actor that can satisfy that bounded probe, so it retries
+// once per Run after a short delay. The Runtime still decides the outcome.
+const PROVIDER_RECONNECT_PROBE_DELAY_MS = 15_000;
 type StoredSession = {
   id: string;
   title: string;
@@ -123,7 +128,7 @@ type StoredModelProfile = {
   contextWindowTokens: number | null;
   activeInputTargetTokens: number | null;
   decisionOutputTokens: number;
-  transport: "native_tools" | "structured_output";
+  transport: "native_tools";
   reasoning: "off" | "dynamic" | "on";
   thinkingToggleParam: string | null;
 };
@@ -153,6 +158,8 @@ export class DesktopRuntimeService {
   readonly #publicOutputArtifacts = new Map<string, { readonly reasoning: string; readonly content: string }>();
   readonly #automaticApprovalRequests = new Set<string>();
   readonly #emissionQueues = new Map<string, Promise<void>>();
+  readonly #recoveryAttempts = new WeakMap<AgentRuntime, number>();
+  readonly #providerProbeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(input: { readonly workspace: string; readonly onSnapshot: (snapshot: DesktopSnapshot) => void; readonly onError: (message: string) => void; readonly onPublicOutput?: (event: AgentPublicOutputEvent) => void }) {
     this.#workspace = resolve(input.workspace);
@@ -465,7 +472,14 @@ export class DesktopRuntimeService {
     else if (control.type === "deny") operation = handle.deny({ requestId: control.requestId, ...(control.reason === undefined ? {} : { reason: control.reason }) });
     else if (control.type === "cancel") operation = handle.cancel("Cancelled from Nexora Desktop.");
     else if (control.type === "resume") {
-      if (inspection.status === "blocked" && inspection.resumePredicate !== null) {
+      // A provider_reconnect predicate is satisfied by a plain Resume: the
+      // Runtime performs the persisted bounded probe. Other typed predicates
+      // require their own control and must not be resumed generically.
+      if (
+        inspection.status === "blocked"
+        && inspection.resumePredicate !== null
+        && inspection.resumePredicate.kind !== "provider_reconnect"
+      ) {
         throw new Error("A typed blocked Run must be resumed through its Runtime predicate.");
       }
       operation = handle.resume();
@@ -523,6 +537,8 @@ export class DesktopRuntimeService {
   async close(): Promise<void> {
     await Promise.all([...this.#subscriptions.values()].map(async (subscription) => await subscription.close()));
     this.#subscriptions.clear();
+    for (const timer of this.#providerProbeTimers.values()) clearTimeout(timer);
+    this.#providerProbeTimers.clear();
     await Promise.all([...this.#runtimes.values()].map(async (runtime) => await runtime.close()));
     this.#runtimes.clear();
   }
@@ -553,7 +569,34 @@ export class DesktopRuntimeService {
     });
     this.#runtimes.set(key, runtime);
     this.#dirtyRuntimeKeys.delete(key);
+    this.#recoverInterruptedRuns(runtime);
     return runtime;
+  }
+
+  #recoverInterruptedRuns(runtime: AgentRuntime): void {
+    const attempt = this.#recoveryAttempts.get(runtime) ?? 0;
+    if (attempt > 12) return;
+    this.#recoveryAttempts.set(runtime, attempt + 1);
+    void (async () => {
+      const summaries = await runtime.listRuns();
+      let busy = false;
+      for (const summary of summaries) {
+        if (summary.status !== "running") continue;
+        try {
+          await runtime.openRun(summary.runId).resume();
+        } catch (error) {
+          const code = error !== null && typeof error === "object" && "code" in error
+            ? (error as { readonly code?: unknown }).code
+            : null;
+          if (code === "RUN_BUSY") busy = true;
+          else this.#onError(errorMessage(error));
+        }
+      }
+      if (busy) {
+        const timer = setTimeout(() => this.#recoverInterruptedRuns(runtime), 5_000);
+        timer.unref();
+      }
+    })().catch((error: unknown) => this.#onError(errorMessage(error)));
   }
 
   async #watch(handle: RunHandle, workspace = this.#workspace): Promise<void> {
@@ -570,6 +613,33 @@ export class DesktopRuntimeService {
     if (inspection.status === "waiting_for_approval" && inspection.pendingRequest?.kind === "approval") {
       this.#autoApproveRequest(handle, inspection.pendingRequest);
     }
+    this.#scheduleProviderReconnectProbe(handle, inspection, workspace);
+  }
+
+  // The Host satisfies the persisted `bounded_provider_probe` predicate once per
+  // Run. The Runtime owns the recovery budget and the terminal decision, so this
+  // only re-issues the Run; a second failure is admitted as a bounded terminal
+  // outcome with an explicit Delivery and next action.
+  #scheduleProviderReconnectProbe(handle: RunHandle, inspection: RunInspection, workspace = this.#workspace): void {
+    if (inspection.status !== "blocked" || inspection.resumePredicate?.kind !== "provider_reconnect") return;
+    if (this.#providerProbeTimers.has(handle.id)) return;
+    const timer = setTimeout(() => {
+      this.#providerProbeTimers.delete(handle.id);
+      void (async () => {
+        const current = await handle.inspect();
+        if (current.status !== "blocked" || current.resumePredicate?.kind !== "provider_reconnect") return;
+        await handle.resume();
+      })()
+        .catch((error: unknown) => {
+          const code = error !== null && typeof error === "object" && "code" in error
+            ? (error as { readonly code?: unknown }).code
+            : null;
+          if (code !== "RUN_BUSY") this.#onError(errorMessage(error));
+        })
+        .finally(() => { void this.#emitWorkspace(workspace); });
+    }, PROVIDER_RECONNECT_PROBE_DELAY_MS);
+    timer.unref();
+    this.#providerProbeTimers.set(handle.id, timer);
   }
 
   #autoApprove(handle: RunHandle, event: RuntimeEvent): boolean {
@@ -612,6 +682,14 @@ export class DesktopRuntimeService {
   async #synchronizeProject(runtime: AgentRuntime, project = this.#currentProject()): Promise<void> {
     const summaries = await runtime.listRuns();
     const byRun = new Map(summaries.map((summary) => [summary.runId, summary]));
+    for (const summary of summaries) {
+      if (summary.pendingRequestKind !== "approval") continue;
+      const handle = runtime.openRun(summary.runId);
+      const inspection = await handle.inspect();
+      if (inspection.pendingRequest?.kind === "approval") {
+        this.#autoApproveRequest(handle, inspection.pendingRequest);
+      }
+    }
     const legacyInternalSessions = new Set(project.sessions.flatMap((session) => {
       const latest = session.turns.at(-1);
       const lineage = latest === undefined ? undefined : byRun.get(latest.runId)?.lineage;
@@ -849,9 +927,9 @@ export class DesktopRuntimeService {
     const environment = { ...readEnv(join(workspace, ".env")), ...process.env };
     const boundedProviderEnvironment = {
       ...environment,
-      NEXORA_MODEL_CONNECT_TIMEOUT_MS: environment.NEXORA_MODEL_CONNECT_TIMEOUT_MS ?? "30000",
-      NEXORA_MODEL_TIMEOUT_MS: environment.NEXORA_MODEL_TIMEOUT_MS ?? "60000",
-      NEXORA_MODEL_MAX_DURATION_MS: environment.NEXORA_MODEL_MAX_DURATION_MS ?? "180000"
+      NEXORA_MODEL_CONNECT_TIMEOUT_MS: environment.NEXORA_MODEL_CONNECT_TIMEOUT_MS ?? "120000",
+      NEXORA_MODEL_TIMEOUT_MS: environment.NEXORA_MODEL_TIMEOUT_MS ?? "300000",
+      NEXORA_MODEL_MAX_DURATION_MS: environment.NEXORA_MODEL_MAX_DURATION_MS ?? "1800000"
     };
     const project = this.#ensureProject(workspace);
     const selected = this.#hostConfig.modelProfiles.find((profile) => profile.id === project.selectedModelProfileId);
@@ -863,7 +941,6 @@ export class DesktopRuntimeService {
       NEXORA_MODEL_BASE_URL: selected.baseUrl,
       NEXORA_MODEL_NAME: selected.model,
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(selected.decisionOutputTokens),
-      NEXORA_MODEL_TOOL_TRANSPORT: selected.transport,
       NEXORA_MODEL_REASONING: selected.reasoning,
       ...(selected.thinkingToggleParam === null ? {} : { NEXORA_MODEL_THINKING_PARAM: selected.thinkingToggleParam }),
       ...(selected.contextWindowTokens === null ? {} : { NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: String(selected.contextWindowTokens) }),
@@ -896,7 +973,6 @@ export class DesktopRuntimeService {
         NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: null,
         NEXORA_MODEL_ACTIVE_INPUT_TOKENS: null,
         NEXORA_MODEL_DECISION_OUTPUT_TOKENS: null,
-        NEXORA_MODEL_TOOL_TRANSPORT: null,
         NEXORA_MODEL_REASONING: null,
         NEXORA_MODEL_THINKING_PARAM: null
       });
@@ -910,7 +986,6 @@ export class DesktopRuntimeService {
       NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: selected.contextWindowTokens === null ? null : String(selected.contextWindowTokens),
       NEXORA_MODEL_ACTIVE_INPUT_TOKENS: selected.activeInputTargetTokens === null ? null : String(selected.activeInputTargetTokens),
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(selected.decisionOutputTokens),
-      NEXORA_MODEL_TOOL_TRANSPORT: selected.transport,
       NEXORA_MODEL_REASONING: selected.reasoning,
       NEXORA_MODEL_THINKING_PARAM: selected.thinkingToggleParam,
       NEXORA_MODEL_API_KEY: key ?? null
@@ -1012,7 +1087,7 @@ function environmentModelProfile(workspace: string): StoredModelProfile | null {
     contextWindowTokens: Number.isInteger(contextWindowTokens) && contextWindowTokens > 0 ? contextWindowTokens : null,
     activeInputTargetTokens: Number.isInteger(activeInputTargetTokens) && activeInputTargetTokens > 0 ? activeInputTargetTokens : null,
     decisionOutputTokens,
-    transport: environment.NEXORA_MODEL_TOOL_TRANSPORT === "structured_output" ? "structured_output" : "native_tools",
+    transport: "native_tools",
     reasoning: environment.NEXORA_MODEL_REASONING === "off" || environment.NEXORA_MODEL_REASONING === "on"
       ? environment.NEXORA_MODEL_REASONING
       : "dynamic",

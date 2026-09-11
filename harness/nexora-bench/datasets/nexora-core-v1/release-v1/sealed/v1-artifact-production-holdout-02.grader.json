@@ -1,0 +1,55 @@
+{
+  "files": [
+    {
+      "id": "expected-1",
+      "path": "deliverables/brief.md",
+      "exists": true,
+      "equals": "# Incident handoff\n\n## Decision\nProceed with owner review.\n\n## Evidence\n- source record A\n- source record B\n\n## Next action\nAssign the named owner and record confirmation.\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "independent-verifier",
+      "command": "node",
+      "args": [
+        "verify.mjs"
+      ],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": [],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": [
+      {
+        "toolName": "filesystem.list",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.patch",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "shell.execute",
+        "status": "succeeded",
+        "count": 1
+      }
+    ]
+  }
+}

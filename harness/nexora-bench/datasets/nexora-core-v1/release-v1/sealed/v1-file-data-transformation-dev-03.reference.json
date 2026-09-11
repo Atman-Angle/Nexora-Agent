@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-file-data-transformation-dev-03",
+  "expectedPaths": [
+    "report.md"
+  ],
+  "referenceStateDigest": "sha256:52b5ae54e788947ee0e6b327b1527325691d7abd52185709862a1df302d11fec"
+}

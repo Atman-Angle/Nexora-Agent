@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   type ModelDecisionContext,
   type ModelResponse,
@@ -258,9 +258,13 @@ describe("E108 Runtime-owned Intent Compilation", () => {
 
     const first = await runtime.start({ input: "Begin the history fixture." });
     const second = await runtime.resume({ runId: first.runId, input: "The proof is in history.txt." });
-    const result = await runtime.resume({
+    const waiting = await runtime.resume({
       runId: second.runId,
       input: "Request and restore input:2 before reading its path and report the marker."
+    });
+    const result = await runtime.resume({
+      runId: waiting.runId,
+      input: "Report the restored input:2 history marker."
     });
     const view = await runtime.inspect(result.runId);
     await runtime.close();
@@ -803,7 +807,7 @@ describe("E108 Runtime-owned Intent Compilation", () => {
 
   it("pauses legacy RuntimeAction output at the budget while preserving the repair cause", async () => {
     const root = fixtureRoot();
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide() {
         return { type: "set_plan", basedOnVersion: null, orderedSteps: [] } as unknown as ModelResponse;
       }
@@ -881,6 +885,7 @@ function queuedProvider(
   const queue = [...decisions];
   const contexts: ModelDecisionContext[] = [];
   return {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     contexts,
     async decide(context) {
       contexts.push(structuredClone(context));

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "taskId": "cap-local-discovery-handoff",
+  "reviewStatus": "PENDING_HUMAN_REVIEW",
+  "reviewer": null,
+  "reviewedAt": null,
+  "decision": null,
+  "qualificationEvidence": ".tmp/cohort-c-local-discovery-qualification/report.json",
+  "reviewNotes": []
+}

@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-environment-configuration-operations-validation-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "environment_configuration_operations",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "validation",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Update the worker environment configuration for the requested operational policy, preserve unrelated settings, and validate the configuration before handoff.",
+    "allowedCapabilities": [
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-environment-configuration-operations-validation-01/fixture",
+      "digest": "sha256:987cecc509c84a294186499f9d2cc03bba8fc57f907ec4e2fd455f6f2171e0fb"
+    },
+    "scenario": "release-v1/tasks/v1-environment-configuration-operations-validation-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-environment-configuration-operations-validation-01.grader.json",
+    "graderDigest": "sha256:0a8f14088e20314e52de63198dceb088e09d139240e2b85902b21db3d6762739",
+    "referenceRef": "release-v1/sealed/v1-environment-configuration-operations-validation-01.reference.json",
+    "referenceDigest": "sha256:201c981ebf6a30053815458139a7807ba9242a5eddc41d432317eab1ccae3bd6",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-environment-configuration-operations-validation-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:4ad61caba3cb088a174a1ae38ed303daf58b7d4a9cc4508ed946b295a10dc5c1",
+    "fixtureDigest": "sha256:987cecc509c84a294186499f9d2cc03bba8fc57f907ec4e2fd455f6f2171e0fb"
+  }
+}

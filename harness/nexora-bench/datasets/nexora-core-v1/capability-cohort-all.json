@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-all",
+  "version": 1,
+  "description": "Frozen ten-task Harbor capability cohort: every cap-* task run by smoke and aggregate reliability jobs.",
+  "tasks": [
+    "tasks/cap-artifact-incident-handoff/task.json",
+    "tasks/cap-batch-manifest-reorganize/task.json",
+    "tasks/cap-code-serializer-provenance/task.json",
+    "tasks/cap-data-tax-reconcile/task.json",
+    "tasks/cap-env-coherent-mapping/task.json",
+    "tasks/cap-env-config-converge/task.json",
+    "tasks/cap-local-discovery-handoff/task.json",
+    "pilots/batch-a/coding-pagination.task.json",
+    "pilots/batch-a/data-batch-report.task.json",
+    "pilots/batch-a/mixed-restart-aggregate.task.json"
+  ]
+}

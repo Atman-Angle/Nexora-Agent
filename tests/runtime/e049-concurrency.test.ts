@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { deriveRunDelivery } from "../../packages/runtime/src/delivery.js";
-import { createRuntime, modelResponses, type ModelDecisionContext, type ModelResponse, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createRuntime, modelResponses, type ModelDecisionContext, type ModelResponse, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
 import { transitionRunStatus } from "../../packages/runtime/src/state-machine.js";
 
@@ -22,6 +22,7 @@ function tempRoot(): string {
 }
 
 class PausedProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   entered!: () => void;
   readonly enteredPromise = new Promise<void>((resolve) => { this.entered = resolve; });
   release!: () => void;
@@ -41,7 +42,7 @@ describe("E049 lease and fencing", () => {
     let calls = 0;
     let elapsedMs = 0;
     const startedAt = Date.parse("2026-07-22T00:00:00.000Z");
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide() {
         calls += 1;
         elapsedMs += 150;
@@ -59,7 +60,7 @@ describe("E049 lease and fencing", () => {
       now: () => new Date(startedAt + elapsedMs).toISOString()
     });
     const result = await runtime.start({ input: "Exercise lease renewal.", budgets: { maxIterations: 40, maxModelCalls: 40, maxToolCalls: 1, maxRetries: 40, maxDurationMs: 10_000 } });
-    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
     expect(calls).toBe(2);
     expect(elapsedMs).toBeGreaterThanOrEqual(300);
     runtime.close();
@@ -83,7 +84,7 @@ describe("E049 lease and fencing", () => {
     const second = createRuntime({
       workspace,
       dataDir,
-      provider: { async decide() { return modelResponses.input({ question: "x", reason: "x" }); } },
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide() { return modelResponses.input({ question: "x", reason: "x" }); } },
       tools: []
     });
     await expect(second.resume({ runId })).rejects.toThrow(/RUN_BUSY/);
@@ -109,6 +110,12 @@ describe("E049 lease and fencing", () => {
     const blocked = transitionRunStatus(initial, "blocked", {
       now: blockedAt,
       stopReason: "PROVIDER_UNAVAILABLE",
+      resumePredicate: {
+        kind: "provider_reconnect",
+        providerCode: "PROVIDER_UNAVAILABLE",
+        remainingRecoverySegments: 1,
+        verification: "bounded_provider_probe"
+      },
       delivery: deriveRunDelivery({
         run: initial,
         outcome: "blocked",

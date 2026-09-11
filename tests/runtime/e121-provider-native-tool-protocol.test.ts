@@ -9,6 +9,7 @@ import { z } from "zod";
 import {
   createOpenAICompatibleProvider,
   createRuntime,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL
 } from "../../packages/harness/src/index.js";
@@ -31,6 +32,14 @@ function tempRoot(prefix: string): string {
 
 type ProviderRequest = {
   readonly parallel_tool_calls?: boolean;
+  readonly tools?: readonly {
+    readonly type: "function";
+    readonly function: {
+      readonly name: string;
+      readonly description: string;
+      readonly parameters: Record<string, unknown>;
+    };
+  }[];
   readonly messages: readonly {
     readonly role: string;
     readonly content: string | null;
@@ -87,8 +96,9 @@ describe("E050 Provider response contract convergence", () => {
       baseUrl: `http://127.0.0.1:${server.port}/v1`,
       apiKey: "test-key",
       model: "test-model",
-      transport: "structured_output"
+      transport: "native_tools"
     });
+    expect(provider.nativeFunctionCalling).toEqual(NATIVE_FUNCTION_CALLING_CAPABILITIES);
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
@@ -117,8 +127,11 @@ describe("E050 Provider response contract convergence", () => {
     }));
     expect(requests[0]?.messages[0]?.content).toContain('"name":"example.read"');
     expect(requests[0]?.messages[0]?.content).toContain('"name":"example.other"');
-    expect(requests[0]?.messages[0]?.content).toContain("strict Provider response Schema");
+    expect(requests[0]?.messages[0]?.content).toContain("Provider-native functions");
     expect(requests[0]?.messages[0]?.content).toBe(requests[1]?.messages[0]?.content);
+    const planTool = requests[0]?.tools?.find((tool) => tool.function.name === UPDATE_PLAN_CONTROL)?.function;
+    expect(planTool?.description).toContain("Never bind one required_outcome task to multiple ids");
+    expect(JSON.stringify(planTool?.parameters)).toContain("MUST contain exactly one id");
 
     const rejected = view.events.find((event) => event.type === "response.rejected");
     expect(rejected).toBeDefined();
@@ -151,7 +164,7 @@ describe("E050 Provider response contract convergence", () => {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
         model: "test-model",
-        transport: "structured_output"
+        transport: "native_tools"
       }),
       tools: [exampleTool({ path: "target.txt" })]
     });
@@ -199,7 +212,7 @@ describe("E050 Provider response contract convergence", () => {
           type: "function" as const,
           function: {
             name: REQUEST_INPUT_CONTROL,
-            arguments: JSON.stringify({ question: "Continue?", reason: "Native Tool continuity proved." })
+            arguments: JSON.stringify({ question: "Continue?", reason: "Native Tool continuity proved.", basis: "user_exclusive" })
           }
         }]
       };
@@ -228,7 +241,7 @@ describe("E050 Provider response contract convergence", () => {
       inputJson: { path: "target.txt" }
     });
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
-    expect(requests[0]?.parallel_tool_calls).toBe(true);
+    expect(requests[0]?.parallel_tool_calls).toBe(false);
     expect(requests[1]?.messages.map((message) => message.role)).toEqual([
       "system", "user", "assistant", "tool", "user"
     ]);
@@ -267,7 +280,7 @@ describe("E050 Provider response contract convergence", () => {
           }
         : {
             content: null,
-            tool_calls: [{ id: "canonical-input", type: "function" as const, function: { name: REQUEST_INPUT_CONTROL, arguments: JSON.stringify({ question: "Continue?", reason: "Canonical native name normalized." }) } }]
+            tool_calls: [{ id: "canonical-input", type: "function" as const, function: { name: REQUEST_INPUT_CONTROL, arguments: JSON.stringify({ question: "Continue?", reason: "Canonical native name normalized.", basis: "user_exclusive" }) } }]
           };
     });
     const runtime = createRuntime({
@@ -313,7 +326,7 @@ describe("E050 Provider response contract convergence", () => {
           type: "function" as const,
           function: {
             name: REQUEST_INPUT_CONTROL,
-            arguments: JSON.stringify({ question: "Continue?", reason: "Nested repair proved." })
+            arguments: JSON.stringify({ question: "Continue?", reason: "Nested repair proved.", basis: "user_exclusive" })
           }
         }]
       };
@@ -345,7 +358,7 @@ describe("E050 Provider response contract convergence", () => {
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
   });
 
-  it("normalizes schema-declared structured arguments for structured_output before Tool validation", async () => {
+  it("normalizes schema-declared composite arguments from native Tool calls before Tool validation", async () => {
     const workspace = tempRoot("nexora-e121-structured-argument-normalization-");
     const executed: unknown[] = [];
     let decisions = 0;
@@ -371,7 +384,7 @@ describe("E050 Provider response contract convergence", () => {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
         model: "test-model",
-        transport: "structured_output"
+        transport: "native_tools"
       }),
       tools: [normalizationExampleTool(executed)]
     });
@@ -550,7 +563,7 @@ describe("E050 Provider response contract convergence", () => {
           type: "function" as const,
           function: {
             name: REQUEST_INPUT_CONTROL,
-            arguments: JSON.stringify({ question: "Continue?", reason: "Plan continuation captured." })
+            arguments: JSON.stringify({ question: "Continue?", reason: "Plan continuation captured.", basis: "user_exclusive" })
           }
         }]
       };
@@ -639,7 +652,7 @@ describe("E050 Provider response contract convergence", () => {
           type: "function" as const,
           function: {
             name: REQUEST_INPUT_CONTROL,
-            arguments: JSON.stringify({ question: "Continue?", reason: "Rejected continuation captured." })
+            arguments: JSON.stringify({ question: "Continue?", reason: "Rejected continuation captured.", basis: "user_exclusive" })
           }
         }]
       };
@@ -702,7 +715,7 @@ describe("E050 Provider response contract convergence", () => {
           type: "function" as const,
           function: {
             name: REQUEST_INPUT_CONTROL,
-            arguments: JSON.stringify({ question: "Continue?", reason: "Batch continuation captured." })
+            arguments: JSON.stringify({ question: "Continue?", reason: "Batch continuation captured.", basis: "user_exclusive" })
           }
         }]
       };
@@ -806,7 +819,7 @@ describe("E050 Provider response contract convergence", () => {
           type: "function" as const,
           function: {
             name: REQUEST_INPUT_CONTROL,
-            arguments: JSON.stringify({ question: "Continue?", reason: "Failure continuation captured." })
+            arguments: JSON.stringify({ question: "Continue?", reason: "Failure continuation captured.", basis: "user_exclusive" })
           }
         }]
       };
@@ -865,7 +878,7 @@ describe("E050 Provider response contract convergence", () => {
           type: "function" as const,
           function: {
             name: REQUEST_INPUT_CONTROL,
-            arguments: JSON.stringify({ question: "Continue?", reason: "Budget contraction captured." })
+            arguments: JSON.stringify({ question: "Continue?", reason: "Budget contraction captured.", basis: "user_exclusive" })
           }
         }]
       };
@@ -920,9 +933,66 @@ describe("E050 Provider response contract convergence", () => {
         return {
           content: null,
           tool_calls: [{
+            id: "native-write-plan",
+            type: "function" as const,
+            function: {
+              name: UPDATE_PLAN_CONTROL,
+              arguments: JSON.stringify({
+                goal: "Write the target.",
+                tasks: [
+                  {
+                    objective: "Write the target.",
+                    checks: [{ toolName: "example.write", role: "mutation" }]
+                  },
+                  {
+                    objective: "Verify the denied write was not applied.",
+                    checks: [{ toolName: "example.read", role: "verification" }]
+                  }
+                ]
+              })
+            }
+          }]
+        };
+      }
+      if (decisions === 2) {
+        return {
+          content: null,
+          tool_calls: [{
             id: "native-write",
             type: "function" as const,
             function: { name: "example_write", arguments: JSON.stringify({ path: "target.txt" }) }
+          }]
+        };
+      }
+      if (decisions === 3) {
+        const payload = JSON.parse(request.messages.at(-1)!.content!) as DecisionPayload & {
+          readonly currentPlanAndChecks: DecisionPayload["currentPlanAndChecks"] & {
+            readonly removableSteps?: readonly { readonly stepId: string }[];
+          };
+        };
+        const stepId = payload.currentPlanAndChecks.removableSteps?.[0]?.stepId;
+        if (stepId === undefined) throw new Error("Expected a removable denied-write Plan step.");
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-remove-denied-step",
+            type: "function" as const,
+            function: {
+              name: UPDATE_PLAN_CONTROL,
+              arguments: JSON.stringify({
+                removeSteps: [{ stepId, reason: "The requested write was denied; do not retry it." }]
+              })
+            }
+          }]
+        };
+      }
+      if (decisions === 4) {
+        return {
+          content: null,
+          tool_calls: [{
+            id: "native-verify-denial",
+            type: "function" as const,
+            function: { name: "example.read", arguments: JSON.stringify({ path: "target.txt" }) }
           }]
         };
       }
@@ -936,7 +1006,7 @@ describe("E050 Provider response contract convergence", () => {
         apiKey: "test-key",
         model: "test-model"
       }),
-      tools: [protectedExampleTool()]
+      tools: [protectedExampleTool(), exampleTool({ path: "target.txt" })]
     });
 
     const approval = await runtime.start({
@@ -955,8 +1025,11 @@ describe("E050 Provider response contract convergence", () => {
     runtime.close();
 
     expect(completed.status).toBe("succeeded");
-    expect(view.toolInvocations).toEqual([]);
-    expect(JSON.parse(requests[1]!.messages[3]!.content!)).toMatchObject({
+    expect(view.toolInvocations).toEqual([
+      expect.objectContaining({ toolName: "example.read", status: "succeeded" })
+    ]);
+    expect(view.toolInvocations.some((invocation) => invocation.toolName === "example.write")).toBe(false);
+    expect(JSON.parse(requests[2]!.messages[3]!.content!)).toMatchObject({
       ok: false,
       status: "denied",
       error: { code: "APPROVAL_DENIED", message: "Do not change this file." }
@@ -1001,7 +1074,7 @@ describe("E050 Provider response contract convergence", () => {
     });
   });
 
-  it("rejects an unknown structured Tool at the Provider boundary", async () => {
+  it("rejects an unknown native Tool at the Provider boundary", async () => {
     const workspace = tempRoot("nexora-e050-unknown-structured-");
     const server = await providerServer(async () => toolResponse("unknown.tool", { value: true }));
     const runtime = createRuntime({
@@ -1011,7 +1084,7 @@ describe("E050 Provider response contract convergence", () => {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
         model: "test-model",
-        transport: "structured_output"
+        transport: "native_tools"
       }),
       tools: [exampleTool({ path: "target.txt" })]
     });
@@ -1049,13 +1122,13 @@ describe("E050 Provider response contract convergence", () => {
     runtime.close();
 
     expect(result).toMatchObject({ status: "blocked", stopReason: "PROVIDER_UNAVAILABLE" });
-    expect(attempts).toBe(3);
+    expect(attempts).toBe(5);
     expect(view.snapshot.lastError?.message).toContain(
       "Provider returned an empty assistant response (finish_reason=null)."
     );
-    expect(view.events.filter((event) => event.type === "provider.attempt.failed")).toHaveLength(3);
+    expect(view.events.filter((event) => event.type === "provider.attempt.failed")).toHaveLength(5);
     expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
-  });
+  }, 15_000);
 
   it("retries malformed native function arguments before exposing a Model response", async () => {
     const workspace = tempRoot("nexora-e050-malformed-native-arguments-");
@@ -1133,7 +1206,7 @@ describe("E050 Provider response contract convergence", () => {
         baseUrl: `http://127.0.0.1:${server.port}/v1`,
         apiKey: "test-key",
         model: "test-model",
-        transport: "structured_output"
+        transport: "native_tools"
       }),
       tools: [exampleTool({ path: "target.txt" })]
     });
@@ -1149,7 +1222,9 @@ describe("E050 Provider response contract convergence", () => {
     expect(observation).toEqual(expect.objectContaining({
       toolName: "example.read",
       status: "succeeded",
-      payloadMode: "full"
+      payloadMode: "reference",
+      facts: null,
+      truncated: true
     }));
     expect(observation).toEqual(expect.objectContaining({
       stepId: expect.any(String),
@@ -1165,8 +1240,8 @@ describe("E050 Provider response contract convergence", () => {
     const workspace = tempRoot("nexora-e050-revision-");
     const provider = new ScriptedRuntimeProvider([
       setPlan(workspace),
-      { type: "request_input", question: "Add a constraint?", reason: "test" },
-      { type: "request_input", question: "Continue?", reason: "deterministic stop" }
+      { type: "request_input", question: "Add a constraint?", reason: "test", basis: "user_exclusive" },
+      { type: "request_input", question: "Continue?", reason: "deterministic stop", basis: "user_exclusive" }
     ]);
     const runtime = createRuntime({
       workspace,
@@ -1200,7 +1275,7 @@ describe("E050 Provider response contract convergence", () => {
       runtime = createRuntime({
         workspace,
         dataDir: join(workspace, ".nexora"),
-        provider: {
+        provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
           async decide() {
             return {
               text: "Configuration should fail before this response.",
@@ -1221,35 +1296,15 @@ describe("E050 Provider response contract convergence", () => {
     expect((thrown as Error).message).toContain("inputExample");
   });
 
-  it("fails one malformed strict Provider response without an Agent repair loop", async () => {
+  it("rejects the retired structured transport before an Agent Run starts", () => {
     const workspace = tempRoot("nexora-e050-exhaustion-");
-    const server = await providerServer(async () => ({ type: "set_plan", basedOnVersion: null }));
-    const runtime = createRuntime({
-      workspace,
-      dataDir: join(workspace, ".nexora"),
-      provider: createOpenAICompatibleProvider({
-        baseUrl: `http://127.0.0.1:${server.port}/v1`,
-        apiKey: "test-key",
-        model: "test-model",
-        transport: "structured_output"
-      }),
-      tools: []
-    });
-
-    const result = await runtime.start({
-      input: "Do the work.",
-      budgets: { maxIterations: 5, maxModelCalls: 5, maxToolCalls: 1, maxRetries: 1, maxDurationMs: 30_000 }
-    });
-    const view = await runtime.inspect(result.runId);
-    runtime.close();
-
-    expect(result.status).toBe("blocked");
-    expect(result.stopReason).toBe("PROVIDER_UNAVAILABLE");
-    expect(view.snapshot.status).toBe("blocked");
-    expect(view.modelCalls).toHaveLength(1);
-    expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
-    expect(view.events.map((event) => event.type)).not.toContain("response.rejected");
-    expect(view.toolInvocations).toEqual([]);
+    expect(() => createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      transport: "structured_output" as unknown as "native_tools"
+    })).toThrow('OpenAI-compatible Provider supports only "native_tools" transport.');
+    rmSync(workspace, { recursive: true, force: true });
   });
 });
 
@@ -1422,9 +1477,36 @@ function exampleForSchema(schema: z.ZodTypeAny): unknown {
 async function providerServer(
   decide: (request: ProviderRequest) => Promise<unknown>
 ): Promise<{ readonly port: number }> {
-  return await providerMessageServer(async (request) => ({
-    content: JSON.stringify(await decide(request))
-  }));
+  let fixtureCall = 0;
+  return await providerMessageServer(async (request) => {
+    const result = await decide(request);
+    if (result !== null
+      && typeof result === "object"
+      && !Array.isArray(result)
+      && "toolCalls" in result
+      && Array.isArray((result as { readonly toolCalls?: unknown }).toolCalls)) {
+      const modelResponse = result as {
+        readonly text: string | null;
+        readonly toolCalls: readonly {
+          readonly callId?: string;
+          readonly name: string;
+          readonly arguments: unknown;
+        }[];
+      };
+      return {
+        content: modelResponse.text,
+        tool_calls: modelResponse.toolCalls.map((call) => ({
+          id: call.callId ?? `fixture-call-${++fixtureCall}`,
+          type: "function" as const,
+          function: {
+            name: call.name,
+            arguments: JSON.stringify(call.arguments)
+          }
+        }))
+      };
+    }
+    return { content: typeof result === "string" ? result : JSON.stringify(result) };
+  });
 }
 
 async function providerMessageServer(
@@ -1478,6 +1560,6 @@ function scriptedToolResponse(name: string, argumentsValue: unknown, callId: str
 function inputResponse(question: string, reason: string) {
   return structuredCalls([{
     name: REQUEST_INPUT_CONTROL,
-    arguments: { question, reason }
+    arguments: { question, reason, basis: "user_exclusive" }
   }]);
 }

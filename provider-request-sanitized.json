@@ -1,0 +1,783 @@
+{
+  "model": "qwen3.8-flash",
+  "temperature": 0,
+  "max_tokens": 16384,
+  "messages": [
+    {
+      "role": "system",
+      "content": "[REDACTED:28111 chars]"
+    },
+    {
+      "role": "user",
+      "content": "[REDACTED:6131 chars]"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "nexora_respond",
+        "description": "nexora_respond: Return a final answer grounded entirely in authoritative context already present, without starting workspace or external execution.\nUse when: The complete answer is already grounded in authoritative context and no observation, effect, Plan or user input is needed.\nAvoid when: Any required fact is absent, mutable, workspace-specific or external.; A Plan, Tool, Approval, recovery or user input is needed.\nNon-goals: Claim unobserved state.; Bypass Evidence or Host completion requirements.\nEffect: control\nProduces: A direct-response proposal for Runtime validation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "nexora_update_plan",
+        "description": "nexora_update_plan: Resolve the durable Task Scope on first planning, then set independently verifiable outcome TODOs bound to that scope; omit finished outcomes.\nUse when: Before the first mutation when known work spans multiple files or components, has dependent implementation and verification outcomes, or likely needs more than three Tool calls.; After bounded read-only exploration establishes the scope of a complex change.; A planned outcome finished, a conflict occurred, or new facts changed the remaining work.\nAvoid when: A direct answer, one observation, or one obvious local change is sufficient.\nNon-goals: Grant permission.; Declare completion.; Add an unauthorized user-facing outcome during replan.\nEffect: control\nProduces: A Runtime-owned Task Scope plus a remaining-work Plan whose outcomes bind to Scope and required Tool evidence.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "goal": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scope": {
+              "type": "object",
+              "properties": {
+                "taskShape": {
+                  "type": "string",
+                  "enum": [
+                    "greenfield",
+                    "feature",
+                    "bug_fix",
+                    "refactor"
+                  ]
+                },
+                "requiredOutcomes": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "description": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "user_explicit",
+                          "agent_inferred",
+                          "workspace_fact"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "description",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "assumptions": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "description": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "user_explicit",
+                          "agent_inferred",
+                          "workspace_fact"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "description",
+                      "source"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "excludedScope": {
+                  "type": "array",
+                  "maxItems": 64,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "completionCriteria": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 32,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "resolutionMode": {
+                  "type": "string",
+                  "enum": [
+                    "pass_through",
+                    "normalize",
+                    "shape"
+                  ]
+                }
+              },
+              "required": [
+                "taskShape",
+                "requiredOutcomes",
+                "assumptions",
+                "excludedScope",
+                "completionCriteria",
+                "resolutionMode"
+              ],
+              "additionalProperties": false
+            },
+            "tasks": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "objective": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "required_outcome",
+                      "supporting"
+                    ]
+                  },
+                  "supports": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 16,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "checks": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "toolName": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "mutation",
+                            "verification"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "toolName",
+                        "role"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "objective",
+                  "kind",
+                  "supports",
+                  "checks"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "removeSteps": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "stepId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "stepId",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "tasks"
+              ]
+            },
+            {
+              "required": [
+                "removeSteps"
+              ]
+            }
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "nexora_request_input",
+        "description": "nexora_request_input: Pause for a user-exclusive fact, irreversible preference or business choice after autonomous paths are exhausted.\nUse when: Only the user can supply the required fact or choice.\nAvoid when: Available facts or Tools can resolve the uncertainty.; Runtime Approval is required.\nNon-goals: Request Tool Approval.; Delegate ordinary exploration to the user.\nEffect: control\nProduces: A persisted human-input request.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "question",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "nexora_delegate_workers",
+        "description": "nexora_delegate_workers: Delegate at least two independent read-only or isolated objectives to bounded Worker Runs when the user requested it or the task materially benefits from isolation or independent verification. Each objective should say what final deliverable it supports and what contribution the Worker must provide.\nUse when: The user explicitly requests sub-agents.; There are at least two independent objectives and delegation provides context, permission or verification isolation.\nAvoid when: The work is one tightly sequential objective.; Delegation would create shared mutable state or bypass approval.\nNon-goals: Create a workflow graph.; Grant Tool permission.; Declare Parent success.\nEffect: control\nProduces: Runtime-owned Child Branch identities and bounded Worker objectives.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "finalDeliverable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "assignments": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "objective": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "contribution": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "profileRef": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "objective"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "assignments"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "filesystem_list",
+        "description": "filesystem.list: Discover workspace file names and paths under one known directory.\nUse when: A required path is unknown but its containing directory is known.\nAvoid when: The exact target path is already known.; The uncertainty concerns file content rather than path.\nNon-goals: Read file contents.; Search for text inside files.\nEffect: read\nProduces: One deterministic recursive path page and the exact next offset when more entries exist.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "default": "."
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 2000,
+              "default": 2000
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "filesystem_patch",
+        "description": "filesystem.patch: Replace one exact occurrence in a known workspace file guarded by its content digest.\nUse when: The path, current digest, unique old text, and replacement text are known.; After CONTENT_CONFLICT, the returned recovery is retry_with_current_digest and the same exact edit is still intended.\nAvoid when: The current content or digest is unknown.; The replacement target is missing or not unique.; A conflict requires content inspection rather than a digest-only retry.; Several known edits to the same fully-read file would require serial patches; use one complete filesystem.write instead.\nNon-goals: Rewrite an entire file.; Apply ambiguous or multi-location edits.\nEffect: write\nProduces: The changed path, resulting digest, and whether an idempotent replay was detected.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "expectedDigest": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            },
+            "find": {
+              "type": "string",
+              "minLength": 1
+            },
+            "replace": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "expectedDigest",
+            "find",
+            "replace"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "filesystem_read",
+        "description": "filesystem.read: Retrieve UTF-8 content or one bounded character range from a known workspace file.\nUse when: The exact target path is known and its content is required.; A large file preview requires continuation from nextOffset.\nAvoid when: The target path is unresolved.; Existing facts already contain the required content.\nNon-goals: Discover an unknown path.; Modify file content.\nEffect: read\nProduces: The target path, bounded content or preview, full-file digest and size, plus nextOffset for ranged continuation.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 3000
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "filesystem_search",
+        "description": "filesystem.search: Find a case-insensitive literal value inside UTF-8 file contents.\nUse when: The required literal content is known but its file location is unresolved.\nAvoid when: The target path is already known.; The uncertainty concerns a file name or path rather than content.\nNon-goals: Discover a file by name.; Interpret the query as a regular expression.\nEffect: read\nProduces: One deterministic matching-line page with paths, line numbers, bounded text and the exact next offset.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "default": "."
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "default": 100
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "filesystem_write",
+        "description": "filesystem.write: Replace or create one known workspace file with complete content.\nUse when: The exact target path and complete desired content are known.; Several known changes in one already-read file can be applied safely in one complete write.\nAvoid when: Only one localized existing-content change is required.; The desired content is unresolved.\nNon-goals: Apply a minimal change to existing content.; Discover a target path.\nEffect: write\nProduces: The written path, resulting content digest, and byte length.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "git_diff",
+        "description": "git.diff: Observe unstaged repository differences for the workspace or one known path.\nUse when: The current unstaged changes are required as facts.\nAvoid when: The required fact is repository status or committed content rather than an unstaged diff.\nNon-goals: Read committed history.; Modify repository state.\nEffect: read\nProduces: The bounded unstaged diff and process facts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "git_show",
+        "description": "git.show: Observe content from one known repository revision, optionally limited to one path.\nUse when: The exact revision is known and its committed content is required.\nAvoid when: The revision is unresolved or the required fact concerns the working tree.\nNon-goals: Read unstaged changes.; Modify repository state.\nEffect: read\nProduces: The bounded committed revision content and process facts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "revision": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._/-]{1,200}$"
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "revision"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "git_status",
+        "description": "git.status: Observe the current workspace change status.\nUse when: The current set of changed, untracked, or staged paths is required.\nAvoid when: Existing facts already establish the required workspace status.\nNon-goals: Read file contents or diffs.; Modify repository state.\nEffect: read\nProduces: The bounded short-form repository status and process facts.",
+        "parameters": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "process_inspect",
+        "description": "process.inspect: Inspect the current liveness and terminal facts of one exact managed process generation.\nUse when: A known process handle must be checked before claiming the service is running or stopped.\nAvoid when: No exact process handle is available.\nNon-goals: Discover an unknown service.; Change process state.\nEffect: read\nProduces: Current process state, verified heartbeat freshness, endpoint, PID and exit facts.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "processHandle": {
+              "type": "string",
+              "pattern": "^process_[a-f0-9-]{36}$"
+            }
+          },
+          "required": [
+            "processHandle"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "process_logs",
+        "description": "process.logs: Read a bounded redacted tail from one exact managed process log.\nUse when: A known managed process requires startup or failure diagnostics.\nAvoid when: The process handle is unknown.; Current process facts already answer the question.\nNon-goals: Stream logs indefinitely.; Change process state.\nEffect: read\nProduces: A bounded redacted log tail and an Artifact reference when the complete log is large.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "processHandle": {
+              "type": "string",
+              "pattern": "^process_[a-f0-9-]{36}$"
+            },
+            "stream": {
+              "type": "string",
+              "enum": [
+                "stdout",
+                "stderr",
+                "combined"
+              ],
+              "default": "combined"
+            },
+            "tailBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536,
+              "default": 16384
+            }
+          },
+          "required": [
+            "processHandle"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "process_start",
+        "description": "process.start: Start one persistent non-interactive workspace process and return after a declared readiness condition passes.\nUse when: A development server, preview server, watcher, worker, or other persistent local service must remain available after this Tool call.\nAvoid when: The command is expected to exit after build, test, lint, or migration work.; The executable or readiness condition is unresolved.\nNon-goals: Run commands that naturally exit.; Execute shell command strings.; Start a service without a readiness condition.\nEffect: execute\nProduces: A generation-bound process handle, command digest, PID, readiness time, endpoint, and replay fact.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 128,
+              "default": []
+            },
+            "cwd": {
+              "type": "string",
+              "default": "."
+            },
+            "serviceKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+            },
+            "readiness": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "output_contains"
+                    },
+                    "value": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "tcp"
+                    },
+                    "host": {
+                      "type": "string",
+                      "enum": [
+                        "127.0.0.1",
+                        "localhost",
+                        "::1"
+                      ]
+                    },
+                    "port": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 65535
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "host",
+                    "port"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "http"
+                    },
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "expectedStatus": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": 599
+                      },
+                      "minItems": 1,
+                      "maxItems": 20,
+                      "default": [
+                        200
+                      ]
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "url"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "startupTimeoutMs": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 120000,
+              "default": 30000
+            },
+            "maxLifetimeMs": {
+              "type": "integer",
+              "minimum": 1000,
+              "maximum": 86400000
+            }
+          },
+          "required": [
+            "command",
+            "serviceKey",
+            "readiness"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "process_stop",
+        "description": "process.stop: Stop one exact managed process generation and its descendants, then confirm terminal state.\nUse when: A known managed process is no longer required or must be restarted with different configuration.\nAvoid when: No exact process handle is available.\nNon-goals: Stop arbitrary operating-system PIDs.; Discover an unknown service.\nEffect: execute\nProduces: Confirmed terminal state, stop time, exit code, and whether the process was already stopped.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "processHandle": {
+              "type": "string",
+              "pattern": "^process_[a-f0-9-]{36}$"
+            }
+          },
+          "required": [
+            "processHandle"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "shell_execute",
+        "description": "shell.execute: Run one known non-interactive native executable that is expected to exit on Host process platform win32. Set command to only the executable name/path and put every argument in args; no shell parsing occurs.\nUse when: The exact executable compatible with Host process platform win32, arguments, working directory, and expected purpose are known and the command will naturally exit.\nAvoid when: A dedicated capability can produce the required facts.; The command or its necessity is unresolved.; The requested outcome requires the process to remain running after the Tool call; use process.start.\nNon-goals: Execute shell command strings, pipelines, redirections, compound expressions, shell built-ins, or script-wrapper entrypoints.; Discover which command should be run.; Start a persistent server, watcher, listener, or background service.\nEffect: execute\nProduces: The process exit code, bounded stdout/stderr, timeout status, and truncation status.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string",
+              "minLength": 1,
+              "description": "One native executable name or path only. Do not include arguments, shell operators, redirections, pipelines, built-ins, or shell/script-wrapper entrypoints."
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [],
+              "description": "Explicit argument tokens passed directly to the executable without shell parsing. Put every argument here as a separate array item."
+            },
+            "cwd": {
+              "type": "string",
+              "default": ".",
+              "description": "Workspace-relative working directory for the process."
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 300000,
+              "default": 60000,
+              "description": "Maximum synchronous execution time in milliseconds."
+            }
+          },
+          "required": [
+            "command"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": true
+}

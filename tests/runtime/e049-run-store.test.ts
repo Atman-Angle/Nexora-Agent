@@ -82,6 +82,12 @@ describe("E049 authoritative Run Store", () => {
     const blocked = transitionRunStatus(initial, "blocked", {
       now: later,
       stopReason: "PROVIDER_UNAVAILABLE",
+      resumePredicate: {
+        kind: "provider_reconnect",
+        providerCode: "PROVIDER_UNAVAILABLE",
+        remainingRecoverySegments: 1,
+        verification: "bounded_provider_probe"
+      },
       delivery: deriveRunDelivery({ run: initial, outcome: "blocked", now: later, stopReason: "PROVIDER_UNAVAILABLE" })
     });
     store.commitRun({ previous: initial, next: blocked, event: { type: "run.blocked", occurredAt: later, payload: {} } });

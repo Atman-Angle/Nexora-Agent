@@ -8,7 +8,7 @@
 |---|---|
 | `model-client.ts` | Provider 相关的公共类型（`RuntimeProvider`、`ModelDecisionContext`、`ToolObservation` 等）。 |
 | `model-response.ts` | 归一化 `ModelResponse`、Provider Tool Call 与 Plan/HITL control 的严格 Schema。 |
-| `adapter.ts` | `defineProviderAdapter` 工厂、`native_tools` / `structured_output` 传输类型以及 Prompt 编译入口。 |
+| `adapter.ts` | `defineProviderAdapter` 工厂、`native_tools` 传输类型以及 Prompt 编译入口。 |
 | `openai-compatible.ts` | OpenAI 兼容协议的实现：`createOpenAICompatibleProvider`、`openAICompatibleProviderFromEnv`、`ModelConfigError`。 |
 | `index.ts` | 重导出桶；新增厂商时在这里暴露公共入口。 |
 
@@ -25,6 +25,8 @@
 ```ts
 interface RuntimeProvider {
   readonly modelProfile?: ProviderModelProfile;
+  readonly transport?: ProviderTransportProfile;
+  readonly nativeFunctionCalling: NativeFunctionCallingCapabilities;
   readonly measureTokens?: ProviderTokenMeter;
   decide(context: ModelDecisionContext, operation): Promise<ModelResponse>;
   dispose?(): void | Promise<void>;
@@ -33,14 +35,13 @@ interface RuntimeProvider {
 
 `ModelResponse` 只描述 Provider 返回的事实：可选文本、带 `callId` 的 Tool Calls 和 finish reason。它不包含模型填写的 Runtime Action。Harness 按响应形状确定性路由：`nexora_update_plan` 编译 Plan、`nexora_request_input` 编译 HITL、注册的 Runtime Tool 进入唯一 Tool Action 路径、无调用的非空文本提出完成。
 
-原生 Function Calling 的下一轮不是新的无状态请求。Harness 将最近一批规范化调用记录为 `model.turn` 审计事实，并从后续 Plan、Tool Invocation、HITL resume 或 rejection Authority 派生一个有界 continuation。OpenAI-compatible Adapter 发送原始 `assistant.tool_calls` 和逐个匹配 `tool_call_id` 的 `role: tool` 结果；进程内 Provider session 不保存状态，`structured_output` 也不使用这条 wire 路径。
+原生 Function Calling 的下一轮不是新的无状态请求。Harness 将最近一批规范化调用记录为 `model.turn` 审计事实，并从后续 Plan、Tool Invocation、HITL resume 或 rejection Authority 派生一个有界 continuation。OpenAI-compatible Adapter 发送原始 `assistant.tool_calls` 和逐个匹配 `tool_call_id` 的 `role: tool` 结果；进程内 Provider session 不保存状态。
 
-Provider 必须在一个 Run 内固定声明一种能力：
+Provider 必须在一个 Run 内固定声明完整的 native Function Calling 能力：
 
 - `native_tools`：注册真实函数 Schema，不发送 `response_format`，只读取 Provider 原生 `tool_calls`；普通 content 永远不解析为 Tool。
-- `structured_output`：不注册原生 Tools，使用 strict `json_schema` 返回 response envelope；Adapter 为缺少原生 ID 的 calls 生成稳定 ID。
 
-不支持任一能力的 Provider 必须显式失败，不能降级到 JSON-object、Prompt 约定或已删除的 Action wire。
+能力声明覆盖函数定义、原生调用响应、稳定 call ID、逐 call result continuation、multi-turn、null content with calls、批量上限、alias 与参数保真。`defineProviderAdapter` 默认提供完整声明；直接实现 `RuntimeProvider` 的调用方必须显式提供。`supported: false` 或声明不完整都在 Agent 组合边界失败，不能降级到 JSON-object、Prompt 约定或已删除的 Action wire。
 
 Provider Contract v6 在同一投影中增加 Runtime-verified continuation ancestors。祖先 Input、正式 Outcome、Tool/Evidence/Artifact facts 由 Harness 从 Authority 重建，按 `full → compact → reference` 收缩，并使用 `run:<runId>/...` ref 精确恢复；Host summary、Provider reasoning delta 和 sibling Run 不进入该历史。
 
@@ -83,7 +84,7 @@ Provider 返回最终 `text` 后，Harness 只提交 summary。Runtime 从当前
 
 环境入口还读取 `NEXORA_MODEL_CONNECT_TIMEOUT_MS`、`NEXORA_MODEL_TIMEOUT_MS`、`NEXORA_MODEL_MAX_DURATION_MS`、`NEXORA_MODEL_TEMPERATURE`、`NEXORA_MODEL_REASONING`（`off|on|dynamic`）、`NEXORA_MODEL_THINKING_PARAM`、`NEXORA_MODEL_ACTIVE_INPUT_TOKENS` 和 `NEXORA_MODEL_STREAM`（`true|false`）。等待响应头默认最多一分钟；响应建立后只在连续五分钟没有完整 SSE frame 时触发可重试 timeout。只要 Provider 持续发送 reasoning/content/Tool Call/heartbeat 就不会被空闲计时器中断。30 分钟总上限独立存在，用户取消始终立即生效。`openAICompatibleProviderFromEnv` 优先根据 `NEXORA_MODEL_NAME` 从同一 Adapter 的 capability catalog 解析窗口与输出能力；未知模型必须显式提供 `NEXORA_MODEL_CONTEXT_WINDOW_TOKENS`，不会猜测 Context Window。Harness 从模型总窗口扣除当前 phase 输出预留，最终 wire input 必须落在剩余 hard input limit 内；只有显式配置时，active-input target 才进一步约束成本/延迟，且绝不放宽 capacity soft limit。Runtime 持久化 Model Call ledger 与 derived projection mode，完整 Context 事实仍只来自原有 Authority。
 
-公共文字增量不是 Runtime Event、Evidence 或完成事实。`reasoning_content` 只作为 Provider 暴露的过程文字转发，不进入最终 `ModelResponse.text`，Harness 不生成、补全或推断 Provider 未返回的隐藏推理。Harness 为每个 Run / Model Call / Attempt 标识增量；失败 Attempt 会发出丢弃通知。成功 Attempt 可由 Host 请求 Runtime 将已脱敏的 reasoning/content transcript 保存为内容寻址 Artifact，并由 `responseArtifactRef` 关联到该 Attempt；失败、取消或中断 Attempt 不保存 transcript。最终状态仍只使用完整 `ModelResponse` 和 Runtime Completion Gate。`structured_output` 的半成品 JSON 不流式展示。
+公共文字增量不是 Runtime Event、Evidence 或完成事实。`reasoning_content` 只作为 Provider 暴露的过程文字转发，不进入最终 `ModelResponse.text`，Harness 不生成、补全或推断 Provider 未返回的隐藏推理。Harness 为每个 Run / Model Call / Attempt 标识增量；失败 Attempt 会发出丢弃通知。成功 Attempt 可由 Host 请求 Runtime 将已脱敏的 reasoning/content transcript 保存为内容寻址 Artifact，并由 `responseArtifactRef` 关联到该 Attempt；失败、取消或中断 Attempt 不保存 transcript。最终状态仍只使用完整 `ModelResponse` 和 Runtime Completion Gate；无 Function Call 的非空普通文本只能作为 Completion Gate 候选。
 
 同一 capability catalog 还可以保存由固定真实 usage 数据集验证的 estimated wire-meter 校准。`qwen3.7-flash` 的 E101 decision 样本最大 actual-to-UTF8/4 偏差为 1.66×，因此使用带余量的 1.8×。`deepseek-v4-flash-0731` 已登记供应商公布的 1M 上下文与 393,216 共享输出上限，但在取得固定 usage 校准集前继续使用通用 `nexora:utf8-bytes/4:v1`，不会借用 Qwen 比率。Ledger 记录完整 meter 名称并继续标记 `estimated`，Provider 返回的 actual usage 原样保留。`tokenMeter` 注入的精确 tokenizer 优先于 catalog 校准；未知模型不会猜测能力或校准值。
 

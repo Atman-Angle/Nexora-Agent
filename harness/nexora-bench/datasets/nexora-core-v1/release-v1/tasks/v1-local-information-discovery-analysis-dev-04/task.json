@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-local-information-discovery-analysis-dev-04",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "local_information_discovery_analysis",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "basic",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "real_workflow",
+  "agentVisible": {
+    "instruction": "Inspect the local billing notes, extract the owner and priority, and write a concise evidence-linked findings note without changing source material.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-local-information-discovery-analysis-dev-04/fixture",
+      "digest": "sha256:01b6b994a2f247554518d3bee2690f81cbcbb18bdded5b8bd8f090a1633dba8f"
+    },
+    "scenario": "release-v1/tasks/v1-local-information-discovery-analysis-dev-04/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-local-information-discovery-analysis-dev-04.grader.json",
+    "graderDigest": "sha256:e0082d93067c8c60cf1e0f0f53c03ae39e2d164bc2feac3e98749f600b6fd34c",
+    "referenceRef": "release-v1/sealed/v1-local-information-discovery-analysis-dev-04.reference.json",
+    "referenceDigest": "sha256:99c2e53d6357d04552bf2478395c626276a71d91ff3696a1ec49e3712ca8127e",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-local-information-discovery-analysis-dev-04.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:7caf486f13b0cfc473cbaddca0c3686847dc235052f2c667927ec8ad780b38b2",
+    "fixtureDigest": "sha256:01b6b994a2f247554518d3bee2690f81cbcbb18bdded5b8bd8f090a1633dba8f"
+  }
+}

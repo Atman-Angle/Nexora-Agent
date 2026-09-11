@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { compileModelPlan } from "../../packages/harness/src/planning.js";
-import { createRuntime, type ModelDecisionContext, type ModelResponse } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createRuntime, type ModelDecisionContext, type ModelResponse } from "../../packages/harness/src/index.js";
 import {
   type PlanTaskScope,
   RunSnapshotSchema,
@@ -148,7 +148,7 @@ describe("E144 Task Scope Authority v0.1", () => {
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide(): Promise<ModelResponse> {
           const response = responses.shift();
           if (response === undefined) throw new Error("Greenfield replan Provider exhausted.");
@@ -310,7 +310,7 @@ describe("E144 Task Scope Authority v0.1", () => {
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide(): Promise<ModelResponse> {
           const response = responses.shift();
           if (response === undefined) throw new Error("Bug Fix replan Provider exhausted.");
@@ -523,7 +523,7 @@ describe("E144 Task Scope Authority v0.1", () => {
     expect(validateCompletion(run, []).issues).not.toContain("SCOPE_REQUIRED_OUTCOME_UNCOVERED:journal-verification");
   });
 
-  it("makes Completion Gate reject a persisted Plan whose required Scope coverage was corrupted", () => {
+  it("keeps corrupted Scope coverage outside Runtime mechanical terminal admission", () => {
     const run = materializePlannedRun({
       userInput: "Build the bounded exploration journal.",
       scope: broadScope,
@@ -547,11 +547,12 @@ describe("E144 Task Scope Authority v0.1", () => {
       ))
     });
 
-    expect(validateCompletion(corrupted, []).issues)
-      .toContain("SCOPE_REQUIRED_OUTCOME_UNCOVERED:journal-persistence");
+    const issues = validateCompletion(corrupted, []).issues;
+    expect(issues).not.toContain("SCOPE_REQUIRED_OUTCOME_UNCOVERED:journal-persistence");
+    expect(issues).toContain("COMPLETION_EVIDENCE_REQUIRED");
   });
 
-  it("makes Completion Gate reject missing Plans and duplicate required bindings for a persisted Scope", () => {
+  it("keeps missing Plans and duplicate Scope bindings outside Runtime terminal admission", () => {
     const run = materializePlannedRun({
       userInput: "Build the bounded exploration journal.",
       scope: broadScope,
@@ -566,7 +567,7 @@ describe("E144 Task Scope Authority v0.1", () => {
       currentPlan: null,
       stepProgress: []
     });
-    expect(validateCompletion(missingPlan, []).issues).toContain("SCOPE_PLAN_REQUIRED");
+    expect(validateCompletion(missingPlan, []).issues).not.toContain("SCOPE_PLAN_REQUIRED");
 
     const requiredStep = run.currentPlan!.orderedSteps[0]!;
     const duplicated = RunSnapshotSchema.parse({
@@ -584,10 +585,10 @@ describe("E144 Task Scope Authority v0.1", () => {
       ]
     });
     expect(validateCompletion(duplicated, []).issues)
-      .toContain("SCOPE_REQUIRED_OUTCOME_DUPLICATED:journal-records");
+      .not.toContain("SCOPE_REQUIRED_OUTCOME_DUPLICATED:journal-records");
   });
 
-  it("makes Completion Gate reject missing and invalid persisted Step-to-Scope relations", () => {
+  it("keeps invalid Step-to-Scope relations outside Runtime terminal admission", () => {
     const run = materializePlannedRun({
       userInput: "Build the bounded exploration journal.",
       scope: broadScope,
@@ -622,9 +623,10 @@ describe("E144 Task Scope Authority v0.1", () => {
     });
 
     const issues = validateCompletion(corrupted, []).issues;
-    expect(issues).toContain(`SCOPE_STEP_RELATION_MISSING:${unboundStep!.id}`);
-    expect(issues).toContain(`SCOPE_STEP_REF_INVALID:${invalidRefStep!.id}:unknown-outcome`);
-    expect(issues).toContain(`SCOPE_REQUIRED_OUTCOME_BINDING_INVALID:${multiBoundStep!.id}`);
+    expect(issues).not.toContain(`SCOPE_STEP_RELATION_MISSING:${unboundStep!.id}`);
+    expect(issues).not.toContain(`SCOPE_STEP_REF_INVALID:${invalidRefStep!.id}:unknown-outcome`);
+    expect(issues).not.toContain(`SCOPE_REQUIRED_OUTCOME_BINDING_INVALID:${multiBoundStep!.id}`);
+    expect(issues).toContain("COMPLETION_EVIDENCE_REQUIRED");
   });
 
   it("persists Scope through the real Runtime path and rejects an unauthorized replan before completion", async () => {
@@ -680,7 +682,7 @@ describe("E144 Task Scope Authority v0.1", () => {
       responseDirect("The requested target was inspected and verified.")
     ];
     const contexts: ModelDecisionContext[] = [];
-    const provider = {
+    const provider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide(context: ModelDecisionContext): Promise<ModelResponse> {
         contexts.push(structuredClone(context));
         const response = responses.shift();
@@ -787,6 +789,7 @@ describe("E144 Task Scope Authority v0.1", () => {
       })
     ];
     const provider = {
+      nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide(): Promise<ModelResponse> {
         const response = responses.shift();
         if (response === undefined) throw new Error("Raw scope-revision test Provider exhausted.");
@@ -841,7 +844,7 @@ describe("E144 Task Scope Authority v0.1", () => {
       completionCriteria: ["The target remains available for continued execution."],
       resolutionMode: "pass_through" as const
     };
-    const firstProvider = {
+    const firstProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide(): Promise<ModelResponse> {
         return responsePlan({
           goal: "Implement the requested target change.",
@@ -867,7 +870,7 @@ describe("E144 Task Scope Authority v0.1", () => {
       const reopened = createRuntime({
         workspace,
         dataDir,
-        provider: { async decide(): Promise<ModelResponse> { return responseCall("nexora_request_input", {
+        provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide(): Promise<ModelResponse> { return responseCall("nexora_request_input", {
           question: "Continue?",
           reason: "Recovery inspection.",
           basis: "user_exclusive"

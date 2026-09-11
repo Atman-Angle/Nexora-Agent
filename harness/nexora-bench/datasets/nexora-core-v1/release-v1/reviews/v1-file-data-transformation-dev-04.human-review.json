@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "taskId": "v1-file-data-transformation-dev-04",
+  "reviewStatus": "PENDING_HUMAN_REVIEW",
+  "reviewer": null,
+  "reviewedAt": null,
+  "decision": null,
+  "qualificationEvidence": ".tmp/release-v1-qualification/report.json",
+  "reviewNotes": []
+}

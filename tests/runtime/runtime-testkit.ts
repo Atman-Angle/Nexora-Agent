@@ -7,8 +7,8 @@ import type {
   RuntimeProvider
 } from "../../packages/harness/src/index.js";
 import {
-  DIRECT_RESPONSE_CONTROL,
   ModelPlanUpdateSchema,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL
 } from "../../packages/harness/src/index.js";
@@ -16,6 +16,7 @@ import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 
 export class ScriptedRuntimeProvider implements RuntimeProvider {
   readonly contexts: ModelDecisionContext[] = [];
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   /** Historical counter retained only so deleted compaction assertions can migrate locally. */
   readonly compactionContexts: unknown[] = [];
   readonly #responses: Array<unknown | ((context: ModelDecisionContext) => unknown)>;
@@ -108,7 +109,7 @@ export function successfulReadTool(counter?: { calls: number }): RuntimeTool {
 }
 
 export function finishFromEvidence(summary: string): (context: ModelDecisionContext) => ModelResponse {
-  return (_context) => responseDirect(summary);
+  return (_context) => responseText(summary);
 }
 
 /** Adapts internal Runtime-command test descriptors into the production Provider response contract. */
@@ -119,6 +120,7 @@ export function runtimeActionTestProvider(provider: {
   dispose?(): void | Promise<void>;
 }): RuntimeProvider {
   return {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
     ...(provider.measureTokens === undefined ? {} : { measureTokens: provider.measureTokens }),
     async decide(context, operation) {
@@ -140,13 +142,17 @@ export function materializeTestResponse(value: unknown, context: ModelDecisionCo
     return responseText("Continue using the deterministically restored context.");
   }
   if (command.type === "request_input") {
-    return responseInput(String(command.question), String(command.reason), typeof command.basis === "string" ? command.basis as any : undefined);
+    return responseInput(
+      String(command.question),
+      String(command.reason),
+      typeof command.basis === "string" ? command.basis as any : "user_exclusive"
+    );
   }
   if (command.type === "delegate_workers") {
     return responseCall("nexora_delegate_workers", { assignments: command.assignments });
   }
   if (command.type === "propose_finish") {
-    return responseDirect(String(command.summary));
+    return responseText(String(command.summary));
   }
   if (command.type === "call_tool") {
     return responseCall(String(command.toolName), command.input);
@@ -196,6 +202,7 @@ function normalizeLegacyTestPlanResponse(response: ModelResponse, context: Model
     const parsed = ModelPlanUpdateSchema.safeParse(call.arguments);
     if (!parsed.success) return call;
     const explicitScope = parsed.data.scope;
+    const planTasks = parsed.data.tasks ?? [];
     const existingScope = context.run.taskContract?.scope;
     const shouldSynthesizeScope = context.strategyRouting?.strategyProfile === "coding"
       && requiresContract
@@ -210,12 +217,12 @@ function normalizeLegacyTestPlanResponse(response: ModelResponse, context: Model
       }],
       assumptions: [],
       excludedScope: [],
-      completionCriteria: parsed.data.tasks.map((task) => task.objective),
+      completionCriteria: planTasks.map((task) => task.objective),
       resolutionMode: "normalize" as const
     } : undefined;
     const effectiveScope = explicitScope ?? existingScope ?? synthesizedScope;
     const defaultScopeRef = effectiveScope?.requiredOutcomes[0]?.id;
-    const tasks = parsed.data.tasks.map((task, index) => {
+    const tasks = planTasks.map((task, index) => {
       if (task.kind !== undefined || task.supports !== undefined || defaultScopeRef === undefined) return task;
       const existing = context.run.currentPlan?.orderedSteps.find((step) => (
         normalizeTestObjective(step.objective) === normalizeTestObjective(task.objective)
@@ -235,7 +242,7 @@ function normalizeLegacyTestPlanResponse(response: ModelResponse, context: Model
       arguments: {
         ...(parsed.data.goal === undefined ? {} : { goal: parsed.data.goal }),
         ...(!requiresContract || effectiveScope === undefined ? {} : { scope: effectiveScope }),
-        tasks,
+        ...(parsed.data.tasks === undefined ? {} : { tasks }),
         ...(parsed.data.removeSteps.length === 0 ? {} : { removeSteps: parsed.data.removeSteps })
       }
     };
@@ -286,16 +293,85 @@ export function responsePlanAndTools(
   ]);
 }
 
-export function responseInput(question: string, reason: string, basis?: "user_exclusive" | "workspace" | "tool" | "context" | "persisted_fact"): ModelResponse {
+export function responseInput(
+  question: string,
+  reason: string,
+  basis: "user_exclusive" | "workspace" | "tool" | "context" | "persisted_fact" = "user_exclusive"
+): ModelResponse {
   return responseCall(REQUEST_INPUT_CONTROL, { question, reason, ...(basis === undefined ? {} : { basis }) });
-}
-
-export function responseDirect(text: string): ModelResponse {
-  return responseCall(DIRECT_RESPONSE_CONTROL, { text });
 }
 
 export function responseText(text: string): ModelResponse {
   return { text, toolCalls: [], finishReason: "stop" };
+}
+
+/** Compatibility alias for tests written before ordinary final text migration. */
+export function responseDirect(text: string): ModelResponse {
+  return responseText(text);
+}
+
+export function openAIChatCompletionBody(response: unknown): string {
+  const normalized = isModelResponseLike(response)
+    ? response
+    : {
+        text: typeof response === "string" ? response : JSON.stringify(response),
+        toolCalls: [],
+        finishReason: "stop" as const
+      };
+  return JSON.stringify({
+    choices: [{
+      message: modelResponseToOpenAIMessage(normalized)
+    }]
+  });
+}
+
+function modelResponseToOpenAIMessage(response: {
+  readonly text: string | null;
+  readonly toolCalls: readonly {
+    readonly callId?: string;
+    readonly name: string;
+    readonly arguments?: unknown;
+  }[];
+  readonly finishReason: string | null;
+}): {
+  readonly content: string | null;
+  readonly finish_reason: string | null;
+  readonly tool_calls?: readonly {
+    readonly id: string;
+    readonly type: "function";
+    readonly function: { readonly name: string; readonly arguments: string };
+  }[];
+} {
+  const toolCalls = response.toolCalls.map((call, index) => ({
+    id: call.callId ?? `test-call-${index + 1}`,
+    type: "function" as const,
+    function: {
+      name: call.name,
+      arguments: JSON.stringify(call.arguments)
+    }
+  }));
+  return {
+    content: response.text,
+    finish_reason: response.finishReason,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
+}
+
+function isModelResponseLike(value: unknown): value is {
+  readonly text: string | null;
+  readonly toolCalls: readonly {
+    readonly callId?: string;
+    readonly name: string;
+    readonly arguments?: unknown;
+  }[];
+  readonly finishReason: string | null;
+} {
+  return value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && "text" in value
+    && "toolCalls" in value
+    && "finishReason" in value;
 }
 
 function nextTestCallId(): string {

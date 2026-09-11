@@ -7,10 +7,13 @@ import {
 } from "@nexora/runtime/internal";
 import {
   deepFreeze,
-  digestJson
+  digestJson,
+  validateCompletion
 } from "@nexora/runtime/internal";
 import type {
   JsonValue,
+  CompletionBlocker,
+  CompletionProjection,
   ContinuationTurn,
   ModelDecisionContext,
   RepairContext,
@@ -198,6 +201,12 @@ export function buildDecisionContext(args: {
     .filter((fact) => fact.error === null)
     .map((fact) => fact.ref);
   const projectedRun = projectRunContext(run);
+  const completionProjection = projectCompletionProjection({
+    run,
+    invocations,
+    artifactExists: (digest) => artifacts.has(digest),
+    toolEffect: (toolName) => tools.get(toolName)?.contract.execution.effect.kind
+  });
   const nativeToolContinuation = projectNativeToolContinuation({
     run,
     projectedRun,
@@ -216,6 +225,7 @@ export function buildDecisionContext(args: {
       event.type === "runtime.event" && event.payload.name === "workers.delegation.accepted"
     )),
     run: projectedRun,
+    completionProjection,
     continuation,
     providerContractVersion: 6 as const,
     activeInvocations: invocations
@@ -280,6 +290,7 @@ export function buildDecisionContext(args: {
     workerRun: projection.workerRun,
     delegationSatisfied: projection.delegationSatisfied,
     run: projection.run,
+    completionProjection: projection.completionProjection,
     continuation: projection.continuation,
     projection: {
       schemaVersion: 1 as const,
@@ -302,6 +313,58 @@ export function buildDecisionContext(args: {
     skills: projection.skills
   });
   return { context, injectedRehydratedRefs };
+}
+
+export function projectCompletionProjection(args: {
+  readonly run: RunSnapshot;
+  readonly invocations: readonly ToolInvocation[];
+  readonly artifactExists: (digest: string) => boolean;
+  readonly toolEffect: (toolName: string) => "read" | "write" | "execute" | undefined;
+}): CompletionProjection {
+  const validation = validateCompletion(
+    args.run,
+    args.invocations,
+    args.artifactExists,
+    "task_result",
+    args.toolEffect
+  );
+  const blockers = validation.issues.map(projectCompletionBlocker);
+  return Object.freeze({
+    ready: validation.passed,
+    blockers: Object.freeze(blockers)
+  });
+}
+
+function projectCompletionBlocker(issue: string): CompletionBlocker {
+  const parts = issue.split(":");
+  const code = parts[0] ?? issue;
+  const stepId = code.startsWith("STEP_") || code.startsWith("CHECK_")
+    ? (parts[1] ?? null)
+    : null;
+  const checkId = code.startsWith("CHECK_") ? (parts[2] ?? null) : null;
+  const subject = code === "COMPLETION_TOOL_REQUIRED"
+    ? (parts[1] ?? null)
+    : code === "EVIDENCE_ARTIFACT_INVALID" || code === "EVIDENCE_PROVENANCE_INVALID"
+      ? (parts[1] ?? null)
+      : null;
+  return {
+    code,
+    stepId,
+    checkId,
+    subject,
+    nextAction: completionBlockerAction(code),
+    detail: issue
+  };
+}
+
+function completionBlockerAction(code: string): CompletionBlocker["nextAction"] {
+  if (code === "CHECK_EVIDENCE_STALE") return "refresh";
+  if (code === "CHECK_UNSATISFIED" || code === "STEP_INCOMPLETE") return "execute";
+  if (code === "COMPLETION_EVIDENCE_REQUIRED" || code === "COMPLETION_TOOL_REQUIRED") return "collect";
+  if (code === "TOOL_INVOCATION_UNRESOLVED" || code === "UNPLANNED_MUTATION_UNVERIFIED") return "resolve";
+  if (code.startsWith("PLAN_") || code.startsWith("SCOPE_") || code === "PLAN_GOAL_DIGEST_MISMATCH") return "plan";
+  if (code === "STEP_UNVERIFIABLE" || code === "STEP_VERIFICATION_REQUIRED") return "plan";
+  return "resolve";
 }
 
 function projectRepairContext(
@@ -454,7 +517,7 @@ function projectNoProgressRepair(
     && (
       event.type === "tool.succeeded"
       || event.type === "tool.failed"
-      || event.type === "tool.recovered"
+      || event.type === "tool.reconciled"
       || event.type === "run.resumed"
       || (event.type === "plan.set" && event.payload.noOp !== true)
     )
@@ -609,7 +672,13 @@ function repairIssues(
           && typeof (item as { readonly message?: unknown }).message === "string"
             ? [{
                 kind: parsedRepairIssueKind((item as { readonly code?: unknown }).code, "unresolved_failure"),
-                message: (item as { readonly message: string }).message
+                message: (item as { readonly message: string }).message,
+                ...(typeof (item as { readonly code?: unknown }).code === "string"
+                  ? { code: (item as { readonly code: string }).code }
+                  : {}),
+                ...(typeof (item as { readonly path?: unknown }).path === "string"
+                  ? { path: (item as { readonly path: string }).path }
+                  : {})
               }]
             : []
         ));
@@ -643,7 +712,13 @@ function repairIssues(
                   (item as { readonly kind?: unknown }).kind,
                   "unresolved_failure"
                 ),
-                message: (item as { readonly message: string }).message
+                message: (item as { readonly message: string }).message,
+                ...(typeof (item as { readonly code?: unknown }).code === "string"
+                  ? { code: (item as { readonly code: string }).code }
+                  : {}),
+                ...(typeof (item as { readonly path?: unknown }).path === "string"
+                  ? { path: (item as { readonly path: string }).path }
+                  : {})
               }
             : null
         ))

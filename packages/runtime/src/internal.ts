@@ -34,6 +34,7 @@ export type {
   ModelCallStart,
   ProviderAttemptCompletion,
   ProviderAttemptStart,
+  ProviderBoundaryProposal,
   PlanProposal,
   RuntimeCommand,
   RuntimeDispatchOutcome
@@ -46,6 +47,7 @@ export {
 export { transitionRunStatus } from "./state-machine.js";
 export {
   digestTaskContract,
+  latestWriteMutation,
   validateCompletion,
   type CompletionValidation
 } from "./completion-gate.js";

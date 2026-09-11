@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-file-data-transformation-validation-02",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "file_data_transformation",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "advanced",
+  "horizon": "short",
+  "split": "validation",
+  "source": "real_workflow",
+  "agentVisible": {
+    "instruction": "Combine the three supplied operational fact shards into the requested ordered report, preserve source records, and validate the result.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-file-data-transformation-validation-02/fixture",
+      "digest": "sha256:7d2e811af21e17d2987d65ca7deb8021c33c870cc983ea2cfdaf6d6e4da90197"
+    },
+    "scenario": "release-v1/tasks/v1-file-data-transformation-validation-02/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-file-data-transformation-validation-02.grader.json",
+    "graderDigest": "sha256:4e5f33bf72e24ae21fd2ae865befec9a60f7aaaca7c4d769c9bee2da227d9772",
+    "referenceRef": "release-v1/sealed/v1-file-data-transformation-validation-02.reference.json",
+    "referenceDigest": "sha256:e67f627817e7a470e089469165db5773eb1a4bafec89b11785e996c888bf942b",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-file-data-transformation-validation-02.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:59bee7027ab7d1776b8eddd98f140e309cb39469124214100215ca13e17f0c66",
+    "fixtureDigest": "sha256:7d2e811af21e17d2987d65ca7deb8021c33c870cc983ea2cfdaf6d6e4da90197"
+  }
+}

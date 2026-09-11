@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   MemoryRecordSchema,
   createBuiltInTools,
   createRuntime,
@@ -319,7 +319,7 @@ async function seedHistoryRun(input: {
   readonly dataDir: string;
   readonly memoryStore: ReturnType<typeof openMemoryStore>;
 }): Promise<string> {
-  const bootstrap: RuntimeProvider = {
+  const bootstrap: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     modelProfile: { provider: "benchmark-fixture", model: "history-seeder", contextWindowTokens: 32_000, reservedOutputTokens: { decision: 1_024 }, softLimitRatio: 0.8 },
     async decide() { return modelResponses.input({ question: "Continue fixture setup.", reason: "Build persisted Session Archive input history." }); }
   };
@@ -365,7 +365,7 @@ function observeProvider(provider: RuntimeProvider, observations: Observation[])
     });
     return result;
   };
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
     ...(provider.measureTokens === undefined ? {} : { measureTokens: provider.measureTokens.bind(provider) }),
     decide: (context, operation) => invoke("decision", context, () => provider.decide(context, operation)),

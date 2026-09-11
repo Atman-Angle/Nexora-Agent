@@ -1,141 +1,118 @@
-# NexoraBench
+# Nexora Evaluation
 
-NexoraBench is an external, native TypeScript evaluation harness for Nexora Runtime. It does not modify or bypass Runtime production code.
+Nexora evaluation uses **Harbor 0.22.0** for task and dataset packaging, isolated
+Docker environments, trial/job execution, repeated attempts, concurrency,
+external verification, generic rewards, logs, artifacts and result management.
+Nexora does not fork or patch Harbor.
 
-The harness runs versioned, reproducible tasks through the public Runtime API, checks the final workspace with independent deterministic graders, audits persisted Run authority, exports OpenTelemetry traces, and produces a bounded Codex optimization packet for failed runs.
+Nexora owns only the Runtime-specific layer:
 
-It is also a private workspace component: `@nexora/bench` exports the existing Dataset loader, Runner, and Telemetry boundary for CI or host composition. The CLI calls the same Runner; there is no second execution path, plugin system, or alternate Runtime authority.
+- `harbor/nexora_harbor/agent.py`: Harbor → Nexora Runtime adapter;
+- `src/runner.ts#runHarborRuntimeTrial`: Runtime execution and durable fact export;
+- `harbor/nexora_harbor/verifier.py`: external-result + Runtime-grade composition;
+- existing Runtime Integrity, Authority, Safety, ExpectedOutcome and
+  `firstBrokenBoundary` graders;
+- `src/fault-lab.mjs`: durable-boundary fault injection;
+- `harbor/nexora_harbor/projection.py`: Nexora reliability metrics projected from
+  Harbor job results.
 
-## What It Measures
+The former TypeScript batch/repeat entry points are not production evaluation
+paths. Harbor job configuration is the execution authority.
 
-Each task receives two independent grades:
+## Prerequisites
 
-- **Task grade:** file state, hidden command/test results, and unchanged-path checks performed outside the Runtime.
-- **Authority grade:** expected terminal state, approval ordering, non-idempotent effect uniqueness, Invocation/Evidence integrity, Result citation integrity, and false-success detection.
+- Docker Desktop with Linux containers;
+- Python 3.12+ and `uv`;
+- Node.js 20+ and pnpm 11.7.0 for repository tests.
 
-The included `nexora-core-v1` Dataset v11 contains sixteen tasks:
+Harbor is pinned in `harbor/pyproject.toml` and `harbor/uv.lock`. The task image
+contains a native-build fallback for `better-sqlite3`, so a transient prebuilt
+binary download failure does not make setup non-deterministic.
 
-- `NB-CODE-001`: multi-stage search/read/patch/test code repair;
-- `NB-CONVERGE-001`: failure-driven replanning and semantic convergence across configuration repair and verification;
-- `NB-LONG-001`: long sequence with three fact reads, approval-time process restart, mutation, and validation;
-- `NB-SAFETY-001`: denied protected mutation that must remain unchanged and wait for revised input.
-- `NB-BATCH-001`: one Provider Decision starts three independent delayed reads, then writes and validates an ordered aggregate after the batch barrier;
-- `NB-RETRY-001`: an idempotent read receives one transient 503, retries under the same logical Invocation, then writes and validates the recovered value;
-- `NB-CANCEL-001`: a Host cancels a later slow read while the Runtime preserves Evidence from an earlier confirmed read;
-- `NB-RECOVERY-001`: a non-idempotent Effect becomes unknown, the Runtime restarts, and explicit recovery abandons the Run without replaying the Effect;
-- `NB-ARTIFACT-001`: a long Tool payload is persisted through Artifact-backed authority;
-- `NB-EXTENDED-001`: 24 independent reads survive multiple reopens before verified aggregation;
-- `NB-BATCH-CANCEL-001`: cancellation preserves completed siblings and prevents unfinished batch work;
-- `HB-WORLD-001`: pinned Harbor file-creation task;
-- `HB-MULTI-001`: pinned Harbor multi-step state-continuity task;
-- `HB-WORKDIR-001`: pinned Harbor working-directory task with a cross-platform verifier;
-- `QB-GCD-001`: pinned QuixBugs Python `gcd` repair;
-- `QB-MAXSUM-001`: pinned QuixBugs Python `max_sublist_sum` repair.
-
-Scenario providers are deterministic so Runtime safety, persistence, Tools, Approval, Evidence, recovery, and Completion are reproducible. `--provider real` replaces only the Scenario Provider with Nexora's production OpenAI-compatible Provider; the fixture, tools, approvals, graders, and Authority checks remain unchanged.
-
-Durable crash-prefix coverage remains in Runtime tests (`e110` through `e113`): prepared-before-effect, partial batch result, interrupted attempt, multiple unknown Invocations, cancellation reconciliation, and snapshot/watch handoff. The Dataset adds representative end-to-end cancellation and unknown-recovery scenarios, while exhaustive crash prefixes remain deterministic Runtime protocol tests rather than model-quality tasks.
-
-The Harbor tasks are adapted from a pinned Apache-2.0 commit. The QuixBugs tasks retain pinned MIT-licensed buggy programs and test vectors and follow Harbor's parity-validated QuixBugs adapter design. See `THIRD_PARTY_NOTICES.md` and each task's `UPSTREAM.md`. These smoke subsets are not official Harbor or QuixBugs leaderboard scores.
-
-## Run
+## Capability evaluation
 
 From the repository root in PowerShell:
 
 ```powershell
-pnpm --filter @nexora/bench test
-pnpm --filter @nexora/bench typecheck
-pnpm --filter @nexora/bench bench
+pnpm --filter @nexora/bench eval
 ```
 
-Run a task or split:
+This loads the local Harbor Dataset at
+`harbor/datasets/nexora-capability-v1` and runs every `cap-*` task once. Each
+Harbor trial seeds its own fixture into `/app`; the adapter resolves the trial's
+Nexora scenario from Harbor's native session id (`scenario_id: auto`) against
+`datasets/nexora-core-v1/capability-cohort-all.json`, so a trial always runs its
+own plan, checks and budgets rather than a shared hardcoded scenario. Nexora
+Runtime operates directly on that Harbor workspace; it does not create a second
+task workspace. The hidden Harbor verifier independently checks the requested
+files.
 
-```powershell
-pnpm --filter @nexora/bench bench -- --task NB-CODE-001
-pnpm --filter @nexora/bench bench -- --split dev
-```
-
-Run the same Dataset with the real Provider configured in the repository root `.env`:
-
-```powershell
-pnpm --filter @nexora/bench bench:real
-pnpm --filter @nexora/bench bench:real -- --task QB-GCD-001 --keep-workspaces
-```
-
-`--keep-workspaces` preserves both final task files under `workspaces/<task-id>/` and the inspectable Runtime Store under `run-data/<task-id>/`. Reports label every task and trace with `providerMode`; deterministic and real-provider rates must not be combined.
-
-Reports are written under `harness/nexora-bench/reports/<timestamp>/`:
+Every completed trial exposes these rewards together:
 
 ```text
-report.json
-failures.jsonl
-telemetry.jsonl
-optimization-packet.json
-codex-result.schema.json
-codex-prompt.md
-workspaces/          # only with --keep-workspaces
-run-data/            # only with --keep-workspaces
+reward                  # final STRICT_PASS
+external_result         # Harbor external outcome verifier
+runtime_integrity       # Nexora Runtime Integrity
+authority               # Nexora Plan / State / Invocation authority
+safety                  # approval, effects, idempotency and fencing safety
+expected_outcome        # Nexora ExpectedOutcome semantics
+nexora_strict_pass      # conjunction of Nexora-specific grades
 ```
 
-## Langfuse
+Raw Runtime facts are collected as
+`artifacts/logs/artifacts/nexora-runtime-fact-bundle.json`. The verifier writes
+`verifier/nexora-projection.json`. Harbor writes the canonical trial and job
+`result.json`, logs and artifact manifest under `harbor/jobs-output/`.
 
-Local metadata-only `telemetry.jsonl` is always produced. Copy `.env.example` to `.env` inside this harness and configure both keys to additionally export the OpenTelemetry trace tree to Langfuse. The `bench`, `bench:dev`, and `optimize` commands load this file automatically:
+## Reliability
+
+Harbor owns repeat and concurrency orchestration:
 
 ```powershell
-Copy-Item -LiteralPath "harness/nexora-bench/.env.example" -Destination "harness/nexora-bench/.env"
-# Edit harness/nexora-bench/.env with the project keys, then run:
-pnpm --filter @nexora/bench bench
+pnpm --filter @nexora/bench reliability
 ```
 
-The repository ignores `.env`, so local API keys are never part of the benchmark Dataset or committed source. Existing shell environment variables take precedence over values in `.env`.
+`harbor/jobs/reliability-3.yaml` uses `n_attempts: 3` and
+`n_concurrent_trials: 3`. Do not add a Nexora repeat loop.
 
-For a self-hosted instance, set `LANGFUSE_BASE_URL` to its root URL. The adapter sends OTLP HTTP traces to `/api/public/otel/v1/traces` with ingestion version 4.
-
-Langfuse observations include the root task input/output, model decision input/output, and Tool input/output so failures can be reconstructed. Every observation is recursively redacted and bounded to 16 KiB: secret-like keys and values are removed, Windows user names are replaced, strings/arrays/object depth are capped, and oversized observations become excerpts. Environment variables, credentials, raw Artifact blobs and unsanitized event payloads are never exported.
-
-The benchmark propagates its trace name, tags, Dataset metadata, and `development` environment to every observation so Langfuse filters and dashboards remain accurate. Model calls are `generation` observations and Tool Invocations are `tool` observations. The provider is shut down before the CLI exits, which flushes queued spans.
-
-Task reports and local `telemetry.jsonl` remain metadata-only. Their failure diagnostics include Run error code, stop reason, failed Tool/model error codes, and Action rejection counts. Prompt strategy reports add kernel/compiler/Profile/Host/Project/Tool/Transport provenance, stable-prefix digest/tokens, per-Attempt cache status and eligible/cached/write tokens. `unsupported`, `disabled`, and `unknown` remain visible in the distribution but are excluded from the cached-input ratio. These fields feed the optimization packet without copying Prompt, Provider output, or Tool payloads into the report.
-
-Langfuse remains an optional observation backend. Export failure cannot change a Nexora Run, Evidence, Result, or grader outcome.
-
-## Codex Optimization Loop
-
-When a run fails, `optimization-packet.json` groups failures by the first broken boundary and includes authority references and reproduction commands. Invoke Codex from an isolated branch or CI workspace:
+Project a completed Harbor job into the allowed Nexora-specific metrics:
 
 ```powershell
-$report = Get-ChildItem -LiteralPath "harness/nexora-bench/reports" -Recurse -Filter "optimization-packet.json" |
-  Sort-Object LastWriteTime -Descending |
-  Select-Object -First 1
-$schema = Join-Path -Path $report.DirectoryName -ChildPath "codex-result.schema.json"
-$prompt = Get-Content -LiteralPath (Join-Path -Path $report.DirectoryName -ChildPath "codex-prompt.md") -Raw
-
-codex exec `
-  --sandbox workspace-write `
-  --output-schema $schema `
-  -o (Join-Path -Path $report.DirectoryName -ChildPath "codex-result.json") `
-  $prompt
+Set-Location -LiteralPath "harness/nexora-bench/harbor"
+uv run nexora-harbor-project "jobs-output/<job-directory>" `
+  --output "jobs-output/<job-directory>/nexora-reliability.json"
 ```
 
-The loop must remain bounded: one failure cluster per iteration, no Dataset/grader edits, no task-specific Runtime branches, maximum five iterations, and stop after the same root cause fails three times. Public Contract, Authority, security-boundary, destructive-migration, or heavyweight-dependency changes require human review.
+The projection contains empirical strict pass rate, observed All-3/All-5 when
+enough attempts exist, terminal distribution, first-broken-boundary distribution
+and component pass rates. It does not schedule or retry trials.
 
-The harness can enforce this loop directly. It is opt-in because it edits the current workspace:
+## Runtime-specific Fault Lab
+
+Fault injection remains Nexora-owned because prepared effects, unknown side
+effects, crash prefixes, recovery, Lease/Fencing and durable authority cannot be
+faithfully reduced to ordinary outcome tasks:
 
 ```powershell
-pnpm --filter @nexora/bench optimize -- `
-  --packet "harness/nexora-bench/reports/<run>/optimization-packet.json" `
-  --max-iterations 5 `
-  --confirm
+pnpm --filter @nexora/bench fault-lab
 ```
 
-After each Codex iteration, the harness reruns the affected task reproductions and records the result in `optimization-history.jsonl`. It stops on success, after five iterations, when Codex reports a blocker, or when the same root cause repeats three times. Run this command only on an isolated branch or disposable CI workspace.
+Harbor may wrap this in an environment in the future, but Harbor is not the
+authority for the injected durable boundary or its invariant grade.
 
-## Adding Tasks
+## Validation
 
-1. Add an immutable fixture, `task.json`, and `scenario.ts` under the Dataset task directory.
-2. Compute the fixture digest with `directoryDigest()` and lock it in `task.json`.
-3. Prefer deterministic external graders and keep oracle information out of the Agent context.
-4. Add the task path to the Dataset manifest, which changes the Dataset digest.
-5. Run the task at least three times with a real Provider before using it for quality claims.
+```powershell
+pnpm --filter @nexora/bench test
+pnpm --filter @nexora/bench typecheck
+Set-Location -LiteralPath "harness/nexora-bench/harbor"
+uv run python -m unittest discover -s tests -v
+```
 
-The repository Dataset manifest and fixtures are the benchmark source of truth. Langfuse Datasets and scores may mirror them for analysis, but cannot replace their version or digest.
+For a real Provider cohort, set the existing `NEXORA_MODEL_*` variables through
+Harbor agent environment configuration and change `provider_mode` to `real` in a
+separate job configuration. Deterministic and real-provider cohorts must remain
+separate.
+
+See `docs/NEXORA_EVAL_SPEC.md` and `NEXORA_HARBOR_MIGRATION_REPORT.md` for the
+normative boundary and migration evidence.

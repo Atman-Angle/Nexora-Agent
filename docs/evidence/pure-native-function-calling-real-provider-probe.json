@@ -1,0 +1,697 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-08T14:40:57.325Z",
+  "provider": "openai-compatible",
+  "model": "qwen3.8-flash",
+  "wireMode": "openai-compatible-chat-completions-native-tools",
+  "scenarios": [
+    {
+      "scenario": "single-call",
+      "passed": true,
+      "attempts": 1,
+      "failures": [],
+      "evidence": {
+        "runId": "10ae461a-c948-418c-8c77-553ecb4c1bf5",
+        "status": "succeeded",
+        "stopReason": "COMPLETED",
+        "summary": "NEXORA_NATIVE_SINGLE_7F41",
+        "completionGate": {
+          "status": "succeeded",
+          "evidenceCount": 1,
+          "resultEvidenceIds": [
+            "5173d423-06b0-4c48-a76d-b05f7de53553"
+          ]
+        },
+        "modelTurns": [
+          {
+            "finishReason": "tool_calls",
+            "hasText": false,
+            "compiledActionTypes": [
+              "call_tool"
+            ],
+            "toolCalls": [
+              {
+                "callId": "call_e39f795f65d74169b5593ec1",
+                "name": "filesystem.read",
+                "arguments": {
+                  "path": "single.txt"
+                }
+              }
+            ]
+          },
+          {
+            "finishReason": "stop",
+            "hasText": true,
+            "compiledActionTypes": [
+              "propose_finish"
+            ],
+            "toolCalls": []
+          }
+        ],
+        "invocations": [
+          {
+            "id": "97a3a07f-8977-44a8-a719-cc17e6b19b1e",
+            "toolName": "filesystem.read",
+            "status": "succeeded",
+            "inputJson": {
+              "path": "single.txt"
+            },
+            "resultJson": {
+              "path": "single.txt",
+              "content": "NEXORA_NATIVE_SINGLE_7F41",
+              "digest": "sha256:b3013f167965b4018a9abb001682cde437768bf48f54cb21c6587c5711aff0f5",
+              "byteLength": 25
+            }
+          }
+        ],
+        "providerCallIds": [
+          "call_e39f795f65d74169b5593ec1"
+        ],
+        "invocationIds": [
+          "97a3a07f-8977-44a8-a719-cc17e6b19b1e"
+        ],
+        "decisionEfficiency": {
+          "logicalModelCalls": 2,
+          "providerAttempts": 2,
+          "budgetMeasuredInputTokens": 15252,
+          "providerVisibleEstimatedInputTokens": 25273,
+          "actualProviderInputTokens": 22933,
+          "actualProviderOutputTokens": 159,
+          "actualProviderTotalTokens": 23092,
+          "finalRequestBytes": {
+            "n": 2,
+            "sum": 101088,
+            "p50": 49327,
+            "p95": 51761,
+            "max": 51761
+          },
+          "effectiveActionCount": 1,
+          "effectiveActions": {
+            "state_change": 0,
+            "plan_progress": 0,
+            "evidence_read": 0,
+            "verification": 0,
+            "recovery": 0,
+            "completion_delivery": 1
+          },
+          "responseToolCallCount": 1,
+          "toolInvocationCount": 1,
+          "duplicateSubstantivePayloadCount": 0,
+          "toolBatches": {
+            "count": 1,
+            "sizeHistogram": {
+              "1": 1
+            },
+            "concurrencyHistogram": {
+              "1": 1
+            },
+            "retryCount": 0
+          },
+          "efficiency": {
+            "actualInputTokensPerEffectiveAction": 22933,
+            "logicalModelCallsPerEffectiveAction": 2,
+            "noEffectiveAction": false
+          },
+          "wasteCategories": {
+            "no_tool_response": 1,
+            "planning_only": 0,
+            "rejected_response": 0,
+            "repair_only_without_progress": 0,
+            "provider_retry_without_new_accepted_effect": 0,
+            "failed_tool": 0,
+            "duplicate_mutation": 0,
+            "duplicate_read_or_no_progress": 1,
+            "completion_claim_rejected": 0,
+            "provider_failure": 0,
+            "cancelled_or_interrupted": 0
+          },
+          "wallClockMs": 4555,
+          "usageIncompleteAttempts": 0,
+          "wireTelemetryIncompleteAttempts": 0,
+          "sectionAttributionTotals": {
+            "stablePrefix": {
+              "bytes": 57928,
+              "estimatedTokens": 14482,
+              "attempts": 2
+            },
+            "dynamicContext": {
+              "bytes": 5774,
+              "estimatedTokens": 1452,
+              "attempts": 2
+            },
+            "nativeContinuation": {
+              "bytes": 1011,
+              "estimatedTokens": 253,
+              "attempts": 1
+            },
+            "providerTools": {
+              "bytes": 35058,
+              "estimatedTokens": 8766,
+              "attempts": 2
+            },
+            "responseFormat": {
+              "bytes": 0,
+              "estimatedTokens": 0,
+              "attempts": 0
+            },
+            "otherProviderInput": {
+              "bytes": 519,
+              "estimatedTokens": 131,
+              "attempts": 2
+            },
+            "providerWrapper": {
+              "bytes": 258,
+              "estimatedTokens": 66,
+              "attempts": 2
+            },
+            "messageEnvelope": {
+              "bytes": 261,
+              "estimatedTokens": 66,
+              "attempts": 2
+            }
+          }
+        },
+        "wire": [
+          {
+            "index": 0,
+            "url": "ws-kpvnr5nde68a0lq3.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "request": {
+              "toolNames": [
+                "nexora_update_plan",
+                "nexora_request_input",
+                "nexora_delegate_workers",
+                "filesystem_list",
+                "filesystem_patch",
+                "filesystem_read",
+                "filesystem_search",
+                "filesystem_write",
+                "git_diff",
+                "git_show",
+                "git_status",
+                "process_inspect",
+                "process_logs",
+                "process_start",
+                "process_stop",
+                "shell_execute"
+              ],
+              "toolChoice": "auto",
+              "parallelToolCalls": true,
+              "hasResponseFormat": false,
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "<system:27065 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                },
+                {
+                  "role": "user",
+                  "content": "{\"availableControls\":[\"nexora_update_plan\",\"nexora_request_input\",\"nexora_delegate_workers\"],\"controlState\":{\"completedOutcomes\":[],\"completionBlockers\":[{\"checkId\":null,\"code\":\"COMPLETION_EVIDENCE_REQUIRED\",\"detail\":\"COMPLETION_EVIDENCE_REQUIRED\",\"nextAction\":\"collect\",\"stepId\":null,\"subject\":null},{\"checkId\":null,\"code\":\"COMPLETION_TOOL_REQUIRED\",\"detail\":\"COMPLETION_TOOL_REQUIRED:filesystem.read\",\"nextAction\":\"collect\",\"stepId\":null,\"subject\":\"filesystem.read\"}],\"completionReady\":false,\"guidance\":[\"Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes.\"],\"invalidatedOutcomes\":[],\"nextUnfinishedStep\":null,\"phase\":\"INITIAL_PLANNING\",\"protectedEffectsThisTurn\":0,\"unfinishedOutcomes\":[]},\"currentPlanAndChecks\":{\"activeInvocations\":[],\"evidence\":[],\"plan\":null,\"progress\":[],\"removableSteps\":[]},\"currentRuntimeDirective\":{\"kind\":\"normal\"},\"currentState\":{\"active\":null,\"completed\":[],\"contractRevision\":null,\"currentBoundary\":\"completion\",\"goal\":\"Call filesystem.read exactly once with path single.txt. Do not answer before the Tool result is available. After the read succeeds, return only the exact file content as the final answer.\",\"invalidated\":[],\"latestObservation\":null,\"planRevision\":null,\"strategyProfile\":\"general\",\"taskShape\":null,\"unfinished\":[]},\"observationsAndRepair\":{\"coordinationGuidance\":\"Before delegating, identify the final user-facing deliverable and state what each independent Worker contributes to it. Delegate only when that decomposition improves the result.\",\"memoryCandidates\":[],\"rehydratedFacts\":[],\"repair\":null,\"toolObservations\":[],\"workerObservations\":[]},\"originalTaskContract\":{\"continuation\":[],\"derivedTaskContract\":null,\"userInputs\":[{\"sequence\":1,\"text\":\"Call filesystem.read exactly once with path single.txt. Do not answer before the Tool result is available. After the read succeeds, return only the exact file content as the final answer.\"}]},\"recentTraj...<2456 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                }
+              ]
+            },
+            "response": {
+              "finishReason": "tool_calls",
+              "content": "",
+              "toolCalls": [
+                {
+                  "id": "call_e39f795f65d74169b5593ec1",
+                  "type": "function",
+                  "name": "filesystem_read",
+                  "arguments": {
+                    "path": "single.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 10944,
+                "total_tokens": 11042,
+                "completion_tokens": 98,
+                "prompt_tokens_details": {
+                  "cached_tokens": 0,
+                  "text_tokens": 10944
+                },
+                "completion_tokens_details": {
+                  "reasoning_tokens": 69,
+                  "text_tokens": 98
+                }
+              }
+            }
+          },
+          {
+            "index": 1,
+            "url": "ws-kpvnr5nde68a0lq3.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "request": {
+              "toolNames": [
+                "nexora_update_plan",
+                "nexora_request_input",
+                "nexora_delegate_workers",
+                "filesystem_list",
+                "filesystem_patch",
+                "filesystem_read",
+                "filesystem_search",
+                "filesystem_write",
+                "git_diff",
+                "git_show",
+                "git_status",
+                "process_inspect",
+                "process_logs",
+                "process_start",
+                "process_stop",
+                "shell_execute"
+              ],
+              "toolChoice": "auto",
+              "parallelToolCalls": true,
+              "hasResponseFormat": false,
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "<system:27065 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                },
+                {
+                  "role": "user",
+                  "content": "Continue from the following completed Provider-native Tool Call batch. Current Runtime context follows after its Tool results.",
+                  "toolCallId": null,
+                  "toolCalls": []
+                },
+                {
+                  "role": "assistant",
+                  "content": null,
+                  "toolCallId": null,
+                  "toolCalls": [
+                    {
+                      "id": "call_e39f795f65d74169b5593ec1",
+                      "type": "function",
+                      "name": "filesystem_read",
+                      "arguments": "{\"path\":\"single.txt\"}"
+                    }
+                  ]
+                },
+                {
+                  "role": "tool",
+                  "content": "{\"ok\":true,\"status\":\"succeeded\",\"observation\":{\"invocationId\":\"97a3a07f-8977-44a8-a719-cc17e6b19b1e\",\"toolName\":\"filesystem.read\",\"payloadMode\":\"full\",\"facts\":{\"path\":\"single.txt\",\"content\":\"NEXORA_NATIVE_SINGLE_7F41\",\"digest\":\"sha256:b3013f167965b4018a9abb001682cde437768bf48f54cb21c6587c5711aff0f5\",\"byteLength\":25},\"error\":null,\"payloadFragment\":null,\"truncated\":false,\"originalBytes\":158,\"sourceRefs\":[\"invocation:97a3a07f-8977-44a8-a719-cc17e6b19b1e\"],\"digest\":\"sha256:0b092c4bd8424cb860fda9030a7fe5b36dc7788c8367b2bf10b9fb35951ddb11\"}}",
+                  "toolCallId": "call_e39f795f65d74169b5593ec1",
+                  "toolCalls": []
+                },
+                {
+                  "role": "user",
+                  "content": "{\"availableControls\":[\"nexora_update_plan\",\"nexora_request_input\",\"nexora_delegate_workers\"],\"controlState\":{\"completedOutcomes\":[],\"completionBlockers\":[],\"completionReady\":true,\"guidance\":[\"Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes.\"],\"invalidatedOutcomes\":[],\"nextUnfinishedStep\":null,\"phase\":\"INITIAL_PLANNING\",\"protectedEffectsThisTurn\":0,\"unfinishedOutcomes\":[]},\"currentPlanAndChecks\":{\"activeInvocations\":[],\"evidence\":[{\"artifactRef\":null,\"checkId\":\"invocation:97a3a07f-8977-44a8-a719-cc17e6b19b1e\",\"digest\":\"sha256:0b092c4bd8424cb860fda9030a7fe5b36dc7788c8367b2bf10b9fb35951ddb11\",\"id\":\"5173d423-06b0-4c48-a76d-b05f7de53553\",\"invocationId\":\"97a3a07f-8977-44a8-a719-cc17e6b19b1e\",\"kind\":\"tool_result\",\"planVersion\":1,\"producedAt\":\"2026-09-08T14:40:50.831Z\",\"source\":\"tool\",\"stepId\":\"run-unplanned\",\"subjectRef\":\"single.txt\"}],\"plan\":null,\"progress\":[],\"removableSteps\":[]},\"currentRuntimeDirective\":{\"kind\":\"normal\"},\"currentState\":{\"active\":null,\"completed\":[],\"contractRevision\":null,\"currentBoundary\":\"completion\",\"goal\":\"Call filesystem.read exactly once with path single.txt. Do not answer before the Tool result is available. After the read succeeds, return only the exact file content as the final answer.\",\"invalidated\":[],\"latestObservation\":{\"digest\":\"sha256:0b092c4bd8424cb860fda9030a7fe5b36dc7788c8367b2bf10b9fb35951ddb11\",\"kind\":\"tool_result\",\"sourceRefs\":[\"invocation:97a3a07f-8977-44a8-a719-cc17e6b19b1e\"],\"status\":\"succeeded\",\"toolName\":\"filesystem.read\"},\"planRevision\":null,\"strategyProfile\":\"general\",\"taskShape\":null,\"unfinished\":[]},\"observationsAndRepair\":{\"coordinationGuidance\":\"Before delegating, identify the final user-facing deliverable and state what each independent Worker contributes to it. Delegate only when that decomposition improves the result.\",\"memoryCandidates\":[],\"rehydratedFacts\":[],\"repair\":null,\"toolObservations\":[{\"completedAt\":\"2026-09-08T14...<3752 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                }
+              ]
+            },
+            "response": {
+              "finishReason": "stop",
+              "content": "NEXORA_NATIVE_SINGLE_7F41",
+              "toolCalls": [],
+              "usage": {
+                "prompt_tokens": 11989,
+                "total_tokens": 12050,
+                "completion_tokens": 61,
+                "prompt_tokens_details": {
+                  "cached_tokens": 10240,
+                  "text_tokens": 11989
+                },
+                "completion_tokens_details": {
+                  "reasoning_tokens": 48,
+                  "text_tokens": 61
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "multi-call",
+      "passed": true,
+      "attempts": 1,
+      "failures": [],
+      "evidence": {
+        "runId": "ed6788c9-08b7-4701-9d41-d4c1ca5f71bf",
+        "status": "succeeded",
+        "stopReason": "COMPLETED",
+        "summary": "Both reads succeeded. Exact file contents:\n\n**alpha.txt**\n```\nNEXORA_NATIVE_ALPHA_53C9\n```\n\n**beta.txt**\n```\nNEXORA_NATIVE_BETA_8D17\n```",
+        "completionGate": {
+          "status": "succeeded",
+          "evidenceCount": 2,
+          "resultEvidenceIds": [
+            "7f103520-626d-45b1-b80f-b7dc5c0730be",
+            "c515507a-7b7c-46a9-bf0d-7b63c7d91649"
+          ]
+        },
+        "modelTurns": [
+          {
+            "finishReason": "tool_calls",
+            "hasText": false,
+            "compiledActionTypes": [
+              "execute_step"
+            ],
+            "toolCalls": [
+              {
+                "callId": "call_f123f5cbcf864385869dc510",
+                "name": "filesystem.read",
+                "arguments": {
+                  "path": "alpha.txt"
+                }
+              },
+              {
+                "callId": "call_e1f3bd33ef5342e29c7d1d80",
+                "name": "filesystem.read",
+                "arguments": {
+                  "path": "beta.txt"
+                }
+              }
+            ]
+          },
+          {
+            "finishReason": "stop",
+            "hasText": true,
+            "compiledActionTypes": [
+              "propose_finish"
+            ],
+            "toolCalls": []
+          }
+        ],
+        "invocations": [
+          {
+            "id": "9d19a0a6-1a43-46d4-a887-56dfeba56224",
+            "toolName": "filesystem.read",
+            "status": "succeeded",
+            "inputJson": {
+              "path": "alpha.txt"
+            },
+            "resultJson": {
+              "path": "alpha.txt",
+              "content": "NEXORA_NATIVE_ALPHA_53C9",
+              "digest": "sha256:c0f4d1c37d12129a74fe6b90be8a3fca22af147ae2b54c623d668fa17b6819d6",
+              "byteLength": 24
+            }
+          },
+          {
+            "id": "c5c75243-c919-4336-ab1b-3e7489095851",
+            "toolName": "filesystem.read",
+            "status": "succeeded",
+            "inputJson": {
+              "path": "beta.txt"
+            },
+            "resultJson": {
+              "path": "beta.txt",
+              "content": "NEXORA_NATIVE_BETA_8D17",
+              "digest": "sha256:34fcaf1f243c33e45dad8271d9cefcafc4915851a5c04259607a746cb7aba272",
+              "byteLength": 23
+            }
+          }
+        ],
+        "providerCallIds": [
+          "call_f123f5cbcf864385869dc510",
+          "call_e1f3bd33ef5342e29c7d1d80"
+        ],
+        "invocationIds": [
+          "9d19a0a6-1a43-46d4-a887-56dfeba56224",
+          "c5c75243-c919-4336-ab1b-3e7489095851"
+        ],
+        "decisionEfficiency": {
+          "logicalModelCalls": 2,
+          "providerAttempts": 2,
+          "budgetMeasuredInputTokens": 15835,
+          "providerVisibleEstimatedInputTokens": 25931,
+          "actualProviderInputTokens": 23938,
+          "actualProviderOutputTokens": 251,
+          "actualProviderTotalTokens": 24189,
+          "finalRequestBytes": {
+            "n": 2,
+            "sum": 103718,
+            "p50": 49477,
+            "p95": 54241,
+            "max": 54241
+          },
+          "effectiveActionCount": 1,
+          "effectiveActions": {
+            "state_change": 0,
+            "plan_progress": 0,
+            "evidence_read": 0,
+            "verification": 0,
+            "recovery": 0,
+            "completion_delivery": 1
+          },
+          "responseToolCallCount": 2,
+          "toolInvocationCount": 2,
+          "duplicateSubstantivePayloadCount": 0,
+          "toolBatches": {
+            "count": 1,
+            "sizeHistogram": {
+              "2": 1
+            },
+            "concurrencyHistogram": {
+              "2": 1
+            },
+            "retryCount": 0
+          },
+          "efficiency": {
+            "actualInputTokensPerEffectiveAction": 23938,
+            "logicalModelCallsPerEffectiveAction": 2,
+            "noEffectiveAction": false
+          },
+          "wasteCategories": {
+            "no_tool_response": 1,
+            "planning_only": 0,
+            "rejected_response": 0,
+            "repair_only_without_progress": 0,
+            "provider_retry_without_new_accepted_effect": 0,
+            "failed_tool": 0,
+            "duplicate_mutation": 0,
+            "duplicate_read_or_no_progress": 1,
+            "completion_claim_rejected": 0,
+            "provider_failure": 0,
+            "cancelled_or_interrupted": 0
+          },
+          "wallClockMs": 4655,
+          "usageIncompleteAttempts": 0,
+          "wireTelemetryIncompleteAttempts": 0,
+          "sectionAttributionTotals": {
+            "stablePrefix": {
+              "bytes": 57928,
+              "estimatedTokens": 14482,
+              "attempts": 2
+            },
+            "dynamicContext": {
+              "bytes": 7463,
+              "estimatedTokens": 1871,
+              "attempts": 2
+            },
+            "nativeContinuation": {
+              "bytes": 1806,
+              "estimatedTokens": 452,
+              "attempts": 1
+            },
+            "providerTools": {
+              "bytes": 35058,
+              "estimatedTokens": 8766,
+              "attempts": 2
+            },
+            "responseFormat": {
+              "bytes": 0,
+              "estimatedTokens": 0,
+              "attempts": 0
+            },
+            "otherProviderInput": {
+              "bytes": 593,
+              "estimatedTokens": 149,
+              "attempts": 2
+            },
+            "providerWrapper": {
+              "bytes": 258,
+              "estimatedTokens": 66,
+              "attempts": 2
+            },
+            "messageEnvelope": {
+              "bytes": 335,
+              "estimatedTokens": 85,
+              "attempts": 2
+            }
+          }
+        },
+        "wire": [
+          {
+            "index": 0,
+            "url": "ws-kpvnr5nde68a0lq3.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "request": {
+              "toolNames": [
+                "nexora_update_plan",
+                "nexora_request_input",
+                "nexora_delegate_workers",
+                "filesystem_list",
+                "filesystem_patch",
+                "filesystem_read",
+                "filesystem_search",
+                "filesystem_write",
+                "git_diff",
+                "git_show",
+                "git_status",
+                "process_inspect",
+                "process_logs",
+                "process_start",
+                "process_stop",
+                "shell_execute"
+              ],
+              "toolChoice": "auto",
+              "parallelToolCalls": true,
+              "hasResponseFormat": false,
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "<system:27065 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                },
+                {
+                  "role": "user",
+                  "content": "{\"availableControls\":[\"nexora_update_plan\",\"nexora_request_input\",\"nexora_delegate_workers\"],\"controlState\":{\"completedOutcomes\":[],\"completionBlockers\":[{\"checkId\":null,\"code\":\"COMPLETION_EVIDENCE_REQUIRED\",\"detail\":\"COMPLETION_EVIDENCE_REQUIRED\",\"nextAction\":\"collect\",\"stepId\":null,\"subject\":null},{\"checkId\":null,\"code\":\"COMPLETION_TOOL_REQUIRED\",\"detail\":\"COMPLETION_TOOL_REQUIRED:filesystem.read\",\"nextAction\":\"collect\",\"stepId\":null,\"subject\":\"filesystem.read\"}],\"completionReady\":false,\"guidance\":[\"Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes.\"],\"invalidatedOutcomes\":[],\"nextUnfinishedStep\":null,\"phase\":\"INITIAL_PLANNING\",\"protectedEffectsThisTurn\":0,\"unfinishedOutcomes\":[]},\"currentPlanAndChecks\":{\"activeInvocations\":[],\"evidence\":[],\"plan\":null,\"progress\":[],\"removableSteps\":[]},\"currentRuntimeDirective\":{\"kind\":\"normal\"},\"currentState\":{\"active\":null,\"completed\":[],\"contractRevision\":null,\"currentBoundary\":\"completion\",\"goal\":\"In one parallel Function Calling response, call filesystem.read twice: once with path alpha.txt and once with path beta.txt. Do not answer before both Tool results are available. After both reads succeed, return both exact file contents in alpha then beta order.\",\"invalidated\":[],\"latestObservation\":null,\"planRevision\":null,\"strategyProfile\":\"general\",\"taskShape\":null,\"unfinished\":[]},\"observationsAndRepair\":{\"coordinationGuidance\":\"Before delegating, identify the final user-facing deliverable and state what each independent Worker contributes to it. Delegate only when that decomposition improves the result.\",\"memoryCandidates\":[],\"rehydratedFacts\":[],\"repair\":null,\"toolObservations\":[],\"workerObservations\":[]},\"originalTaskContract\":{\"continuation\":[],\"derivedTaskContract\":null,\"userInputs\":[{\"sequence\":1,\"text\":\"In one parallel Function Calling response, call filesystem.read twice: once with path alpha.txt and once with path beta.txt. Do ...<2606 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                }
+              ]
+            },
+            "response": {
+              "finishReason": "tool_calls",
+              "content": "",
+              "toolCalls": [
+                {
+                  "id": "call_f123f5cbcf864385869dc510",
+                  "type": "function",
+                  "name": "filesystem_read",
+                  "arguments": {
+                    "path": "alpha.txt"
+                  }
+                },
+                {
+                  "id": "call_e1f3bd33ef5342e29c7d1d80",
+                  "type": "function",
+                  "name": "filesystem_read",
+                  "arguments": {
+                    "path": "beta.txt"
+                  }
+                }
+              ],
+              "usage": {
+                "prompt_tokens": 10972,
+                "total_tokens": 11111,
+                "completion_tokens": 139,
+                "prompt_tokens_details": {
+                  "cached_tokens": 10240,
+                  "text_tokens": 10972
+                },
+                "completion_tokens_details": {
+                  "reasoning_tokens": 83,
+                  "text_tokens": 139
+                }
+              }
+            }
+          },
+          {
+            "index": 1,
+            "url": "ws-kpvnr5nde68a0lq3.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions",
+            "request": {
+              "toolNames": [
+                "nexora_update_plan",
+                "nexora_request_input",
+                "nexora_delegate_workers",
+                "filesystem_list",
+                "filesystem_patch",
+                "filesystem_read",
+                "filesystem_search",
+                "filesystem_write",
+                "git_diff",
+                "git_show",
+                "git_status",
+                "process_inspect",
+                "process_logs",
+                "process_start",
+                "process_stop",
+                "shell_execute"
+              ],
+              "toolChoice": "auto",
+              "parallelToolCalls": true,
+              "hasResponseFormat": false,
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "<system:27065 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                },
+                {
+                  "role": "user",
+                  "content": "Continue from the following completed Provider-native Tool Call batch. Current Runtime context follows after its Tool results.",
+                  "toolCallId": null,
+                  "toolCalls": []
+                },
+                {
+                  "role": "assistant",
+                  "content": null,
+                  "toolCallId": null,
+                  "toolCalls": [
+                    {
+                      "id": "call_f123f5cbcf864385869dc510",
+                      "type": "function",
+                      "name": "filesystem_read",
+                      "arguments": "{\"path\":\"alpha.txt\"}"
+                    },
+                    {
+                      "id": "call_e1f3bd33ef5342e29c7d1d80",
+                      "type": "function",
+                      "name": "filesystem_read",
+                      "arguments": "{\"path\":\"beta.txt\"}"
+                    }
+                  ]
+                },
+                {
+                  "role": "tool",
+                  "content": "{\"ok\":true,\"status\":\"succeeded\",\"observation\":{\"invocationId\":\"9d19a0a6-1a43-46d4-a887-56dfeba56224\",\"toolName\":\"filesystem.read\",\"payloadMode\":\"full\",\"facts\":{\"path\":\"alpha.txt\",\"content\":\"NEXORA_NATIVE_ALPHA_53C9\",\"digest\":\"sha256:c0f4d1c37d12129a74fe6b90be8a3fca22af147ae2b54c623d668fa17b6819d6\",\"byteLength\":24},\"error\":null,\"payloadFragment\":null,\"truncated\":false,\"originalBytes\":156,\"sourceRefs\":[\"invocation:9d19a0a6-1a43-46d4-a887-56dfeba56224\"],\"digest\":\"sha256:d3f5b840b7e4b298ec9fd8270bb928cfaa373b2cff6173c5ddd3065d03105f63\"}}",
+                  "toolCallId": "call_f123f5cbcf864385869dc510",
+                  "toolCalls": []
+                },
+                {
+                  "role": "tool",
+                  "content": "{\"ok\":true,\"status\":\"succeeded\",\"observation\":{\"invocationId\":\"c5c75243-c919-4336-ab1b-3e7489095851\",\"toolName\":\"filesystem.read\",\"payloadMode\":\"full\",\"facts\":{\"path\":\"beta.txt\",\"content\":\"NEXORA_NATIVE_BETA_8D17\",\"digest\":\"sha256:34fcaf1f243c33e45dad8271d9cefcafc4915851a5c04259607a746cb7aba272\",\"byteLength\":23},\"error\":null,\"payloadFragment\":null,\"truncated\":false,\"originalBytes\":154,\"sourceRefs\":[\"invocation:c5c75243-c919-4336-ab1b-3e7489095851\"],\"digest\":\"sha256:2eeafcab1cabc2c8d1d738d7f1b5a07e2a375b528b86743dee9a3310efb6574d\"}}",
+                  "toolCallId": "call_e1f3bd33ef5342e29c7d1d80",
+                  "toolCalls": []
+                },
+                {
+                  "role": "user",
+                  "content": "{\"availableControls\":[\"nexora_update_plan\",\"nexora_request_input\",\"nexora_delegate_workers\"],\"controlState\":{\"completedOutcomes\":[],\"completionBlockers\":[],\"completionReady\":true,\"guidance\":[\"Establish a Runtime Plan before an authority-managed effect when the task requires change or multi-step work; keep only real remaining outcomes.\"],\"invalidatedOutcomes\":[],\"nextUnfinishedStep\":null,\"phase\":\"INITIAL_PLANNING\",\"protectedEffectsThisTurn\":0,\"unfinishedOutcomes\":[]},\"currentPlanAndChecks\":{\"activeInvocations\":[],\"evidence\":[{\"artifactRef\":null,\"checkId\":\"invocation:9d19a0a6-1a43-46d4-a887-56dfeba56224\",\"digest\":\"sha256:d3f5b840b7e4b298ec9fd8270bb928cfaa373b2cff6173c5ddd3065d03105f63\",\"id\":\"7f103520-626d-45b1-b80f-b7dc5c0730be\",\"invocationId\":\"9d19a0a6-1a43-46d4-a887-56dfeba56224\",\"kind\":\"tool_result\",\"planVersion\":1,\"producedAt\":\"2026-09-08T14:40:55.124Z\",\"source\":\"tool\",\"stepId\":\"run-unplanned\",\"subjectRef\":\"alpha.txt\"},{\"artifactRef\":null,\"checkId\":\"invocation:c5c75243-c919-4336-ab1b-3e7489095851\",\"digest\":\"sha256:2eeafcab1cabc2c8d1d738d7f1b5a07e2a375b528b86743dee9a3310efb6574d\",\"id\":\"c515507a-7b7c-46a9-bf0d-7b63c7d91649\",\"invocationId\":\"c5c75243-c919-4336-ab1b-3e7489095851\",\"kind\":\"tool_result\",\"planVersion\":1,\"producedAt\":\"2026-09-08T14:40:55.124Z\",\"source\":\"tool\",\"stepId\":\"run-unplanned\",\"subjectRef\":\"beta.txt\"}],\"plan\":null,\"progress\":[],\"removableSteps\":[]},\"currentRuntimeDirective\":{\"kind\":\"normal\"},\"currentState\":{\"active\":null,\"completed\":[],\"contractRevision\":null,\"currentBoundary\":\"completion\",\"goal\":\"In one parallel Function Calling response, call filesystem.read twice: once with path alpha.txt and once with path beta.txt. Do not answer before both Tool results are available. After both reads succeed, return both exact file contents in alpha then beta order.\",\"invalidated\":[],\"latestObservation\":{\"digest\":\"sha256:2eeafcab1cabc2c8d1d738d7f1b5a07e2a375b528b86743dee9a3310efb6574d\",\"kind\":\"tool_result\",\"sourceRefs\":[\"invocation:c5c75243-c919-4336-ab1b-3e748...<5291 chars>",
+                  "toolCallId": null,
+                  "toolCalls": []
+                }
+              ]
+            },
+            "response": {
+              "finishReason": "stop",
+              "content": "Both reads succeeded. Exact file contents:\n\n**alpha.txt**\n```\nNEXORA_NATIVE_ALPHA_53C9\n```\n\n**beta.txt**\n```\nNEXORA_NATIVE_BETA_8D17\n```",
+              "toolCalls": [],
+              "usage": {
+                "prompt_tokens": 12966,
+                "total_tokens": 13078,
+                "completion_tokens": 112,
+                "prompt_tokens_details": {
+                  "cached_tokens": 10240,
+                  "text_tokens": 12966
+                },
+                "completion_tokens_details": {
+                  "reasoning_tokens": 60,
+                  "text_tokens": 112
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

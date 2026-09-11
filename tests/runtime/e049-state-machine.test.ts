@@ -114,4 +114,42 @@ describe("E049 Run status authority", () => {
     });
     expect(failed).toMatchObject({ status: "failed", resumePredicate: null });
   });
+
+  it("describes non-terminal pauses with a reason and a user next action", () => {
+    const approval = deriveRunDelivery({
+      run: runningRun(),
+      outcome: "paused",
+      now: later,
+      pendingRequest: {
+        id: "approval-1",
+        kind: "approval",
+        prompt: "Allow shell.execute?",
+        createdAt: later
+      }
+    });
+    expect(approval).toMatchObject({
+      outcome: "paused",
+      exactCause: { code: "APPROVAL_REQUIRED", stopReason: null },
+      summary: expect.stringContaining("Tool approval"),
+      nextAction: expect.stringContaining("Approve or deny")
+    });
+
+    const input = deriveRunDelivery({
+      run: runningRun(),
+      outcome: "paused",
+      now: later,
+      pendingRequest: {
+        id: "input-1",
+        kind: "input",
+        prompt: "Which file should be updated?",
+        createdAt: later
+      }
+    });
+    expect(input).toMatchObject({
+      outcome: "paused",
+      exactCause: { code: "USER_INPUT_REQUIRED", stopReason: null },
+      summary: expect.stringContaining("user input"),
+      nextAction: expect.stringContaining("Provide the requested input")
+    });
+  });
 });

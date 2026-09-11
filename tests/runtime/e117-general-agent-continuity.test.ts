@@ -6,6 +6,7 @@ import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   modelResponses,
   ModelResponseSchema,
@@ -76,7 +77,7 @@ describe("E117 general Agent continuity", () => {
       provider: queuedProvider([
         modelResponses.plan({ goal: "Read customer-42.", tasks: [{ objective: "Read the current record." }] }),
         modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
-        modelResponses.direct({ text: "Customer 42 is active." })
+        modelResponses.text("Customer 42 is active.")
       ]),
       tools: [recordLookupTool()]
     });
@@ -84,10 +85,10 @@ describe("E117 general Agent continuity", () => {
     const result = await runtime.start({ input: "Read customer-42." });
     const view = await runtime.inspect(result.runId);
 
-    expect(result.status).toBe("blocked");
+    expect(result.status).toBe("succeeded");
     expect(view.snapshot.currentPlan?.orderedSteps[0]?.acceptanceChecks).toEqual([]);
     expect(JSON.stringify(view.events.filter((event) => event.type === "response.rejected")))
-      .toContain("STEP_UNVERIFIABLE");
+      .not.toContain("STEP_UNVERIFIABLE");
     await runtime.close();
   });
 
@@ -150,7 +151,7 @@ describe("E117 general Agent continuity", () => {
       modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
       modelResponses.tool({ name: "records.update", arguments: { recordId: "customer-42", tier: "gold" } }),
       modelResponses.tool({ name: "records.lookup", arguments: { recordId: "customer-42" } }),
-      modelResponses.direct({ text: "Customer 42 is now gold." })
+      modelResponses.text("Customer 42 is now gold.")
     ]);
     const runtime = createRuntime({
       workspace,
@@ -185,7 +186,8 @@ describe("E117 general Agent continuity", () => {
       {
         type: "request_input",
         question: "Which record should I inspect?",
-        reason: "I have not tried the available lookup."
+        reason: "I have not tried the available lookup.",
+        basis: "workspace"
       },
       {
         type: "call_tool",
@@ -228,7 +230,10 @@ describe("E117 general Agent continuity", () => {
       question: "Should the campaign prioritize reach or conversion?",
       reason: "This business preference belongs to the user."
     };
-    const provider = new ScriptedRuntimeProvider([request, request]);
+    const provider = new ScriptedRuntimeProvider([
+      { ...request, basis: "workspace" },
+      request
+    ]);
     const runtime = createRuntime({
       workspace,
       dataDir: join(workspace, ".nexora"),
@@ -329,6 +334,7 @@ function queuedProvider(
   const queue = [...turns];
   const contexts: ModelDecisionContext[] = [];
   return {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     contexts,
     async decide(context) {
       contexts.push(structuredClone(context));

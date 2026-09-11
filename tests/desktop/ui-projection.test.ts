@@ -35,8 +35,8 @@ describe("Desktop UI projection invariants", () => {
   });
 
   it("projects waiting input and approval only from pending Runtime requests", () => {
-    expect(projectRuntimeControls({ status: "waiting_for_input", pendingRequest: { kind: "input", id: "input-1", prompt: "Which branch?" }, resumePredicate: null })).toEqual({ kind: "input", requestId: "input-1" });
-    expect(projectRuntimeControls({ status: "waiting_for_approval", pendingRequest: { kind: "approval", id: "approval-1", prompt: "Write", toolName: "filesystem.write", input: {} }, resumePredicate: null })).toEqual({ kind: "approval", requestId: "approval-1" });
+    expect(projectRuntimeControls({ status: "waiting_for_input", pendingRequest: { kind: "input", id: "input-1", prompt: "Which branch?", createdAt: "2026-09-09T00:00:00.000Z" }, resumePredicate: null })).toEqual({ kind: "input", requestId: "input-1" });
+    expect(projectRuntimeControls({ status: "waiting_for_approval", pendingRequest: { kind: "approval", id: "approval-1", prompt: "Write", createdAt: "2026-09-09T00:00:00.000Z", toolName: "filesystem.write", stepId: "step-1", input: {} }, resumePredicate: null })).toEqual({ kind: "approval", requestId: "approval-1" });
   });
 
   it("projects each typed blocked predicate without inferring capability from stop reasons", () => {

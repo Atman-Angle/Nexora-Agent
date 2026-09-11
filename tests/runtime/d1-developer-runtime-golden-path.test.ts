@@ -14,6 +14,7 @@ import { z } from "zod";
 
 import {
   createRuntime,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   type ModelDecisionContext,
   type RuntimeProvider,
   type RuntimeTool
@@ -315,7 +316,7 @@ describe("D1 developer Runtime golden path", () => {
     const secondRuntime = createRuntime({
       workspace,
       dataDir,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           providerCalls += 1;
           throw new Error("openRun must not execute");
@@ -647,6 +648,7 @@ function externalConsumerSource(workspace: string): string {
 import {
   createBuiltInTools,
   createRuntime,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   modelResponses,
   type ModelDecisionContext,
   type RuntimeProvider
@@ -657,6 +659,7 @@ import type { RuntimeEngine as InternalRuntime } from "@nexora/harness/dist/runt
 let call = 0;
 const workspace = ${JSON.stringify(workspace)};
 const provider: RuntimeProvider = {
+  nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
   async decide(_context: ModelDecisionContext) {
     call += 1;
     if (call === 1) return modelResponses.plan({
@@ -670,7 +673,7 @@ const provider: RuntimeProvider = {
       name: "filesystem.search",
       arguments: { query: "external D1 consumer", path: "." }
     });
-    return modelResponses.direct({ text: "Verified external package" });
+    return modelResponses.text("Verified external package");
   }
 };
 

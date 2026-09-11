@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-coding-repository-change-holdout-01",
+  "expectedPaths": [
+    "src/transform.js"
+  ],
+  "referenceStateDigest": "sha256:0f33b44d07d9af4c1ad51f6727b0939f512be5c85560b32873df1baf99ce99dc"
+}

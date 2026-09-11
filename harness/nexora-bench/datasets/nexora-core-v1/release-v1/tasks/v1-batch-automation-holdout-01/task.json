@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-batch-automation-holdout-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "batch_automation",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "advanced",
+  "horizon": "multi_stage",
+  "split": "holdout",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Prepare the batch normalization job manifest from the three input rows, preserving row order and producing a validated handoff for the automation queue.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-batch-automation-holdout-01/fixture",
+      "digest": "sha256:e22d41b536157313f600d7e7f45f24b67979a5ea3fc7bd62fbb5e88f30257d71"
+    },
+    "scenario": "release-v1/tasks/v1-batch-automation-holdout-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-batch-automation-holdout-01.grader.json",
+    "graderDigest": "sha256:4a08606de8012b877b8dd11c7136fbbdd710bc1bbcf0d645f56e8f15934345ee",
+    "referenceRef": "release-v1/sealed/v1-batch-automation-holdout-01.reference.json",
+    "referenceDigest": "sha256:c2b2640e764806f09ca1fc8f04de0a1460918761230beababec4218f31a5f5ae",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-batch-automation-holdout-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:4f6bd381bc11bcb0dea8a44faaf3d173802fc01783a1436fbf8caff6ea2d8ef0",
+    "fixtureDigest": "sha256:e22d41b536157313f600d7e7f45f24b67979a5ea3fc7bd62fbb5e88f30257d71"
+  }
+}

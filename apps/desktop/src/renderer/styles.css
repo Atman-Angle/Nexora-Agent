@@ -57,6 +57,23 @@ button { border: 0; cursor: pointer; }
 .view-switch button { padding: 4px 9px; border-radius: 6px; color: #888782; background: transparent; font-size: 11px; }
 .view-switch button.active { color: #2d2d2a; background: white; box-shadow: 0 1px 3px rgba(20,20,18,.07); }
 .content-scroll { overflow: auto; }
+.activity-page { width: min(820px, calc(100% - 48px)); margin: 0 auto; padding: 34px 0 48px; }
+.activity-page > header { margin-bottom: 22px; }
+.activity-page h2 { margin: 0 0 5px; font-size: 20px; font-weight: 600; }
+.activity-page header p { margin: 0; color: #92918c; font-size: 12px; }
+.activity-summary { display: flex; gap: 5px; align-items: baseline; margin-top: 16px; color: #a2a8a3; font-size: 10px; }
+.activity-summary strong { color: #52645c; font-size: 16px; }
+.activity-summary i { width: 1px; height: 13px; margin: 0 7px; background: #dfe4df; }
+.activity-records { border-top: 1px solid #eceeea; }
+.activity-record { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; padding: 11px 0; border-bottom: 1px solid #f0f0ed; }
+.activity-record-index { display: grid; place-items: center; align-self: start; min-height: 22px; border-radius: 6px; color: #999893; background: #f5f5f2; font: 10px ui-monospace, monospace; }
+.activity-record-heading { display: flex; gap: 12px; align-items: baseline; justify-content: space-between; }
+.activity-record-heading strong { overflow: hidden; color: #4e5551; font-size: 12px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
+.activity-record-heading time { flex: 0 0 auto; color: #aaa9a4; font-size: 10px; }
+.activity-record details { margin-top: 5px; }
+.activity-record summary { cursor: pointer; color: #8b948e; font-size: 10px; }
+.activity-record pre { max-height: 320px; overflow: auto; margin: 7px 0 0; padding: 10px; border: 1px solid rgba(30,30,27,.065); border-radius: 7px; background: #f8f8f6; white-space: pre-wrap; word-break: break-word; font: 11px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }
+
 .empty-state { display: grid; max-width: 540px; height: 100%; min-height: 420px; margin: auto; place-content: center; justify-items: center; padding: 40px; text-align: center; }
 .empty-state .empty-mark { width: 38px; height: 38px; margin-bottom: 18px; }
 h1 { margin: 0 0 8px; font-size: 19px; font-weight: 580; letter-spacing: -.02em; }

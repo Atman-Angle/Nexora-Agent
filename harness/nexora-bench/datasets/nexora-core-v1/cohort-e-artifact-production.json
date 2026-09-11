@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-e-artifact-production",
+  "version": 1,
+  "description": "Harbor capability cohort E: realistic artifact production task (incident handoff document).",
+  "tasks": [
+    "tasks/cap-artifact-incident-handoff/task.json"
+  ]
+}

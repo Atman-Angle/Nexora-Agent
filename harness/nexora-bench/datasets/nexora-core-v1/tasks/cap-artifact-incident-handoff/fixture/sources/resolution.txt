@@ -1,0 +1,3 @@
+Root cause: connection pool exhaustion after a bad deploy. Hotfix rolled back
+the deploy and raised the pool ceiling. Follow-up: add an alert on pool
+utilisation and schedule a postmortem review with team-orders.

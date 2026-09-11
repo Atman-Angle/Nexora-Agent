@@ -380,6 +380,7 @@ function failingWriteTool(): RuntimeTool {
 function context(strategyProfile: "coding" | "general"): ModelDecisionContext {
   return {
     providerContractVersion: 6,
+    workspace: "D:\\fixture",
     run: {
       runId: "run-e143",
       status: "running",
@@ -417,7 +418,7 @@ function context(strategyProfile: "coding" | "general"): ModelDecisionContext {
         stopDiscipline: { requiredOutcomesOnly: true, optionalExpansionForbidden: true }
       }
     } : {})
-  } as ModelDecisionContext;
+  } as unknown as ModelDecisionContext;
 }
 
 function fixture(): string {

@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { modelResponses } from "@nexora/harness";
+import { modelResponses, NATIVE_FUNCTION_CALLING_CAPABILITIES } from "@nexora/harness";
 import { join } from "node:path";
 
 import {
@@ -25,6 +25,7 @@ export const createScenario: ScenarioFactory = () => ({
 
 function batchProvider(): RuntimeProvider {
   return {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     modelProfile: {
       provider: "nexora-bench",
       model: "deterministic-batch-v1",

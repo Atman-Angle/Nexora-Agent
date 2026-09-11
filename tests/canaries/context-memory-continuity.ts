@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   MemoryRecordSchema,
   createBuiltInTools,
   createRuntime,
@@ -64,6 +64,8 @@ export async function runContinuityCanary(options: {
   readonly pricing?: Pricing;
   readonly budgetOverride?: CanaryBudgetOverride;
   readonly requireEviction?: boolean;
+  /** Paired A/B switch for native continuation observation projection. */
+  readonly contextProjectionDedupe?: "on" | "off";
 }): Promise<ContinuityCanaryReport> {
   const createdAt = new Date().toISOString();
   const outputRoot = resolve(options.outputRoot ?? join(
@@ -91,7 +93,8 @@ export async function runContinuityCanary(options: {
     memory: {
       store: memoryStore,
       scope: { userId: "canary-user", projectId: "canary-project", workspaceId: "canary-workspace" }
-    }
+    },
+    contextProjectionDedupe: options.contextProjectionDedupe ?? "on"
   });
 
   const started = performance.now();
@@ -342,8 +345,9 @@ function observeProvider(
     });
     return result;
   };
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     ...(provider.modelProfile === undefined ? {} : { modelProfile: provider.modelProfile }),
+    ...(provider.transport === undefined ? {} : { transport: provider.transport }),
     ...(provider.measureTokens === undefined
       ? {}
       : { measureTokens: provider.measureTokens.bind(provider) }),
@@ -526,8 +530,13 @@ async function main(): Promise<void> {
     : openAICompatibleProviderFromEnv(process.env, {
         contextWindowTokensOverride: overrideTokens
       });
+  const dedupeRaw = process.env.NEXORA_CANARY_CONTEXT_PROJECTION_DEDUPE?.trim() ?? "on";
+  if (dedupeRaw !== "on" && dedupeRaw !== "off") {
+    throw new Error('NEXORA_CANARY_CONTEXT_PROJECTION_DEDUPE must be "on" or "off".');
+  }
   const report = await runContinuityCanary({
     provider,
+    contextProjectionDedupe: dedupeRaw,
     requireEviction: overrideTokens !== undefined,
     ...(overrideTokens === undefined
       ? {}

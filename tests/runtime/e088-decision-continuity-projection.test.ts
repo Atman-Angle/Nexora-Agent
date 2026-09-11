@@ -29,13 +29,13 @@ describe("E088 decision continuity projection", () => {
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",
       model: "test-model",
-      transport: "structured_output",
+      transport: "native_tools",
       fetch: async (_input, init) => {
         bodies.push(JSON.parse(String(init?.body)) as ProviderRequest);
         return new Response(JSON.stringify({
           choices: [{
             message: {
-              content: JSON.stringify(structuredInput("Continue?", "Continuity projection captured."))
+              ...nativeMessage(structuredInput("Continue?", "Continuity projection captured."))
             }
           }]
         }), {
@@ -77,7 +77,7 @@ describe("E088 decision continuity projection", () => {
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",
       model: "test-model",
-      transport: "structured_output",
+      transport: "native_tools",
       fetch: async (_input, init) => {
         bodies.push(JSON.parse(String(init?.body)) as ProviderRequest);
         decisions += 1;
@@ -89,9 +89,7 @@ describe("E088 decision continuity projection", () => {
                 }]
               })
           : structuredInput("Stop?", "Exact wire rehydration captured.");
-        return new Response(JSON.stringify({
-          choices: [{ message: { content: JSON.stringify(response) } }]
-        }), {
+        return new Response(JSON.stringify({ choices: [{ message: nativeMessage(response) }] }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -111,7 +109,7 @@ describe("E088 decision continuity projection", () => {
     expect(result.status).toBe("waiting");
     expect(decisions).toBe(2);
     const finalWirePayload = JSON.parse(
-      bodies.at(-1)!.messages.find((message) => message.role === "user")!.content
+      bodies.at(-1)!.messages.filter((message) => message.role === "user").at(-1)!.content
     ) as { readonly observationsAndRepair: { readonly rehydratedFacts: readonly Record<string, unknown>[] } };
     expect(finalWirePayload.observationsAndRepair.rehydratedFacts).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -155,7 +153,33 @@ function structuredTool(name: string, argumentsValue: unknown): unknown {
 }
 
 function structuredInput(question: string, reason: string): unknown {
-  return structuredTool("nexora_request_input", { question, reason });
+  return structuredTool("nexora_request_input", { question, reason, basis: "user_exclusive" });
+}
+
+function nativeMessage(value: unknown): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, index) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${index}`,
+      type: "function" as const,
+      function: { name: String(call.name), arguments: JSON.stringify(call.arguments ?? null) }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
 }
 
 function decisionContext(options: {

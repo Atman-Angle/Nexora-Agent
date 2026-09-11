@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   type ModelDecisionContext,
   type RuntimeProvider
@@ -200,6 +200,7 @@ describe("Phase 3 Multi-Agent failure containment and restart recovery", () => {
 });
 
 class RoutedDelegationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide(context: ModelDecisionContext) {
     const latestInput = context.run.inputHistory.at(-1)?.text ?? "";
     if (latestInput === "Fail inside Child Provider.") {
@@ -224,6 +225,7 @@ class RoutedDelegationProvider implements RuntimeProvider {
 }
 
 class RecoveryWithoutRedelegationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   parentDelegationDecisions = 0;
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) return responseDirect("Recovered Worker completed.");
@@ -238,6 +240,7 @@ class RecoveryWithoutRedelegationProvider implements RuntimeProvider {
 }
 
 class PostJoinFailureProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) return responseDirect("Worker joined successfully.");
     if ((context.workerObservations?.length ?? 0) === 2) throw new Error("injected post-join Provider outage");

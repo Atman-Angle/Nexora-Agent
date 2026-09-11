@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-artifact-production-dev-04",
+  "expectedPaths": [
+    "deliverables/brief.md"
+  ],
+  "referenceStateDigest": "sha256:8ef42139e18b5323fcebfdd03bcfb264f26463dd55f2782ba002f3bd0a6f2c81"
+}

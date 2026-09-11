@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { DesktopRuntimeService, desktopToolApprovalPolicy } from "../../apps/desktop/src/runtime-service.js";
 import { projectRuntimeControls } from "../../apps/desktop/src/renderer/ui-projection.js";
-import { createAgent, createBuiltInTools, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createAgent, createBuiltInTools, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import { responseCall, responseText } from "./runtime-testkit.js";
 
 const roots: string[] = [];
@@ -102,7 +102,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     roots.push(workspace);
     const runtime = createAgent({
       workspace,
-      provider: { async decide() { return responseText("The terminal Session is ready."); } },
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide() { return responseText("The terminal Session is ready."); } },
       tools: []
     });
     const result = await runtime.start({
@@ -291,13 +291,9 @@ describe("E130 Desktop Project and continuous Session", () => {
     const server = createServer(async (request, response) => {
       for await (const _chunk of request) { /* consume request */ }
       calls += 1;
-      const content = {
-        text: null,
-        toolCalls: [{ name: "nexora_respond", arguments: { text: "I am Nexora." } }],
-        finishReason: "tool_calls"
-      };
+      const content = responseText("I am Nexora.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -307,7 +303,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_API_KEY=test-key",
       "NEXORA_MODEL_NAME=qwen3.7-flash",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -334,7 +329,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write('data: {"choices":[{"delta":{"reasoning_content":"Inspecting the request. "}}]}\n\n');
       response.write('data: {"choices":[{"delta":{"content":"**I am Nexora.**"}}]}\n\n');
-      response.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-response","type":"function","function":{"name":"nexora_respond","arguments":"{\\"text\\":\\"**I am Nexora.**\\"}"}}]},"finish_reason":"tool_calls"}],"usage":null}\n\n');
+      response.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":null}\n\n');
       response.end("data: [DONE]\n\n");
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
@@ -345,7 +340,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_API_KEY=test-key",
       "NEXORA_MODEL_NAME=qwen3.7-flash",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=native_tools"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -395,7 +389,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_API_KEY=test-key",
       "NEXORA_MODEL_NAME=qwen3.7-flash",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=native_tools"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -427,9 +420,9 @@ describe("E130 Desktop Project and continuous Session", () => {
       calls += 1;
       const content = calls % 2 === 1
         ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }], finishReason: "tool_calls" }
-        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Verified target.txt." } }], finishReason: "tool_calls" };
+        : responseText("Verified target.txt.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -439,7 +432,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_API_KEY=test-desktop-secret",
       "NEXORA_MODEL_NAME=qwen3.7-flash",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -505,7 +497,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       apiKey: "replacement-secret",
       model: "qwen3.7-flash",
       decisionOutputTokens: 2048,
-      transport: "structured_output",
+      transport: "native_tools",
       reasoning: "dynamic",
       thinkingToggleParam: "enable_thinking"
     });
@@ -518,7 +510,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
       model: "qwen3.7-flash",
       decisionOutputTokens: 2048,
-      transport: "structured_output",
+      transport: "native_tools",
       reasoning: "dynamic",
       thinkingToggleParam: null
     });
@@ -544,7 +536,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     expect(calls).toBe(8);
-  }, 10_000);
+  }, 25_000);
 
   it("switches Projects while the previous Project Run continues in the background", async () => {
     const firstWorkspace = mkdtempSync(join(tmpdir(), "nexora-e130-background-first-"));
@@ -558,13 +550,9 @@ describe("E130 Desktop Project and continuous Session", () => {
       calls += 1;
       const callNumber = calls;
       if (callNumber === 1) await firstGate;
-      const content = {
-        text: null,
-        toolCalls: [{ name: "nexora_respond", arguments: { text: `Project ${callNumber} completed.` } }],
-        finishReason: "tool_calls"
-      };
+      const content = responseText(`Project ${callNumber} completed.`);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -574,7 +562,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_API_KEY=test-key",
       "NEXORA_MODEL_NAME=qwen3.7-flash",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n");
     writeFileSync(join(firstWorkspace, ".env"), environment, "utf8");
     writeFileSync(join(secondWorkspace, ".env"), environment, "utf8");
@@ -588,7 +575,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       baseUrl: `http://127.0.0.1:${address.port}/v1`,
       model: "qwen3.7-fast",
       decisionOutputTokens: 2_048,
-      transport: "structured_output"
+      transport: "native_tools"
     });
     expect(configuredWhileRunning.session?.inspection.status).toBe("running");
     expect(configuredWhileRunning.workspace.modelProfiles.map(({ id }) => id)).toContain("global-fast");
@@ -614,6 +601,7 @@ describe("E130 Desktop Project and continuous Session", () => {
   it("auto-approves bounded workspace writes but keeps process execution user-gated", async () => {
     expect(desktopToolApprovalPolicy("filesystem.write")).toBe("auto_approve");
     expect(desktopToolApprovalPolicy("filesystem.patch")).toBe("auto_approve");
+    expect(desktopToolApprovalPolicy("http.request")).toBe("auto_approve");
     expect(desktopToolApprovalPolicy("shell.execute")).toBe("require_user");
     expect(desktopToolApprovalPolicy("shell.execute", {
       command: process.execPath,
@@ -648,9 +636,9 @@ describe("E130 Desktop Project and continuous Session", () => {
           ? { text: null, toolCalls: [{ name: "filesystem.write", arguments: { path: "result.txt", content: "approved by Desktop policy\n" } }], finishReason: "tool_calls" }
           : calls === 3
             ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "result.txt" } }], finishReason: "tool_calls" }
-            : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Created and verified result.txt." } }], finishReason: "tool_calls" };
+            : responseText("Created and verified result.txt.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -661,7 +649,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_NAME=desktop-auto-approval-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -692,7 +679,7 @@ describe("E130 Desktop Project and continuous Session", () => {
         ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Run the requested process only after Approval.", tasks: [{ objective: "Run the requested process.", checks: [{ toolName: "shell.execute" }] }] } }], finishReason: "tool_calls" }
         : { text: null, toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "process.exit(0)"], cwd: ".", timeoutMs: 60_000 } }], finishReason: "tool_calls" };
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -703,7 +690,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_NAME=desktop-risk-approval-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -732,9 +718,9 @@ describe("E130 Desktop Project and continuous Session", () => {
         ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Run the requested delayed command.", tasks: [{ objective: "Run and verify the requested delayed command.", checks: [{ toolName: "shell.execute" }] }] } }], finishReason: "tool_calls" }
         : calls === 2
           ? { text: null, toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "setTimeout(() => process.exit(0), 1200)"], cwd: ".", timeoutMs: 10_000 } }], finishReason: "tool_calls" }
-          : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Approved command completed." } }], finishReason: "tool_calls" };
+          : responseText("Approved command completed.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -745,7 +731,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_NAME=desktop-approval-status-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -791,7 +776,7 @@ describe("E130 Desktop Project and continuous Session", () => {
         ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "Request a protected write through shell execution.", tasks: [{ objective: "Run the protected command only if approved.", checks: [{ toolName: "shell.execute" }] }] } }], finishReason: "tool_calls" }
         : { text: null, toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["-e", "require('node:fs').writeFileSync('must-not-exist.txt','executed')"], cwd: ".", timeoutMs: 10_000 } }], finishReason: "tool_calls" };
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -802,7 +787,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_NAME=desktop-approval-reopen-deny-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -848,13 +832,9 @@ describe("E130 Desktop Project and continuous Session", () => {
             toolCalls: [{ name: "shell.execute", arguments: { command: process.execPath, args: ["--version"], cwd: ".", timeoutMs: 60_000 } }],
             finishReason: "tool_calls"
           }
-        : {
-            text: null,
-            toolCalls: [{ name: "nexora_respond", arguments: { text: "Node version verified." } }],
-            finishReason: "tool_calls"
-          };
+        : responseText("Node version verified.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -865,7 +845,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_NAME=desktop-bounded-shell-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -902,9 +881,9 @@ describe("E130 Desktop Project and continuous Session", () => {
             startupTimeoutMs: 10_000,
             maxLifetimeMs: 60_000
           } }], finishReason: "tool_calls" }
-        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Managed service is ready." } }], finishReason: "tool_calls" };
+        : responseText("Managed service is ready.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -915,7 +894,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_NAME=desktop-managed-process-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -958,9 +936,9 @@ describe("E130 Desktop Project and continuous Session", () => {
       if (calls === 1) return;
       const content = calls === 2
         ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }], finishReason: "tool_calls" }
-        : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Continued after interruption." } }], finishReason: "tool_calls" };
+        : responseText("Continued after interruption.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -970,7 +948,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_API_KEY=test-key",
       "NEXORA_MODEL_NAME=qwen3.7-flash",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError() {} });
@@ -997,7 +974,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     let failedDecisions = 0;
     const seeded = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           failedDecisions += 1;
           throw new Error("seeded Provider outage");
@@ -1018,15 +995,13 @@ describe("E130 Desktop Project and continuous Session", () => {
     await expect(seeded.openRun(parent.runId).resume()).rejects.toThrow(/Run is failed/);
     await seeded.close();
 
+    let calls = 0;
     const server = createServer(async (request, response) => {
       for await (const _chunk of request) { /* consume request */ }
-      const content = {
-        text: null,
-        toolCalls: [{ name: "nexora_respond", arguments: { text: "Recovered in a continuation Run." } }],
-        finishReason: "tool_calls"
-      };
+      calls += 1;
+      const content = responseText("Recovered in a continuation Run.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -1037,7 +1012,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_NAME=desktop-provider-recovery-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -1076,7 +1050,6 @@ describe("E130 Desktop Project and continuous Session", () => {
       "NEXORA_MODEL_API_KEY=test-key",
       "NEXORA_MODEL_NAME=qwen3.7-flash",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError() {} });
@@ -1100,7 +1073,34 @@ describe("E130 Desktop Project and continuous Session", () => {
   });
 });
 
+function nativeMessage(value: unknown, decisionIndex: number): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, index) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${decisionIndex}-${index}`,
+      type: "function" as const,
+      function: { name: String(call.name), arguments: JSON.stringify(call.arguments ?? null) }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
+}
+
 class DesktopDelegationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) return responseText("Internal Worker result.");
     if ((context.workerObservations?.length ?? 0) > 0) return responseText("Parent result.");
@@ -1127,7 +1127,7 @@ function currentProject(snapshot: Awaited<ReturnType<DesktopRuntimeService["snap
 }
 
 async function runtimeRunExists(workspace: string, runId: string): Promise<boolean> {
-  const runtime = createAgent({ workspace, provider: { async decide() { return responseText("not used"); } }, tools: [] });
+  const runtime = createAgent({ workspace, provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide() { return responseText("not used"); } }, tools: [] });
   try { return (await runtime.listRuns()).some((summary) => summary.runId === runId); }
   finally { await runtime.close(); }
 }

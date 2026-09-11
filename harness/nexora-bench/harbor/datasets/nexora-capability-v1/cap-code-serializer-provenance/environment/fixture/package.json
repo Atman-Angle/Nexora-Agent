@@ -1,0 +1,8 @@
+{
+  "name": "serializer-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/verify.mjs"
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-mixed-restart-aggregate",
+  "revision": 1,
+  "datasetVersion": "0.1.0-pilot",
+  "family": "complex_mixed_workflow",
+  "secondaryCoverage": [
+    "long_horizon",
+    "restart",
+    "approval",
+    "validation"
+  ],
+  "difficulty": "advanced",
+  "horizon": "long",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Produce a validated ordered aggregate from the supplied fact shards. The host may restart while an approval is pending; preserve progress and source files, then validate the final report.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "environmentFacts": [
+      "A restart can occur while execution is awaiting an approval decision."
+    ]
+  },
+  "execution": {
+    "fixture": {
+      "path": "pilots/batch-a/cap-mixed-restart-aggregate/fixture",
+      "digest": "sha256:61d2a975a28809b146d2ac7a48b25a2445ca65da8036bc90c74158f64b7d5538"
+    },
+    "scenario": "pilots/batch-a/cap-mixed-restart-aggregate/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": true
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 3,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 4,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 5,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "facts/alpha.txt",
+      "facts/beta.txt",
+      "facts/gamma.txt",
+      "verify.mjs"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "pilots/batch-a/sealed/mixed-restart-aggregate.grader.json",
+    "graderDigest": "sha256:844055d5f46eefd9107cfd65c680e42ab9cb752243ca0d95a8c948229ad56318",
+    "referenceRef": "pilots/batch-a/sealed/mixed-restart-aggregate.reference.json",
+    "referenceDigest": "sha256:233012bcc61b75d4e7adc72f4e654570e32aaf609f66f9d8110714289eea46f0",
+    "resetRef": "pilots/batch-a/sealed/reset.json"
+  },
+  "humanReviewRef": "pilots/batch-a/cap-mixed-restart-aggregate/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:02a3a1cc3db9d06899e1a7863e05aad2c5d2513b6eadb062cb008c19366b365a",
+    "fixtureDigest": "sha256:61d2a975a28809b146d2ac7a48b25a2445ca65da8036bc90c74158f64b7d5538"
+  }
+}

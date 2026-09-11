@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "service": "nexora-worker",
+  "port": "8080",
+  "healthCheck": false
+}

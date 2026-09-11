@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "taskId": "cap-artifact-incident-handoff",
+  "reviewStatus": "PENDING_HUMAN_REVIEW",
+  "reviewer": null,
+  "reviewedAt": null,
+  "decision": null,
+  "qualificationEvidence": ".tmp/cohort-e-artifact-production-qualification/report.json",
+  "reviewNotes": []
+}

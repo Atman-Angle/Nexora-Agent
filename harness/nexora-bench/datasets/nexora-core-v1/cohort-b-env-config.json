@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-b-env-config",
+  "version": 1,
+  "description": "Harbor capability cohort B: realistic environment/configuration convergence task.",
+  "tasks": [
+    "tasks/cap-env-config-converge/task.json"
+  ]
+}

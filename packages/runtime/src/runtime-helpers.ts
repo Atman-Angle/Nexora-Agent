@@ -115,7 +115,7 @@ function isZodErrorLike(error: unknown): error is z.ZodError {
     && Array.isArray((error as { readonly issues?: unknown }).issues);
 }
 
-function stateRejectionRecovery(message: string): {
+export function stateRejectionRecovery(message: string): {
   readonly sideEffect: "none";
   readonly doNotRepeat: true;
   readonly nextAction: string;
@@ -134,18 +134,29 @@ function stateRejectionRecovery(message: string): {
       nextAction: "The protected mutation batch was rejected as a whole; no mutation was executed. Submit exactly one protected mutation or one complete write, and do not resend the rejected batch."
     };
   }
-  if (message.includes("MUTATION_VERIFICATION_REQUIRED") || message.includes("PLAN_AFTER_UNPLANNED_MUTATION")) {
+  if (
+    message.includes("CHECK_EVIDENCE_STALE")
+    || message.includes("STEP_VERIFICATION_REQUIRED")
+    || message.includes("UNPLANNED_MUTATION_UNVERIFIED")
+  ) {
     return {
       sideEffect: "none",
       doNotRepeat: true,
-      nextAction: "A successful mutation is already persisted. Verify the current result or finish it. Only a later authoritative verification failure or new user input can authorize another mutation; a Plan cannot be added retroactively."
+      nextAction: "The Completion Gate rejected the completion because the verification Evidence for the final workspace state is missing or older than the latest write. Run the verification Tool now so a fresh Tool Result is persisted after the last mutation, then submit the completion again; do not change the persisted Task Scope and do not resubmit this completion unchanged."
+    };
+  }
+  if (message.includes("Completion is not valid:")) {
+    return {
+      sideEffect: "none",
+      doNotRepeat: true,
+      nextAction: "The Completion Gate rejected the completion. Correct the specific issues named in the rejection, preserve completed Tool effects, and submit a corrected completion; do not resend this completion unchanged."
     };
   }
   if (message.includes("FINAL_CONTROL_REQUIRED")) {
     return {
       sideEffect: "none",
       doNotRepeat: true,
-      nextAction: "The text was not accepted as a task result. Preserve all completed Tool effects and do not call workspace Tools again. Submit exactly one Provider-native nexora_respond control call containing the user-facing answer; ordinary assistant text cannot complete this Run."
+      nextAction: "The text was not accepted as a task result. Preserve all completed Tool effects and do not call workspace Tools again. Submit a final assistant text completion candidate grounded in the authoritative facts; the Runtime Completion Gate will accept or reject it."
     };
   }
   return {

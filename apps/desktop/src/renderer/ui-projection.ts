@@ -1,6 +1,6 @@
 import type { RunInspection } from "@nexora/harness";
 
-export type DesktopViewMode = "conversation" | "output";
+export type DesktopViewMode = "conversation" | "activity" | "output";
 
 export type ContentScrollMetrics = {
   readonly scrollTop: number;

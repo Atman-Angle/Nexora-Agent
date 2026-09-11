@@ -10,7 +10,13 @@ export const createScenario: ScenarioFactory = () => ({
     tasks: [{
       objective: "Create the greeting file",
       capability: "filesystem.write",
-      arguments: { path: "hello.txt", content: "Hello, world!" }
+      arguments: { path: "hello.txt", content: "Hello, world!" },
+      checks: [{ toolName: "filesystem.write", role: "mutation" }]
+    }, {
+      objective: "Verify the persisted greeting file",
+      capability: "filesystem.read",
+      arguments: { path: "hello.txt" },
+      checks: [{ toolName: "filesystem.read", role: "verification" }]
     }],
     summary: "Created hello.txt with the requested greeting."
   })

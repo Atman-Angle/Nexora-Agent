@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-batch-automation-holdout-01",
+  "expectedPaths": [
+    "manifest.json"
+  ],
+  "referenceStateDigest": "sha256:801f8a6bb66bf9b1c564af98f0c2a69a514eb3699984650bb24bc14d170a1796"
+}

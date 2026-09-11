@@ -4,28 +4,27 @@ import {
   type RunSnapshot,
   type RuntimeAction,
   type StructuredPlan,
+  type ToolInvocation,
+  latestWriteMutation,
   UNPLANNED_STEP_ID
 } from "@nexora/runtime/internal";
 import {
   ModelResponseSchema,
   ModelPlanUpdateSchema,
   ModelInputRequestSchema,
-  ModelDirectResponseSchema,
-  DIRECT_RESPONSE_CONTROL,
   MAX_MODEL_PLAN_TASKS,
   MAX_RECOMMENDED_UNFINISHED_PLAN_STEPS,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
+  DelegateWorkersSchema,
   type ModelPlanTask,
   type ModelPlanUpdate,
   type ModelInputRequest,
-  type ModelDirectResponse,
   type ModelResponse,
   type ProviderToolCall
 } from "./providers/model-response.js";
 import { ActionRejectedError } from "@nexora/runtime/internal";
-import { z } from "zod";
 import {
   SupervisorWorkerRoleSchema,
   renderWorkerAssignmentPrompt,
@@ -34,14 +33,18 @@ import {
 
 type ToolAction = Extract<RuntimeAction, { type: "call_tool" | "execute_step" }>;
 
-export const DelegateWorkersSchema = z.object({
-  finalDeliverable: z.string().trim().min(1).max(4_096).optional(),
-  assignments: z.array(z.object({
-    objective: z.string().trim().min(1),
-    contribution: z.string().trim().min(1).max(4_096).optional(),
-    profileRef: z.string().trim().min(1).optional()
-  }).strict()).min(2).max(8)
-}).strict();
+export type ToolEffectKind = "read" | "write" | "execute";
+
+/**
+ * Mechanical execution facts a Provider Tool batch is compiled against. The
+ * Harness owns check attribution, so it must judge stale verification Evidence
+ * with the same notion of "latest write mutation" the Completion Gate uses,
+ * including writes that were never attributed to a Plan Step.
+ */
+export type ProviderToolExecutionView = {
+  readonly invocations: readonly ToolInvocation[];
+  readonly toolEffect: (toolName: string) => ToolEffectKind | undefined;
+};
 
 export function parseDelegationControl(call: ProviderToolCall): Extract<RuntimeAction, { type: "delegate_workers" }> {
   if (call.name !== DELEGATE_WORKERS_CONTROL) {
@@ -88,13 +91,6 @@ export function parseInputControl(call: ProviderToolCall): ModelInputRequest {
   return ModelInputRequestSchema.parse(call.arguments);
 }
 
-export function parseDirectResponseControl(call: ProviderToolCall): ModelDirectResponse {
-  if (call.name !== DIRECT_RESPONSE_CONTROL) {
-    throw new ActionRejectedError(`Expected ${DIRECT_RESPONSE_CONTROL}, received ${call.name}.`);
-  }
-  return ModelDirectResponseSchema.parse(call.arguments);
-}
-
 export function compileModelPlan(
   run: RunSnapshot,
   update: ModelPlanUpdate,
@@ -106,7 +102,7 @@ export function compileModelPlan(
     createId,
     goal: update.goal,
     scope: update.scope,
-    tasks: update.tasks,
+    tasks: update.tasks ?? [],
     removeSteps: update.removeSteps ?? [],
     availableToolNames
   });
@@ -114,19 +110,29 @@ export function compileModelPlan(
 
 export function compileProviderToolCalls(
   run: RunSnapshot,
-  calls: readonly ProviderToolCall[]
+  calls: readonly ProviderToolCall[],
+  execution?: ProviderToolExecutionView
 ): ToolAction {
   if (calls.length === 0) throw new ActionRejectedError("A Provider Tool batch cannot be empty.");
   const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
-  const step = run.currentPlan?.orderedSteps.find((item) => item.id === activeStepId);
+  const activeStep = run.currentPlan?.orderedSteps.find((item) => item.id === activeStepId);
+  // A Step-owned write invalidates that Step's verification Evidence whether or
+  // not the Step is still active, so the refresh target must be computed for an
+  // active Step too.  Leaving it undefined while a Step is active dropped the
+  // stale Check id from `remaining`, so the model's re-run of the required
+  // verification Tool was persisted without the Check id, produced no fresh
+  // Evidence, and left the Completion Gate reporting CHECK_EVIDENCE_STALE
+  // forever.
+  const refresh = staleVerificationTarget(run, calls, execution);
+  const step = activeStep ?? refresh?.step;
   const remaining = step?.acceptanceChecks.filter(
     (check): check is Extract<AcceptanceCheck, { kind: "tool_result" }> => (
       check.kind === "tool_result"
-      && !run.evidence.some((evidence) => (
+      && (refresh?.checkIds.has(check.id) === true || !run.evidence.some((evidence) => (
         evidence.planVersion <= run.currentPlan!.version
         && evidence.stepId === step.id
         && evidence.checkId === check.id
-      ))
+      )))
     )
   ) ?? [];
   const actions = calls.map((call) => {
@@ -143,6 +149,79 @@ export function compileProviderToolCalls(
   return actions.length === 1
     ? actions[0]!
     : { type: "execute_step", stepId: step?.id ?? UNPLANNED_STEP_ID, actions };
+}
+
+function staleVerificationTarget(
+  run: RunSnapshot,
+  calls: readonly ProviderToolCall[],
+  execution?: ProviderToolExecutionView
+): { readonly step: StructuredPlan["orderedSteps"][number]; readonly checkIds: ReadonlySet<string> } | undefined {
+  const plan = run.currentPlan;
+  if (plan === null) return undefined;
+  const latestMutation = latestMutationAnchor(run, execution);
+  if (latestMutation === undefined) return undefined;
+  const requestedTools = new Set(calls.map((call) => call.name));
+  for (const [stepIndex, step] of plan.orderedSteps.entries()) {
+    if (stepIndex < latestMutation.stepIndex) continue;
+    const stale = step.acceptanceChecks.filter((check) => {
+      if (check.kind !== "tool_result" || check.role !== "verification" || !requestedTools.has(check.toolName)) return false;
+      const evidence = latestCheckEvidence(run, step.id, check.id);
+      return evidence !== undefined && evidence.producedAt < latestMutation.producedAt;
+    });
+    if (stale.length > 0) return { step, checkIds: new Set(stale.map((check) => check.id)) };
+  }
+  return undefined;
+}
+
+/**
+ * Resolves the latest write mutation the Completion Gate will act on to the
+ * Plan Step index whose verification Evidence it invalidates.
+ *
+ * The Gate invalidates verification Evidence from any succeeded write, so the
+ * refresh target must be derived from write Invocations too. A write a Step
+ * owns but that carries no mutation Check still invalidates that Step's
+ * verification Evidence, so mutation Check Evidence alone under-reports which
+ * Checks are stale and leaves the Gate blocking completion.
+ */
+function latestMutationAnchor(
+  run: RunSnapshot,
+  execution?: ProviderToolExecutionView
+): { readonly producedAt: string; readonly stepIndex: number } | undefined {
+  const plan = run.currentPlan;
+  if (plan === null) return undefined;
+  const invocation = execution === undefined
+    ? null
+    : latestWriteMutation(execution.invocations, execution.toolEffect);
+  if (invocation !== null && invocation.completedAt !== null) {
+    const stepIndex = plan.orderedSteps.findIndex((step) => step.id === invocation.stepId);
+    // A write that no Step owns, or one whose Step left the Plan, invalidates
+    // verification Evidence in every Step, so every Step becomes eligible.
+    return { producedAt: invocation.completedAt, stepIndex: Math.max(stepIndex, 0) };
+  }
+  // Callers without a mechanical execution view fall back to the newest
+  // mutation Check Evidence as the last attested mutation.
+  let latest: { readonly producedAt: string; readonly stepIndex: number } | undefined;
+  for (const [stepIndex, step] of plan.orderedSteps.entries()) {
+    for (const check of step.acceptanceChecks) {
+      if (check.kind !== "tool_result" || check.role !== "mutation") continue;
+      const evidence = latestCheckEvidence(run, step.id, check.id);
+      if (evidence !== undefined && (latest === undefined || evidence.producedAt >= latest.producedAt)) {
+        latest = { producedAt: evidence.producedAt, stepIndex };
+      }
+    }
+  }
+  return latest;
+}
+
+function latestCheckEvidence(run: RunSnapshot, stepId: string, checkId: string) {
+  return run.evidence.reduce<(typeof run.evidence)[number] | undefined>((latest, evidence) => {
+    if (
+      evidence.planVersion > (run.currentPlan?.version ?? 0)
+      || evidence.stepId !== stepId
+      || evidence.checkId !== checkId
+    ) return latest;
+    return latest === undefined || evidence.producedAt >= latest.producedAt ? evidence : latest;
+  }, undefined);
 }
 
 export function compileModelFinish(

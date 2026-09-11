@@ -3,7 +3,7 @@ import {
   type RuntimeProvider,
   type RuntimeTool
 } from "@nexora/harness";
-import { modelResponses } from "@nexora/harness";
+import { modelResponses, NATIVE_FUNCTION_CALLING_CAPABILITIES } from "@nexora/harness";
 import { z } from "zod";
 
 import type { ScenarioFactory } from "../../../../src/scenario.js";
@@ -15,6 +15,7 @@ export const createScenario: ScenarioFactory = () => ({
 
 function provider(): RuntimeProvider {
   return {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(context: ModelDecisionContext) {
       if (context.run.currentPlan === null) {
         return modelResponses.plan({

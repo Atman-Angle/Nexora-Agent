@@ -1,0 +1,33 @@
+{
+  "files": [
+    {
+      "id": "services-fixed",
+      "path": "services.json",
+      "exists": true,
+      "equals": "{\n  \"services\": [\n    { \"name\": \"gateway\", \"upstream\": null },\n    { \"name\": \"checkout\", \"upstream\": \"payments-svc\" },\n    { \"name\": \"payments-svc\", \"upstream\": \"db\" },\n    { \"name\": \"db\", \"upstream\": null }\n  ]\n}\n"
+    },
+    {
+      "id": "routes-fixed",
+      "path": "routes.json",
+      "exists": true,
+      "equals": "{\n  \"routes\": [\n    { \"path\": \"/v1/login\", \"service\": \"checkout\" },\n    { \"path\": \"/v1/user\", \"service\": \"checkout\" }\n  ]\n}\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "coherence-verifier",
+      "command": "node",
+      "args": ["verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": ["requirements.md", "verify.mjs"],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": []
+  }
+}

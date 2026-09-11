@@ -33,9 +33,9 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
     let decisions = 0;
     const fetch: typeof globalThis.fetch = async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as {
-        readonly messages: readonly { readonly content: string }[];
+        readonly messages: readonly { readonly role: string; readonly content: string }[];
       };
-      JSON.parse(body.messages[1]!.content);
+      JSON.parse(body.messages.filter((message) => message.role === "user").at(-1)!.content);
       decisions += 1;
       if (decisions === 1) return response(stressPlan());
       if (decisions === 2) return response({
@@ -52,24 +52,21 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
         finishReason: "tool_calls"
       });
       return response({
-        text: null,
-        toolCalls: [{
-          name: "nexora_respond",
-          arguments: { text: `Verified ordered ORCHID codes ${Array.from({ length: 8 }, (_, index) => (
-            `ORCHID-${String(index + 1).padStart(2, "0")}-A${String(17 + index).padStart(2, "0")}`
-          )).join(", ")} from all eight file Evidence records.` }
-        }],
-        finishReason: "tool_calls"
+        text: `Verified ordered ORCHID codes ${Array.from({ length: 8 }, (_, index) => (
+          `ORCHID-${String(index + 1).padStart(2, "0")}-A${String(17 + index).padStart(2, "0")}`
+        )).join(", ")} from all eight file Evidence records.`,
+        toolCalls: [],
+        finishReason: "stop"
       });
     };
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example/v1",
       apiKey: "test-key",
       model: "qwen3.7-flash",
-      contextWindowTokens: 32_000,
+      contextWindowTokens: 40_000,
       reservedOutputTokens: { decision: 16_384 },
       softLimitRatio: 0.8,
-      transport: "structured_output",
+      transport: "native_tools",
       fetch
     });
     const declaredProfile: ProviderModelProfile = {
@@ -83,7 +80,7 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       budgetOverride: {
         declaredProfile,
         environmentVariable: "NEXORA_CANARY_CONTEXT_WINDOW_TOKENS",
-        contextWindowTokens: 32_000
+        contextWindowTokens: 40_000
       }
     });
 
@@ -97,17 +94,17 @@ describe("E106 Context and Memory benchmark v2 stress", () => {
       budgetConfiguration: {
         source: "canary_override",
         declaredProfile: { contextWindowTokens: 1_000_000 },
-        effectiveProfile: { contextWindowTokens: 32_000 },
+        effectiveProfile: { contextWindowTokens: 40_000 },
         issues: []
       }
     });
     expect(report.continuity.evictedModelCalls).toBeGreaterThanOrEqual(1);
     expect(report.contextBudget.inconsistentCalls).toEqual([]);
     expect(report.contextBudget.phases.find((phase) => phase.phase === "decision")).toMatchObject({
-      contextWindowTokens: [32_000],
+        contextWindowTokens: [40_000],
       reservedOutputTokens: [16_384],
-      softInputLimitTokens: [12_492],
-      hardInputLimitTokens: [15_616],
+      softInputLimitTokens: [18_892],
+      hardInputLimitTokens: [23_616],
       measurementMethods: ["estimated"],
       meters: ["nexora:qwen3.7-flash:utf8-bytes/4*x1.8:e101-v1"]
     });
@@ -168,9 +165,36 @@ function stressPlan() {
 }
 
 function response(value: unknown): Response {
-  return new Response(JSON.stringify({
-    choices: [{ message: { content: JSON.stringify(value) } }]
-  }), { status: 200, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify({ choices: [{ message: nativeMessage(value) }] }), {
+    status: 200,
+    headers: { "content-type": "application/json" }
+  });
+}
+
+function nativeMessage(value: unknown): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, index) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${index}`,
+      type: "function" as const,
+      function: { name: String(call.name), arguments: JSON.stringify(call.arguments ?? null) }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
 }
 
 function vitestReport(): MutableVitestReport {

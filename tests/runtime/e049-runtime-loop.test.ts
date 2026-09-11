@@ -92,7 +92,7 @@ describe("E049 one persisted Runtime loop", () => {
     runtime.close();
   });
 
-  it("does not let a legacy post-plan request bypass admissibility", async () => {
+  it("normalizes a legacy post-plan input request through the current admissibility path", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       { type: "set_plan", basedOnVersion: null, taskContract: taskContract(), orderedSteps: setPlan(workspace).orderedSteps },
@@ -103,7 +103,7 @@ describe("E049 one persisted Runtime loop", () => {
     const result = await runtime.start({ input: "Inspect a file." });
     const view = await runtime.inspect(result.runId);
     expect(result.status).toBe("waiting");
-    expect(view.events.some((event) => event.type === "response.rejected")).toBe(true);
+    expect(view.events.some((event) => event.type === "response.rejected")).toBe(false);
     expect(view.snapshot.pendingRequest?.kind).toBe("input");
     runtime.close();
   });

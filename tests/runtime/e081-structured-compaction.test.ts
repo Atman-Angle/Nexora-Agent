@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   modelResponses,
   type ModelDecisionContext,
@@ -23,7 +23,7 @@ describe("E081 deterministic Context convergence", () => {
     roots.push(workspace);
     let calls = 0;
     let received: ModelDecisionContext | undefined;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "fixture",
         model: "tiny-window",
@@ -58,7 +58,7 @@ describe("E081 deterministic Context convergence", () => {
   });
 
   it("never exposes a model compaction operation", () => {
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide() { return modelResponses.text("done"); }
     };
     expect(provider).not.toHaveProperty("compact");

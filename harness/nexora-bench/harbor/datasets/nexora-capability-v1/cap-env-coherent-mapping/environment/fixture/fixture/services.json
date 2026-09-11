@@ -1,0 +1,8 @@
+{
+  "services": [
+    { "name": "gateway", "upstream": null },
+    { "name": "checkout", "upstream": "payments" },
+    { "name": "payments-svc", "upstream": "db" },
+    { "name": "db", "upstream": null }
+  ]
+}

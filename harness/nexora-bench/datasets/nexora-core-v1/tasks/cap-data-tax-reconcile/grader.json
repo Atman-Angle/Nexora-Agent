@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "id": "tax-report",
+      "path": "report.txt",
+      "exists": true,
+      "equals": "region subtotal tax total\nnorth 120.00 6.00 126.00\nsouth 80.00 8.00 88.00\nwest 40.00 6.00 46.00\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "independent-verifier",
+      "command": "node",
+      "args": ["verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": ["sales.csv", "rates.csv", "verify.mjs"],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": []
+  }
+}

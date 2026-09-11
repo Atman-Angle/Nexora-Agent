@@ -94,6 +94,7 @@ import {
   RunControlError,
   createBuiltInTools,
   createRuntime,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   modelResponses,
   type ModelDecisionContext,
   type RuntimeEvent,
@@ -103,6 +104,7 @@ import {
 const workspace = ${JSON.stringify(workspace)};
 let call = 0;
 const provider: RuntimeProvider = {
+  nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
   async decide(_context: ModelDecisionContext) {
     call += 1;
     if (call === 1) return modelResponses.plan({
@@ -123,7 +125,7 @@ const provider: RuntimeProvider = {
       name: "filesystem.read",
       arguments: { path: "d2-output.txt" }
     });
-    return modelResponses.direct({ text: "D2 write verified" });
+    return modelResponses.text("D2 write verified");
   }
 };
 

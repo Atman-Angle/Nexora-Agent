@@ -20,15 +20,16 @@ describe("E049 reusable @nexora/harness package", () => {
     execFileSync("npm", ["install", "--offline", ...tarballs], { cwd: root, stdio: "pipe", shell: process.platform === "win32" });
     writeFileSync(join(root, "target.txt"), "external consumer\n", "utf8");
     writeFileSync(join(root, "consumer.mjs"), `
-import { createBuiltInTools, createRuntime, modelResponses } from "@nexora/harness";
+import { createBuiltInTools, createRuntime, modelResponses, NATIVE_FUNCTION_CALLING_CAPABILITIES } from "@nexora/harness";
 let call = 0;
 const workspace = ${JSON.stringify(root)};
 const provider = {
+  nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
   async decide() {
     call += 1;
     if (call === 1) return modelResponses.plan({ goal: "Search target", tasks: [{ objective: "Search", checks: [{ toolName: "filesystem.search" }] }] });
     if (call === 2) return modelResponses.tool({ name: "filesystem.search", arguments: { query: "external consumer", path: "." } });
-    return modelResponses.direct({ text: "Verified" });
+    return modelResponses.text("Verified");
   }
 };
 const runtime = createRuntime({ workspace, provider, tools: createBuiltInTools() });

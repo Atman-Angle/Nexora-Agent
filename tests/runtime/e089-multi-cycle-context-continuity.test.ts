@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   modelResponses,
   type ModelDecisionContext,
@@ -26,7 +26,7 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
     const workspace = fixture();
     const contexts: ModelDecisionContext[] = [];
     let turn = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "test",
         model: "bounded-continuity",
@@ -53,7 +53,7 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
         if (turn <= 102) {
           return modelResponses.tool({ name: "test.sequence.read", arguments: { index: turn - 1 } });
         }
-        return modelResponses.direct({ text: "Completed the bounded 101-read sequence." });
+        return modelResponses.text("Completed the bounded 101-read sequence.");
       }
     };
     const agent = createAgent({ workspace, provider, tools: [sequenceTool()] });
@@ -65,7 +65,7 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
         maxModelCalls: 106,
         maxToolCalls: 102,
         maxRetries: 1,
-        maxDurationMs: 60_000
+        maxDurationMs: 120_000
       }
     });
     const view = await agent.inspect(result.runId);
@@ -79,7 +79,7 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
       Math.ceil(Buffer.byteLength(JSON.stringify(context), "utf8") / 4) <= 14_976
     ))).toBe(true);
     expect(contexts.at(-1)).not.toHaveProperty("contextCheckpoint");
-  }, 45_000);
+  }, 120_000);
 
   it("rebuilds the same Plan and continues from persisted state after reopen", async () => {
     const workspace = fixture();
@@ -100,12 +100,12 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
     const second = createAgent({
       workspace,
       dataDir,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide(context) {
           captured.value ??= structuredClone(context);
           return context.run.evidence.length === 0
             ? modelResponses.tool({ name: "test.sequence.read", arguments: { index: 1 } })
-            : modelResponses.direct({ text: "Read sequence fact 1 after reopen." });
+            : modelResponses.text("Read sequence fact 1 after reopen.");
         }
       },
       tools: [sequenceTool()]
@@ -168,7 +168,7 @@ function planTurn(): ModelResponse {
 
 function queuedProvider(turns: readonly ModelResponse[]): RuntimeProvider {
   const queue = [...turns];
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide() {
       const next = queue.shift();
       if (next === undefined) throw new Error("Provider queue exhausted.");

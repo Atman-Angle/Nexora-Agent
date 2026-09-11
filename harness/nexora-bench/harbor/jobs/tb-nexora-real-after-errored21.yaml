@@ -1,0 +1,39 @@
+jobs_dir: jobs-output
+n_attempts: 1
+n_concurrent_trials: 3
+environment:
+  type: docker
+agents:
+  - import_path: nexora_harbor.agent:NexoraRuntimeAgent
+    kwargs:
+      scenario_id: auto
+      manifest_path: harness/nexora-bench/datasets/nexora-core-v1/capability-cohort-all.json
+      provider_mode: real
+    override_setup_timeout_sec: 1200
+    override_timeout_sec: 2400
+verifier:
+  import_path: nexora_harbor.verifier:NexoraRuntimeVerifier
+datasets:
+  - path: .tmp-tb/terminal-bench
+    task_names:
+      - extract-elf
+      - install-windows-3.11
+      - make-doom-for-mips
+      - make-mips-interpreter
+      - mteb-leaderboard
+      - mteb-retrieve
+      - nginx-request-logging
+      - polyglot-rust-c
+      - prove-plus-comm
+      - query-optimize
+      - rstan-to-pystan
+      - sam-cell-seg
+      - sanitize-git-repo
+      - schemelike-metacircular-eval
+      - sparql-university
+      - sqlite-with-gcov
+      - train-fasttext
+      - tune-mjcf
+      - video-processing
+      - winning-avg-corewars
+      - write-compressor

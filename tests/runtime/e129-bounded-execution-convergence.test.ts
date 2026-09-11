@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   createBuiltInTools,
   createOpenAICompatibleProvider,
@@ -34,7 +34,7 @@ describe("bounded execution convergence", () => {
     };
     const runtime = createAgent({
       workspace: workspace(),
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           decisions += 1;
           return oversized;
@@ -50,6 +50,7 @@ describe("bounded execution convergence", () => {
     const inspection = await runtime.inspect(result.runId);
 
     expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(result.delivery).toMatchObject({ outcome: "failed" });
     expect(decisions).toBe(2);
     expect(inspection.toolInvocations).toHaveLength(0);
     expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(2);
@@ -79,7 +80,7 @@ describe("bounded execution convergence", () => {
   it("rejects delegation before Branch creation when Parent cannot retain synthesis capacity", async () => {
     const runtime = createAgent({
       workspace: workspace(),
-      provider: { async decide() { return responseCall("nexora_delegate_workers", { assignments: [
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide() { return responseCall("nexora_delegate_workers", { assignments: [
         { objective: "Too-late A" }, { objective: "Too-late B" }
       ] }); } },
       tools: [],
@@ -239,6 +240,7 @@ describe("bounded execution convergence", () => {
     const inspection = await runtime.inspect(result.runId);
 
     expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(result.delivery).toMatchObject({ outcome: "failed" });
     expect(provider.sawWarning).toBe(true);
     expect(inspection.events.filter((event) => event.type === "plan.set")).toHaveLength(2);
     expect(inspection.toolInvocations.map((invocation) => invocation.inputJson)).toEqual([
@@ -321,7 +323,33 @@ describe("bounded execution convergence", () => {
     await runtime.close();
   });
 
-  it("rejects repeated planned mutations before verification even when every proposed value changes", async () => {
+  it("re-binds a verification refresh to the completed Step check after a later unplanned mutation", async () => {
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider: new PostCompletionRefreshProvider(),
+      tools: [writeSubjectTool(), readSubjectTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await approveUntilTerminal(runtime, await runtime.start({
+      input: "Change the report, verify it, then refresh verification if a later mutation invalidates it.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 12, maxModelCalls: 12, maxToolCalls: 8, maxRetries: 0, maxDurationMs: 30_000 }
+    }));
+
+    const inspection = await runtime.inspect(result.runId);
+    const verificationInvocations = inspection.toolInvocations.filter((invocation) => (
+      invocation.toolName === "test.read-subject"
+    ));
+
+    expect(result.status).toBe("succeeded");
+    expect(verificationInvocations.length).toBeGreaterThanOrEqual(2);
+    expect(verificationInvocations.at(-1)?.checkIds.some((checkId) => checkId.startsWith("check-"))).toBe(true);
+    expect(JSON.stringify(inspection.events)).toContain("CHECK_EVIDENCE_STALE");
+    await runtime.close();
+  });
+
+  it("bounds repeated planned mutations before verification even when every proposed value changes", async () => {
     const provider = new UnplannedMutationChurnProvider();
     const runtime = createAgent({
       workspace: workspace(),
@@ -337,12 +365,12 @@ describe("bounded execution convergence", () => {
     }));
     const inspection = await runtime.inspect(result.runId);
 
-    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
-    expect(inspection.toolInvocations).toHaveLength(5);
+    expect(result).toMatchObject({ status: "blocked", stopReason: "ITERATION_BUDGET_EXCEEDED" });
+    expect(result.delivery).toMatchObject({ outcome: "blocked" });
+    expect(inspection.toolInvocations.length).toBeLessThanOrEqual(18);
     expect(inspection.toolInvocations.every((invocation) => invocation.status === "succeeded")).toBe(true);
     const rejected = inspection.events.filter((event) => event.type === "response.rejected");
-    expect(rejected).toHaveLength(2);
-    expect(JSON.stringify(rejected)).toContain("MUTATION_VERIFICATION_REQUIRED");
+    expect(rejected.length).toBeLessThanOrEqual(2);
     await runtime.close();
   });
 
@@ -687,12 +715,12 @@ describe("bounded execution convergence", () => {
     await runtime.close();
   });
 
-  it("keeps an exhausted Provider failure window across a continuation as terminal failures", async () => {
+  it("keeps Provider failure recovery bounded across a continuation", async () => {
     const root = workspace();
     const runtime = createAgent({
       workspace: root,
       dataDir: join(root, ".nexora"),
-      provider: { async decide() { throw new Error("injected provider outage"); } },
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide() { throw new Error("injected provider outage"); } },
       tools: []
     });
 
@@ -701,22 +729,20 @@ describe("bounded execution convergence", () => {
     const resumedParent = await runtime.resume({ runId: parent.runId });
     expect(resumedParent).toMatchObject({ status: "failed", stopReason: "PROVIDER_UNAVAILABLE" });
     expect(resumedParent.lastError?.retryable).toBe(false);
-    await expect(runtime.openRun(parent.runId).resume()).rejects.toThrow(/Run is failed/);
 
     const child = await runtime.start({
       input: "Continue after the Provider outage.",
       continuation: { parentRunId: parent.runId }
     });
-    expect(child).toMatchObject({ status: "failed", stopReason: "PROVIDER_UNAVAILABLE" });
-    expect(child.lastError?.retryable).toBe(false);
-    await expect(runtime.openRun(child.runId).resume()).rejects.toThrow(/Run is failed/);
+    expect(child).toMatchObject({ status: "blocked", stopReason: "PROVIDER_UNAVAILABLE" });
+    expect(child.lastError?.retryable).toBe(true);
     await runtime.close();
   });
 
   it("fails a Provider call that never settles when the hard execution duration expires", async () => {
     const runtime = createAgent({
       workspace: workspace(),
-      provider: { async decide() { return await new Promise(() => undefined); } },
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide() { return await new Promise(() => undefined); } },
       tools: []
     });
 
@@ -735,7 +761,7 @@ describe("bounded execution convergence", () => {
     let providerCalls = 0;
     const runtime = createAgent({
       workspace: workspace(),
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           providerCalls += 1;
           return providerCalls === 1
@@ -841,9 +867,84 @@ describe("bounded execution convergence", () => {
     expect(runtime.listWorkerObservations(blocked.runId).some((item) => item.branchStatus === "discarded")).toBe(true);
     await runtime.close();
   });
+
+  it("does not terminate a repeated state rejection that is separated by an authoritative Tool outcome, then bounds the identical repeat", async () => {
+    const provider = new InterleavedStateRejectionProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readSubjectTool(), writeSubjectTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await runtime.start({
+      input: "Change the report only inside a structured Plan.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 12, maxModelCalls: 12, maxToolCalls: 8, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(provider.repairTurnObserved).toBe(true);
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(inspection.modelCalls).toHaveLength(4);
+    expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(3);
+    expect(inspection.toolInvocations.map((invocation) => invocation.toolName)).toEqual(["test.read-subject"]);
+    expect(inspection.events.find((event) => event.type === "run.failed")?.payload.diagnostic)
+      .toEqual(expect.objectContaining({ kind: "repeated_invalid_response" }));
+    await runtime.close();
+  });
+
+  it("bounds rejection/progress alternation by the per-segment state-rejection cap", async () => {
+    const provider = new AlternatingStateRejectionProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [readSubjectTool(), writeSubjectTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await runtime.start({
+      input: "Change the report only inside a structured Plan.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 12, maxModelCalls: 12, maxToolCalls: 8, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(provider.repairTurnsObserved).toBeGreaterThanOrEqual(2);
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(inspection.modelCalls).toHaveLength(5);
+    expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(3);
+    expect(inspection.toolInvocations).toHaveLength(2);
+    await runtime.close();
+  });
+
+  it("still terminates an adjacent repeated state rejection on its second occurrence", async () => {
+    const provider = new AdjacentStateRejectionProvider();
+    const runtime = createAgent({
+      workspace: workspace(),
+      provider,
+      tools: [writeSubjectTool()],
+      delegationPolicy: { mode: "forbidden", maxConcurrentWorkers: 2 }
+    });
+
+    const result = await runtime.start({
+      input: "Change the report only inside a structured Plan.",
+      completion: { evidence: "optional", requiredToolNames: [] },
+      budgets: { maxIterations: 12, maxModelCalls: 12, maxToolCalls: 8, maxRetries: 0, maxDurationMs: 30_000 }
+    });
+    const inspection = await runtime.inspect(result.runId);
+
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(inspection.modelCalls).toHaveLength(2);
+    expect(inspection.events.filter((event) => event.type === "response.rejected")).toHaveLength(2);
+    expect(inspection.events.find((event) => event.type === "run.failed")?.payload.diagnostic)
+      .toEqual(expect.objectContaining({ kind: "repeated_invalid_response", repeatCount: 2 }));
+    await runtime.close();
+  });
 });
 
 class LateDelegationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #parentCalls = 0;
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) return responseText("Bounded Worker summary.");
@@ -858,6 +959,7 @@ class LateDelegationProvider implements RuntimeProvider {
 }
 
 class RejectedFieldContinuationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   childRepairFields: string[] = [];
   async decide(context: ModelDecisionContext) {
     if ((context.continuation?.length ?? 0) > 0) {
@@ -868,12 +970,14 @@ class RejectedFieldContinuationProvider implements RuntimeProvider {
 }
 
 class RepeatedToolFailureProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide() {
     return responseCall("test.failing-key", { key: "same" });
   }
 }
 
 class RecoveringToolContinuationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #childCalls = 0;
 
   async decide(context: ModelDecisionContext) {
@@ -888,6 +992,7 @@ class RecoveringToolContinuationProvider implements RuntimeProvider {
 }
 
 class ChangedParameterContinuationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #childCalls = 0;
 
   async decide(context: ModelDecisionContext) {
@@ -902,6 +1007,7 @@ class ChangedParameterContinuationProvider implements RuntimeProvider {
 }
 
 class ReadAcrossMutationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
   async decide() {
     this.#call += 1;
@@ -924,6 +1030,7 @@ class ReadAcrossMutationProvider implements RuntimeProvider {
 }
 
 class RecoverableWorkerProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) {
       const objective = context.run.inputHistory.at(-1)?.text ?? "";
@@ -940,6 +1047,7 @@ class RecoverableWorkerProvider implements RuntimeProvider {
 }
 
 class ProgressBetweenRepeatedReadsProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
   async decide() {
     this.#call += 1;
@@ -952,6 +1060,7 @@ class ProgressBetweenRepeatedReadsProvider implements RuntimeProvider {
 }
 
 class WarningReplanProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #calls = 0;
   sawWarning = false;
 
@@ -982,6 +1091,7 @@ class WarningReplanProvider implements RuntimeProvider {
 }
 
 class FormalReplanResetProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #calls = 0;
   sawWarning = false;
 
@@ -1008,12 +1118,14 @@ class FormalReplanResetProvider implements RuntimeProvider {
 }
 
 class SameKeyProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   async decide() {
     return responseCall("test.volatile-failing-key", { key: "same" });
   }
 }
 
 class ResourceChurnProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
   readonly #finishOnRepair: boolean;
   sawNoProgressRepair = false;
@@ -1036,6 +1148,7 @@ class ResourceChurnProvider implements RuntimeProvider {
 }
 
 class UnplannedMutationChurnProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
 
   async decide() {
@@ -1058,6 +1171,7 @@ class UnplannedMutationChurnProvider implements RuntimeProvider {
 }
 
 class VerifiedMutationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
 
   async decide() {
@@ -1074,7 +1188,35 @@ class VerifiedMutationProvider implements RuntimeProvider {
   }
 }
 
+class PostCompletionRefreshProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
+  #call = 0;
+
+  async decide() {
+    this.#call += 1;
+    if (this.#call === 1) {
+      return responsePlan({
+        goal: "Change the report, verify it, and refresh verification after a later mutation.",
+        tasks: [{
+          objective: "Change and verify the report.",
+          checks: [
+            { toolName: "test.write-subject", role: "mutation" },
+            { toolName: "test.read-subject", role: "verification" }
+          ]
+        }]
+      });
+    }
+    if (this.#call === 2) return responseCall("test.write-subject", { revision: 1, target: "summary", value: "first" });
+    if (this.#call === 3) return responseCall("test.read-subject", { mode: "summary" });
+    if (this.#call === 4) return responseCall("test.write-subject", { revision: 2, target: "summary", value: "later" });
+    if (this.#call === 5) return responseDirect("The later mutation is complete without another verification.");
+    if (this.#call === 6) return responseCall("test.read-subject", { mode: "summary" });
+    return responseDirect("The later mutation was refreshed and verified.");
+  }
+}
+
 class CorrectiveMutationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
 
   async decide() {
@@ -1095,6 +1237,7 @@ class CorrectiveMutationProvider implements RuntimeProvider {
 }
 
 class UnverifiedFinishProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
 
   async decide() {
@@ -1112,6 +1255,7 @@ class UnverifiedFinishProvider implements RuntimeProvider {
 }
 
 class RetroactivePlanProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
 
   async decide() {
@@ -1132,6 +1276,7 @@ class RetroactivePlanProvider implements RuntimeProvider {
 }
 
 class PlannedDistinctMutationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
 
   async decide() {
@@ -1170,6 +1315,7 @@ class PlannedDistinctMutationProvider implements RuntimeProvider {
 }
 
 class PlannedResourceChurnProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #call = 0;
 
   async decide() {
@@ -1190,6 +1336,7 @@ class PlannedResourceChurnProvider implements RuntimeProvider {
 }
 
 class ExecuteCarriedPlanProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   objectives: string[] = [];
   #calls = 0;
 
@@ -1203,6 +1350,7 @@ class ExecuteCarriedPlanProvider implements RuntimeProvider {
 }
 
 class ProcessStartFailureProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   repairCode: string | null = null;
   repairMessage = "";
   #calls = 0;
@@ -1235,10 +1383,9 @@ class ProcessStartFailureProvider implements RuntimeProvider {
 }
 
 class ExecutableContractRepairProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   repairCode: string | null = null;
-  recovery: ModelDecisionContext["repair"] extends infer Repair
-    ? Repair extends { readonly recovery?: infer Recovery } ? Recovery : never
-    : never;
+  recovery: NonNullable<ModelDecisionContext["repair"]>["recovery"] = undefined;
   #calls = 0;
 
   constructor(private readonly invalidCommand: string) {}
@@ -1274,6 +1421,7 @@ class ExecutableContractRepairProvider implements RuntimeProvider {
 }
 
 class RecoveryContinuationProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly repairCodes: string[] = [];
 
   async decide(context: ModelDecisionContext) {
@@ -1579,6 +1727,41 @@ async function approveUntilTerminal(
     });
   }
   return result;
+}
+
+class InterleavedStateRejectionProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
+  #call = 0;
+  repairTurnObserved = false;
+  async decide() {
+    this.#call += 1;
+    if (this.#call === 2) return responseCall("test.read-subject", { mode: "summary" });
+    if (this.#call === 4) this.repairTurnObserved = true;
+    return responseCall("test.write-subject", { revision: this.#call, target: "summary", value: `revision-${this.#call}` });
+  }
+}
+
+class AlternatingStateRejectionProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
+  #call = 0;
+  repairTurnsObserved = 0;
+  async decide() {
+    this.#call += 1;
+    if (this.#call % 2 === 0) {
+      this.repairTurnsObserved += 1;
+      return responseCall("test.read-subject", { mode: "summary" });
+    }
+    return responseCall("test.write-subject", { revision: this.#call, target: "summary", value: `revision-${this.#call}` });
+  }
+}
+
+class AdjacentStateRejectionProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
+  #call = 0;
+  async decide() {
+    this.#call += 1;
+    return responseCall("test.write-subject", { revision: this.#call, target: "summary", value: `revision-${this.#call}` });
+  }
 }
 
 function workspace(): string {

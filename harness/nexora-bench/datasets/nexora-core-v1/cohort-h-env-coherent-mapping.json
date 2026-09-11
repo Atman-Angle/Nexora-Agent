@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-h-env-coherent-mapping",
+  "version": 1,
+  "description": "Harbor capability cohort H: realistic environment configuration task (coherent service mapping across files).",
+  "tasks": [
+    "tasks/cap-env-coherent-mapping/task.json"
+  ]
+}

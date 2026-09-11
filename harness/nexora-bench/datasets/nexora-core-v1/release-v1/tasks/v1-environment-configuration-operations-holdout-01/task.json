@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-environment-configuration-operations-holdout-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "environment_configuration_operations",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "holdout",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Update the worker environment configuration for the requested operational policy, preserve unrelated settings, and validate the configuration before handoff.",
+    "allowedCapabilities": [
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-environment-configuration-operations-holdout-01/fixture",
+      "digest": "sha256:987cecc509c84a294186499f9d2cc03bba8fc57f907ec4e2fd455f6f2171e0fb"
+    },
+    "scenario": "release-v1/tasks/v1-environment-configuration-operations-holdout-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-environment-configuration-operations-holdout-01.grader.json",
+    "graderDigest": "sha256:0a8f14088e20314e52de63198dceb088e09d139240e2b85902b21db3d6762739",
+    "referenceRef": "release-v1/sealed/v1-environment-configuration-operations-holdout-01.reference.json",
+    "referenceDigest": "sha256:0ad2f53483b3783e7cdd1c49b3f148aee81df4f488653ba0c2fee03558998a5e",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-environment-configuration-operations-holdout-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:be491e12af601a0ce44dd6107310bd6c91420bb4ede3e071aac3d9be71a74213",
+    "fixtureDigest": "sha256:987cecc509c84a294186499f9d2cc03bba8fc57f907ec4e2fd455f6f2171e0fb"
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-09T00:20:00.000Z",
+  "sourceReport": "docs/evidence/decision-efficiency-candidate-a-ab-disabled.json",
+  "provider": "openai-compatible",
+  "model": "qwen3.8-flash",
+  "promptCachePolicy": "disabled",
+  "providerImplicitCacheObserved": true,
+  "coldCacheEvidenceAvailable": false,
+  "coldCacheReason": "The Provider reported cached input tokens on first attempts even with the Nexora prompt-cache policy disabled.",
+  "cohort": {
+    "taskLanes": [
+      "direct-read",
+      "similar-tool",
+      "read-only",
+      "mutation",
+      "protected",
+      "multi-call",
+      "plan-read",
+      "request-input",
+      "recovery",
+      "coding"
+    ],
+    "repetitions": 5,
+    "runsPerArm": 50,
+    "interleaved": true,
+    "validPairedInvariants": 50,
+    "invalidPairedInvariants": 0
+  },
+  "structural": {
+    "firstRequestBytes": {
+      "control": { "p50": 46338, "p95": 48570, "max": 48570 },
+      "candidate": { "p50": 28596, "p95": 30828, "max": 30828 },
+      "p50Delta": 17742
+    },
+    "promptToolCatalogSegment": {
+      "control": { "bytes": 16190, "estimatedTokens": 4048 },
+      "candidate": { "bytes": 118, "estimatedTokens": 30 },
+      "delta": { "bytes": 16072, "estimatedTokens": 4018 }
+    },
+    "providerFunctionSchemas": {
+      "controlBytes": 16168,
+      "candidateBytes": 16168,
+      "identical": true,
+      "digest": "sha256:274555755a70b22805ca33b079df984f29d373fd42b4dc2c850977c3db2a385c"
+    }
+  },
+  "actualProvider": {
+    "successfulTasks": { "control": 48, "candidate": 46 },
+    "actualInputTokensPerSuccessfulTask": {
+      "control": { "p50": 33596, "p95": 64153, "max": 64797 },
+      "candidate": { "p50": 23192, "p95": 47721, "max": 81697 }
+    },
+    "actualInputTokensPerEffectiveAction": {
+      "control": { "p50": 21592, "p95": 46293, "max": 46337 },
+      "candidate": { "p50": 14683, "p95": 32462, "max": 32493 }
+    },
+    "bothSuccessfulPairs": {
+      "count": 45,
+      "inputTokenDelta": { "p50": -10352, "p95": -6874, "max": 17307 },
+      "inputReduction": { "p50": 0.3084, "p95": 0.3255, "max": 0.5593 },
+      "logicalCallDelta": { "p50": 0, "p95": 0, "max": 3 },
+      "callDeltaCounts": { "-1": 1, "0": 42, "1": 1, "3": 1 }
+    }
+  },
+  "cache": {
+    "overallCachedShare": { "control": 0.7774, "candidate": 0.7174 },
+    "firstAttemptCachedShare": { "control": 0.8947, "candidate": 0.8944 },
+    "laterAttemptCachedShare": { "control": 0.7346, "candidate": 0.6646 }
+  },
+  "correctness": {
+    "passedRuns": { "control": 48, "candidate": 46 },
+    "successRate": { "control": 0.96, "candidate": 0.92 },
+    "falseSuccessCount": { "control": 0, "candidate": 0 },
+    "unknownFunctionCallCount": { "control": 0, "candidate": 0 },
+    "responseRejectedCount": { "control": 15, "candidate": 20 },
+    "approvalRequestedCount": { "control": 17, "candidate": 17 },
+    "approvalGrantedCount": { "control": 17, "candidate": 17 },
+    "duplicateMutationCount": { "control": 0, "candidate": 0 },
+    "failedToolCount": { "control": 5, "candidate": 5 },
+    "usageIncompleteAttempts": { "control": 0, "candidate": 1 },
+    "wireTelemetryIncompleteAttempts": { "control": 0, "candidate": 0 },
+    "failedRuns": [
+      { "task": "mutation", "arm": "candidate", "repetition": 2, "status": "failed", "stopReason": "NO_PROGRESS_DETECTED" },
+      { "task": "mutation", "arm": "control", "repetition": 4, "status": "failed", "stopReason": "NO_PROGRESS_DETECTED" },
+      { "task": "protected", "arm": "candidate", "repetition": 4, "status": "failed", "stopReason": "NO_PROGRESS_DETECTED" },
+      { "task": "mutation", "arm": "candidate", "repetition": 5, "status": "failed", "stopReason": "NO_PROGRESS_DETECTED" },
+      { "task": "protected", "arm": "control", "repetition": 5, "status": "failed", "stopReason": "NO_PROGRESS_DETECTED" },
+      { "task": "protected", "arm": "candidate", "repetition": 5, "status": "cancelled", "stopReason": "CANCELLED" }
+    ]
+  },
+  "decision": {
+    "controlledAbStatus": "failed",
+    "candidateA": "NO-GO",
+    "productionDefault": "full",
+    "reason": "Actual input savings were substantial on both-success pairs, but success rate decreased, response rejection increased, and mutation/protected high-risk lanes regressed. The hard correctness and stability gates fail."
+  }
+}

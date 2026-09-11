@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createAgent } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createAgent } from "../../packages/harness/src/index.js";
 import type {
   ModelDecisionContext,
   RuntimeProvider
@@ -13,7 +13,6 @@ import type {
 import type { RuntimeTool } from "../../packages/runtime/src/runtime.js";
 import {
   responseCall,
-  responseDirect,
   responsePlan,
   responsePlanAndTools,
   responseText
@@ -35,7 +34,7 @@ describe("E119 progressive Agent execution", () => {
       },
       (context) => {
         contexts.push(structuredClone(context));
-        return responseDirect("Customer 42 is active.");
+        return responseText("Customer 42 is active.");
       }
     ]);
     const runtime = createAgent({
@@ -78,7 +77,7 @@ describe("E119 progressive Agent execution", () => {
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return responseDirect("Customer 42 is active.");
+          return responseText("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -99,7 +98,7 @@ describe("E119 progressive Agent execution", () => {
     await runtime.close();
   });
 
-  it("treats nexora_respond after Plan and Tool execution as an evidence-gated task result", async () => {
+  it("treats bare assistant text after Plan and Tool execution as an evidence-gated completion candidate", async () => {
     const runtime = createAgent({
       workspace: tempRoot(),
       provider: decisionProvider([
@@ -107,7 +106,7 @@ describe("E119 progressive Agent execution", () => {
           goal: "Read customer-42.",
           tasks: [{ objective: "Read the current customer record.", checks: [{ toolName: "records.lookup" }] }]
         }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]),
-        () => responseCall("nexora_respond", { text: "Customer 42 is active." })
+        () => responseText("Customer 42 is active.")
       ]),
       tools: [recordLookupTool()]
     });
@@ -144,7 +143,7 @@ describe("E119 progressive Agent execution", () => {
         },
         (context) => {
           contexts.push(structuredClone(context));
-          return responseDirect("Customer 42 is active.");
+          return responseText("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -191,7 +190,7 @@ describe("E119 progressive Agent execution", () => {
       provider: decisionProvider([
         (context) => {
           resumedContexts.push(structuredClone(context));
-          return responseDirect("Customer 42 is active.");
+          return responseText("Customer 42 is active.");
         }
       ]),
       tools: [recordLookupTool()]
@@ -219,7 +218,7 @@ describe("E119 progressive Agent execution", () => {
             tasks: [{ objective: "Read the current customer record.", checks: [{ toolName: "records.lookup" }] }]
           }, [{ name: "records.lookup", arguments: { recordId: "customer-42" } }]),
         () => responseText(""),
-        () => responseDirect("Customer 42 is active.")
+        () => responseText("Customer 42 is active.")
       ]),
       tools: [recordLookupTool(toolCalls)]
     });
@@ -237,14 +236,14 @@ describe("E119 progressive Agent execution", () => {
     await runtime.close();
   });
 
-  it("rejects nonempty bare draft text after execution and finishes through explicit control without replaying effects", async () => {
+  it("accepts bare final text after execution only through the Completion Gate without replaying effects", async () => {
     const toolCalls = { count: 0 };
     const runtime = createAgent({
       workspace: tempRoot(),
       provider: decisionProvider([
         () => responseCall("records.lookup", { recordId: "customer-42" }),
         () => responseText("Working draft: the lookup succeeded, so I should now prepare the answer."),
-        () => responseDirect("Customer 42 is active.")
+        () => responseText("Customer 42 is active.")
       ]),
       tools: [recordLookupTool(toolCalls)]
     });
@@ -252,12 +251,10 @@ describe("E119 progressive Agent execution", () => {
     const result = await runtime.start({ input: "Report whether customer-42 is active." });
     const view = await runtime.inspect(result.runId);
 
-    expect(result).toMatchObject({ status: "succeeded", summary: "Customer 42 is active." });
+    expect(result).toMatchObject({ status: "succeeded", summary: "Working draft: the lookup succeeded, so I should now prepare the answer." });
     expect(toolCalls.count).toBe(1);
     expect(view.toolInvocations).toHaveLength(1);
-    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
-    expect(view.events.find((event) => event.type === "response.rejected")?.payload.message)
-      .toContain("FINAL_CONTROL_REQUIRED");
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     await runtime.close();
   });
 
@@ -323,7 +320,7 @@ describe("E119 progressive Agent execution", () => {
           ],
           finishReason: "tool_calls"
         }),
-        () => responseDirect("Customer 42 is active and audited.")
+      () => responseText("Customer 42 is active and audited.")
       ]),
       tools: [recordLookupTool(lookupCalls), recordAuditTool(auditCalls)]
     });
@@ -347,7 +344,7 @@ type Decision = (context: ModelDecisionContext) => unknown;
 
 function decisionProvider(decisions: readonly Decision[]): RuntimeProvider {
   const queue = [...decisions];
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(context) {
       const next = queue.shift();
       if (next === undefined) throw new Error("Decision queue exhausted.");

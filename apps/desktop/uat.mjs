@@ -25,6 +25,26 @@ let directParity = null;
 const uatEnvironment = {};
 uatUserData = mkdtempSync(join(tmpdir(), "nexora-desktop-user-data-"));
 
+function sendDeterministicResponse(response, modelResponse) {
+  const message = {
+    content: modelResponse.text,
+    ...(modelResponse.toolCalls.length === 0 ? {} : {
+      tool_calls: modelResponse.toolCalls.map((call, index) => ({
+        id: call.callId ?? `uat-call-${index + 1}`,
+        type: "function",
+        function: {
+          name: call.name,
+          arguments: JSON.stringify(call.arguments)
+        }
+      }))
+    })
+  };
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify({
+    choices: [{ message, finish_reason: modelResponse.finishReason }]
+  }));
+}
+
 if (deterministic || deterministicDocument || deterministicRecovery || deterministicChanges) {
   fixture = mkdtempSync(join(tmpdir(), "nexora-desktop-uat-"));
   writeFileSync(join(fixture, "target.txt"), "deterministic desktop evidence\n", "utf8");
@@ -45,9 +65,8 @@ if (deterministic || deterministicDocument || deterministicRecovery || determini
           ? { text: null, toolCalls: [{ name: "filesystem.search", arguments: { query: "deterministic desktop evidence", path: "." } }], finishReason: "tool_calls" }
           : clientCall === 6
             ? { text: null, toolCalls: [{ name: "filesystem.read", arguments: { path: "target.txt" } }], finishReason: "tool_calls" }
-            : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Recovered through an alternative search strategy." } }], finishReason: "tool_calls" };
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+          : { text: "Recovered through an alternative search strategy.", toolCalls: [], finishReason: "stop" };
+      sendDeterministicResponse(response, content);
       return;
     }
     if (deterministicDocument) {
@@ -71,7 +90,7 @@ if (deterministic || deterministicDocument || deterministicRecovery || determini
         : calls === 2
           ? { text: null, toolCalls: [{ name: "document.create", arguments: createInput }], finishReason: "tool_calls" }
           : calls === 3
-            ? { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "季度经营分析已生成。" } }], finishReason: "tool_calls" }
+            ? { text: "季度经营分析已生成。", toolCalls: [], finishReason: "stop" }
             : calls === 4
               ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "更新趋势图和结论并保留其他内容", tasks: [{ objective: "检查目标内容", checks: [{ toolName: "document.inspect" }] }, { objective: "更新目标内容并验证新版本", checks: [{ toolName: "document.apply_patch" }] }] } }], finishReason: "tool_calls" }
               : calls === 5
@@ -81,18 +100,37 @@ if (deterministic || deterministicDocument || deterministicRecovery || determini
                 { type: "replace_block", targetBlockId: "summary", block: { blockId: "summary", type: "paragraph", runs: [{ text: "结论已精简，增长趋势保持明确。" }] } },
                 { type: "replace_block", targetBlockId: "chart", block: { blockId: "chart", type: "chart", chartType: "line", title: "季度趋势", categories: ["Q1", "Q2", "Q3"], series: [{ name: "收入", values: [320, 410, 520] }], showLegend: true } }
               ] } }], finishReason: "tool_calls" }
-                  : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "趋势图和结论已按范围更新。" } }], finishReason: "tool_calls" };
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+                  : { text: "趋势图和结论已按范围更新。", toolCalls: [], finishReason: "stop" };
+      sendDeterministicResponse(response, content);
       return;
     }
     if (deterministicChanges) {
       const content = calls === 1
-        ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "创建长路径作品集组件", tasks: [{ objective: "创建并验证组件文件", checks: [{ toolName: "filesystem.write" }] }] } }], finishReason: "tool_calls" }
+        ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: {
+          goal: "创建长路径作品集组件",
+          scope: {
+            taskShape: "feature",
+            requiredOutcomes: [{
+              id: "create-portfolio-card",
+              description: "Create and verify the requested long-path portfolio component file.",
+              source: "user_explicit"
+            }],
+            assumptions: [],
+            excludedScope: ["Unrequested application or styling changes"],
+            completionCriteria: ["The requested component file is created with successful Tool evidence."],
+            resolutionMode: "pass_through"
+          },
+          tasks: [{
+            objective: "Create and verify the component file",
+            kind: "required_outcome",
+            supports: ["create-portfolio-card"],
+            checks: [{ toolName: "filesystem.write" }]
+          }]
+        } }], finishReason: "tool_calls" }
         : calls === 2
           ? { text: null, toolCalls: [{ name: "filesystem.write", arguments: { path: "src/features/portfolio/components/hero/presentation/interactive-developer-profile-card.tsx", content: "export const ProfileCard = () => 'Nexora';\n" } }], finishReason: "tool_calls" }
           : calls === 3
-            ? { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "# 单文件更新完成\n\n已创建长路径组件文件。" } }], finishReason: "tool_calls" }
+            ? { text: "# 单文件更新完成\n\n已创建长路径组件文件。", toolCalls: [], finishReason: "stop" }
             : calls === 4
               ? { text: null, toolCalls: [{ name: "nexora_update_plan", arguments: { goal: "同步入口与主题样式", tasks: [{ objective: "更新并验证两个关联文件", checks: [{ toolName: "filesystem.write" }] }] } }], finishReason: "tool_calls" }
               : calls === 5
@@ -100,9 +138,8 @@ if (deterministic || deterministicDocument || deterministicRecovery || determini
                   { name: "filesystem.write", arguments: { path: "src/app.ts", content: "export { ProfileCard } from './features/portfolio/components/hero/presentation/interactive-developer-profile-card.js';\n" } },
                   { name: "filesystem.write", arguments: { path: "src/theme.css", content: ":root { color-scheme: light; }\n" } }
                 ], finishReason: "tool_calls" }
-                : { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "# 多文件更新完成\n\n入口与主题样式已同步。" } }], finishReason: "tool_calls" };
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+                : { text: "# 多文件更新完成\n\n入口与主题样式已同步。", toolCalls: [], finishReason: "stop" };
+      sendDeterministicResponse(response, content);
       return;
     }
     response.writeHead(200, { "content-type": "text/event-stream" });
@@ -133,7 +170,7 @@ if (deterministic || deterministicDocument || deterministicRecovery || determini
         `| File read | Passed |`,
         `| Evidence | Confirmed |`
       ].join("\n");
-      response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: `respond-${calls}`, function: { name: "nexora_respond", arguments: JSON.stringify({ text: result }) } }] }, finish_reason: "tool_calls" }] })}\n\n`);
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: result }, finish_reason: "stop" }] })}\n\n`);
     }
     response.end("data: [DONE]\n\n");
   });
@@ -146,7 +183,6 @@ if (deterministic || deterministicDocument || deterministicRecovery || determini
     "NEXORA_MODEL_NAME=qwen3.7-flash",
     "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
     "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-    `NEXORA_MODEL_TOOL_TRANSPORT=${deterministicDocument || deterministicRecovery || deterministicChanges ? "structured_output" : "native_tools"}`
   ].join("\n"), "utf8");
   Object.assign(uatEnvironment, {
     NEXORA_DESKTOP_WORKSPACE: fixture,
@@ -172,7 +208,6 @@ if (deterministic || deterministicDocument || deterministicRecovery || determini
       NEXORA_MODEL_NAME: "desktop-recovery-parity",
       NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: "128000",
       NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096",
-      NEXORA_MODEL_TOOL_TRANSPORT: "structured_output",
       NEXORA_MODEL_STREAM: "false"
     });
     const runtime = createAgent({ workspace: directFixture, provider, tools: createBuiltInTools() });

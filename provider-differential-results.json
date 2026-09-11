@@ -1,0 +1,47 @@
+[
+  {
+    "name": "exact",
+    "status": 200,
+    "ok": true,
+    "headerMs": 59293,
+    "totalMs": 59296,
+    "bodyChars": 11647,
+    "contentType": "application/json; charset=utf-8",
+    "jsonValid": true,
+    "bodyPrefix": "{\"id\":\"chatcmpl-2a437dba-88ec-9e71-966d-0db74fc6c3ec\",\"object\":\"chat.completion\""
+  },
+  {
+    "name": "no_tools",
+    "error": "AbortError: This operation was aborted",
+    "headerMs": null,
+    "totalMs": 150008
+  },
+  {
+    "name": "no_tool_controls",
+    "status": 200,
+    "ok": true,
+    "headerMs": 74119,
+    "totalMs": 74122,
+    "bodyChars": 14927,
+    "contentType": "application/json; charset=utf-8",
+    "jsonValid": true,
+    "bodyPrefix": "{\"id\":\"chatcmpl-edb84d1c-c38e-9ff6-8751-e2a4c8c329b4\",\"object\":\"chat.completion\""
+  },
+  {
+    "name": "reduced_context",
+    "status": 200,
+    "ok": true,
+    "headerMs": 4128,
+    "totalMs": 4128,
+    "bodyChars": 1290,
+    "contentType": "application/json; charset=utf-8",
+    "jsonValid": true,
+    "bodyPrefix": "{\"id\":\"chatcmpl-6a78684a-6888-92bf-90c0-431a46e26241\",\"object\":\"chat.completion\""
+  },
+  {
+    "name": "low_max_tokens",
+    "error": "AbortError: This operation was aborted",
+    "headerMs": null,
+    "totalMs": 150007
+  }
+]

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-local-information-discovery-analysis-dev-03",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "local_information_discovery_analysis",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "advanced",
+  "horizon": "long",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Inspect the local security notes, extract the owner and priority, and write a concise evidence-linked findings note without changing source material.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-local-information-discovery-analysis-dev-03/fixture",
+      "digest": "sha256:f005aa1c07c57878e50df7c36812e7e643ff722b3953eeab1c679562e7a06e3f"
+    },
+    "scenario": "release-v1/tasks/v1-local-information-discovery-analysis-dev-03/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-local-information-discovery-analysis-dev-03.grader.json",
+    "graderDigest": "sha256:a0b6c4adeeab0986ed98dbd7b4ffe845fff715156aebc08a42a63673b12d6ca1",
+    "referenceRef": "release-v1/sealed/v1-local-information-discovery-analysis-dev-03.reference.json",
+    "referenceDigest": "sha256:240de3f0a516155787bd502b7b0338054769ac0e9f23753bd7116a2c56e79a7a",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-local-information-discovery-analysis-dev-03.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:1706cd392ebfbfe7edd8075a660779d990f30a059c64c2fd0c5579b2811f26e9",
+    "fixtureDigest": "sha256:f005aa1c07c57878e50df7c36812e7e643ff722b3953eeab1c679562e7a06e3f"
+  }
+}
