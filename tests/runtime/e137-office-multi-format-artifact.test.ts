@@ -14,7 +14,7 @@ import { projectDeliverables } from "../../apps/desktop/src/deliverables/project
 import { createRichDocument, exportRichDocumentFormat, inspectRichDocument, patchRichDocument, writeOfficeFile } from "../../apps/desktop/src/deliverables/rich-document.js";
 import { createRichDocumentTools } from "../../apps/desktop/src/deliverables/tools.js";
 import { inspectXlsx, validateXlsxPackage } from "../../apps/desktop/src/deliverables/xlsx-renderer.js";
-import { finishFromEvidence, responseCall, responseDirect, responsePlan, ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { finishFromEvidence, responseCall, responseDirect, responsePlan, responsePlanAndTools, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 const signal = new AbortController().signal;
@@ -161,7 +161,10 @@ describe("E137 real XLSX, PPTX and PDF Office representations", () => {
   it("commits the multi-format result through one existing Runtime Invocation and Completion Gate", async () => {
     const workspace = createWorkspace();
     const provider = new ScriptedRuntimeProvider([
-      responseCall("document.create", input()),
+      responsePlanAndTools({
+        goal: "Create the requested Office representations.",
+        tasks: [{ objective: "Create the Office artifacts.", checks: [{ toolName: "document.create", role: "mutation" }] }]
+      }, [{ name: "document.create", arguments: input() }]),
       finishFromEvidence("The requested XLSX, PPTX and PDF files are committed.")
     ]);
     const agent = createAgent({ workspace, provider, tools: [...createRichDocumentTools()] });
@@ -183,12 +186,15 @@ describe("E137 real XLSX, PPTX and PDF Office representations", () => {
     const workspace = createWorkspace();
     const created = await createRichDocument(workspace, "export-runtime-setup", compileAuthoringCreateInput({ ...input(), formats: ["xlsx"] }), signal);
     const provider = new ScriptedRuntimeProvider([
-      responseCall("document.export", {
+      responsePlanAndTools({
+        goal: "Export the requested Office representation.",
+        tasks: [{ objective: "Export the PDF artifact.", checks: [{ toolName: "document.export", role: "mutation" }] }]
+      }, [{ name: "document.export", arguments: {
         manifestPath: created.manifestPath,
         expectedRevision: created.revision,
         expectedSourceDigest: created.sourceDigest,
         format: "pdf"
-      }),
+      } }]),
       finishFromEvidence("The PDF representation is committed from the cited source revision.")
     ]);
     const agent = createAgent({ workspace, provider, tools: [...createRichDocumentTools()] });
@@ -270,7 +276,10 @@ describe("E137 real XLSX, PPTX and PDF Office representations", () => {
         })
       ]);
       expect(inspection.evidence).toEqual([]);
-      expect(inspection.result).toBeNull();
+      expect(inspection.result).toMatchObject({
+        status: "failed",
+        stopReason: "NO_PROGRESS_DETECTED"
+      });
       expect(readFileSync(join(workspace, exported.manifestPath), "utf8")).toBe(manifestBeforeFailure);
       expect(inspectRichDocument(workspace, exported.manifestPath).manifest).toMatchObject({
         currentRevision: 2,

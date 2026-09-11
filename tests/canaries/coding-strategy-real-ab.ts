@@ -109,8 +109,7 @@ const environment = {
   ...process.env,
   NEXORA_MODEL_NAME: desktopProfile.model,
   NEXORA_MODEL_CONTEXT_WINDOW_TOKENS: String(desktopProfile.contextWindowTokens),
-  NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(desktopProfile.decisionOutputTokens),
-  NEXORA_MODEL_TOOL_TRANSPORT: desktopProfile.transport
+  NEXORA_MODEL_DECISION_OUTPUT_TOKENS: String(desktopProfile.decisionOutputTokens)
 };
 const profile = openAICompatibleProviderFromEnv(environment).modelProfile!;
 
@@ -167,7 +166,7 @@ async function runAbSuite() {
       model: desktopProfile.name,
       providerModelId: profile.model,
       provider: profile.provider,
-      transport: environment.NEXORA_MODEL_TOOL_TRANSPORT ?? "configured-default",
+      transport: desktopProfile.transport,
       prompt: PROMPT,
       invariantInputs: {
         runtime: "Nexora Runtime through createAgent",
@@ -209,7 +208,7 @@ async function runAbSuite() {
       model: desktopProfile.name,
       providerModelId: profile.model,
       provider: profile.provider,
-      transport: environment.NEXORA_MODEL_TOOL_TRANSPORT ?? "configured-default",
+      transport: desktopProfile.transport,
       prompt: PROMPT,
       invariantInputs: {
         runtime: "Nexora Runtime through createAgent",
@@ -248,7 +247,7 @@ async function runAbSuite() {
   model: desktopProfile.name,
   providerModelId: profile.model,
   provider: profile.provider,
-  transport: environment.NEXORA_MODEL_TOOL_TRANSPORT ?? "configured-default",
+  transport: desktopProfile.transport,
   prompt: PROMPT,
   invariantInputs: {
     runtime: "Nexora Runtime through createAgent",
@@ -296,7 +295,7 @@ function reportEnvelope(suite: "primary" | "reliability", samples: readonly Awai
     model: desktopProfile.name,
     providerModelId: profile.model,
     provider: profile.provider,
-    transport: environment.NEXORA_MODEL_TOOL_TRANSPORT ?? "configured-default",
+    transport: desktopProfile.transport,
     invariantInputs: {
       runtime: "Nexora Runtime through createAgent",
       tools: createBuiltInTools().map((tool) => tool.contract.identity.name),
@@ -661,10 +660,8 @@ const broken = ;
 function completionAttemptEvents(view: RunView): Array<{ readonly sequence: number; readonly elapsedMs: number }> {
   return view.events.flatMap((event) => {
     if (event.type !== "model.turn" || !Array.isArray(event.payload.toolCalls)) return [];
-    const attempted = event.payload.toolCalls.some((call) => (
-      call !== null && typeof call === "object" && !Array.isArray(call)
-      && "name" in call && (call as { readonly name?: unknown }).name === "nexora_respond"
-    ));
+    const attempted = Array.isArray(event.payload.compiledActionTypes)
+      && event.payload.compiledActionTypes.includes("propose_finish");
     return attempted ? [{
       sequence: event.sequence,
       elapsedMs: Math.max(0, Date.parse(event.occurredAt) - Date.parse(view.snapshot.createdAt))
@@ -676,9 +673,12 @@ function sameFileEditMetrics(view: RunView): { readonly repeatedEditCount: numbe
   const counts = new Map<string, number>();
   for (const invocation of view.toolInvocations) {
     if (invocation.toolName !== "filesystem.write" && invocation.toolName !== "filesystem.patch") continue;
-    const path = invocation.inputJson !== null && typeof invocation.inputJson === "object" && !Array.isArray(invocation.inputJson)
-      && typeof (invocation.inputJson as Record<string, unknown>).path === "string"
-      ? (invocation.inputJson as Record<string, string>).path.replaceAll("\\", "/")
+    const input = invocation.inputJson;
+    const candidatePath = input !== null && typeof input === "object" && !Array.isArray(input)
+      ? (input as Record<string, unknown>).path
+      : null;
+    const path = typeof candidatePath === "string"
+      ? candidatePath.replaceAll("\\", "/")
       : "<unknown>";
     counts.set(path, (counts.get(path) ?? 0) + 1);
   }
@@ -868,7 +868,7 @@ function qwenDesktopProfile(): {
   readonly model: string;
   readonly contextWindowTokens: number;
   readonly decisionOutputTokens: number;
-  readonly transport: "native_tools" | "structured_output";
+  readonly transport: "native_tools";
 } {
   const path = resolve(".nexora", "desktop-host.json");
   if (!existsSync(path)) throw new Error("Coding Strategy A/B requires the Desktop Host model profile at .nexora/desktop-host.json.");
@@ -881,7 +881,7 @@ function qwenDesktopProfile(): {
     && candidate.contextWindowTokens > 0
   ));
   if (selected === undefined) throw new Error("No valid Qwen 3.8 Flash Desktop Host profile with an explicit context window was found.");
-  if (selected.transport !== "native_tools" && selected.transport !== "structured_output") {
+  if (selected.transport !== "native_tools") {
     throw new Error("Qwen 3.8 Flash Desktop Host profile has an unsupported transport.");
   }
   if (typeof selected.decisionOutputTokens !== "number" || selected.decisionOutputTokens <= 0) {

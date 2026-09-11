@@ -1,0 +1,19 @@
+[project]
+name = "nexora-harbor-adapter"
+version = "0.1.0"
+description = "Harbor extension layer for Nexora Runtime evaluation"
+requires-python = ">=3.12"
+dependencies = ["harbor==0.22.0"]
+
+[project.scripts]
+nexora-harbor-project = "nexora_harbor.projection:main"
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nexora_harbor"]

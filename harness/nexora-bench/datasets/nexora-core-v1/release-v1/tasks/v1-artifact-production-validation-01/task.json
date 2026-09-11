@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-artifact-production-validation-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "artifact_production",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "basic",
+  "horizon": "multi_stage",
+  "split": "validation",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Produce a review-ready release readiness artifact from the supplied records, retain traceable evidence references, and validate the final artifact.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-artifact-production-validation-01/fixture",
+      "digest": "sha256:e1cd27b9aa695410cf28137e83b7c7c2f80809a959299c12b51848a24f08e32a"
+    },
+    "scenario": "release-v1/tasks/v1-artifact-production-validation-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-artifact-production-validation-01.grader.json",
+    "graderDigest": "sha256:f579445dbd73f6d0bea573c693507d94bfc89b6740c2e4f542b20d3ba90b6a0f",
+    "referenceRef": "release-v1/sealed/v1-artifact-production-validation-01.reference.json",
+    "referenceDigest": "sha256:be5bb6266424cb6428b19799b2e5220a6625b641b6db1fc41b4f81d650c7e6f5",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-artifact-production-validation-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:8427e6a63efd3ec8861ab9f311408f2c7bcb419aa31ab424a2bc245a1d92dcdb",
+    "fixtureDigest": "sha256:e1cd27b9aa695410cf28137e83b7c7c2f80809a959299c12b51848a24f08e32a"
+  }
+}

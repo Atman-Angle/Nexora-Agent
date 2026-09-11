@@ -517,7 +517,7 @@ function projectNoProgressRepair(
     && (
       event.type === "tool.succeeded"
       || event.type === "tool.failed"
-      || event.type === "tool.recovered"
+      || event.type === "tool.reconciled"
       || event.type === "run.resumed"
       || (event.type === "plan.set" && event.payload.noOp !== true)
     )

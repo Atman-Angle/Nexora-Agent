@@ -5,7 +5,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createAgent, modelResponses } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createAgent, modelResponses } from "../../packages/harness/src/index.js";
 import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
 import { createInitialRunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { openRunStore } from "../../packages/runtime/src/store/run-store.js";
@@ -151,7 +151,7 @@ describe("E118 Durable Run Journal", () => {
     const workspace = fixture();
     const secret = "sk-super-secret-fixture-123456789";
     let calls = 0;
-    const provider = {
+    const provider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "retry-provider",
         model: "retry-model",

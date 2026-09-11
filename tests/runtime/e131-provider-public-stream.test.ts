@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   createOpenAICompatibleProvider,
   modelResponses,
@@ -26,7 +26,7 @@ describe("E131 Provider public output stream", () => {
     roots.push(workspace);
     const runtime = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         modelProfile: {
           provider: "test",
           model: "test-model",
@@ -37,7 +37,7 @@ describe("E131 Provider public output stream", () => {
         transport: { kind: "native_tools", promptCache: { mode: "disabled" } },
         async decide(_context, operation) {
           operation.reportPublicTextDelta?.("Visible progress.");
-          return modelResponses.direct({ text: "Completed despite the UI listener." });
+          return modelResponses.text("Completed despite the UI listener.");
         }
       },
       tools: [],
@@ -127,7 +127,7 @@ describe("E131 Provider public output stream", () => {
     const output: AgentPublicOutputEvent[] = [];
     const runtime = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         modelProfile: {
           provider: "test",
           model: "test-model",
@@ -170,7 +170,7 @@ describe("E131 Provider public output stream", () => {
     };
     const runtime = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide(_context, operation) {
           operation.reportPublicTextDelta?.("Provisional rejected output.");
           return oversized;
@@ -183,7 +183,7 @@ describe("E131 Provider public output stream", () => {
     const result = await runtime.start({ input: "Reject oversized output without leaving it visible." });
     await runtime.close();
 
-    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
     expect(output.map((event) => event.type)).toEqual([
       "text.delta", "text.completed", "text.discarded",
       "text.delta", "text.completed", "text.discarded"
@@ -198,7 +198,7 @@ describe("E131 Provider public output stream", () => {
     const runIdReady = new Promise<string>((resolve) => { resolveRunId = resolve; });
     const runtime = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         modelProfile: {
           provider: "test",
           model: "test-model",

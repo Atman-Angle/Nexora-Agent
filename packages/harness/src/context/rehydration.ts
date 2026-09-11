@@ -301,6 +301,7 @@ function compareMilestoneValueDescending(left: MilestoneCandidate, right: Milest
 
 function isSessionArchiveBoundaryEvent(event: RunEvent): boolean {
   return event.type !== "model.requested"
+    && event.type !== "model.wire_telemetry"
     && event.type !== "context.rehydrate_requested"
     && event.type !== "context.rehydrated";
 }

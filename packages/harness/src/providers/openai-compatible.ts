@@ -7,6 +7,7 @@ import { estimateTextTokens } from "../context/budget.js";
 import type { ProviderPromptCachePolicy, ProviderTransportProfile } from "../prompt.js";
 import { decisionHasSemanticPressure } from "../provider-policy.js";
 import {
+  buildProviderWireSectionTelemetry,
   defineProviderAdapter,
   type ProviderCompletionOperation,
   type ProviderCompletionRequest,
@@ -14,6 +15,8 @@ import {
 } from "./adapter.js";
 import type {
   ProviderCacheUsage,
+  ProviderWireSectionTelemetry,
+  ProviderWireTransportTelemetry,
   ReasoningPolicy,
   RuntimeProvider
 } from "./model-client.js";
@@ -56,6 +59,42 @@ export class ModelConfigError extends RuntimeError {
 
 class RetryableProviderError extends Error {
   readonly retryable = true;
+
+  constructor(message: string, readonly code = "PROVIDER_ERROR") {
+    super(message);
+    this.name = "RetryableProviderError";
+  }
+}
+
+class ProviderCancelledError extends Error {
+  readonly code = "PROVIDER_CANCELLED";
+  readonly retryable = false;
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : "Provider request cancelled.");
+    this.name = "ProviderCancelledError";
+    this.cause = cause;
+  }
+}
+
+class ProviderHttpError extends Error {
+  readonly code = "PROVIDER_HTTP_ERROR";
+
+  constructor(message: string, readonly retryable: boolean) {
+    super(message);
+    this.name = "ProviderHttpError";
+  }
+}
+
+class ProviderResponseInvalidError extends Error {
+  readonly code = "PROVIDER_RESPONSE_INVALID";
+  readonly retryable = false;
+
+  constructor(cause: unknown) {
+    super(`Invalid Provider response: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = "ProviderResponseInvalidError";
+    this.cause = cause;
+  }
 }
 
 const MODEL_CAPABILITIES: Readonly<Record<string, {
@@ -115,10 +154,6 @@ export function openAICompatibleProviderFromEnv(
   if (reasoningRaw !== undefined && !["off", "on", "dynamic"].includes(reasoningRaw)) {
     throw new ModelConfigError('NEXORA_MODEL_REASONING must be "off", "on" or "dynamic".');
   }
-  const transportRaw = environment.NEXORA_MODEL_TOOL_TRANSPORT?.trim() ?? "native_tools";
-  if (transportRaw !== "native_tools" && transportRaw !== "structured_output") {
-    throw new ModelConfigError('NEXORA_MODEL_TOOL_TRANSPORT must be "native_tools" or "structured_output".');
-  }
   const cacheRaw = environment.NEXORA_MODEL_PROMPT_CACHE?.trim() ?? "automatic";
   if (cacheRaw !== "automatic" && cacheRaw !== "disabled") {
     throw new ModelConfigError('NEXORA_MODEL_PROMPT_CACHE must be "automatic" or "disabled".');
@@ -160,7 +195,6 @@ export function openAICompatibleProviderFromEnv(
     ...(environment.NEXORA_MODEL_THINKING_PARAM?.trim()
       ? { thinkingToggleParam: environment.NEXORA_MODEL_THINKING_PARAM.trim() }
       : {}),
-    transport: transportRaw,
     promptCache: { mode: cacheRaw },
     contextWindowTokens,
     reservedOutputTokens: { decision: decisionOutputTokens },
@@ -205,7 +239,10 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     if (promptCache.mode === "explicit_breakpoints") {
       throw new Error("Generic OpenAI-compatible transport does not implement explicit cache breakpoints.");
     }
-    transport = { kind: options.transport ?? "native_tools", promptCache };
+    if (options.transport !== undefined && options.transport !== "native_tools") {
+      throw new ModelConfigError('OpenAI-compatible Provider supports only "native_tools" transport.');
+    }
+    transport = { kind: "native_tools", promptCache };
     contextWindowTokens = z.number().int().positive().parse(options.contextWindowTokens ?? 128_000);
     decisionOutputTokens = z.number().int().nonnegative().parse(options.reservedOutputTokens?.decision ?? 4_096);
     softLimitRatio = z.number().positive().max(1).parse(options.softLimitRatio ?? 0.8);
@@ -239,85 +276,124 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
     async complete(request, operation) {
       const controller = new AbortController();
       let timeoutMessage: string | null = null;
+      let timeoutCode: "PROVIDER_RESPONSE_HEADERS_TIMEOUT" | "PROVIDER_ATTEMPT_TIMEOUT" | "PROVIDER_RESPONSE_BODY_TIMEOUT" | "PROVIDER_STREAM_IDLE_TIMEOUT" | null = null;
       let responseHeadersTimer: ReturnType<typeof setTimeout> | undefined;
       let idleTimer: ReturnType<typeof setTimeout> | undefined;
       const forwardAbort = (): void => controller.abort(operation.signal.reason);
-      const abortForTimeout = (message: string): void => {
+      const abortForTimeout = (
+        message: string,
+        code: "PROVIDER_RESPONSE_HEADERS_TIMEOUT" | "PROVIDER_ATTEMPT_TIMEOUT" | "PROVIDER_RESPONSE_BODY_TIMEOUT" | "PROVIDER_STREAM_IDLE_TIMEOUT"
+      ): void => {
         if (controller.signal.aborted) return;
         timeoutMessage = message;
+        timeoutCode = code;
         controller.abort(new Error(message));
       };
-      const renewIdleTimeout = (): void => {
+      const renewIdleTimeout = (
+        code: "PROVIDER_RESPONSE_BODY_TIMEOUT" | "PROVIDER_STREAM_IDLE_TIMEOUT" = "PROVIDER_RESPONSE_BODY_TIMEOUT"
+      ): void => {
         if (idleTimer !== undefined) clearTimeout(idleTimer);
         idleTimer = setTimeout(
-          () => abortForTimeout(`Provider produced no response data for ${timeoutMs}ms.`),
+          () => abortForTimeout(`Provider produced no response data for ${timeoutMs}ms.`, code),
           timeoutMs
         );
       };
       if (operation.signal.aborted) forwardAbort();
       else operation.signal.addEventListener("abort", forwardAbort, { once: true });
       responseHeadersTimer = setTimeout(
-        () => abortForTimeout(`Provider did not return response headers for ${connectTimeoutMs}ms.`),
+        () => abortForTimeout(
+          `Provider did not return response headers for ${connectTimeoutMs}ms.`,
+          "PROVIDER_RESPONSE_HEADERS_TIMEOUT"
+        ),
         connectTimeoutMs
       );
       const maxDurationTimer = setTimeout(
-        () => abortForTimeout(`Provider Attempt exceeded ${maxDurationMs}ms.`),
+        () => abortForTimeout(`Provider Attempt exceeded ${maxDurationMs}ms.`, "PROVIDER_ATTEMPT_TIMEOUT"),
         maxDurationMs
       );
       try {
         const shouldStream = stream && request.transport.kind === "native_tools";
+        const messages = providerMessages(request);
+    const wireBody = {
+      model,
+      temperature,
+      max_tokens: decisionOutputTokens,
+      ...(shouldStream ? { stream: true } : {}),
+      messages,
+          ...(request.tools !== undefined
+            ? {
+                tools: providerToolBindings(request.tools).map(({ providerName, tool }) => ({
+                  type: "function",
+                  function: {
+                    name: providerName,
+                    description: toolDescription(tool),
+                    parameters: tool.inputSchema
+                  }
+                })),
+                tool_choice: "auto",
+                // Runtime admits protected mutations one at a time. Asking the
+                // Provider for parallel calls makes it likely to emit a mixed
+                // or multi-mutation batch that must be rejected as a whole.
+                parallel_tool_calls: false
+              }
+            : {}),
+          ...resolveThinkingToggle(thinkingToggleParam, reasoning, request)
+        };
+        const wireBodyText = JSON.stringify(wireBody);
+        try {
+          operation.reportWireTelemetry?.(measureOpenAIWireTelemetry(wireBody, wireBodyText));
+        } catch {
+          // Wire telemetry is observational. A malformed observer or digest
+          // calculation must never alter Provider request semantics.
+        }
         const response = await fetchImplementation(`${baseUrl}/chat/completions`, {
           method: "POST",
           headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-          body: JSON.stringify({
-            model,
-            temperature,
-            max_tokens: decisionOutputTokens,
-            ...(shouldStream ? { stream: true } : {}),
-            messages: providerMessages(request),
-            ...(request.responseFormat.kind === "json_schema"
-              ? {
-                  response_format: {
-                    type: "json_schema",
-                    json_schema: {
-                      name: request.responseFormat.name,
-                      strict: true,
-                      schema: request.responseFormat.schema
-                    }
-                  }
-                }
-              : {}),
-            ...(request.transport.kind === "native_tools" && request.tools !== undefined
-              ? {
-                  tools: providerToolBindings(request.tools).map(({ providerName, tool }) => ({
-                    type: "function",
-                    function: {
-                      name: providerName,
-                      description: toolDescription(tool),
-                      parameters: tool.inputSchema
-                    }
-                  })),
-                  tool_choice: "auto",
-                  parallel_tool_calls: true
-                }
-              : {}),
-            ...resolveThinkingToggle(thinkingToggleParam, reasoning, request)
-          }),
+          body: wireBodyText,
           signal: controller.signal
         });
         clearTimeout(responseHeadersTimer);
         responseHeadersTimer = undefined;
-        renewIdleTimeout();
         if (!response.ok) {
-          const ErrorType = response.status === 429 || response.status >= 500
-            ? RetryableProviderError
-            : Error;
-          throw new ErrorType(`Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
+          throw new ProviderHttpError(
+            `Provider HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`,
+            response.status === 429 || response.status >= 500
+          );
         }
-        if (shouldStream && response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
-          return await normalizeStreamingResponse(response, request, operation, renewIdleTimeout);
+        const isEventStream = shouldStream
+          && response.headers.get("content-type")?.toLowerCase().includes("text/event-stream");
+        renewIdleTimeout(isEventStream ? "PROVIDER_STREAM_IDLE_TIMEOUT" : "PROVIDER_RESPONSE_BODY_TIMEOUT");
+        if (isEventStream) {
+          try {
+            return await normalizeStreamingResponse(response, request, operation, renewIdleTimeout);
+          } catch (error) {
+            // A few OpenAI-compatible gateways emit conflicting tool-call ids
+            // across SSE chunks. Keep SSE as the primary transport, but retry
+            // this narrowly identified protocol failure as one atomic response.
+            // Never merge the conflicting calls: that could execute the wrong tool.
+            const message = error instanceof Error ? error.message : String(error);
+            if (!message.startsWith("Provider returned ambiguous native Tool identity")) throw error;
+            try { await response.body?.cancel(); } catch { /* best effort */ }
+            const fallbackBody = { ...wireBody, stream: false };
+            const fallbackResponse = await fetchImplementation(`${baseUrl}/chat/completions`, {
+              method: "POST",
+              headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+              body: JSON.stringify(fallbackBody),
+              signal: controller.signal
+            });
+            if (!fallbackResponse.ok) {
+              throw new ProviderHttpError(
+                `Provider HTTP ${fallbackResponse.status}: ${(await fallbackResponse.text()).slice(0, 500)}`,
+                fallbackResponse.status === 429 || fallbackResponse.status >= 500
+              );
+            }
+            const fallback = parseProviderResponse(await fallbackResponse.json());
+            const fallbackUsage = normalizeUsage(fallback.usage, request.transport.promptCache?.mode ?? "automatic");
+            if (fallbackUsage !== null) operation.reportTokenUsage?.(fallbackUsage);
+            return normalizeAssistantMessage(fallback.choices[0]!.message, request, fallback.choices[0]!.finish_reason);
+          }
         }
-        const body = ProviderResponseSchema.parse(await response.json());
+        const body = parseProviderResponse(await response.json());
         const usage = normalizeUsage(body.usage, request.transport.promptCache?.mode ?? "automatic");
         if (usage !== null) operation.reportTokenUsage?.(usage);
         return normalizeAssistantMessage(
@@ -326,14 +402,20 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
           body.choices[0]!.finish_reason
         );
       } catch (error) {
-        if (timeoutMessage !== null && !operation.signal.aborted) {
-          throw new RetryableProviderError(timeoutMessage);
+        if (operation.signal.aborted) {
+          throw new ProviderCancelledError(operation.signal.reason);
+        }
+        if (timeoutMessage !== null && timeoutCode !== null) {
+          throw new RetryableProviderError(timeoutMessage, timeoutCode);
         }
         if (
           !operation.signal.aborted
           && (error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError"))
         ) {
-          throw new RetryableProviderError(error instanceof Error ? error.message : String(error));
+          throw new RetryableProviderError(
+            error instanceof Error ? error.message : String(error),
+            "PROVIDER_UNAVAILABLE"
+          );
         }
         throw error;
       } finally {
@@ -344,6 +426,12 @@ export function createOpenAICompatibleProvider(options: OpenAICompatibleProvider
       }
     }
   });
+}
+
+function parseProviderResponse(value: unknown): z.infer<typeof ProviderResponseSchema> {
+  const result = ProviderResponseSchema.safeParse(value);
+  if (!result.success) throw new ProviderResponseInvalidError(result.error);
+  return result.data;
 }
 
 const ProviderUsageSchema = z.object({
@@ -400,7 +488,7 @@ async function normalizeStreamingResponse(
   response: Response,
   request: ProviderCompletionRequest,
   operation: ProviderCompletionOperation,
-  reportActivity: () => void
+  reportActivity: (code?: "PROVIDER_RESPONSE_BODY_TIMEOUT" | "PROVIDER_STREAM_IDLE_TIMEOUT") => void
 ): Promise<ModelResponse> {
   if (response.body === null) throw new RetryableProviderError("Provider returned an empty stream body.");
   const reader = response.body.getReader();
@@ -412,7 +500,7 @@ async function normalizeStreamingResponse(
   const calls = new Map<number, { id: string; name: string; arguments: string }>();
 
   const consumeEvent = (event: string): void => {
-    reportActivity();
+    reportActivity("PROVIDER_STREAM_IDLE_TIMEOUT");
     const data = event.split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
       .map((line) => line.slice(5).trimStart())
@@ -433,7 +521,12 @@ async function normalizeStreamingResponse(
       }
       for (const call of choice.delta.tool_calls ?? []) {
         const current = calls.get(call.index) ?? { id: "", name: "", arguments: "" };
-        if (call.id !== undefined) current.id += call.id;
+        if (call.id !== undefined) {
+          if (current.id !== "" && current.id !== call.id) {
+            throw new Error(`Provider returned ambiguous native Tool identity for stream index ${call.index}.`);
+          }
+          current.id = call.id;
+        }
         if (call.function?.name !== undefined) current.name += call.function.name;
         if (call.function?.arguments !== undefined) current.arguments += call.function.arguments;
         calls.set(call.index, current);
@@ -457,11 +550,23 @@ async function normalizeStreamingResponse(
   if (normalizedUsage !== null) operation.reportTokenUsage?.(normalizedUsage);
   const toolCalls = [...calls.entries()]
     .sort(([left], [right]) => left - right)
-    .map(([, call]) => ({
-      id: call.id,
-      type: "function" as const,
-      function: { name: call.name, arguments: call.arguments }
-    }));
+    .map(([, call]) => {
+      if (call.id.trim().length === 0) {
+        throw new Error("Provider returned a native Tool call without a stable call identity.");
+      }
+      return {
+        id: call.id,
+        type: "function" as const,
+        function: { name: call.name, arguments: call.arguments }
+      };
+    });
+  const ids = new Set<string>();
+  for (const call of toolCalls) {
+    if (ids.has(call.id)) {
+      throw new Error(`Provider returned duplicate native Tool call identity: ${call.id}`);
+    }
+    ids.add(call.id);
+  }
   return normalizeAssistantMessage({
     content: content.length === 0 ? null : content,
     ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
@@ -475,27 +580,6 @@ function normalizeAssistantMessage(
 ): ModelResponse {
   const content = nonEmptyText(message.content);
   const nativeCalls = message.tool_calls ?? [];
-  if (request.transport.kind === "structured_output") {
-    if (nativeCalls.length > 0) {
-      throw new Error("Provider returned native Tool calls for structured_output transport.");
-    }
-    if (content === null) throw new Error("Provider returned an empty structured response.");
-    const parsed = parseStructuredResponse(content);
-    const availableNames = new Set((request.tools ?? []).map((tool) => tool.name));
-    const unsupported = parsed.toolCalls.find((call) => !availableNames.has(call.name));
-    if (unsupported !== undefined) {
-      throw new Error(`Provider returned an unknown structured Tool: ${unsupported.name}`);
-    }
-    return {
-      text: parsed.text,
-      toolCalls: parsed.toolCalls.map((call, index) => ({
-        callId: structuredCallId(content, index),
-        name: call.name,
-        arguments: call.arguments
-      })),
-      finishReason: parsed.finishReason ?? finishReason ?? null
-    };
-  }
   if (nativeCalls.length === 0) {
     if (content === null) {
       throw new RetryableProviderError(
@@ -564,6 +648,111 @@ function normalizePlanToolReferences(
       };
     })
   };
+}
+
+function measureOpenAIWireTelemetry(
+  wireBody: Record<string, unknown>,
+  wireBodyText: string
+): ProviderWireTransportTelemetry {
+  const messages = Array.isArray(wireBody.messages) ? wireBody.messages : [];
+  const messageBytes = serializedBytes(messages);
+  // Partition the serialized message array without rebuilding the request. The
+  // payload values are the only bytes removed; object/array syntax, roles,
+  // tool_call_id metadata and payload keys remain envelope overhead.
+  const messagePayloadBytes = messages.reduce((total, message) => {
+    if (message === null || typeof message !== "object" || Array.isArray(message)) return total;
+    const record = message as Record<string, unknown>;
+    return total
+      + (["content", "tool_calls"] as const).reduce((bytes, key) => (
+        key in record ? bytes + serializedBytes(record[key]) : bytes
+      ), 0);
+  }, 0);
+  const messageEnvelopeBytes = Math.max(0, messageBytes - messagePayloadBytes);
+
+  // Attribute exact top-level JSON framing and non-context Provider fields to
+  // the wrapper. This is deterministic and non-overlapping with the message
+  // value, tool schema value and response schema value measurements below.
+  const providerValueBytes = Object.entries(wireBody)
+    .filter(([key]) => key !== "messages" && key !== "tools")
+    .reduce((total, [, value]) => total + serializedBytes(value), 0);
+  const topLevelFieldLabelBytes = Object.keys(wireBody)
+    .reduce((total, key) => total + Buffer.byteLength(`${JSON.stringify(key)}:`, "utf8"), 0);
+  const topLevelSyntaxBytes = 2 + Math.max(0, Object.keys(wireBody).length - 1);
+  const providerWrapperBytes = providerValueBytes + topLevelFieldLabelBytes + topLevelSyntaxBytes;
+  const providerSections: Record<string, ProviderWireSectionTelemetry> = {};
+  if (wireBody.tools !== undefined) providerSections.toolSchema = buildProviderWireSectionTelemetry(wireBody.tools);
+  if (messages.length > 2 && messages[1]?.role === "user" && messages[1]?.content === "Continue from the following completed Provider-native Tool Call batch. Current Runtime context follows after its Tool results.") {
+    const continuationMessages = messages.slice(1, -1);
+    providerSections.continuation = buildProviderWireSectionTelemetry(
+      continuationMessages,
+      decodeContinuationMessagesForTelemetry(continuationMessages)
+    );
+  }
+  // Provider wrapper fields intentionally remain outside business section
+  // attribution. `wireBodyText` is still the source of truth for final bytes
+  // and digest; these sub-measurements are only an attribution view.
+  const transportOverheadBytes = providerWrapperBytes + messageEnvelopeBytes;
+  return {
+    schemaVersion: 1,
+    finalRequest: {
+      bytes: Buffer.byteLength(wireBodyText, "utf8"),
+      digest: `sha256:${createHash("sha256").update(wireBodyText, "utf8").digest("hex")}`
+    },
+    providerSections,
+    transportOverhead: {
+      providerWrapperBytes,
+      providerWrapperEstimatedTokens: Math.ceil(providerWrapperBytes / 4),
+      messageEnvelopeBytes,
+      messageEnvelopeEstimatedTokens: Math.ceil(messageEnvelopeBytes / 4),
+      transportOverheadBytes,
+      transportOverheadEstimatedTokens: Math.ceil(transportOverheadBytes / 4)
+    }
+  };
+}
+
+function decodeContinuationMessagesForTelemetry(
+  messages: readonly unknown[]
+): readonly unknown[] {
+  return messages.map((message) => {
+    if (message === null || typeof message !== "object" || Array.isArray(message)) return message;
+    const record = message as Record<string, unknown>;
+    const decoded: Record<string, unknown> = { ...record };
+    if (typeof record.content === "string") {
+      const parsed = parseJson(record.content);
+      if (parsed !== undefined) decoded.content = parsed;
+    }
+    if (Array.isArray(record.tool_calls)) {
+      decoded.tool_calls = record.tool_calls.map((toolCall) => {
+        if (toolCall === null || typeof toolCall !== "object" || Array.isArray(toolCall)) return toolCall;
+        const call = toolCall as Record<string, unknown>;
+        const fn = call.function;
+        if (fn === null || typeof fn !== "object" || Array.isArray(fn)) return call;
+        const functionRecord = fn as Record<string, unknown>;
+        return {
+          ...call,
+          function: {
+            ...functionRecord,
+            ...(typeof functionRecord.arguments !== "string"
+              ? {}
+              : (() => {
+                  const parsed = parseJson(functionRecord.arguments);
+                  return parsed === undefined ? {} : { arguments: parsed };
+                })())
+          }
+        };
+      });
+    }
+    return decoded;
+  });
+}
+
+function parseJson(value: string): unknown | undefined {
+  try { return JSON.parse(value) as unknown; }
+  catch { return undefined; }
+}
+
+function serializedBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
 function providerMessages(request: ProviderCompletionRequest): readonly Record<string, unknown>[] {
@@ -683,26 +872,6 @@ function parseJsonObject(value: string): Record<string, unknown> | null {
 function nonEmptyText(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? null : trimmed;
-}
-
-const StructuredResponseSchema = z.object({
-  text: z.string().trim().min(1).nullable(),
-  toolCalls: z.array(z.object({
-    name: z.string().trim().min(1),
-    arguments: z.record(z.unknown())
-  }).strict()),
-  finishReason: z.string().trim().min(1).nullable()
-}).strict();
-
-function parseStructuredResponse(value: string): z.infer<typeof StructuredResponseSchema> {
-  const parsed = parseJsonObject(value);
-  if (parsed === null) throw new Error("Provider returned invalid JSON for structured_output transport.");
-  return StructuredResponseSchema.parse(parsed);
-}
-
-function structuredCallId(content: string, index: number): string {
-  const digest = createHash("sha256").update(content).digest("hex").slice(0, 16);
-  return `structured_${digest}_${index}`;
 }
 
 function providerToolBindings(tools: readonly NonNullable<ProviderCompletionRequest["tools"]>[number][]): readonly {

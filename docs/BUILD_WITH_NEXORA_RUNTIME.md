@@ -226,7 +226,7 @@ const result = await run.result();
 
 `run()` 返回前已经持久化 Run，因此 `run.id` 可立即保存。它随后进入现有唯一 Runtime Loop；Handle 不保存独立状态。
 
-Host 拥有机械完成要求。默认 `completion.evidence` 为 `"auto"`：Harness 只有在回答完全基于当前权威 Context、且尚未开始 Plan 或 Tool 执行时，才可通过 `nexora_respond` 提议直接回复；Runtime 允许该回复不伪造 Evidence。普通最终文本仍按任务结果处理，`auto` 下必须由真实 Evidence 支撑。Host 可显式使用 `"optional"` 强制允许直接回答，或使用 `"required"` / `requiredToolNames` 收紧要求；模型不能降级 Host 要求。
+Host 拥有机械完成要求。默认 `completion.evidence` 为 `"auto"`：只有当回答完全基于当前权威 Context、且尚未开始 Plan 或 Tool 执行时，无 Function Call 的非空普通文本才可作为 direct response 提议；Runtime 允许该回复不伪造 Evidence。执行开始后的普通最终文本按 task result 处理，`auto` 下必须由真实 Evidence 支撑。Host 可显式使用 `"optional"` 强制允许直接回答，或使用 `"required"` / `requiredToolNames` 收紧要求；模型不能降级 Host 要求。
 
 ### `RunHandle.inspect`
 
@@ -511,9 +511,9 @@ Provider 通过 `nexora_update_plan` control 提交可选 `goal` 与有序 `{ ob
 
 Plan 是可选导航，不是执行许可或 Tool 白名单。已知工作跨多个文件/组件、包含相互依赖的实现与验证结果，或预计超过三次 Tool 调用时，应在首次 mutation 前以 2–7 个可独立验证的剩余 outcome 创建初始 Plan；范围未知时只做最小必要的只读探索，再在 mutation 前创建 Plan。直接回答、一次观察或一个明显的局部修改不需要 Plan。outcome 完成后立即从快照移除，因此后续快照可以只剩最后 1 项；冲突或新事实改变剩余工作时立即修订，不能把历史 Tool 调用清单当作 TODO。
 
-生产 `ModelResponse` 不接受模型 Action。Harness 只按原生/strict-structured Tool Calls、`nexora_respond`、`nexora_update_plan`、`nexora_request_input` 和已有执行事实后的非空最终文本确定性路由。`nexora_respond` 在尚未执行 Plan/Tool 时是 direct response；若 Provider 在已有执行事实后误用它，同一文字按 evidence-gated task result 处理，不绕过 Completion Gate，也不额外请求模型修正控制名称。native mode 的普通 JSON content 永远不会被解析或执行；空响应、未知 Tool、非法 batch 和旧 Action envelope 都会整体拒绝。
+生产 `ModelResponse` 不接受模型 Action。Harness 只按 Provider-native Tool Calls、`nexora_update_plan`、`nexora_request_input` 和无调用时的非空普通文本确定性路由。无 Function Call 的文本在执行前可作为 direct-response 候选，在已有 Plan/Tool 执行事实后作为 evidence-gated task-result 候选；两种情况都必须经过 Runtime Completion Gate。普通 JSON content 永远不会被解析或执行；空响应、未知 Tool、非法 batch 和旧 Action envelope 都会整体拒绝。
 
-`createAgent()` 还可接收 Host Policy、由 `createAgentProfileSnapshot()` 创建的版本化 Profile，以及 Host 授权的 Project Instructions。Prompt Compiler 以 Kernel/Transport/Host/Profile/Project/Tool 的稳定顺序编译请求，Profile 仅是 strategy-only 内容，不能改变 Tool、权限、Approval、Evidence、Completion Gate 或 Run Status。Provider Adapter 每个 Run 固定选择 `native_tools` 或 strict `structured_output`，并把实际 cache usage 按 Attempt 写入审计。
+`createAgent()` 还可接收 Host Policy、由 `createAgentProfileSnapshot()` 创建的版本化 Profile，以及 Host 授权的 Project Instructions。Prompt Compiler 以 Kernel/Transport/Host/Profile/Project/Tool 的稳定顺序编译请求，Profile 仅是 strategy-only 内容，不能改变 Tool、权限、Approval、Evidence、Completion Gate 或 Run Status。Provider Adapter 每个 Run 固定使用 `native_tools`，声明完整 native Function Calling 能力，并把实际 cache usage 按 Attempt 写入审计。
 
 Decision Context 的公开 `historyCandidates` 字段提供当前任务相关的历史导航。候选只来自 Runtime 提供的当前 Run Authority 或 Branch Fork Base；Harness 负责排序、预算和精确 Rehydration。其他 Run、sibling Branch 与 parent post-fork ref 不会成为候选。
 

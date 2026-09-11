@@ -102,6 +102,11 @@ describe("E138 existing Office attachment editing", () => {
           ["document.read_source", { path: "references/deck.pptx", mode: "blocks", targetIds: ["pptx.slide.0004"] }]
         ])
         : calls === 2
+          ? planResponse("Create a Word summary from all reference material.", [
+            { objective: "Create the Word summary.", toolName: "document.create" },
+            { objective: "Inspect the created summary.", toolName: "document.inspect" }
+          ])
+          : calls === 3
           ? toolResponse("document.create", {
             outputDirectory: "outputs/mixed-reference",
             title: "Mixed reference summary",
@@ -113,11 +118,11 @@ describe("E138 existing Office attachment editing", () => {
               { blockId: "summary", type: "paragraph", runs: "Revenue 120 with a concise market summary." }
             ]
           })
-          : calls === 3
+          : calls === 4
             ? toolResponse("document.inspect", { manifestPath: "outputs/mixed-reference/manifest.nexora.json", mode: "summary" })
-            : toolResponse("nexora_respond", { text: "Created the requested Office summary from the supplied references." });
+            : textResponse("Created the requested Office summary from the supplied references.");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -126,7 +131,7 @@ describe("E138 existing Office attachment editing", () => {
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
     try {
       await service.startSession("Read all TXT, MD, DOCX, XLSX and PPTX files under references and create a new Word summary.");
-      const completed = await waitForStatus(service, "succeeded", 15_000, 1);
+      const completed = await waitForStatus(service, "succeeded", 30_000, 1);
       expect(completed.session?.deliverables).toEqual([expect.objectContaining({ revision: 1, stage: "created", files: [expect.objectContaining({ format: "docx" })] })]);
       const invocations = completed.session!.inspection.invocations;
       expect(invocations.filter(({ toolName }) => toolName === "document.read_source")).toHaveLength(3);
@@ -136,13 +141,13 @@ describe("E138 existing Office attachment editing", () => {
       expect(requests[1]).toContain("第三章原始内容，收入 120");
       expect(requests[1]).toContain("August");
       expect(requests[1]).toContain("第四页旧标题");
-      expect(calls).toBe(4);
+      expect(calls).toBe(5);
     } finally {
       await service.close();
       server.closeAllConnections();
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
-  }, 25_000);
+  }, 45_000);
 
   it("replays stringified report blocks through generic normalization and the real document.create contract", async () => {
     const workspace = createWorkspace();
@@ -155,6 +160,11 @@ describe("E138 existing Office attachment editing", () => {
     const server = createServer(async (_request, response) => {
       calls += 1;
       const content = calls === 1
+        ? planResponse("Generate and verify the Word report.", [
+          { objective: "Generate the Word report.", toolName: "document.create" },
+          { objective: "Inspect the generated report.", toolName: "document.inspect" }
+        ])
+        : calls === 2
         ? toolResponse("document.create", {
           outputDirectory: "outputs/stringified-blocks",
           title: "澄屿咖啡 2026 Q2 经营诊断与 Q3 行动方案",
@@ -163,11 +173,11 @@ describe("E138 existing Office attachment editing", () => {
           theme: { pageWidth: "standard", surface: "light", primaryColor: "#2563eb", accentColor: "#0ea5e9", font: "system", spacing: "comfortable", corners: "rounded" },
           blocks: encodedBlocks
         })
-        : calls === 2
+        : calls === 3
           ? toolResponse("document.inspect", { manifestPath: "outputs/stringified-blocks/manifest.nexora.json", mode: "summary" })
-          : toolResponse("nexora_respond", { text: "已生成并检查真实 Word Deliverable。" });
+          : textResponse("已生成并检查真实 Word Deliverable。");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -176,8 +186,8 @@ describe("E138 existing Office attachment editing", () => {
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
     try {
       await service.startSession("Generate the Word report from the already-read source facts.");
-      const completed = await waitForStatus(service, "succeeded", 15_000, 1);
-      expect(calls).toBe(3);
+      const completed = await waitForStatus(service, "succeeded", 30_000, 1);
+      expect(calls).toBe(4);
       expect(completed.session?.deliverables).toEqual([expect.objectContaining({
         revision: 1,
         stage: "created",
@@ -210,7 +220,7 @@ describe("E138 existing Office attachment editing", () => {
       server.closeAllConnections();
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
-  }, 25_000);
+  }, 45_000);
 
   it("imports an independently authored DOCX, changes one paragraph and preserves unrelated package content", async () => {
     const workspace = createWorkspace();
@@ -378,34 +388,43 @@ describe("E138 existing Office attachment editing", () => {
       if (calls === 1) firstRequest = body;
       const manifest = () => JSON.parse(readFileSync(join(workspace, "outputs", "conversation-import", "manifest.nexora.json"), "utf8")) as { currentRevision: number; sourceDigest: string };
       const content = calls === 1
-        ? toolResponse("document.import", { attachmentPath: stagedPath, attachmentDigest: stagedDigest, outputDirectory: "outputs/conversation-import", title: "会话导入文档" })
-        : calls === 2 || calls === 4 || calls === 6 || calls === 8
-          ? toolResponse("document.inspect", {
-              manifestPath: "outputs/conversation-import/manifest.nexora.json",
-              mode: "blocks",
-              blockIds: calls === 2
-                ? ["docx.p.0001", "docx.p.0004", "docx.p.0005", "docx.p.0006", "docx.table.0001.cell.r0002.c0002"]
-                : calls === 6
-                  ? ["docx.p.0002"]
-                  : calls === 4
-                    ? ["docx.p.0001", "docx.p.0008", "docx.table.0001.cell.r0002.c0002"]
-                    : ["docx.p.0002"]
-            })
+        ? planResponse("Import, revise, and verify the attached document.", [
+          { objective: "Import the attached document.", toolName: "document.import" },
+          { objective: "Inspect the imported document.", toolName: "document.inspect" },
+          { objective: "Apply the requested native edits.", toolName: "document.apply_native_patch" },
+          { objective: "Inspect the revised document.", toolName: "document.inspect" }
+        ])
+        : calls === 2
+          ? toolResponse("document.import", { attachmentPath: stagedPath, attachmentDigest: stagedDigest, outputDirectory: "outputs/conversation-import", title: "会话导入文档" })
           : calls === 3
-            ? toolResponse("document.apply_native_patch", { manifestPath: "outputs/conversation-import/manifest.nexora.json", expectedRevision: String(manifest().currentRevision), expectedSourceDigest: manifest().sourceDigest, operations: [
+            ? inspectResponse(["docx.p.0001", "docx.p.0004", "docx.p.0005", "docx.p.0006", "docx.table.0001.cell.r0002.c0002"])
+            : calls === 4
+              ? toolResponse("document.apply_native_patch", { manifestPath: "outputs/conversation-import/manifest.nexora.json", expectedRevision: String(manifest().currentRevision), expectedSourceDigest: manifest().sourceDigest, operations: [
               { type: "replace_text", targetId: "docx.p.0001", text: "会话修订业务报告" },
               { type: "replace_text", targetId: "docx.p.0004", text: "第三章会话精简版，收入 120。" },
               { type: "set_table_cell", targetId: "docx.table.0001.cell.r0002.c0002", text: "135" },
               { type: "insert_paragraphs_after", targetId: "docx.p.0004", paragraphs: ["会话新增一。", "会话新增二。", "会话新增三。"] },
               { type: "delete_targets", targetIds: ["docx.p.0005"] }
-            ] })
-            : calls === 5
-              ? toolResponse("nexora_respond", { text: "第三章已精简，其他内容保持。" })
-              : calls === 7
-                ? toolResponse("document.apply_native_patch", { manifestPath: "outputs/conversation-import/manifest.nexora.json", expectedRevision: manifest().currentRevision, expectedSourceDigest: manifest().sourceDigest, operations: [{ type: "replace_text", targetId: "docx.p.0002", text: "第一章再次调整。" }] })
-                : toolResponse("nexora_respond", { text: "重启后已继续修改同一个文件。" });
+              ] })
+              : calls === 5
+                ? inspectResponse(["docx.p.0001", "docx.p.0008", "docx.table.0001.cell.r0002.c0002"])
+                : calls === 6
+                  ? textResponse("第三章已精简，其他内容保持。")
+                  : calls === 7
+                    ? planResponse("Revise and verify the first chapter.", [
+                      { objective: "Inspect the current first chapter.", toolName: "document.inspect" },
+                      { objective: "Patch the first chapter.", toolName: "document.apply_native_patch" },
+                      { objective: "Inspect the revised first chapter.", toolName: "document.inspect" }
+                    ])
+                    : calls === 8
+                      ? inspectResponse(["docx.p.0002"])
+                      : calls === 9
+                        ? toolResponse("document.apply_native_patch", { manifestPath: "outputs/conversation-import/manifest.nexora.json", expectedRevision: manifest().currentRevision, expectedSourceDigest: manifest().sourceDigest, operations: [{ type: "replace_text", targetId: "docx.p.0002", text: "第一章再次调整。" }] })
+                        : calls === 10
+                          ? inspectResponse(["docx.p.0002"])
+                          : textResponse("重启后已继续修改同一个文件。");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -416,7 +435,6 @@ describe("E138 existing Office attachment editing", () => {
       "NEXORA_MODEL_NAME=existing-office-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     let service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
@@ -425,7 +443,7 @@ describe("E138 existing Office attachment editing", () => {
       stagedPath = staged[0]!.workspacePath;
       stagedDigest = staged[0]!.digest;
       await service.startSession({ text: "修改标题和第三章，更新表格数值，插入三段分析，删除 Appendix B，但保留 Appendix C 和其他内容。", attachments: staged });
-      const revised = await waitForStatus(service, "succeeded", 15_000, 1);
+      const revised = await waitForStatus(service, "succeeded", 30_000, 1);
       expect(revised.session?.runs[0]?.attachments).toEqual(staged);
       expect(revised.session?.deliverables).toEqual([expect.objectContaining({ revision: 2, title: "会话导入文档", stage: "modified" })]);
       const revisedDocument = inspectImportedOffice(workspace, { manifestPath: "outputs/conversation-import/manifest.nexora.json", mode: "blocks", blockIds: ["docx.p.0001", "docx.p.0008", "docx.table.0001.cell.r0002.c0002"] });
@@ -444,15 +462,15 @@ describe("E138 existing Office attachment editing", () => {
       expect(reopened.session?.runs[0]?.attachments).toEqual(staged);
 
       await service.continueSession(sessionId, "再修改第一章。");
-      const final = await waitForStatus(service, "succeeded", 15_000, 2);
+      const final = await waitForStatus(service, "succeeded", 30_000, 2);
       expect(final.session?.deliverables).toEqual([expect.objectContaining({ revision: 3, changedBlockIds: ["docx.p.0002"] })]);
-      expect(calls).toBe(9);
+      expect(calls).toBe(11);
     } finally {
       await service.close();
       server.closeAllConnections();
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
-  }, 25_000);
+  }, 60_000);
 
   it("rejects attachment drift and active content before committing an imported revision", async () => {
     const workspace = createWorkspace();
@@ -601,6 +619,54 @@ function multiToolResponse(calls: ReadonlyArray<readonly [string, unknown]>) {
   return { text: null, toolCalls: calls.map(([name, argumentsValue]) => ({ name, arguments: argumentsValue })), finishReason: "tool_calls" };
 }
 
+function textResponse(text: string) {
+  return { text, toolCalls: [], finishReason: "stop" };
+}
+
+function planResponse(
+  goal: string,
+  tasks: readonly { readonly objective: string; readonly toolName: string }[]
+) {
+  return toolResponse("nexora_update_plan", {
+    goal,
+    tasks: tasks.map((task) => ({ objective: task.objective, checks: [{ toolName: task.toolName }] }))
+  });
+}
+
+function inspectResponse(blockIds: readonly string[]) {
+  return toolResponse("document.inspect", {
+    manifestPath: "outputs/conversation-import/manifest.nexora.json",
+    mode: "blocks",
+    blockIds
+  });
+}
+
+function nativeMessage(value: unknown, decisionIndex: number): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, index) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${decisionIndex}-${index}`,
+      type: "function" as const,
+      function: { name: String(call.name), arguments: JSON.stringify(call.arguments ?? null) }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
+}
+
 function writeProviderEnv(workspace: string, port: number, model: string): void {
   writeFileSync(join(workspace, ".env"), [
     `NEXORA_MODEL_BASE_URL=http://127.0.0.1:${port}/v1`,
@@ -608,7 +674,6 @@ function writeProviderEnv(workspace: string, port: number, model: string): void 
     `NEXORA_MODEL_NAME=${model}`,
     "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
     "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-    "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
   ].join("\n"), "utf8");
 }
 

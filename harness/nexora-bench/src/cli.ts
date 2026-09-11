@@ -1,64 +1,51 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { EvalSplitSchema, type EvalSplit } from "./contracts.js";
-import { runOptimizationLoop } from "./optimizer.js";
-import { runBench } from "./runner.js";
+import { runHarborRuntimeTrial, type OpenTrialBudgets } from "./runner.js";
 
-const root = resolve(import.meta.dirname, "..");
 const launchDirectory = process.env.INIT_CWD?.trim() || process.cwd();
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  const command = args.shift() ?? "run";
-  if (command === "optimize") {
-    const packet = option(args, "--packet");
-    if (packet === undefined) throw new Error("optimize requires --packet <optimization-packet.json>.");
-    const maximum = option(args, "--max-iterations");
-    const result = await runOptimizationLoop({
-      packetPath: resolve(launchDirectory, packet),
-      repositoryRoot: launchDirectory,
-      confirm: args.includes("--confirm"),
-      ...(maximum === undefined ? {} : { maxIterations: Number(maximum) })
+  const command = args.shift();
+  if (command === "harbor-trial") {
+    const manifest = requiredOption(args, "--manifest");
+    const taskId = requiredOption(args, "--task");
+    const instructionFile = requiredOption(args, "--instruction-file");
+    const workspace = requiredOption(args, "--workspace");
+    const dataDir = requiredOption(args, "--data-dir");
+    const factBundle = requiredOption(args, "--fact-bundle");
+    const providerMode = option(args, "--provider") ?? "deterministic";
+    if (providerMode !== "deterministic" && providerMode !== "real") {
+      throw new Error('--provider must be "deterministic" or "real".');
+    }
+    const report = await runHarborRuntimeTrial({
+      manifestPath: resolve(launchDirectory, manifest),
+      taskId,
+      instruction: readFileSync(resolve(launchDirectory, instructionFile), "utf8").trim(),
+      workspace: resolve(launchDirectory, workspace),
+      dataDir: resolve(launchDirectory, dataDir),
+      factBundlePath: resolve(launchDirectory, factBundle),
+      providerMode,
+      openFallback: true,
+      openBudgets: openBudgetsFromEnv()
     });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    if (result.status !== "resolved" && result.status !== "no_failures") process.exitCode = 1;
+    process.stdout.write(`${JSON.stringify({
+      taskId: report.taskId,
+      runId: report.runId,
+      terminal: report.actualTerminal,
+      runtimeGradingPassed: report.suite === undefined
+        ? report.authorityGrade.passed
+        : report.suite.runtimePassed && report.suite.authorityPassed
+          && report.suite.safetyPassed && report.suite.expectedOutcomePassed
+    })}\n`);
     return;
   }
-  if (command !== "run") throw new Error(`Unknown command: ${command}`);
-  const splitValue = option(args, "--split");
-  const taskIds = options(args, "--task");
-  const manifestOption = option(args, "--manifest");
-  const manifestPath = manifestOption === undefined
-    ? joinDefaultManifest()
-    : resolve(launchDirectory, manifestOption);
-  const outputRoot = option(args, "--output");
-  const keepWorkspaces = args.includes("--keep-workspaces");
-  const providerValue = option(args, "--provider") ?? "deterministic";
-  if (providerValue !== "deterministic" && providerValue !== "real") {
-    throw new Error('--provider must be "deterministic" or "real".');
-  }
-  const split: EvalSplit | undefined = splitValue === undefined ? undefined : EvalSplitSchema.parse(splitValue);
-  const result = await runBench({
-    manifestPath,
-    ...(split === undefined ? {} : { split }),
-    ...(taskIds.length === 0 ? {} : { taskIds }),
-    ...(outputRoot === undefined ? {} : { outputRoot: resolve(launchDirectory, outputRoot) }),
-    keepWorkspaces,
-    providerMode: providerValue
-  });
-  process.stdout.write(`${JSON.stringify({
-    passed: result.report.passed,
-    reportPath: result.reportPath,
-    optimizationPacketPath: result.optimizationPacketPath,
-    taskResolvedRate: result.report.taskResolvedRate,
-    validatedSuccessRate: result.report.validatedSuccessRate,
-    falseSuccessCount: result.report.falseSuccessCount
-  }, null, 2)}\n`);
-  if (!result.report.passed) process.exitCode = 1;
-}
-
-function joinDefaultManifest(): string {
-  return resolve(root, "datasets", "nexora-core-v1", "dataset.json");
+  throw new Error(
+    command === undefined || command === "run"
+      ? "The legacy Nexora batch runner has been retired. Use `pnpm --filter @nexora/bench eval`; Harbor owns task and job execution."
+      : `Unknown command: ${command}`
+  );
 }
 
 function option(args: readonly string[], name: string): string | undefined {
@@ -69,18 +56,31 @@ function option(args: readonly string[], name: string): string | undefined {
   return value;
 }
 
-function options(args: readonly string[], name: string): string[] {
-  const values: string[] = [];
-  args.forEach((value, index) => {
-    if (value !== name) return;
-    const next = args[index + 1];
-    if (next === undefined || next.startsWith("--")) throw new Error(`${name} requires a value.`);
-    values.push(next);
-  });
-  return values;
+function requiredOption(args: readonly string[], name: string): string {
+  const value = option(args, name);
+  if (value === undefined) throw new Error(`harbor-trial requires ${name} <value>.`);
+  return value;
 }
 
 main().catch((error: unknown) => {
   process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`);
   process.exitCode = 1;
 });
+
+
+function intEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function openBudgetsFromEnv(): OpenTrialBudgets {
+  return {
+    maxIterations: intEnv("NEXORA_OPEN_MAX_ITERATIONS", 120),
+    maxModelCalls: intEnv("NEXORA_OPEN_MAX_MODEL_CALLS", 120),
+    maxToolCalls: intEnv("NEXORA_OPEN_MAX_TOOL_CALLS", 240),
+    maxRetries: intEnv("NEXORA_OPEN_MAX_RETRIES", 5),
+    maxDurationMs: intEnv("NEXORA_OPEN_MAX_DURATION_MS", 780_000)
+  };
+}

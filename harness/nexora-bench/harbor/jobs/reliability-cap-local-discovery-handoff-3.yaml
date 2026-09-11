@@ -1,0 +1,18 @@
+jobs_dir: jobs-output
+n_attempts: 3
+n_concurrent_trials: 3
+environment:
+  type: docker
+agents:
+  - import_path: nexora_harbor.agent:NexoraRuntimeAgent
+    n_concurrent: 3
+    kwargs:
+      scenario_id: cap-local-discovery-handoff
+      manifest_path: harness/nexora-bench/datasets/nexora-core-v1/cohort-c-local-discovery.json
+      provider_mode: deterministic
+verifier:
+  import_path: nexora_harbor.verifier:NexoraRuntimeVerifier
+datasets:
+  - path: datasets/nexora-capability-v1
+    task_names:
+      - cap-local-discovery-handoff

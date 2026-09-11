@@ -43,9 +43,9 @@ describe("E053 Tool capability and Approval input convergence", () => {
       const active = tools(provider.contexts[1]!);
       const shell = active.find((tool) => tool.identity.name === "shell.execute");
 
-      expect(initial).toHaveLength(13);
+      expect(initial).toHaveLength(14);
       expect(initial.map((tool) => tool.identity.name)).toEqual(expect.arrayContaining([
-        "process.start", "process.inspect", "process.logs", "process.stop", "shell.execute"
+        "http.request", "process.start", "process.inspect", "process.logs", "process.stop", "shell.execute"
       ]));
       expect(initial.every((tool) => tool.capability.purpose.length > 0 && tool.decision.useWhen.length > 0 && tool.evidence.produces.length > 0)).toBe(true);
       expect(initial.every((tool) => tool.execution.inputExample !== undefined)).toBe(true);
@@ -160,7 +160,7 @@ describe("E053 Tool capability and Approval input convergence", () => {
         baseUrl: stub.baseUrl,
         apiKey: "test-key",
         model: "test-model",
-        transport: "structured_output"
+        transport: "native_tools"
       }),
       tools: createBuiltInTools()
     });
@@ -264,13 +264,16 @@ async function capabilityProviderStub(): Promise<CapabilityStub> {
     try {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
-      const payload = JSON.parse(body.messages.at(-1)!.content) as {
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+        messages: Array<{ role: string; content: string | null }>;
+      };
+      const payload = JSON.parse(body.messages.filter((message) => message.role === "user").at(-1)!.content!) as {
         observationsAndRepair: {
           toolObservations: ModelDecisionContext["toolObservations"];
         };
       };
       const system = body.messages[0]!.content;
+      if (system === null) throw new Error("Compiled Prompt omitted the system message.");
       const toolsMarker = "[TOOLS]\n";
       const toolOffset = system.lastIndexOf(toolsMarker);
       if (toolOffset < 0) throw new Error("Compiled Prompt omitted Tool contracts.");
@@ -279,16 +282,16 @@ async function capabilityProviderStub(): Promise<CapabilityStub> {
       const toolsText = nextSegment < 0 ? system.slice(toolsStart) : system.slice(toolsStart, nextSegment);
       const capabilities = JSON.parse(toolsText) as WireContextTool[];
       const context: HttpContext = {
-        workingSet: { observations: payload.observationsAndRepair.toolObservations },
+        workingSet: { observations: restoreNativeObservations(body.messages, payload.observationsAndRepair.toolObservations) },
         capabilities
       };
       const index = decisionContexts.length;
       decisionContexts.push(structuredClone(context));
       const decision = capabilityDecision(context, index);
       if (index === 0 && decision.selected) selectedByDescription = true;
-      const content = structuredWireResponse(decision.response);
+      const message = structuredWireResponse(decision.response, index);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message }] }));
     } catch (error) {
       response.writeHead(500, { "content-type": "text/plain" });
       response.end(error instanceof Error ? error.message : String(error));
@@ -338,7 +341,7 @@ function capabilityDecision(
     .map((item) => item.toolName));
   if (completedTools.has("shell.execute")) {
     return {
-      response: { text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Discovered, read, patched, and validated the file." } }], finishReason: "tool_calls" },
+      response: { text: "Discovered, read, patched, and validated the file.", toolCalls: [], finishReason: "stop" },
       selected: false
     };
   }
@@ -397,22 +400,55 @@ function useCapability(capability: string, args: unknown): unknown {
 function requestInput(question: string, reason: string): unknown {
   return {
     text: null,
-    toolCalls: [{ name: "nexora_request_input", arguments: { question, reason } }],
+    toolCalls: [{ name: "nexora_request_input", arguments: { question, reason, basis: "user_exclusive" } }],
     finishReason: "tool_calls"
   };
 }
 
-function structuredWireResponse(value: unknown): unknown {
-  if (value === null || typeof value !== "object") return value;
-  const response = value as { text?: unknown; toolCalls?: unknown; finishReason?: unknown };
-  if (!Array.isArray(response.toolCalls)) return value;
+function restoreNativeObservations(
+  messages: readonly { role: string; content: string | null }[],
+  observations: ModelDecisionContext["toolObservations"]
+): ModelDecisionContext["toolObservations"] {
+  const restored = new Map<string, Record<string, unknown>>();
+  for (const message of messages) {
+    if (message.role !== "tool" || message.content === null) continue;
+    const result = JSON.parse(message.content) as { observation?: Record<string, unknown> };
+    const observation = result.observation;
+    if (observation === undefined || typeof observation.invocationId !== "string") continue;
+    restored.set(observation.invocationId, observation);
+  }
+  return observations.map((observation) => {
+    const update = restored.get(observation.invocationId);
+    return update === undefined ? observation : { ...observation, ...update };
+  });
+}
+
+function structuredWireResponse(value: unknown, decisionIndex: number): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, callIndex) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${decisionIndex}-${callIndex}`,
+      type: "function" as const,
+      function: {
+        name: String(call.name),
+        arguments: JSON.stringify(call.arguments ?? null)
+      }
+    };
+  });
   return {
-    text: response.text ?? null,
-    toolCalls: response.toolCalls.map((item) => {
-      const call = item as { name: unknown; arguments: unknown };
-      return { name: call.name, arguments: call.arguments };
-    }),
-    finishReason: response.finishReason ?? null
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
   };
 }
 

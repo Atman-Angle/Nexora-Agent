@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-local-information-discovery-analysis-holdout-01",
+  "expectedPaths": [
+    "report.md"
+  ],
+  "referenceStateDigest": "sha256:22e77c2c63b234030961ab0a60d03e62ed8edd47cf671bdaead75f60b3391187"
+}

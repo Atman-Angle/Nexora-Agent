@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { modelResponses } from "@nexora/harness";
+import { modelResponses, NATIVE_FUNCTION_CALLING_CAPABILITIES } from "@nexora/harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,6 +17,7 @@ export const createScenario: ScenarioFactory = ({ workspace }) => {
   const verifyArguments = { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 };
   let verificationFailed = false;
   const provider: RuntimeProvider = {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(context: ModelDecisionContext) {
       if (context.run.currentPlan === null) {
         return modelResponses.plan({

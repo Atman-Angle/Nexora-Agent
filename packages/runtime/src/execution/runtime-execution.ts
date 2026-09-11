@@ -552,12 +552,14 @@ export async function callTool(
   }
   const plan = runInput.currentPlan;
   const activeStepId = runInput.stepProgress.find((item) => item.status === "active")?.stepId;
-  const step = plan?.orderedSteps.find((item) => (
-    item.id === activeStepId && item.id === action.stepId
-  ));
-  const checkIds = step === undefined
+  const step = plan?.orderedSteps.find((item) => item.id === action.stepId);
+  let checkIds = step === undefined
     ? []
-    : action.checkIds.filter((id) => step.acceptanceChecks.some((item) => item.id === id));
+    : action.checkIds.filter((id) => {
+        const check = step.acceptanceChecks.find((item) => item.id === id);
+        return check !== undefined
+          && (step.id === activeStepId || (check.kind === "tool_result" && check.role === "verification"));
+      });
 
   const tool = services.tools.get(action.toolName);
   if (tool === undefined) throw new ActionRejectedError(`Tool is not registered: ${action.toolName}`);
@@ -592,10 +594,45 @@ export async function callTool(
       item.status === "succeeded"
       && services.tools.get(item.toolName)?.contract.execution.effect.kind === "write"
     ));
-  if (duplicate !== undefined && !invalidatedByWrite) {
+  const stateChangedAfterDuplicate = duplicateIndex >= 0
+    && persistedInvocations.slice(duplicateIndex + 1).some((item) => (
+      item.status === "succeeded"
+      && services.tools.get(item.toolName)?.contract.execution.effect.kind !== "read"
+    ));
+  // A verification Tool may be resubmitted against a later Plan Step or after
+  // the model omitted the Step's required check id.  Re-executing an identical
+  // execute command is not safe (the Tool contract is not idempotent), so when
+  // the active Step explicitly requires this exact Tool result and no later
+  // command or mutation can have changed state, replay the persisted durable
+  // result under the current Step instead of rejecting the action or running
+  // the command again.
+  const verificationReplayCheck = duplicate !== undefined
+    && duplicate.status === "succeeded"
+    && tool.contract.execution.effect.kind === "execute"
+    && step !== undefined
+    && !invalidatedByWrite
+    && !stateChangedAfterDuplicate
+    ? step.acceptanceChecks.find((check) => (
+        check.required
+        && check.kind === "tool_result"
+        && check.toolName === tool.contract.identity.name
+        && check.role === "verification"
+      ))
+    : undefined;
+  if (
+    duplicate !== undefined
+    && !invalidatedByWrite
+    && verificationReplayCheck === undefined
+  ) {
     throw new ActionRejectedError(
       `Tool action duplicates an existing persisted Invocation with status ${duplicate.status}; do not repeat it.`
     );
+  }
+  if (
+    verificationReplayCheck !== undefined
+    && !checkIds.includes(verificationReplayCheck.id)
+  ) {
+    checkIds = [...checkIds, verificationReplayCheck.id];
   }
   const idempotencyKey = matching.length === 0
     ? baseIdempotencyKey
@@ -606,18 +643,27 @@ export async function callTool(
 
   if (tool.contract.execution.effect.kind !== "read" && !approved) {
     const now = services.now();
+    const pendingRequest: NonNullable<RunSnapshot["pendingRequest"]> = {
+      id: services.createId(),
+      kind: "approval",
+      prompt: step === undefined
+        ? `Allow ${tool.contract.identity.name}?`
+        : `Allow ${tool.contract.identity.name} for Step ${step.id}?`,
+      createdAt: now,
+      action: canonicalAction
+    };
     const waiting = transitionRunStatus(runInput, "waiting", {
       now,
       stopReason: "APPROVAL_REQUIRED",
-      pendingRequest: {
-        id: services.createId(),
-        kind: "approval",
-        prompt: step === undefined
-          ? `Allow ${tool.contract.identity.name}?`
-          : `Allow ${tool.contract.identity.name} for Step ${step.id}?`,
-        createdAt: now,
-        action: canonicalAction
-      }
+      pendingRequest,
+      // A paused Run carries the same explanation surface as a terminal Run so a
+      // waiting Run is never a silent dead end for the user.
+      delivery: deriveRunDelivery({
+        run: runInput,
+        outcome: "paused",
+        now,
+        pendingRequest
+      })
     });
     return services.commit(
       runInput,
@@ -676,7 +722,12 @@ export async function callTool(
     event: {
       type: "tool.started",
       occurredAt: startedAt,
-       payload: { invocationId, toolName: tool.contract.identity.name, stepId }
+       payload: {
+         invocationId,
+         toolName: tool.contract.identity.name,
+         stepId,
+         effectKind: tool.contract.execution.effect.kind
+       }
     }
   });
   services.notify(runInput.runId, observer);
@@ -686,7 +737,8 @@ export async function callTool(
     started.invocation,
     tool,
     parsedInput,
-    observer
+    observer,
+    verificationReplayCheck === undefined ? undefined : duplicate
   );
 }
 
@@ -696,17 +748,35 @@ export async function executeToolInvocation(
   invocation: ToolInvocation,
   tool: RuntimeTool,
   parsedInput: unknown,
-  observer?: RuntimeObserver
+  observer?: RuntimeObserver,
+  replayFrom?: ToolInvocation
 ): Promise<RunSnapshot> {
   let result: RuntimeToolResult;
   let failureDetails: ReturnType<typeof toolFailureDiagnostics>;
   try {
-    const executed = await services.withHeartbeat(run.runId, () => abortableToolExecution(tool.execute(parsedInput, {
-        workspace: services.workspace,
-        runId: run.runId,
-        invocationId: invocation.id,
-        signal: services.signal
-      }), services.signal));
+    let executed: RuntimeToolResult;
+    if (replayFrom !== undefined) {
+      const priorEvidence = run.evidence.find((item) => (
+        item.invocationId === replayFrom.id && item.kind === "tool_result"
+      ));
+      if (replayFrom.resultJson === null || priorEvidence === undefined) {
+        throw new Error(
+          "Verification replay source is missing its persisted Tool result or evidence."
+        );
+      }
+      executed = {
+        status: "success",
+        subjectRef: priorEvidence.subjectRef,
+        facts: replayFrom.resultJson
+      };
+    } else {
+      executed = await services.withHeartbeat(run.runId, () => abortableToolExecution(tool.execute(parsedInput, {
+          workspace: services.workspace,
+          runId: run.runId,
+          invocationId: invocation.id,
+          signal: services.signal
+        }), services.signal));
+    }
     failureDetails = toolFailureDiagnostics(executed);
     const returned = ToolResultSchema.parse(executed);
     if (
@@ -1194,6 +1264,12 @@ function markInvocationUnknownForRecovery(
   observer?: RuntimeObserver
 ): RunSnapshot {
   const now = services.now();
+  const recoveryInvocationIds = [
+    ...services.store.listToolInvocations(run.runId)
+      .filter((item) => item.status === "unknown")
+      .map((item) => item.id),
+    invocation.id
+  ].filter((id, index, ids) => ids.indexOf(id) === index);
   const blockedInput = RunSnapshotSchema.parse({
     ...run,
     lastError: {
@@ -1205,9 +1281,9 @@ function markInvocationUnknownForRecovery(
   });
   const blocked = run.status === "blocked"
     ? RunSnapshotSchema.parse({
-        ...blockedInput,
+      ...blockedInput,
         stopReason: "TOOL_RESULT_UNKNOWN",
-        resumePredicate: { kind: "tool_recovery_decision", invocationIds: [invocation.id] },
+        resumePredicate: { kind: "tool_recovery_decision", invocationIds: recoveryInvocationIds },
         delivery: deriveRunDelivery({
           run: blockedInput,
           outcome: "blocked",
@@ -1217,9 +1293,9 @@ function markInvocationUnknownForRecovery(
         updatedAt: now
       })
     : transitionRunStatus(blockedInput, "blocked", {
-        now,
-        stopReason: "TOOL_RESULT_UNKNOWN",
-        resumePredicate: { kind: "tool_recovery_decision", invocationIds: [invocation.id] },
+      now,
+      stopReason: "TOOL_RESULT_UNKNOWN",
+        resumePredicate: { kind: "tool_recovery_decision", invocationIds: recoveryInvocationIds },
         delivery: deriveRunDelivery({
           run: blockedInput,
           outcome: "blocked",

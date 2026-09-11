@@ -1,0 +1,1 @@
+{"files":[{"id":"implementation-present","path":"src/paginate.js","exists":true}],"commands":[{"id":"pagination-regression","command":"node","args":["--test","tests/verify.mjs"],"cwd":".","timeoutMs":60000,"expectedExitCode":0}],"unchangedPaths":["package.json","tests/verify.mjs"],"authority":{"requiredEventTypes":[],"forbiddenEventTypes":[],"eventCounts":[],"invocations":[]}}

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-coding-repository-change-dev-03",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "coding_repository_change",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "advanced",
+  "horizon": "long",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Repair the date-window helper so normalized input follows the documented repository behavior, preserve its exported API, and run the supplied tests.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-coding-repository-change-dev-03/fixture",
+      "digest": "sha256:01cb3205f1a8dd6cad74747fc9bc4cddb9a8747407cecc8eed9b801137346ed8"
+    },
+    "scenario": "release-v1/tasks/v1-coding-repository-change-dev-03/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-coding-repository-change-dev-03.grader.json",
+    "graderDigest": "sha256:a24a68d333188fde9ba4fb0e7830ecb8ae9060b0bacc1c07920a22cf96ad7386",
+    "referenceRef": "release-v1/sealed/v1-coding-repository-change-dev-03.reference.json",
+    "referenceDigest": "sha256:5be4a436ec0d5c70c05046074614287c507618605fc8f5616868381f4f249e70",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-coding-repository-change-dev-03.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:c1eadaa1636d7170e13247932484f819af92df740001500f9719f8810d780ea3",
+    "fixtureDigest": "sha256:01cb3205f1a8dd6cad74747fc9bc4cddb9a8747407cecc8eed9b801137346ed8"
+  }
+}

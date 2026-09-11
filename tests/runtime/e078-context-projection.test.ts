@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   type ModelDecisionContext,
   type ModelResponse,
@@ -200,6 +200,7 @@ describe("E078 bounded decision context projection", () => {
 });
 
 class CapturingProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly contexts: ModelDecisionContext[] = [];
   readonly frozen: boolean[] = [];
   readonly #decide: (context: ModelDecisionContext, call: number) => unknown;

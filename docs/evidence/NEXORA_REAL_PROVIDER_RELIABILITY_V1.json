@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "nexora-real-provider-reliability-v1",
+  "mode": "real",
+  "provider": {
+    "model": "qwen3.8-flash"
+  },
+  "tasks": [
+    {
+      "taskId": "cap-data-ordered-report",
+      "family": "file_data_transformation",
+      "attempts": 3,
+      "empiricalStrictPassRate": 0.6666666666666666,
+      "observedAll3": false,
+      "externalPassRate": 0.6666666666666666,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 3
+      },
+      "firstBrokenBoundaryDistribution": {
+        "COMPLETION_CONTRACT": 1,
+        "none": 2
+      },
+      "jobDir": "2026-09-03__18-55-26"
+    },
+    {
+      "taskId": "cap-coding-pagination",
+      "family": "coding_repository_change",
+      "attempts": 3,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 3
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 3
+      },
+      "jobDir": "2026-09-03__18-57-55"
+    },
+    {
+      "taskId": "cap-env-config-converge",
+      "family": "environment_configuration_operations",
+      "attempts": 3,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 3
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 3
+      },
+      "jobDir": "2026-09-03__18-59-53"
+    },
+    {
+      "taskId": "cap-artifact-incident-handoff",
+      "family": "artifact_production",
+      "attempts": 3,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 3
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 3
+      },
+      "jobDir": "2026-09-03__19-08-42"
+    },
+    {
+      "taskId": "cap-batch-manifest-reorganize",
+      "family": "batch_automation",
+      "attempts": 2,
+      "attemptsRequested": 3,
+      "infraSetupExceptions": 1,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": null,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 2
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 2
+      },
+      "jobDir": "2026-09-03__19-20-09",
+      "note": "post approval-policy EVAL fix; one attempt failed during container setup (registry ECONNRESET)"
+    },
+    {
+      "taskId": "cap-local-discovery-handoff",
+      "family": "local_information_discovery_analysis",
+      "attempts": 3,
+      "empiricalStrictPassRate": 0.6666666666666666,
+      "observedAll3": false,
+      "externalPassRate": 0.6666666666666666,
+      "expectedOutcomePassRate": 0.6666666666666666,
+      "terminalDistribution": {
+        "blocked": 1,
+        "succeeded": 2
+      },
+      "firstBrokenBoundaryDistribution": {
+        "COMPLETION_CONTRACT": 2,
+        "PROVIDER_EXTERNAL": 1
+      },
+      "jobDir": "2026-09-03__19-41-14"
+    },
+    {
+      "taskId": "cap-code-serializer-provenance",
+      "family": "coding_repository_change",
+      "attempts": 3,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 3
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 3
+      },
+      "jobDir": "2026-09-03__19-43-34"
+    },
+    {
+      "taskId": "cap-data-tax-reconcile",
+      "family": "file_data_transformation",
+      "attempts": 3,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 3
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 3
+      },
+      "jobDir": "2026-09-03__19-47-06"
+    },
+    {
+      "taskId": "cap-env-coherent-mapping",
+      "family": "environment_configuration_operations",
+      "attempts": 3,
+      "empiricalStrictPassRate": 0.3333333333333333,
+      "observedAll3": false,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 0.3333333333333333,
+      "terminalDistribution": {
+        "failed": 2,
+        "succeeded": 1
+      },
+      "firstBrokenBoundaryDistribution": {
+        "CONVERGENCE": 2,
+        "none": 1
+      },
+      "jobDir": "2026-09-03__19-48-51"
+    },
+    {
+      "taskId": "cap-mixed-restart-aggregate",
+      "family": "complex_mixed_workflow",
+      "attempts": 3,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "externalPassRate": 1.0,
+      "expectedOutcomePassRate": 1.0,
+      "terminalDistribution": {
+        "succeeded": 3
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 3
+      },
+      "jobDir": "2026-09-03__19-54-10"
+    }
+  ],
+  "aggregate": {
+    "completedTrials": 29,
+    "strictPass": 25,
+    "empiricalStrictPassRateCompleted": 0.8620689655172413,
+    "attemptsRequested": 30,
+    "empiricalStrictPassRateAttempts": 0.8333333333333334,
+    "infraSetupExceptions": 1,
+    "observedAll3Tasks": [
+      "cap-coding-pagination",
+      "cap-env-config-converge",
+      "cap-artifact-incident-handoff",
+      "cap-code-serializer-provenance",
+      "cap-data-tax-reconcile",
+      "cap-mixed-restart-aggregate"
+    ],
+    "notAll3Tasks": [
+      "cap-data-ordered-report",
+      "cap-batch-manifest-reorganize",
+      "cap-local-discovery-handoff",
+      "cap-env-coherent-mapping"
+    ]
+  }
+}

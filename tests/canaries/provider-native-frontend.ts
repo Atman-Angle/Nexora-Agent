@@ -13,33 +13,66 @@ import { join } from "node:path";
 import {
   createAgent,
   createBuiltInTools,
-  openAICompatibleProviderFromEnv
+  openAICompatibleProviderFromEnv,
+  type ApprovalDecision,
+  type RunResult
 } from "../../packages/harness/src/index.js";
 
 const ALLOWED_FILES = new Set(["index.html", "styles.css", "app.js", "verify.mjs"]);
+
+/**
+ * Static hooks proving the workspace really contains the requested dashboard instead of a
+ * completion claim. Each entry is either a literal token the prompt makes unavoidable (the
+ * stat labels, the status names, the sessionStorage contract, the responsive stylesheet) or a
+ * matcher for a feature the prompt describes without naming. The status filter and the detail
+ * view fall in the second group: the prompt asks for status filtering and for a project detail
+ * drawer or modal but never fixes their identifiers, so a correct implementation is free to
+ * use a chip group or a project-drawer / detail-panel container. Across real provider runs the
+ * literal project-detail appeared in one of eight completed dashboards and the literal
+ * status-filter in seven of eight, while all eight shipped both features; matching the
+ * convention families keeps the gate honest without rejecting correct work.
+ */
+const DASHBOARD_HOOKS: readonly (string | RegExp)[] = [
+  "sessionStorage",
+  "Total Projects",
+  "Completed",
+  "Blocked",
+  /status[-_]?filter|filter[-_]?status|statusFilter|data-status/,
+  "sort",
+  /project[-_]?detail|project[-_]?(drawer|modal|overlay|panel|sheet)|detail[-_]?(drawer|modal|overlay|dialog|panel|view)/,
+  "project-form",
+  "empty-state",
+  "@media"
+];
+
 const transport = process.argv.includes("--transport")
   ? process.argv[process.argv.indexOf("--transport") + 1]
   : undefined;
-if (transport !== "native_tools" && transport !== "structured_output") {
-  throw new Error("Use --transport native_tools|structured_output.");
+if (transport !== "native_tools") {
+  throw new Error("Use --transport native_tools.");
 }
 
-const workspace = mkdtempSync(join(tmpdir(), `nexora-provider-frontend-${transport}-`));
-seedExistingDashboard(workspace);
-const originalDigests = new Map([...ALLOWED_FILES].map((name) => [
-  name,
-  digestFile(join(workspace, name))
-]));
+const resumeWorkspace = process.env.NEXORA_FRONTEND_CANARY_RESUME_WORKSPACE;
+const workspace = resumeWorkspace ?? mkdtempSync(join(tmpdir(), `nexora-provider-frontend-${transport}-`));
+if (resumeWorkspace === undefined) seedExistingDashboard(workspace);
+const originalDigests = seedDigests();
 const environment = {
   ...process.env,
-  NEXORA_MODEL_TOOL_TRANSPORT: transport
+  NEXORA_MODEL_CONNECT_TIMEOUT_MS: "600000",
+  NEXORA_MODEL_TIMEOUT_MS: "600000"
 };
 const provider = openAICompatibleProviderFromEnv(environment);
+const canaryTools = createBuiltInTools().filter((tool) => new Set([
+  "filesystem.read",
+  "filesystem.write",
+  "filesystem.patch",
+  "shell.execute"
+]).has(tool.contract.identity.name));
 const runtime = createAgent({
   workspace,
   dataDir: join(workspace, ".nexora"),
   provider,
-  tools: createBuiltInTools(),
+  tools: canaryTools,
   hostPolicy: {
     schemaVersion: 1,
     id: "provider-native-frontend-canary",
@@ -47,40 +80,58 @@ const runtime = createAgent({
     taskMode: "change",
     promptCache: "allow",
     instructions: [
-      "Modify the existing frontend inside the workspace using real Tools; do not return implementation code as the final answer.",
-      "Preserve the existing legacy hooks and incrementally patch index.html, styles.css, app.js and verify.mjs; do not replace the application with a new implementation.",
+      "Build the requested frontend inside the workspace using real Tools; do not return implementation code as the final answer.",
+      "Inspect and update index.html, styles.css, app.js and verify.mjs. Keep the dependency-free vanilla stack already present; do not add a framework or backend.",
       "Do not claim completion until Tool observations prove the files exist and the verifier exits successfully."
     ]
   }
 });
 
 let approvalCount = 0;
+let deniedApprovals = 0;
+let budgetExtensions = 0;
 try {
-  let result = await runtime.start({
-    input: [
-      "Substantially evolve the existing operations dashboard without rewriting it.",
-      "Keep the legacy brand, activity table, renderLegacyRows function and legacy-shell CSS hook, while adding a live system-status rail, saved filter views, multi-select bulk actions, an incident timeline drawer, density controls, a keyboard command palette, richer status filters, responsive mobile behavior and accessible focus handling.",
-      "Patch all four existing files in place. Extend verify.mjs to check both the preserved legacy hooks and the new features, run node --check on app.js, then run node verify.mjs with shell.execute before finishing."
-    ].join(" "),
-    budgets: {
-      maxIterations: 40,
-      maxModelCalls: 40,
-      maxToolCalls: 30,
-      maxRetries: 3,
-      maxDurationMs: 10 * 60_000
-    }
-  });
+  let result = resumeWorkspace === undefined
+    ? await runtime.start({
+        input: [
+          "Create a polished, runnable Project Dashboard for managing local projects.",
+          "Include a left navigation with Dashboard, Projects, Activity and Settings; a Projects header with search and New Project; statistics for Total Projects, Active, Completed and Blocked; and at least eight varied mock projects showing name, description, status, progress, updated time and tags.",
+          "Implement working search, status filtering, updated-time sorting, project detail drawer or modal, and create/edit forms. Newly created and edited projects must remain available for the current browser session using sessionStorage.",
+          "Make it desktop-first and responsive at common mobile widths with clear hover, selected, disabled and empty states, consistent spacing and typography, accessible labels, focus handling and keyboard dismissal for overlays.",
+          "Update all four existing files, extend verify.mjs to assert these requirements, run node --check on app.js, then run node verify.mjs with shell.execute before finishing."
+        ].join(" "),
+        budgets: {
+          maxIterations: 60,
+          maxModelCalls: 60,
+          maxToolCalls: 60,
+          maxRetries: 3,
+          maxDurationMs: 30 * 60_000
+        }
+      })
+    : await resumeRetainedRun();
 
-  for (let index = 0; index < 30 && result.status === "waiting"; index += 1) {
-    const view = await runtime.inspect(result.runId);
-    const pending = view.snapshot.pendingRequest;
-    if (pending?.kind !== "approval" || pending.action === undefined) break;
-    assertAllowedApproval(pending.action.toolName, pending.action.input);
-    approvalCount += 1;
-    result = await runtime.resume({
-      runId: result.runId,
-      approvalDecision: { requestId: pending.id, approved: true }
-    });
+  for (let index = 0; index < 120; index += 1) {
+    if (result.status === "waiting") {
+      const view = await runtime.inspect(result.runId);
+      const pending = view.snapshot.pendingRequest;
+      if (pending?.kind !== "approval" || pending.action === undefined) break;
+      const decision = decideApproval(pending.action.toolName, pending.action.input, pending.id);
+      if (decision.approved) approvalCount += 1;
+      else deniedApprovals += 1;
+      result = await runtime.resume({ runId: result.runId, approvalDecision: decision });
+      continue;
+    }
+    if (result.status === "blocked" && budgetExtensions < 4) {
+      const view = await runtime.inspect(result.runId);
+      if (view.snapshot.resumePredicate?.kind !== "budget_extension") break;
+      budgetExtensions += 1;
+      result = await runtime.resume({
+        runId: result.runId,
+        budgetExtension: { iterations: 20, modelCalls: 20, toolCalls: 20, retries: 1 }
+      });
+      continue;
+    }
+    break;
   }
   const view = await runtime.inspect(result.runId);
   const files = [...ALLOWED_FILES].map((name) => ({
@@ -163,7 +214,10 @@ try {
     planVersion: view.snapshot.currentPlan?.version ?? null,
     evidenceRecords: view.snapshot.evidence.length,
     responseRejections: eventTypes.filter((type) => type === "response.rejected").length,
+    resumed: resumeWorkspace !== undefined,
     approvals: approvalCount,
+    deniedApprovals,
+    budgetExtensions,
     files,
     syntaxExitCode: syntax.status,
     verificationExitCode: verification.status,
@@ -171,7 +225,7 @@ try {
     falseSuccess: result.status === "succeeded" && (
       view.toolInvocations.length === 0
       || files.some((file) => !file.exists || file.bytes < 100 || !file.modified)
-      || !legacyHooksPreserved(workspace)
+      || !projectDashboardImplemented(workspace)
       || syntax.status !== 0
       || verification.status !== 0
     )
@@ -182,7 +236,7 @@ try {
     result.status !== "succeeded"
     || report.falseSuccess
     || files.some((file) => !file.exists || file.bytes < 100 || !file.modified)
-    || !legacyHooksPreserved(workspace)
+    || !projectDashboardImplemented(workspace)
     || syntax.status !== 0
     || verification.status !== 0
   ) {
@@ -199,13 +253,27 @@ try {
 
 function seedExistingDashboard(root: string): void {
   writeFileSync(join(root, "index.html"), `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Nexora Operations</title><link rel="stylesheet" href="styles.css"></head>
-<body><div class="legacy-shell"><header><strong id="legacy-brand">Nexora Ops</strong><button id="theme-toggle">Theme</button></header><main><h1>Operations overview</h1><section class="kpis"><article>Availability <b>99.98%</b></article><article>Open incidents <b>4</b></article><article>Latency <b>142 ms</b></article><article>Deployments <b>18</b></article></section><label>Filter <input id="activity-filter"></label><table id="legacy-activity-table"><thead><tr><th>Service</th><th>Status</th><th>Owner</th></tr></thead><tbody id="activity-body"></tbody></table><p id="empty-state" hidden>No matching activity</p></main></div><script src="app.js"></script></body></html>`, "utf8");
-  writeFileSync(join(root, "styles.css"), `:root{font-family:Inter,system-ui,sans-serif;color:#17202a;background:#f4f6f7}.legacy-shell{min-height:100vh}header{display:flex;justify-content:space-between;padding:1rem 2rem;background:#fff;border-bottom:1px solid #d5d8dc}main{max-width:1100px;margin:auto;padding:2rem}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}.kpis article{padding:1rem;background:#fff;border:1px solid #d5d8dc;border-radius:6px}.kpis b{display:block;font-size:1.4rem}table{width:100%;margin-top:1rem;border-collapse:collapse;background:#fff}th,td{text-align:left;padding:.75rem;border-bottom:1px solid #e5e7e9}@media(max-width:700px){.kpis{grid-template-columns:1fr 1fr}main{padding:1rem}}`, "utf8");
-  writeFileSync(join(root, "app.js"), `const legacyRows=[{service:"API",status:"Healthy",owner:"Platform"},{service:"Billing",status:"Investigating",owner:"Payments"},{service:"Search",status:"Healthy",owner:"Discovery"}];
-function renderLegacyRows(query=""){const body=document.querySelector("#activity-body");const rows=legacyRows.filter(row=>Object.values(row).some(value=>value.toLowerCase().includes(query.toLowerCase())));body.innerHTML=rows.map(row=>\`<tr><td>\${row.service}</td><td>\${row.status}</td><td>\${row.owner}</td></tr>\`).join("");document.querySelector("#empty-state").hidden=rows.length>0;}
-document.querySelector("#activity-filter").addEventListener("input",event=>renderLegacyRows(event.target.value));document.querySelector("#theme-toggle").addEventListener("click",()=>document.documentElement.toggleAttribute("data-dark"));renderLegacyRows();`, "utf8");
-  writeFileSync(join(root, "verify.mjs"), `import { readFileSync } from "node:fs";import { spawnSync } from "node:child_process";const html=readFileSync("index.html","utf8"),css=readFileSync("styles.css","utf8"),js=readFileSync("app.js","utf8");const required=[[html,"legacy-brand"],[html,"legacy-activity-table"],[css,"legacy-shell"],[js,"renderLegacyRows"]];if(required.some(([text,hook])=>!text.includes(hook)))throw new Error("legacy hook missing");const syntax=spawnSync(process.execPath,["--check","app.js"]);if(syntax.status!==0)process.exit(syntax.status??1);console.log("baseline verifier passed");`, "utf8");
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Project Dashboard</title><link rel="stylesheet" href="styles.css"></head>
+<body><div id="app-shell"><aside><strong>Nexora</strong><nav aria-label="Primary"><a href="#">Dashboard</a><a class="selected" href="#">Projects</a><a href="#">Activity</a><a href="#">Settings</a></nav></aside><main><header><div><p>Workspace</p><h1>Projects</h1></div><button id="new-project">New Project</button></header><section id="project-list" aria-live="polite"></section></main></div><script src="app.js"></script></body></html>`, "utf8");
+  writeFileSync(join(root, "styles.css"), `:root{font-family:Inter,system-ui,sans-serif;color:#17202a;background:#f5f7f8}*{box-sizing:border-box}body{margin:0}#app-shell{display:grid;grid-template-columns:220px 1fr;min-height:100vh}aside{padding:2rem;background:#fff;border-right:1px solid #dfe3e6}nav{display:grid;gap:.5rem;margin-top:2rem}nav a{padding:.75rem;color:inherit;text-decoration:none;border-radius:.5rem}nav a.selected{background:#e8f0ed}main{padding:2rem}header{display:flex;align-items:center;justify-content:space-between}button{font:inherit}@media(max-width:700px){#app-shell{grid-template-columns:1fr}aside{display:none}main{padding:1rem}}`, "utf8");
+  writeFileSync(join(root, "app.js"), `const starterProjects=[{id:"starter",name:"Starter workspace",description:"Replace this starter with the complete dashboard.",status:"Active",progress:20,updatedAt:"2026-09-10",tags:["Starter"]}];
+function renderProjects(){document.querySelector("#project-list").innerHTML=starterProjects.map(project=>\`<article><h2>\${project.name}</h2><p>\${project.description}</p></article>\`).join("");}
+document.querySelector("#new-project").addEventListener("click",()=>{});renderProjects();`, "utf8");
+  writeFileSync(join(root, "verify.mjs"), `import { readFileSync } from "node:fs";import { spawnSync } from "node:child_process";const html=readFileSync("index.html","utf8"),css=readFileSync("styles.css","utf8"),js=readFileSync("app.js","utf8");const required=[[html,"Project Dashboard"],[html,"new-project"],[css,"@media"],[js,"renderProjects"]];if(required.some(([text,hook])=>!text.includes(hook)))throw new Error("starter hook missing");const syntax=spawnSync(process.execPath,["--check","app.js"]);if(syntax.status!==0)process.exit(syntax.status??1);console.log("starter verifier passed");`, "utf8");
+}
+
+/**
+ * Digests of the untouched seed files. They are hashed in a throwaway probe directory so
+ * that the same expectation also holds when the Canary resumes an already-edited workspace.
+ */
+function seedDigests(): ReadonlyMap<string, string> {
+  const probe = mkdtempSync(join(tmpdir(), "nexora-provider-frontend-seed-"));
+  try {
+    seedExistingDashboard(probe);
+    return new Map([...ALLOWED_FILES].map((name) => [name, digestFile(join(probe, name))]));
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
 }
 
 function digestFile(path: string): string {
@@ -219,34 +287,82 @@ function inputPath(value: unknown): string | null {
     : null;
 }
 
-function legacyHooksPreserved(root: string): boolean {
+function projectDashboardImplemented(root: string): boolean {
   const sources = [...ALLOWED_FILES].map((name) => readFileSync(join(root, name), "utf8")).join("\n");
-  return ["legacy-brand", "legacy-activity-table", "renderLegacyRows", "legacy-shell"]
-    .every((hook) => sources.includes(hook));
+  return DASHBOARD_HOOKS.every((hook) => (
+    typeof hook === "string" ? sources.includes(hook) : hook.test(sources)
+  ));
 }
 
-function assertAllowedApproval(toolName: string, input: unknown): void {
-  if (input === null || typeof input !== "object") throw new Error("Approval input must be an object.");
+async function resumeRetainedRun(): Promise<RunResult> {
+  const runs = await runtime.listRuns();
+  const waiting = runs.find((run) => (
+    run.status === "waiting_for_approval" && run.pendingRequestKind === "approval"
+  ));
+  if (waiting !== undefined) {
+    const view = await runtime.inspect(waiting.runId);
+    const pending = view.snapshot.pendingRequest;
+    if (pending?.kind !== "approval" || pending.action === undefined) {
+      throw new Error("The retained Run has no pending Tool Approval.");
+    }
+    const decision = decideApproval(pending.action.toolName, pending.action.input, pending.id);
+    if (decision.approved) approvalCount += 1;
+    else deniedApprovals += 1;
+    return await runtime.resume({ runId: waiting.runId, approvalDecision: decision });
+  }
+  const blocked = runs.find((run) => run.status === "blocked");
+  if (blocked !== undefined) {
+    const view = await runtime.inspect(blocked.runId);
+    if (view.snapshot.resumePredicate?.kind === "budget_extension") {
+      budgetExtensions += 1;
+      return await runtime.resume({
+        runId: blocked.runId,
+        budgetExtension: { iterations: 20, modelCalls: 20, toolCalls: 20, retries: 1 }
+      });
+    }
+  }
+  throw new Error("The retained workspace has no Run waiting for Approval or a Budget Extension.");
+}
+
+/**
+ * The Canary Host decides every protected Tool Approval itself. An action outside the
+ * allowlist is denied through the normal Approval channel so the Run still reaches a
+ * reportable terminal state instead of killing the Canary before it writes anything.
+ */
+function decideApproval(toolName: string, input: unknown, requestId: string): ApprovalDecision {
+  const violation = approvalViolation(toolName, input);
+  return violation === null
+    ? { requestId, approved: true }
+    : { requestId, approved: false, reason: `Canary host policy refused ${toolName}: ${violation}` };
+}
+
+function approvalViolation(toolName: string, input: unknown): string | null {
+  if (input === null || typeof input !== "object") return "the Tool input is not an object.";
   const record = input as Record<string, unknown>;
   if (toolName === "filesystem.write" || toolName === "filesystem.patch") {
-    if (typeof record.path !== "string" || !ALLOWED_FILES.has(record.path)) {
-      throw new Error(`Canary refused write outside its allowlist: ${String(record.path)}`);
-    }
-    return;
+    return typeof record.path === "string" && ALLOWED_FILES.has(record.path)
+      ? null
+      : `writes are limited to ${[...ALLOWED_FILES].join(", ")}.`;
   }
   if (toolName === "shell.execute") {
-    const command = record.command;
-    const args = record.args;
-    const cwd = record.cwd;
-    const allowedCommand = command === "node" || command === process.execPath;
-    const allowedArgs = Array.isArray(args) && (
-      (args.length === 1 && args[0] === "verify.mjs")
-      || (args.length === 2 && args[0] === "--check" && args[1] === "app.js")
-    );
-    if (!allowedCommand || !allowedArgs || cwd !== ".") {
-      throw new Error("Canary refused a shell command outside its Node verification allowlist.");
+    if (record.command !== "node" && record.command !== process.execPath) {
+      return "only the Node executable may be run.";
     }
-    return;
+    if (record.cwd !== ".") return 'the command must run with cwd ".".';
+    const args = record.args;
+    if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
+      return "command arguments must be strings.";
+    }
+    const argv = args as readonly string[];
+    if (argv.length === 2 && argv[0] === "--check" && ALLOWED_FILES.has(argv[1] as string)) {
+      return null;
+    }
+    if (!ALLOWED_FILES.has(argv[0] as string)) {
+      return "only a workspace file may be run as a script.";
+    }
+    return argv.length <= 4 && argv.every((arg) => /^[\w.-]{1,64}$/.test(arg))
+      ? null
+      : "workspace script arguments must be short plain tokens.";
   }
-  throw new Error(`Canary refused protected Tool: ${toolName}`);
+  return `protected Tool ${toolName} is outside the Canary allowlist.`;
 }

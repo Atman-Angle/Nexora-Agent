@@ -31,7 +31,7 @@ describe("E054 CLI dotenv autoload", () => {
 
     expect(result.code).toBe(2);
     expect(JSON.parse(result.stdout).stopReason).toBe("INPUT_REQUIRED");
-    expect(provider.calls).toBe(2);
+    expect(provider.calls).toBe(1);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(secret);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain(provider.baseUrl);
   });
@@ -51,7 +51,7 @@ describe("E054 CLI dotenv autoload", () => {
     });
 
     expect(result.code).toBe(2);
-    expect(provider.calls).toBe(2);
+    expect(provider.calls).toBe(1);
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("explicit-secret");
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("file-secret");
   });
@@ -104,6 +104,21 @@ async function providerStub(): Promise<{ readonly baseUrl: string; readonly call
   const server = createServer(async (request, response) => {
     for await (const _chunk of request) { /* consume request */ }
     calls += 1;
+    const message = {
+      content: null,
+      tool_calls: [{
+        id: "native-request-input",
+        type: "function",
+        function: {
+          name: "nexora_request_input",
+          arguments: JSON.stringify({
+            question: "Which target should be used?",
+            reason: "The task does not identify a target.",
+            basis: "user_exclusive"
+          })
+        }
+      }]
+    };
     const content = {
       text: null,
       toolCalls: [{
@@ -116,7 +131,7 @@ async function providerStub(): Promise<{ readonly baseUrl: string; readonly call
       finishReason: "tool_calls"
     };
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+    response.end(JSON.stringify({ choices: [{ message }] }));
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -134,7 +149,6 @@ function providerEnvFile(baseUrl: string, apiKey: string): string {
     `NEXORA_MODEL_BASE_URL=${baseUrl}`,
     `NEXORA_MODEL_API_KEY=${apiKey}`,
     "NEXORA_MODEL_NAME=qwen3.7-flash",
-    "NEXORA_MODEL_TOOL_TRANSPORT=structured_output",
     "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
     "NEXORA_MODEL_TIMEOUT_MS=10000",
     ""

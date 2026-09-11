@@ -1,0 +1,1 @@
+export function date-window(value) { return value.trim().replace(/\s+/g, " "); }

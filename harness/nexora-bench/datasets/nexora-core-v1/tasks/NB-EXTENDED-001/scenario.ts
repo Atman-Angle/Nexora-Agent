@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { modelResponses } from "@nexora/harness";
+import { modelResponses, NATIVE_FUNCTION_CALLING_CAPABILITIES } from "@nexora/harness";
 import { join } from "node:path";
 
 import {
@@ -22,6 +22,7 @@ export const createScenario: ScenarioFactory = () => ({
 
 function provider(): RuntimeProvider {
   return {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(context: ModelDecisionContext) {
       if (context.run.currentPlan === null) {
         const readTask = (start: number) => ({

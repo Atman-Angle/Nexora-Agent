@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-complex-mixed-workflow-validation-03",
+  "expectedPaths": [
+    "report.md"
+  ],
+  "referenceStateDigest": "sha256:7c25f2c068a20a6c684bbda2faf62ec434a7a04a7dd9c1246229ccbec24c88a5"
+}

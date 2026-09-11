@@ -1,0 +1,50 @@
+{
+  "files": [
+    {
+      "id": "expected-1",
+      "path": "src/transform.js",
+      "exists": true,
+      "equals": "export function config-loader(value) { return value.trim().replace(/\\s+/g, \" \"); }\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "independent-verifier",
+      "command": "node",
+      "args": [
+        "verify.mjs"
+      ],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": [],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": [
+      {
+        "toolName": "filesystem.list",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.patch",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "shell.execute",
+        "status": "succeeded",
+        "count": 1
+      }
+    ]
+  }
+}

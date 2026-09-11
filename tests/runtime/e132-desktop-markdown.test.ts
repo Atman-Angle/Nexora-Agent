@@ -96,14 +96,14 @@ describe("E132 Desktop compact process output and deliverables", () => {
     expect(source).toContain("if (!formalResult) continue");
   });
 
-  it("keeps detailed Tool facts inline and removes the old Activity execution UI", () => {
+  it("keeps detailed Tool facts inline and restores the persisted Activity view", () => {
     const source = readFileSync(resolve("apps/desktop/src/renderer/app.ts"), "utf8");
     expect(source).toContain("function executionTranscript(run:");
     expect(source).toContain("toolDetail(invocation, services)");
     expect(source).toContain("run.inspection.evidence");
-    expect(source).not.toContain("function activity(session: SessionView)");
-    expect(source).not.toContain('data-view="activity"');
-    expect(source).not.toContain("activityTimeline");
+    expect(source).toContain("function activity(session: SessionView)");
+    expect(source).toContain('data-view="activity"');
+    expect(source).toContain("run.history.records");
   });
 
   it("shows the real model Context window and keeps transient automatic eviction out of Conversation", () => {

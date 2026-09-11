@@ -4,7 +4,10 @@ import { ActionRejectedError, errorMessage } from "@nexora/runtime/internal";
 import type { RunSnapshot, RuntimeAction } from "@nexora/runtime/internal";
 import type { AgentDriver, AgentRuntimePort } from "@nexora/runtime/internal";
 import type { RunResult, RuntimeObserver } from "@nexora/runtime/internal";
-import type { RuntimeProvider } from "./providers/model-client.js";
+import {
+  validateNativeFunctionCallingCapabilities,
+  type RuntimeProvider
+} from "./providers/model-client.js";
 import { resolveProviderModelProfile } from "./context/budget.js";
 import { buildDecisionContext } from "./context/decision-context.js";
 import { MemoryScopeSchema } from "./memory/index.js";
@@ -23,14 +26,13 @@ import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
-  DIRECT_RESPONSE_CONTROL,
   isControlCall
 } from "./providers/model-response.js";
 import {
   resolvePromptHostConfiguration,
   type PromptHostConfiguration
 } from "./profile.js";
-import { planControlState } from "./prompt.js";
+import { planControlState, type ToolCatalogProjection } from "./prompt.js";
 import { DEFAULT_DELEGATION_POLICY, DelegationPolicySchema, type DelegationPolicy } from "./multi-agent.js";
 import { SkillCatalog } from "./skills.js";
 import type { CodingStrategyMode } from "./coding-strategy.js";
@@ -66,7 +68,9 @@ export function createAgent(options: CreateAgentOptions): RuntimeEngine {
       options.publicOutputListener,
       options.codingStrategy ?? "auto",
       options.hybridContext ?? "on",
-      options.codingExecutionCadence ?? "on"
+      options.codingExecutionCadence ?? "on",
+      options.contextProjectionDedupe ?? "on",
+      options.toolCatalogProjection ?? "full"
     );
     return new RuntimeEngine({
       workspace: options.workspace,
@@ -110,11 +114,18 @@ function validateProvider(provider: RuntimeProvider): RuntimeProvider {
   ) {
     throw new Error("Runtime Provider must implement decide().");
   }
+  if (provider.transport !== undefined && provider.transport.kind !== "native_tools") {
+    throw new Error('Runtime Provider supports only "native_tools" transport.');
+  }
+  if (provider.nativeFunctionCalling === undefined) {
+    throw new Error("Runtime Provider must declare native Function Calling capabilities.");
+  }
+  validateNativeFunctionCallingCapabilities(provider.nativeFunctionCalling);
   return provider;
 }
 
 function validateReservedToolNames(tools: CreateAgentOptions["tools"]): void {
-  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL, DELEGATE_WORKERS_CONTROL, DIRECT_RESPONSE_CONTROL, "nexora_select_skills"]);
+  const reserved = new Set([UPDATE_PLAN_CONTROL, REQUEST_INPUT_CONTROL, DELEGATE_WORKERS_CONTROL, "nexora_select_skills"]);
   const conflict = tools.find((tool) => reserved.has(tool.contract.identity.name));
   if (conflict !== undefined) {
     throw new Error(`Runtime Tool name is reserved for a Harness control: ${conflict.contract.identity.name}`);
@@ -148,7 +159,9 @@ function createAgentDriver(
   publicOutputListener: AgentPublicOutputListener | undefined,
   codingStrategy: CodingStrategyMode,
   hybridContext: "on" | "off",
-  codingExecutionCadence: "on" | "off"
+  codingExecutionCadence: "on" | "off",
+  contextProjectionDedupe: "on" | "off",
+  toolCatalogProjection: ToolCatalogProjection
 ): AgentDriver {
   return {
     async run(runtime, initial, signal, observer): Promise<RunResult> {
@@ -164,7 +177,9 @@ function createAgentDriver(
           publicOutputListener,
           codingStrategy,
           hybridContext,
-          codingExecutionCadence
+          codingExecutionCadence,
+          contextProjectionDedupe,
+          toolCatalogProjection
         }),
         initial,
         signal,
@@ -189,6 +204,8 @@ function createLoopPort(input: {
   readonly codingStrategy: CodingStrategyMode;
   readonly hybridContext: "on" | "off";
   readonly codingExecutionCadence: "on" | "off";
+  readonly contextProjectionDedupe: "on" | "off";
+  readonly toolCatalogProjection: ToolCatalogProjection;
 }): AgentLoopRuntimePort {
   const {
     runtime,
@@ -201,7 +218,9 @@ function createLoopPort(input: {
     publicOutputListener,
     codingStrategy,
     hybridContext,
-    codingExecutionCadence
+    codingExecutionCadence,
+    contextProjectionDedupe,
+    toolCatalogProjection
   } = input;
   return {
     now: () => runtime.now(),
@@ -259,7 +278,9 @@ function createLoopPort(input: {
         promptHost,
         publicOutputListener,
         hybridContext,
-        codingExecutionCadence
+        codingExecutionCadence,
+        contextProjectionDedupe,
+        toolCatalogProjection
       ),
       run,
       context,
@@ -280,12 +301,16 @@ function createLoopPort(input: {
     failForBudget: (run, activeStartedAt, observer) => {
       return runtime.enforceBudget(run, activeStartedAt, observer);
     },
-    enforceConvergence: (run, observer) => runtime.enforceConvergence(run, observer),
+    proposeTaskFailure: (run, input, observer) => runtime.proposeTaskFailure(run, input, observer),
+    recordConvergenceEvent: (runId, payload, observer) => runtime.recordAgentEvent(runId, {
+      type: "runtime.event",
+      payload
+    }, observer),
     finalizeBudget: (run, activeStartedAt, summary, observer) => (
       runtime.finalizeBudget(run, activeStartedAt, summary, observer)
     ),
-    blockForProvider: (run, error, observer) => (
-      runtime.blockForProvider(run, error, observer)
+    admitProviderBoundary: (run, proposal, observer) => (
+      runtime.admitProviderBoundary(run, proposal, observer)
     ),
     cadenceMode: codingExecutionCadence,
     recordModelResponse: (
@@ -453,7 +478,8 @@ function createLoopPort(input: {
     rejectResponse: (run, error, rawResponse, observer) => (
       runtime.rejectModelResponse(run, error, rawResponse, observer)
     ),
-    snapshot: (runId) => runtime.readState(runId).run
+    snapshot: (runId) => runtime.readState(runId).run,
+    readState: (runId) => runtime.readState(runId)
   };
 }
 
@@ -485,7 +511,9 @@ function gatewayServices(
   promptHost: PromptHostConfiguration,
   publicOutputListener: AgentPublicOutputListener | undefined,
   hybridContext: "on" | "off",
-  codingExecutionCadence: "on" | "off"
+  codingExecutionCadence: "on" | "off",
+  contextProjectionDedupe: "on" | "off",
+  toolCatalogProjection: ToolCatalogProjection
 ): RequestModelServices {
   return {
     provider,
@@ -495,6 +523,8 @@ function gatewayServices(
     ...(publicOutputListener === undefined ? {} : { publicOutputListener }),
     hybridContext,
     codingExecutionCadence,
+    contextProjectionDedupe,
+    toolCatalogProjection,
     ...(memory === undefined ? {} : { memory })
   };
 }

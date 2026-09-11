@@ -119,6 +119,7 @@ export type {
   MemoryCandidate,
   MemoryCandidateReason,
   ModelDecisionContext,
+  NativeFunctionCallingCapabilities,
   NativeToolContinuation,
   ModelCallPhase,
   ProjectedRunContext,
@@ -128,6 +129,9 @@ export type {
   ProviderTokenMeasurement,
   ProviderTokenMeter,
   ProviderTokenUsage,
+  ProviderWireSectionTelemetry,
+  ProviderWireTelemetry,
+  ProviderWireTransportTelemetry,
   ReasoningPolicy,
   RuntimeOperationContext,
   RuntimeProvider,
@@ -135,6 +139,10 @@ export type {
   SessionArchiveMilestone,
   SessionArchiveRange,
   ToolObservation
+} from "./providers/model-client.js";
+export {
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
+  validateNativeFunctionCallingCapabilities
 } from "./providers/model-client.js";
 
 export {
@@ -145,6 +153,7 @@ export {
   ProjectInstructionSchema,
   createAgentProfileSnapshot,
   createProjectInstruction,
+  resolvePromptHostConfiguration,
   type AgentProfile,
   type AgentProfileSnapshot,
   type AgentProfileSource,
@@ -166,7 +175,8 @@ export {
   type ProviderPromptCachePolicy,
   type ProviderToolContract,
   type ProviderTransportProfile,
-  type RuntimeDirective
+  type RuntimeDirective,
+  type ToolCatalogProjection
 } from "./prompt.js";
 
 export {
@@ -175,8 +185,6 @@ export {
   ModelPlanTaskSchema,
   ProviderToolCallSchema,
   ModelInputRequestSchema,
-  ModelDirectResponseSchema,
-  DIRECT_RESPONSE_CONTROL,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
@@ -187,7 +195,6 @@ export {
   type ModelPlanTask,
   type ProviderToolCall,
   type ModelInputRequest,
-  type ModelDirectResponse,
   SkillSelectionInputSchema,
   type SkillSelectionInput,
   isControlCall
@@ -205,7 +212,6 @@ export {
   type ProviderAdapterDefinition,
   type ProviderCompletionOperation,
   type ProviderCompletionRequest,
-  type ProviderResponseFormat,
   type ProviderRequestTokenMeter
 } from "./providers/adapter.js";
 

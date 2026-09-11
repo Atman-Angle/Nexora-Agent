@@ -11,7 +11,7 @@ const INITIAL_DIGEST = `sha256:${createHash("sha256")
 
 export function createAcceptanceProvider() {
   return defineProviderAdapter({
-    transport: { kind: "structured_output", promptCache: { mode: "automatic" } },
+    transport: { kind: "native_tools", promptCache: { mode: "automatic" } },
     async complete(request, operation) {
       const payload = JSON.parse(request.input) as {
         readonly originalTaskContract: {
@@ -81,7 +81,7 @@ export function createAcceptanceProvider() {
       if (completedTools.length === 2) {
         return modelResponses.tool({ name: "filesystem.read", arguments: { path: file } });
       }
-      return modelResponses.direct({ text: `Changed and verified ${file}.` });
+      return modelResponses.text(`Changed and verified ${file}.`);
     }
   });
 }

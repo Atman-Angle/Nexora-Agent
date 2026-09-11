@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createBuiltInTools,
   createRuntime,
   type ModelDecisionContext,
@@ -321,7 +321,7 @@ function scriptedProvider(
   contexts: ModelDecisionContext[] = []
 ): RuntimeProvider {
   let index = 0;
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(context) {
       contexts.push(context);
       const decision = decisions[index++];
@@ -332,6 +332,7 @@ function scriptedProvider(
 }
 
 class FailedStrategyReplanProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #calls = 0;
   failureRepair: ModelDecisionContext["repair"] = null;
 

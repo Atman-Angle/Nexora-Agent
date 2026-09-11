@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-local-information-discovery-analysis-validation-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "local_information_discovery_analysis",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "validation",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Inspect the local deployment notes, extract the owner and priority, and write a concise evidence-linked findings note without changing source material.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-local-information-discovery-analysis-validation-01/fixture",
+      "digest": "sha256:e0cb81c04f5783f5736c4bdae74f2c4695751ce9488aa9046b61bf415605bf77"
+    },
+    "scenario": "release-v1/tasks/v1-local-information-discovery-analysis-validation-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-local-information-discovery-analysis-validation-01.grader.json",
+    "graderDigest": "sha256:22122a27a62fed8801b9ecdf0f8796f34903c264133bf4021b8725b78becfd76",
+    "referenceRef": "release-v1/sealed/v1-local-information-discovery-analysis-validation-01.reference.json",
+    "referenceDigest": "sha256:ed30587eafa49eed67e6a0950c9bf940e3af04853ed53ced88b1cf80f8ffed27",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-local-information-discovery-analysis-validation-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:fea376efcf91a11a98fbc25c6d878386d4ca0802911f5aed4652258eadc3e218",
+    "fixtureDigest": "sha256:e0cb81c04f5783f5736c4bdae74f2c4695751ce9488aa9046b61bf415605bf77"
+  }
+}

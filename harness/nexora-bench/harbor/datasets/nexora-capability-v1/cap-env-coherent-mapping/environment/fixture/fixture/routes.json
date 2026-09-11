@@ -1,0 +1,6 @@
+{
+  "routes": [
+    { "path": "/v1/login", "service": "billing" },
+    { "path": "/v1/user", "service": "checkout" }
+  ]
+}

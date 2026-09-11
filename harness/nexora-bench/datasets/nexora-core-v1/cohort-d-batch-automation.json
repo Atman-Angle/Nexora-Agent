@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-d-batch-automation",
+  "version": 1,
+  "description": "Harbor capability cohort D: realistic manifest-driven batch file reorganisation task.",
+  "tasks": [
+    "tasks/cap-batch-manifest-reorganize/task.json"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "taskId": "cap-data-tax-reconcile",
+  "reviewStatus": "PENDING_HUMAN_REVIEW",
+  "reviewer": null,
+  "reviewedAt": null,
+  "decision": null,
+  "qualificationEvidence": ".tmp/cohort-g-data-tax-reconcile-qualification/report.json",
+  "reviewNotes": []
+}

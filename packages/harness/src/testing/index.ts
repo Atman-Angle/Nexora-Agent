@@ -19,6 +19,7 @@ import {
 import {
   RuntimeError,
   createAgent,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   type RunFinalResult,
   type RuntimeEngine,
   type RuntimeErrorCode,
@@ -27,7 +28,6 @@ import {
   type RuntimeTool
 } from "../index.js";
 import {
-  DIRECT_RESPONSE_CONTROL,
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   type ModelResponse
@@ -57,6 +57,7 @@ type ScriptedInputTurn = {
   readonly kind: "input";
   readonly question: string;
   readonly reason: string;
+  readonly basis?: "user_exclusive" | "workspace" | "tool" | "context" | "persisted_fact";
 };
 
 type ScriptedFinishTurn = {
@@ -105,6 +106,7 @@ export const modelResponses = Object.freeze({
   input(input: {
     readonly question: string;
     readonly reason: string;
+    readonly basis?: "user_exclusive" | "workspace" | "tool" | "context" | "persisted_fact";
   }): ScriptedModelResponse {
     return Object.freeze({
       [SCRIPTED_MODEL_RESPONSE]: true as const,
@@ -138,6 +140,7 @@ export function createScriptedProvider(input: {
   let decisionIndex = 0;
 
   const provider: RuntimeProvider = {
+    nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(context, operation) {
       operation.signal.throwIfAborted();
       const descriptor = modelResponses[decisionIndex];
@@ -289,20 +292,20 @@ function materializeModelResponse(
       toolCalls: [{
         callId: `scripted-${decisionIndex}-0`,
         name: REQUEST_INPUT_CONTROL,
-        arguments: { question: descriptor.question, reason: descriptor.reason }
+        arguments: {
+          question: descriptor.question,
+          reason: descriptor.reason,
+          basis: descriptor.basis ?? "user_exclusive"
+        }
       }],
       finishReason: "tool_calls"
     };
   }
   if (descriptor.kind === "finish") {
     return {
-      text: null,
-      toolCalls: [{
-        callId: `scripted-${decisionIndex}-0`,
-        name: DIRECT_RESPONSE_CONTROL,
-        arguments: { text: descriptor.summary }
-      }],
-      finishReason: "tool_calls"
+      text: descriptor.summary,
+      toolCalls: [],
+      finishReason: "stop"
     };
   }
 

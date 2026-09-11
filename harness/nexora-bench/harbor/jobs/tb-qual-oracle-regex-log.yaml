@@ -1,0 +1,13 @@
+jobs_dir: jobs-output
+n_attempts: 1
+n_concurrent_trials: 1
+environment:
+  type: docker
+agents:
+  - name: oracle
+verifier:
+  import_path: harbor.verifier.verifier:Verifier
+datasets:
+  - path: .tmp-tb/terminal-bench
+    task_names:
+      - regex-log

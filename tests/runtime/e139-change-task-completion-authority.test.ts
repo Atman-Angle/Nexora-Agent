@@ -54,7 +54,7 @@ describe("E139 change-task completion authority", () => {
     await runtime.close();
   });
 
-  it("rejects mutation-only Evidence when the planned verifier was omitted", async () => {
+  it("keeps an omitted planned verifier outside Runtime mechanical terminal admission", async () => {
     const workspace = tempRoot();
     writeFileSync(join(workspace, "target.txt"), "before", "utf8");
     const provider = new ScriptedRuntimeProvider([
@@ -74,11 +74,11 @@ describe("E139 change-task completion authority", () => {
     }));
     const view = await runtime.inspect(result.runId);
 
-    expect(result.status).not.toBe("succeeded");
+    expect(result.status).toBe("succeeded");
     expect(readFileSync(join(workspace, "target.txt"), "utf8")).toBe("after");
     expect(view.toolInvocations.some((invocation) => invocation.toolName === "project.verify")).toBe(false);
     expect(JSON.stringify(view.events.filter((event) => event.type === "response.rejected")))
-      .toContain("STEP_VERIFICATION_REQUIRED");
+      .not.toContain("STEP_VERIFICATION_REQUIRED");
     await runtime.close();
   });
 

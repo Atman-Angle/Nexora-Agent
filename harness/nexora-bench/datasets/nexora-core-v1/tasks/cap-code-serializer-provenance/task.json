@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-code-serializer-provenance",
+  "revision": 1,
+  "datasetVersion": "0.1.0-cohort-f",
+  "family": "coding_repository_change",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "The event serializer substitutes the wall clock for the supplied event timestamp. Locate the defect, fix it without changing the public API, and run the provided tests.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "tasks/cap-code-serializer-provenance/fixture",
+      "digest": "sha256:8ef954374e06b1a6b65e4534b9c46c9faac57a5d5928d68a162b4ccf975bdca7"
+    },
+    "scenario": "tasks/cap-code-serializer-provenance/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "package.json",
+      "tests/verify.mjs",
+      "src/collector.js"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "tasks/cap-code-serializer-provenance/grader.json",
+    "graderDigest": "sha256:990a8a95dbf51fcb63b366b7e6d8ac29fdeb8b6631bb341795b0137d7c17700c"
+  },
+  "humanReviewRef": "tasks/cap-code-serializer-provenance/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:3b3f17a159f0bf690c413185ccf82da448629d5a06e066f7f78a4f8c444f12c6",
+    "fixtureDigest": "sha256:8ef954374e06b1a6b65e4534b9c46c9faac57a5d5928d68a162b4ccf975bdca7"
+  }
+}

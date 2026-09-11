@@ -19,10 +19,12 @@ import {
 import type {
   ModelDecisionContext,
   ProviderTokenUsage,
+  ProviderWireTelemetry,
   RuntimeProvider
 } from "./providers/model-client.js";
 import type { PromptHostConfiguration } from "./profile.js";
 import { compilePrompt, type CompiledPrompt } from "./prompt.js";
+import type { ToolCatalogProjection } from "./prompt.js";
 import { contextSection } from "./context/hybrid-context.js";
 
 export type RequestModelServices = {
@@ -36,6 +38,10 @@ export type RequestModelServices = {
   readonly hybridContext: "on" | "off";
   /** Eval-only coding cadence switch; product default is ON. */
   readonly codingExecutionCadence: "on" | "off";
+  /** A/B switch for native continuation observation projection. */
+  readonly contextProjectionDedupe: "on" | "off";
+  /** Eval-only Prompt projection switch; product default is full. */
+  readonly toolCatalogProjection: ToolCatalogProjection;
 };
 
 export type RequestModelResult =
@@ -82,8 +88,10 @@ export async function requestModel(
     host: services.promptHost,
     hybridContext: services.hybridContext,
     codingExecutionCadence: services.codingExecutionCadence,
+    contextProjectionDedupe: services.contextProjectionDedupe,
+    toolCatalogProjection: services.toolCatalogProjection,
     transport: services.provider.transport ?? {
-      kind: "structured_output",
+      kind: "native_tools",
       promptCache: { mode: "disabled" }
     }
   });
@@ -120,6 +128,8 @@ export async function requestModel(
         host: services.promptHost,
         hybridContext: services.hybridContext,
         codingExecutionCadence: services.codingExecutionCadence,
+        contextProjectionDedupe: services.contextProjectionDedupe,
+        toolCatalogProjection: services.toolCatalogProjection,
         transport: effectivePrompt.transport,
         strategyConfigurationDigest
       });
@@ -152,6 +162,8 @@ export async function requestModel(
     host: services.promptHost,
     hybridContext: services.hybridContext,
     codingExecutionCadence: services.codingExecutionCadence,
+    contextProjectionDedupe: services.contextProjectionDedupe,
+    toolCatalogProjection: services.toolCatalogProjection,
     transport: effectivePrompt.transport,
     measurement: assessment.measurement,
     strategyConfigurationDigest
@@ -217,7 +229,7 @@ export async function requestModel(
     signal.throwIfAborted();
     const output = await services.runtime.withHeartbeat(requested.runId, async () => {
       let lastError: unknown;
-      for (let attemptNumber = 1; attemptNumber <= 3; attemptNumber += 1) {
+      for (let attemptNumber = 1; attemptNumber <= 5; attemptNumber += 1) {
         signal.throwIfAborted();
         const attemptId = services.runtime.createId();
         services.runtime.beginProviderAttempt(requested.runId, {
@@ -234,6 +246,7 @@ export async function requestModel(
           })
         });
         let attemptUsage: ProviderTokenUsage | undefined;
+        let attemptWireTelemetry: ProviderWireTelemetry | undefined;
         let publicSequence = 0;
         let publicReasoning = "";
         let publicContent = "";
@@ -242,6 +255,7 @@ export async function requestModel(
             signal,
             compiledPrompt: effectivePrompt,
             reportTokenUsage: (usage) => { attemptUsage = parseProviderTokenUsage(usage); },
+            reportWireTelemetry: (telemetry) => { attemptWireTelemetry = telemetry; },
             ...(services.publicOutputListener === undefined ? {} : {
               reportPublicTextDelta: (text: string, channel = "content") => {
                 if (text.length === 0) return;
@@ -273,6 +287,16 @@ export async function requestModel(
             successfulPublicAttempt = { attemptId, sequence: publicSequence + 2 };
           }
           if (attemptUsage !== undefined) reportUsage(attemptUsage);
+          recordWireTelemetry(
+            services,
+            requested.runId,
+            intent.id,
+            attemptId,
+            attemptWireTelemetry,
+            attemptUsage,
+            assessment.measurement.inputTokens,
+            observer
+          );
           services.runtime.completeProviderAttempt(requested.runId, {
             attemptId,
             callId: intent.id,
@@ -312,6 +336,16 @@ export async function requestModel(
           }
           lastError = error;
           const cancelled = signal.aborted;
+          recordWireTelemetry(
+            services,
+            requested.runId,
+            intent.id,
+            attemptId,
+            attemptWireTelemetry,
+            attemptUsage,
+            assessment.measurement.inputTokens,
+            observer
+          );
           services.runtime.completeProviderAttempt(requested.runId, {
             attemptId,
             callId: intent.id,
@@ -327,8 +361,8 @@ export async function requestModel(
               ...(attemptUsage.cache === undefined ? {} : { providerUsage: attemptUsage.cache })
             })
           });
-          if (cancelled || !isRetryableProviderError(error) || attemptNumber === 3) throw error;
-          await retryBackoff(250 * 2 ** (attemptNumber - 1), signal);
+          if (cancelled || !isRetryableProviderError(error) || attemptNumber === 5) throw error;
+          await retryBackoff(500 * 2 ** (attemptNumber - 1), signal);
         }
       }
       throw lastError;
@@ -382,6 +416,49 @@ export async function requestModel(
       return { outcome: "failed", run: requested, error: ledgerError };
     }
     return { outcome: "failed", run: requested, error };
+  }
+}
+
+function recordWireTelemetry(
+  services: RequestModelServices,
+  runId: string,
+  callId: string,
+  attemptId: string,
+  telemetry: ProviderWireTelemetry | undefined,
+  usage: ProviderTokenUsage | undefined,
+  budgetMeasuredInputTokens: number,
+  observer: RuntimeObserver | undefined
+): void {
+  if (telemetry === undefined) return;
+  try {
+    const providerVisibleEstimatedInputTokens = Math.ceil(telemetry.finalRequest.bytes / 4);
+    services.runtime.recordAgentEvent(runId, {
+      type: "model.wire_telemetry",
+      payload: {
+        callId,
+        attemptId,
+        telemetry,
+        finalRequestBytes: telemetry.finalRequest.bytes,
+        finalRequestDigest: telemetry.finalRequest.digest,
+        budgetMeasuredInputTokens,
+        providerVisibleEstimatedInputTokens,
+        providerVisibleMeasurementMethod: "estimated",
+        providerVisibleMeter: "nexora:provider-visible:utf8-bytes/4",
+        actualProviderInputTokens: usage?.inputTokens ?? null,
+        actualProviderOutputTokens: usage?.outputTokens ?? null,
+        actualProviderTotalTokens: usage?.totalTokens ?? null,
+        providerVisibleMeasurementDelta: usage === undefined
+          ? null
+          : usage.inputTokens - providerVisibleEstimatedInputTokens,
+        actualInputTokens: usage?.inputTokens ?? null,
+        actualOutputTokens: usage?.outputTokens ?? null,
+        actualTotalTokens: usage?.totalTokens ?? null,
+        cache: usage?.cache ?? null
+      }
+    }, observer);
+  } catch {
+    // Telemetry is observational and must not change Provider execution or
+    // Runtime decision authority when its audit write is unavailable.
   }
 }
 
@@ -571,7 +648,12 @@ function providerErrorCategory(error: unknown): "PROVIDER_CONNECT_TIMEOUT" | "PR
   if (message.includes("no response data") || message.includes("idle timeout")) return "PROVIDER_IDLE_TIMEOUT";
   if (message.includes("provider http") || code.startsWith("HTTP_")) return "PROVIDER_HTTP_ERROR";
   if (message.includes("invalid") || message.includes("unknown structured tool") || message.includes("invalid json")) return "PROVIDER_RESPONSE_INVALID";
-  if (code === "PROVIDER_UNAVAILABLE" || message.includes("unavailable") || message.includes("network")) return "PROVIDER_UNAVAILABLE";
+  if (
+    code === "PROVIDER_UNAVAILABLE"
+    || message.includes("unavailable")
+    || message.includes("network")
+    || message.includes("fetch failed")
+  ) return "PROVIDER_UNAVAILABLE";
   return "PROVIDER_ERROR";
 }
 

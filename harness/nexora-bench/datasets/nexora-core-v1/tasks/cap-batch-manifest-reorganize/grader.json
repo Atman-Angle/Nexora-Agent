@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "id": "archive-index",
+      "path": "index.md",
+      "exists": true,
+      "equals": "# archive index\nalpha.log\nbeta.log\ngamma.log\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "independent-verifier",
+      "command": "node",
+      "args": ["verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": ["manifest.txt", "verify.mjs"],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": []
+  }
+}

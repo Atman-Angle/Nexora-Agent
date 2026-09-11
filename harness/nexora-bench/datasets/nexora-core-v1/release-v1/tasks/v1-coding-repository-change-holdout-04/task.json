@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-coding-repository-change-holdout-04",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "coding_repository_change",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "basic",
+  "horizon": "multi_stage",
+  "split": "holdout",
+  "source": "real_workflow",
+  "agentVisible": {
+    "instruction": "Repair the cache-key helper so normalized input follows the documented repository behavior, preserve its exported API, and run the supplied tests.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-coding-repository-change-holdout-04/fixture",
+      "digest": "sha256:7bbb13e9ce4d16d256dc3e8dbb48034a86ae17f3428b7fd2189d4329995f67d6"
+    },
+    "scenario": "release-v1/tasks/v1-coding-repository-change-holdout-04/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-coding-repository-change-holdout-04.grader.json",
+    "graderDigest": "sha256:0ab7adde81cd62fabddb210b27f610dabd2fd19d648d2e41116ef083745c87f9",
+    "referenceRef": "release-v1/sealed/v1-coding-repository-change-holdout-04.reference.json",
+    "referenceDigest": "sha256:359088556639c3d76004f8a6efa9a5b7498aa350e948f5d8d397b75c5f4a6f01",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-coding-repository-change-holdout-04.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:54ac881613f344bac16bea142a59d58dae66b4b2265271e56e0ee2bd5d128084",
+    "fixtureDigest": "sha256:7bbb13e9ce4d16d256dc3e8dbb48034a86ae17f3428b7fd2189d4329995f67d6"
+  }
+}

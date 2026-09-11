@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-data-tax-reconcile",
+  "revision": 1,
+  "datasetVersion": "0.1.0-cohort-g",
+  "family": "file_data_transformation",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Reconcile the per-region sales amounts with the tax rates and write a validated report with subtotal, tax and total per region.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "tasks/cap-data-tax-reconcile/fixture",
+      "digest": "sha256:8bafdea8e05b4e2c6f0dd5e2a1dcf6f8ffaa2ffb591aea11ece73928c20e2671"
+    },
+    "scenario": "tasks/cap-data-tax-reconcile/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "sales.csv",
+      "rates.csv",
+      "verify.mjs"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "tasks/cap-data-tax-reconcile/grader.json",
+    "graderDigest": "sha256:c424d922150448a061b6e635939fa33f05a233abdabb5e7388d293bdecc70182"
+  },
+  "humanReviewRef": "tasks/cap-data-tax-reconcile/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:e73b6f9e1de51b5b8223c7839c28b40d17bfce88fcb04f2c6448f1d7cc6d5fb0",
+    "fixtureDigest": "sha256:8bafdea8e05b4e2c6f0dd5e2a1dcf6f8ffaa2ffb591aea11ece73928c20e2671"
+  }
+}

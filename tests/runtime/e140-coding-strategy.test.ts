@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   codingPhaseGuidance,
   compactCodingToolObservations,
   createAgent,
@@ -191,6 +191,7 @@ describe("E140 Coding Strategy v0.1", () => {
 });
 
 class CapturingProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly contexts: ModelDecisionContext[] = [];
   readonly promptInputs: string[] = [];
 

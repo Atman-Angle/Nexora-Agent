@@ -36,7 +36,7 @@ Run `a8db8614-71fa-45b8-ac7e-b6f270a366ee`：
 - 用户询问当前网站为什么需要登录才能查看 Solutions；
 - 第一次 Model Turn 没有读取 Workspace，直接提出完成；
 - Completion Gate 以 `COMPLETION_EVIDENCE_REQUIRED` 拒绝；
-- 第二次 Model Call 使用 `nexora_respond` 成功，但仍未读取当前文件；
+- 第二次 Model Call 使用当时仍存在的 direct-response control 成功，但仍未读取当前文件；
 - 两次调用分别携带约 353K input tokens，共耗时约 103 秒。
 
 问题不是 Completion Gate 太严格，而是 Harness 对“当前 Workspace 可变事实”的 grounding 边界不够明确，导致额外轮次和可能错误的结论。

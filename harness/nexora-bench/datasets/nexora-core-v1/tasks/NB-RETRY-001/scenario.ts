@@ -13,9 +13,9 @@ export const createScenario: ScenarioFactory = () => ({
     constraints: ["Do not modify source.txt."],
     acceptanceCriteria: ["result.txt exactly matches source.txt.", "verify.mjs succeeds."],
     tasks: [
-      { objective: "Read the transient value", capability: "fixture.transient_read", arguments: { path: "source.txt" } },
-      { objective: "Persist the exact value", capability: "filesystem.write", arguments: { path: "result.txt", content: "transient-service-value=ready\n" } },
-      { objective: "Validate the persisted value", capability: "shell.execute", arguments: { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 } }
+      { objective: "Read the transient value", capability: "fixture.transient_read", arguments: { path: "source.txt" }, checks: [{ toolName: "fixture.transient_read", role: "verification" }] },
+      { objective: "Persist the exact value", capability: "filesystem.write", arguments: { path: "result.txt", content: "transient-service-value=ready\n" }, checks: [{ toolName: "filesystem.write", role: "mutation" }] },
+      { objective: "Validate the persisted value", capability: "shell.execute", arguments: { command: "node", args: ["verify.mjs"], cwd: ".", timeoutMs: 60_000 }, checks: [{ toolName: "shell.execute", role: "verification" }] }
     ],
     summary: "The transient read recovered from a 503 and the exact value was independently verified."
   })

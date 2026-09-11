@@ -2,13 +2,20 @@
 
 ## Harbor
 
-The `HB-*` smoke tasks are adapted from `harbor-framework/harbor` commit `b7e2f71b4563618af3a42279740f5f412dcf7046`.
+The production evaluation integration depends on Harbor 0.22.0 without modifying
+its source. The migration audited public extension behavior at commit
+`106d19109903b45a1c9467e340765496176628ae`.
 
-- Upstream: https://github.com/harbor-framework/harbor
+- Upstream: https://github.com/laude-institute/harbor
 - License: Apache License 2.0
-- Changed files are identified by each task's `UPSTREAM.md`.
 
-The adaptations replace Harbor container paths and Bash verifiers with Nexora isolated-workspace and cross-platform Node equivalents while retaining the task success conditions. They do not constitute an official Harbor run.
+Historical `HB-*` smoke fixtures were adapted earlier from
+`harbor-framework/harbor` commit
+`b7e2f71b4563618af3a42279740f5f412dcf7046`; their `UPSTREAM.md` files retain
+that provenance.
+
+Those historical adaptations are not official Harbor scores. Current production
+evaluation runs through Harbor itself.
 
 ## QuixBugs
 

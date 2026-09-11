@@ -1,6 +1,6 @@
 # Provider-native Tool Protocol Specification
 
-Status: Accepted for implementation
+Status: Superseded by `PURE_NATIVE_FUNCTION_CALLING_SPEC.md` for the native-only transport contract
 
 ## 1. Problem
 

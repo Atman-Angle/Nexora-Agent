@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-artifact-production-dev-04",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "artifact_production",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "basic",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "real_workflow",
+  "agentVisible": {
+    "instruction": "Produce a review-ready onboarding brief artifact from the supplied records, retain traceable evidence references, and validate the final artifact.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-artifact-production-dev-04/fixture",
+      "digest": "sha256:1d8b29c93e8b3f754feea8b9d51340db8a02736f642ef839be44f39ccce38c3c"
+    },
+    "scenario": "release-v1/tasks/v1-artifact-production-dev-04/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-artifact-production-dev-04.grader.json",
+    "graderDigest": "sha256:c4822e6f0e4267eac8d7d2bc79835043547edfd6632bdac90018d4fbeba6e581",
+    "referenceRef": "release-v1/sealed/v1-artifact-production-dev-04.reference.json",
+    "referenceDigest": "sha256:ecceb5033f86ccc5bb49d8cc8614b64cc0b51503df542d9e19e1f3aad8b8b2c5",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-artifact-production-dev-04.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:a8f3cd135f91eda930c242cb2a1168fbc2f491dd0f05db9b536bb3b8a194f8b2",
+    "fixtureDigest": "sha256:1d8b29c93e8b3f754feea8b9d51340db8a02736f642ef839be44f39ccce38c3c"
+  }
+}

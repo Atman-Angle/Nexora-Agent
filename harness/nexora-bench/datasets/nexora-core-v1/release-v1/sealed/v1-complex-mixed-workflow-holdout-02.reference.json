@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-complex-mixed-workflow-holdout-02",
+  "expectedPaths": [
+    "report.md"
+  ],
+  "referenceStateDigest": "sha256:3e16add6a30bfd2eb5d118aab869fd72f7de28e1156332fa6944b10d6590ce45"
+}

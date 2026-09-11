@@ -1,0 +1,55 @@
+{
+  "files": [
+    {
+      "id": "expected-1",
+      "path": "report.md",
+      "exists": true,
+      "equals": "# deployment findings\n\nowner: team-1\npriority: high\nsource-count: 2\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "independent-verifier",
+      "command": "node",
+      "args": [
+        "verify.mjs"
+      ],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": [],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": [
+      {
+        "toolName": "filesystem.list",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.read",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "filesystem.patch",
+        "status": "succeeded",
+        "count": 1
+      },
+      {
+        "toolName": "shell.execute",
+        "status": "succeeded",
+        "count": 1
+      }
+    ]
+  }
+}

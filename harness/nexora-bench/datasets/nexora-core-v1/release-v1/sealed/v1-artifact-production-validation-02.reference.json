@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-artifact-production-validation-02",
+  "expectedPaths": [
+    "deliverables/brief.md"
+  ],
+  "referenceStateDigest": "sha256:1494f862858b46d9629e78fea91da28b5f915ade1ef0eb499d807fd3689d7ea4"
+}

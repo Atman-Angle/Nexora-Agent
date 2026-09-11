@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   type ModelDecisionContext,
   type RuntimeProvider,
@@ -14,7 +14,7 @@ import {
   evictDecisionContextOnce,
   evictDecisionContextTowardBudget
 } from "../../packages/harness/src/context/eviction.js";
-import { responseCall, responseDirect, ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { responseCall, responseDirect, responsePlanAndTools, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 
@@ -242,6 +242,7 @@ describe("E131 Session Context continuity", () => {
 });
 
 class ProjectionReuseProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly #mode: "write" | "finish";
   readonly contexts: ModelDecisionContext[] = [];
   readonly measurements: number[] = [];
@@ -271,7 +272,10 @@ class ProjectionReuseProvider implements RuntimeProvider {
   async decide(context: ModelDecisionContext) {
     this.contexts.push(context);
     return this.#mode === "write"
-      ? responseCall("test.continuation-write", { path: "target.txt", value: "current" })
+      ? responsePlanAndTools({
+          goal: "Write the current continuation fact.",
+          tasks: [{ objective: "Write the fact.", checks: [{ toolName: "test.continuation-write", role: "mutation" }] }]
+        }, [{ name: "test.continuation-write", arguments: { path: "target.txt", value: "current" } }])
       : responseDirect("Finished from the stable compact ancestor view.");
   }
 }

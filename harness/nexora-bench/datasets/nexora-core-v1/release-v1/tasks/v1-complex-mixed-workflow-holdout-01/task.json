@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-complex-mixed-workflow-holdout-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "complex_mixed_workflow",
+  "secondaryCoverage": [
+    "validation",
+    "restart",
+    "approval"
+  ],
+  "difficulty": "basic",
+  "horizon": "long",
+  "split": "holdout",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Reconcile distributed operational facts into a validated aggregate. Preserve source records when the host restarts during approval, then complete the handoff.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": [
+      "A restart may occur during an approval wait."
+    ]
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-complex-mixed-workflow-holdout-01/fixture",
+      "digest": "sha256:86a116ae9f6364a0b1fae153a8e262236f8ffd44da99a7a472001b3fd1a73296"
+    },
+    "scenario": "release-v1/tasks/v1-complex-mixed-workflow-holdout-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": true
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-complex-mixed-workflow-holdout-01.grader.json",
+    "graderDigest": "sha256:0a736deadc0a4ef8cf0e7065c7316bdc815b14871c89b02693b614843e0f9273",
+    "referenceRef": "release-v1/sealed/v1-complex-mixed-workflow-holdout-01.reference.json",
+    "referenceDigest": "sha256:07704c0e8725661611ae1bdcee4c0b89a149a265b4eff0523e0c2f34f02f7c8e",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-complex-mixed-workflow-holdout-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:ed0236dc7fd8d7b8c462ec3516b51525a2eb30a1c0ac41c2abedac888cd8fddc",
+    "fixtureDigest": "sha256:86a116ae9f6364a0b1fae153a8e262236f8ffd44da99a7a472001b3fd1a73296"
+  }
+}

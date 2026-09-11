@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
-import { createRuntime, type RuntimeTool } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createRuntime, type RuntimeTool } from "../../packages/harness/src/index.js";
 import { createOpenAICompatibleProvider } from "../../packages/harness/src/providers/openai-compatible.js";
 
 const context = {
@@ -46,7 +46,11 @@ describe("E065 Provider transient failure recovery", () => {
       fetch
     });
 
-    await expect(provider.decide(context, operation)).rejects.toThrow("fetch failed");
+    await expect(provider.decide(context, operation)).rejects.toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      retryable: true,
+      message: "fetch failed"
+    });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -75,7 +79,10 @@ describe("E065 Provider transient failure recovery", () => {
       model: "test",
       fetch: badRequestFetch
     });
-    await expect(badRequestProvider.decide(context, operation)).rejects.toThrow("Provider HTTP 400");
+    await expect(badRequestProvider.decide(context, operation)).rejects.toMatchObject({
+      code: "PROVIDER_HTTP_ERROR",
+      retryable: false
+    });
     expect(badRequestFetch).toHaveBeenCalledTimes(1);
 
     const invalidFetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [] }), {
@@ -88,7 +95,10 @@ describe("E065 Provider transient failure recovery", () => {
       model: "test",
       fetch: invalidFetch
     });
-    await expect(invalidProvider.decide(context, operation)).rejects.toThrow();
+    await expect(invalidProvider.decide(context, operation)).rejects.toMatchObject({
+      code: "PROVIDER_RESPONSE_INVALID",
+      retryable: false
+    });
     expect(invalidFetch).toHaveBeenCalledTimes(1);
   });
 
@@ -128,7 +138,10 @@ describe("E065 Provider transient failure recovery", () => {
       fetch
     });
 
-    await expect(provider.decide(context, operation)).rejects.toThrow("Provider HTTP 429");
+    await expect(provider.decide(context, operation)).rejects.toMatchObject({
+      code: "PROVIDER_HTTP_ERROR",
+      retryable: true
+    });
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -154,10 +167,12 @@ describe("E065 Provider transient failure recovery", () => {
 
       expect(result.status).toBe("blocked");
       expect(result.stopReason).toBe("PROVIDER_UNAVAILABLE");
-      expect(result.summary).toBe("No task result was confirmed before PROVIDER_UNAVAILABLE.");
+      // The Harness owns the stop explanation; Runtime only persists it.
+      expect(result.summary).toContain("temporarily unavailable");
       expect(result.delivery).toEqual(expect.objectContaining({
         outcome: "blocked",
-        generatedBy: "deterministic"
+        generatedBy: "deterministic",
+        nextAction: "Restore Provider connectivity, then resume this Run."
       }));
       expect(view.snapshot.resumePredicate).toEqual({
         kind: "provider_reconnect",
@@ -165,8 +180,40 @@ describe("E065 Provider transient failure recovery", () => {
         remainingRecoverySegments: 1,
         verification: "bounded_provider_probe"
       });
-      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(fetch).toHaveBeenCalledTimes(5);
       expect(view.events.some((event) => event.type === "run.succeeded")).toBe(false);
+    } finally {
+      runtime.close();
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("fails an incompatible strategy snapshot with new-Run guidance", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "nexora-e065-strategy-snapshot-"));
+    const runtime = createRuntime({
+      workspace,
+      dataDir: join(workspace, ".nexora"),
+      provider: {
+        nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
+        async decide() {
+          throw new Error("STRATEGY_SNAPSHOT_UNAVAILABLE: the current Tool snapshot changed.");
+        }
+      },
+      tools: []
+    });
+
+    try {
+      const result = await runtime.start({ input: "Resume an incompatible Run." });
+      expect(result).toMatchObject({
+        status: "failed",
+        stopReason: "STRATEGY_SNAPSHOT_UNAVAILABLE",
+        delivery: expect.objectContaining({
+          outcome: "failed",
+          exactCause: expect.objectContaining({ code: "STRATEGY_SNAPSHOT_UNAVAILABLE" }),
+          nextAction: expect.stringContaining("new continuation Run")
+        })
+      });
+      expect(result.summary).toContain("different Host, Profile, Project, Tool or Transport snapshot");
     } finally {
       runtime.close();
       rmSync(workspace, { recursive: true, force: true });
@@ -191,20 +238,20 @@ describe("E065 Provider transient failure recovery", () => {
     try {
       const handle = runtime.run("Remain bounded while the Provider is unavailable.");
       expect((await handle.wait()).stopReason).toBe("PROVIDER_UNAVAILABLE");
-      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(fetch).toHaveBeenCalledTimes(5);
 
       await handle.resume();
       expect((await handle.inspect()).stopReason).toBe("PROVIDER_UNAVAILABLE");
-      expect(fetch).toHaveBeenCalledTimes(6);
+      expect(fetch).toHaveBeenCalledTimes(10);
 
       await expect(handle.resume()).rejects.toThrow(/Run is failed/);
-      expect(fetch).toHaveBeenCalledTimes(6);
+      expect(fetch).toHaveBeenCalledTimes(10);
       const publicInspection = await handle.inspect();
       const inspection = await runtime.inspect(handle.id);
       expect(publicInspection.status).toBe("failed");
       expect(publicInspection.resumePredicate).toBeNull();
       expect(publicInspection.error?.retryable).toBe(false);
-      expect(publicInspection.delivery?.nextAction).toContain("new Run");
+      expect(publicInspection.delivery?.nextAction).toContain("new continuation Run");
       expect(publicInspection.executionMetrics.modelCalls).toBe(2);
       expect(inspection.events.filter((event) => (
         event.type === "run.resumed" && event.payload.reason === "provider_retry"
@@ -213,7 +260,7 @@ describe("E065 Provider transient failure recovery", () => {
       await runtime.close();
       rmSync(workspace, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it("keeps an oversized OpenAI-compatible structured response in model repair instead of Provider recovery", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e065-oversized-structured-"));
@@ -234,7 +281,7 @@ describe("E065 Provider transient failure recovery", () => {
         baseUrl: "https://provider.example",
         apiKey: "test",
         model: "test",
-        transport: "structured_output",
+        transport: "native_tools",
         fetch
       }),
       tools: [counterTool(effect)]
@@ -264,9 +311,9 @@ describe("E065 Provider transient failure recovery", () => {
     let transientFailures = 0;
     const fetch = vi.fn(async (_input: unknown, init?: { body?: unknown }) => {
       const request = JSON.parse(String(init?.body)) as {
-        messages: Array<{ content: string }>;
+        messages: Array<{ role: string; content: string }>;
       };
-      JSON.parse(request.messages[1]!.content);
+      JSON.parse(request.messages.filter((message) => message.role === "user").at(-1)!.content);
       if (decisions === 0) {
         decisions += 1;
         return providerResponse({
@@ -289,18 +336,18 @@ describe("E065 Provider transient failure recovery", () => {
           finishReason: "tool_calls"
         });
       }
-      if (transientFailures < 3) {
+      if (transientFailures < 5) {
         transientFailures += 1;
         return new Response("unavailable", { status: 503 });
       }
       decisions += 1;
-      return providerResponse({ text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "The persisted item was read once." } }], finishReason: "tool_calls" });
+      return providerResponse({ text: "The persisted item was read once.", toolCalls: [], finishReason: "stop" });
     });
     const provider = createOpenAICompatibleProvider({
       baseUrl: "https://provider.example",
       apiKey: "test",
       model: "test",
-      transport: "structured_output",
+      transport: "native_tools",
       fetch
     });
     const runtime = createRuntime({
@@ -316,13 +363,13 @@ describe("E065 Provider transient failure recovery", () => {
       expect(blocked).toEqual(expect.objectContaining({
         status: "blocked",
         stopReason: "PROVIDER_UNAVAILABLE",
-        summary: "Completed 1 planned item(s) and preserved 1 confirmed fact(s) before PROVIDER_UNAVAILABLE.",
         delivery: expect.objectContaining({
           outcome: "blocked",
           generatedBy: "deterministic",
           unfinishedWork: []
         })
       }));
+      expect(blocked.summary).toContain("temporarily unavailable");
       expect(effect.calls).toBe(1);
       expect(blockedView.toolInvocations).toHaveLength(1);
       expect(blockedView.toolInvocations[0]?.status).toBe("succeeded");
@@ -351,7 +398,7 @@ describe("E065 Provider transient failure recovery", () => {
       runtime.close();
       rmSync(workspace, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });
 
 function counterTool(effect: { calls: number }): RuntimeTool {
@@ -379,10 +426,34 @@ function counterTool(effect: { calls: number }): RuntimeTool {
 }
 
 function providerResponse(value: unknown): Response {
-  return new Response(JSON.stringify({
-    choices: [{ message: { content: JSON.stringify(value) } }]
-  }), {
+  return new Response(JSON.stringify({ choices: [{ message: nativeMessage(value) }] }), {
     status: 200,
     headers: { "content-type": "application/json" }
   });
+}
+
+function nativeMessage(value: unknown): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, index) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${index}`,
+      type: "function" as const,
+      function: { name: String(call.name), arguments: JSON.stringify(call.arguments ?? null) }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
 }

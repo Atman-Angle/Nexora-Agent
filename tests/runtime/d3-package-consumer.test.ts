@@ -117,6 +117,7 @@ function consumerSource(workspace: string): string {
 import {
   RuntimeError,
   createRuntime,
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
   type RuntimeEvent,
   type RuntimeProvider
 } from "@nexora/harness";
@@ -125,6 +126,7 @@ import type { RuntimeEngine as InternalRuntime } from "@nexora/harness/dist/runt
 
 let providerDisposed = 0;
 const provider: RuntimeProvider = {
+  nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
   async decide(_context, operation) {
     await new Promise((resolve) => {
       operation.signal.addEventListener("abort", resolve, { once: true });

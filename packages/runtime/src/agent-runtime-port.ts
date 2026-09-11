@@ -64,6 +64,10 @@ export type AgentStateView = {
 
 export type AgentAuditEvent =
   {
+    readonly type: "runtime.event";
+    readonly payload: Readonly<Record<string, unknown>>;
+  }
+  | {
     readonly type: "model.turn";
     readonly payload: {
       readonly modelDecisionId: string;
@@ -78,6 +82,28 @@ export type AgentAuditEvent =
         readonly name: string;
         readonly arguments: unknown;
       }[];
+    };
+  }
+  | {
+    readonly type: "model.wire_telemetry";
+    readonly payload: {
+      readonly callId: string;
+      readonly attemptId: string;
+      readonly finalRequestBytes: number;
+      readonly finalRequestDigest: string;
+      readonly budgetMeasuredInputTokens: number;
+      readonly providerVisibleEstimatedInputTokens: number;
+      readonly providerVisibleMeasurementMethod: "estimated";
+      readonly providerVisibleMeter: string;
+      readonly actualProviderInputTokens: number | null;
+      readonly actualProviderOutputTokens: number | null;
+      readonly actualProviderTotalTokens: number | null;
+      readonly providerVisibleMeasurementDelta: number | null;
+      readonly actualInputTokens: number | null;
+      readonly actualOutputTokens: number | null;
+      readonly actualTotalTokens: number | null;
+      readonly cache: Readonly<Record<string, unknown>> | null;
+      readonly telemetry: Readonly<Record<string, unknown>>;
     };
   }
   | {
@@ -148,6 +174,16 @@ export type ProviderAttemptCompletion = {
   readonly providerUsage?: unknown;
 };
 
+/** Harness-owned Provider transport conclusion; Runtime only admits it mechanically. */
+export type ProviderBoundaryProposal = {
+  readonly outcome: "blocked" | "failed";
+  readonly errorCode: "PROVIDER_UNAVAILABLE" | "CONTEXT_CAPACITY_EXCEEDED" | "STRATEGY_SNAPSHOT_UNAVAILABLE";
+  readonly message: string;
+  readonly remainingRecoverySegments: number;
+  readonly summary?: string;
+  readonly nextAction?: string;
+};
+
 /**
  * Mechanical Authority exposed to the Harness. No Store, state transition,
  * generic commit/event writer, Tool implementation or Runtime service bag is
@@ -191,19 +227,32 @@ export interface AgentRuntimePort {
     activeStartedAt: number,
     observer?: RuntimeObserver
   ): RunSnapshot | null;
-  enforceConvergence(
+  proposeTaskFailure(
     run: RunSnapshot,
+    input: {
+      readonly stopReason: "NO_PROGRESS_DETECTED";
+      readonly message: string;
+      readonly diagnostic: Readonly<Record<string, unknown>>;
+      readonly summary?: string;
+      readonly nextAction?: string;
+    },
     observer?: RuntimeObserver
-  ): RunSnapshot | null;
+  ): RunSnapshot;
+  /** Persist a Harness-owned convergence observation without interpreting it. */
+  recordConvergenceEvent(
+    runId: string,
+    payload: Readonly<Record<string, unknown>>,
+    observer?: RuntimeObserver
+  ): void;
   finalizeBudget(
     run: RunSnapshot,
     activeStartedAt: number,
     summary: string | undefined,
     observer?: RuntimeObserver
   ): RunSnapshot;
-  blockForProvider(
+  admitProviderBoundary(
     run: RunSnapshot,
-    error: unknown,
+    proposal: ProviderBoundaryProposal,
     observer?: RuntimeObserver
   ): RunSnapshot;
   beginModelCall(

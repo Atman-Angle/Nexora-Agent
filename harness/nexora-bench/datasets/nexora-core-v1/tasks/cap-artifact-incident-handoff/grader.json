@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "id": "handoff-artifact",
+      "path": "handoff.md",
+      "exists": true,
+      "equals": "# INC-2047 handoff\n\nstatus: mitigated\nowner: team-orders\nimpact_minutes: 12\nreferences:\n- sources/incident-summary.txt\n- sources/resolution.txt\n- sources/customer-impact.csv\n\nnext: alert on pool utilisation plus postmortem review with team-orders.\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "independent-verifier",
+      "command": "node",
+      "args": ["verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": ["sources/incident-summary.txt", "sources/resolution.txt", "sources/customer-impact.csv", "verify.mjs"],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": []
+  }
+}

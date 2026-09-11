@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   codingReasoningLevel,
   createAgent,
   projectStrategyRouting,
@@ -172,6 +172,7 @@ function pressure(adaptiveReasoning: "low" | "moderate" | "elevated"): boolean {
 }
 
 class CapturingProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   readonly contexts: ModelDecisionContext[] = [];
   readonly promptInputs: string[] = [];
 

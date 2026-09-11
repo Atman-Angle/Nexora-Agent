@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-local-information-discovery-analysis-dev-02",
+  "expectedPaths": [
+    "report.md"
+  ],
+  "referenceStateDigest": "sha256:5ad85674f5ad68e584576584bb4dcb3d71106958d2f66735094c7dcbdd8f7d99"
+}

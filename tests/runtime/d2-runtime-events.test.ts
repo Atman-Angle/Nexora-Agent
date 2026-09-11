@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createRuntime,
   type ModelDecisionContext,
   type RuntimeEvent,
@@ -92,7 +92,7 @@ describe("D2 persisted Runtime Events", () => {
     const workspace = temporaryWorkspace();
     const runtime = createRuntime({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           throw new Error("provider offline");
         }

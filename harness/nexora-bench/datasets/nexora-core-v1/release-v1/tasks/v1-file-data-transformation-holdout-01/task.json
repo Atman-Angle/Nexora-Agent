@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-file-data-transformation-holdout-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "file_data_transformation",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "holdout",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Combine the three supplied operational fact shards into the requested ordered report, preserve source records, and validate the result.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-file-data-transformation-holdout-01/fixture",
+      "digest": "sha256:7f72a6627bc6c9286fefccc6f9dab9b83db2a99074a163dbdf9de78ff7edd6c9"
+    },
+    "scenario": "release-v1/tasks/v1-file-data-transformation-holdout-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-file-data-transformation-holdout-01.grader.json",
+    "graderDigest": "sha256:b4413de0f7bfb7adf3e49dca2fb8c7af56bbc773e58b9f0b49e5a61f1b9039ef",
+    "referenceRef": "release-v1/sealed/v1-file-data-transformation-holdout-01.reference.json",
+    "referenceDigest": "sha256:577f74c3ebcb8105c19f5de943abeb7ce578898cb26308728636adfa9268e7cd",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-file-data-transformation-holdout-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:b22236f81403f0f99a17357503e8ea4a1bdbe58a5e7de1c3be1faf4e93979563",
+    "fixtureDigest": "sha256:7f72a6627bc6c9286fefccc6f9dab9b83db2a99074a163dbdf9de78ff7edd6c9"
+  }
+}

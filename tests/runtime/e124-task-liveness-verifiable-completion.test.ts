@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   createBuiltInTools,
   type RuntimeProvider,
@@ -42,12 +42,12 @@ describe("E124 task liveness and verifiable completion", () => {
     expect(view.toolInvocations).toEqual([]);
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     expect(view.events.find((event) => event.type === "model.turn")?.payload).toMatchObject({
-      controlCallCount: 1,
+      controlCallCount: 0,
       compiledActionTypes: ["propose_finish"]
     });
   });
 
-  it("rejects bare draft text after Tool execution until explicit completion supplies the final answer", async () => {
+  it("accepts native final text after Tool execution as the semantic completion proposal", async () => {
     const workspace = tempRoot();
     const provider = new ScriptedRuntimeProvider([
       responseCall("filesystem.read", { path: "target.txt" }),
@@ -62,7 +62,7 @@ describe("E124 task liveness and verifiable completion", () => {
 
     expect(result).toMatchObject({ status: "succeeded", stopReason: "COMPLETED" });
     expect(view.snapshot.completionRequirements).toEqual({ evidence: "auto", requiredToolNames: [] });
-    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(1);
+    expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(0);
     expect(view.toolInvocations).toHaveLength(1);
     expect(result.evidence).toHaveLength(1);
   });
@@ -207,7 +207,7 @@ describe("E124 task liveness and verifiable completion", () => {
     const workspace = tempRoot();
     const artifactDir = join(workspace, ".nexora", "artifacts");
     const contexts: Parameters<RuntimeProvider["decide"]>[0][] = [];
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide(context) {
         contexts.push(structuredClone(context));
         if (contexts.length === 1) {
@@ -257,7 +257,7 @@ describe("E124 task liveness and verifiable completion", () => {
   it("blocks before Provider execution when authoritative Inputs cannot fit", async () => {
     const workspace = tempRoot();
     let calls = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "test",
         model: "tiny",

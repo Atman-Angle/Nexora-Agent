@@ -4,10 +4,17 @@ import type { ProviderCacheStatus, RunHandle, RunInspection, RunView } from "@ne
 
 import {
   FailureBoundarySchema,
-  type EvalTask,
+  type CheckResult,
+  type NormalizedEvalTask,
   type FailureBoundary
 } from "./contracts.js";
 import type { AuthorityGrade, TaskGrade } from "./grader.js";
+import type { EvalGradeBundle } from "./suite-grader.js";
+import {
+  type DecisionEfficiencyAggregate,
+  createDecisionEfficiencyReport,
+  type DecisionEfficiencyReport
+} from "./decision-efficiency.js";
 
 type ModelCallTrace = Awaited<ReturnType<RunHandle["modelCallTrace"]>>;
 
@@ -40,7 +47,7 @@ export type PromptStrategyCallReport = {
   readonly projectInstructions: readonly { readonly sourceRef: string; readonly digest: string }[];
   readonly toolContractDigest: string | null;
   readonly transport: {
-    readonly kind: "native_tools" | "structured_output";
+    readonly kind: "native_tools";
     readonly promptCacheMode: "disabled" | "automatic" | "explicit_breakpoints";
   } | null;
   readonly authorityContextDigest: string | null;
@@ -124,19 +131,44 @@ export type TaskReport = {
     readonly approvalGrantToolExecutionRate: number | null;
   };
   readonly promptStrategy: PromptStrategyReport;
+  readonly decisionEfficiency?: DecisionEfficiencyReport;
   readonly telemetryErrors: readonly string[];
   readonly durationMs: number;
   readonly reproductionCommand: string;
+  readonly suite?: {
+    readonly sourceTaskSchemaVersion: 1 | 2;
+    readonly family: string;
+    readonly difficulty: string;
+    readonly secondaryCoverage: readonly string[];
+    readonly taskDigest: string;
+    readonly graderDigest: string;
+    readonly toolCatalogDigest: string;
+    readonly strictPass: boolean;
+    readonly runtimePassed: boolean;
+    readonly authorityPassed: boolean;
+    readonly safetyPassed: boolean;
+    readonly expectedOutcomePassed: boolean;
+    readonly runtimeChecks: readonly CheckResult[];
+    readonly authorityChecks: readonly CheckResult[];
+    readonly safetyChecks: readonly CheckResult[];
+    readonly expectedOutcomeChecks: readonly CheckResult[];
+  };
 };
 
 export type EvalReport = {
-  readonly schemaVersion: 1;
+  /** V1 files remain reader-compatible; new output is V2. */
+  readonly schemaVersion: 1 | 2;
   readonly benchmarkId: "nexora-bench";
   readonly dataset: { readonly id: string; readonly version: number; readonly digest: string };
   readonly executionMode: "native_typescript_runtime";
   readonly providerMode: "deterministic" | "real";
   readonly createdAt: string;
   readonly source: { readonly commit: string | null; readonly dirty: boolean | null };
+  readonly baseline?: {
+    readonly repetition: number;
+    readonly providerMode: "deterministic" | "real";
+    readonly contextProjectionDedupe: "on";
+  };
   readonly passed: boolean;
   readonly taskResolvedRate: number;
   readonly validatedSuccessRate: number;
@@ -160,7 +192,38 @@ export type EvalReport = {
     readonly indeterminateTaskCount: number;
     readonly cache: PromptCacheAggregate;
   };
+  readonly decisionEfficiency?: DecisionEfficiencyAggregate & {
+    readonly dataset: {
+      readonly attemptedTasks: number;
+      readonly successfulTasks: number;
+      readonly successfulTasksWithCompleteUsage: number;
+      readonly usageIncompleteTasks: number;
+      readonly successRate: number;
+      readonly falseSuccessRate: number;
+      readonly inputTokensPerSuccessfulTask: number | null;
+      readonly logicalModelCallsPerSuccessfulTask: number | null;
+      readonly wallClockMsPerSuccessfulTask: number | null;
+      readonly actualInputTokensPerSuccessfulTask: Readonly<{
+        readonly n: number;
+        readonly p50: number | null;
+        readonly p95: number | null;
+        readonly max: number | null;
+      }>;
+      readonly logicalModelCallsPerSuccessfulTaskDistribution: Readonly<{
+        readonly n: number;
+        readonly p50: number | null;
+        readonly p95: number | null;
+        readonly max: number | null;
+      }>;
+    };
+  };
   readonly tasks: readonly TaskReport[];
+  readonly evaluation?: {
+    readonly strictPassRate: number;
+    readonly strictPassCount: number;
+    readonly taskSchemaVersions: Readonly<Record<string, number>>;
+    readonly isolation: "declared_process_boundary" | "unsupported_host_isolation";
+  };
 };
 
 export type OptimizationPacket = {
@@ -180,11 +243,12 @@ export type OptimizationPacket = {
 };
 
 export function createTaskReport(input: {
-  readonly task: EvalTask;
+  readonly task: NormalizedEvalTask;
   readonly inspection: RunInspection;
   readonly view: RunView;
   readonly taskGrade: TaskGrade;
   readonly authorityGrade: AuthorityGrade;
+  readonly suiteGrade?: EvalGradeBundle;
   readonly modelCallTraces: readonly ModelCallTrace[];
   readonly telemetryErrors: readonly string[];
   readonly durationMs: number;
@@ -192,7 +256,14 @@ export function createTaskReport(input: {
 }): TaskReport {
   const nexoraValidated = input.view.snapshot.status === "succeeded" && input.view.snapshot.result !== null;
   const falseSuccess = nexoraValidated && !input.taskGrade.passed;
-  const hardGateFailures = input.task.hardGates.filter((gate) => input.authorityGrade.gates[gate] !== true);
+  const legacyFailures = input.task.hardGates.filter((gate) => input.authorityGrade.gates[gate] !== true);
+  const suiteFailures = input.suiteGrade === undefined ? [] : [
+    ...(input.suiteGrade.runtime.passed ? [] : ["runtime_integrity"]),
+    ...(input.suiteGrade.authority.passed ? [] : ["authority"]),
+    ...(input.suiteGrade.safety.passed ? [] : ["safety"]),
+    ...(input.suiteGrade.expectedOutcome.passed ? [] : ["expected_outcome"])
+  ];
+  const hardGateFailures = [...legacyFailures, ...suiteFailures];
   return Object.freeze({
     taskId: input.task.id,
     category: input.task.category,
@@ -200,7 +271,7 @@ export function createTaskReport(input: {
     split: input.task.split,
     providerMode: input.providerMode,
     runId: input.inspection.runId,
-    passed: hardGateFailures.length === 0,
+    passed: input.suiteGrade?.strictPass ?? hardGateFailures.length === 0,
     taskPassed: input.taskGrade.passed,
     nexoraValidated,
     falseSuccess,
@@ -213,6 +284,7 @@ export function createTaskReport(input: {
       view: input.view,
       taskGrade: input.taskGrade,
       authorityGrade: input.authorityGrade,
+      ...(input.suiteGrade === undefined ? {} : { suiteGrade: input.suiteGrade }),
       telemetryErrors: input.telemetryErrors
     }),
     taskGrade: input.taskGrade,
@@ -225,9 +297,30 @@ export function createTaskReport(input: {
     },
     diagnostics: diagnostics(input.view),
     promptStrategy: createPromptStrategyReport(input.modelCallTraces),
+    decisionEfficiency: createDecisionEfficiencyReport(input.view, input.modelCallTraces, {
+      completionAccepted: (input.suiteGrade?.strictPass ?? input.taskGrade.passed) && !falseSuccess
+    }),
     telemetryErrors: [...input.telemetryErrors],
     durationMs: input.durationMs,
-    reproductionCommand: `pnpm --filter @nexora/bench bench -- --provider ${input.providerMode} --task ${input.task.id}`
+    reproductionCommand: "pnpm --filter @nexora/bench eval",
+    ...(input.suiteGrade === undefined ? {} : { suite: Object.freeze({
+      sourceTaskSchemaVersion: input.task.sourceSchemaVersion ?? 1,
+      family: input.task.suite?.family ?? input.task.category,
+      difficulty: input.task.suite?.difficulty ?? "legacy",
+      secondaryCoverage: input.task.suite?.secondaryCoverage ?? [],
+      taskDigest: input.task.suite?.taskDigest ?? "legacy",
+      graderDigest: input.task.suite?.graderDigest ?? "legacy",
+      toolCatalogDigest: input.task.suite?.toolCatalogDigest ?? "legacy",
+      strictPass: input.suiteGrade.strictPass,
+      runtimePassed: input.suiteGrade.runtime.passed,
+      authorityPassed: input.suiteGrade.authority.passed,
+      safetyPassed: input.suiteGrade.safety.passed,
+      expectedOutcomePassed: input.suiteGrade.expectedOutcome.passed
+      , runtimeChecks: input.suiteGrade.runtime.checks
+      , authorityChecks: input.suiteGrade.authority.checks
+      , safetyChecks: input.suiteGrade.safety.checks
+      , expectedOutcomeChecks: input.suiteGrade.expectedOutcome.checks
+    }) })
   });
 }
 
@@ -306,6 +399,7 @@ export function createEvalReport(input: {
   readonly telemetryErrors?: readonly string[];
   readonly createdAt?: string;
   readonly providerMode?: "deterministic" | "real";
+  readonly repetition?: number;
 }): EvalReport {
   const taskPassed = input.tasks.filter((task) => task.taskPassed).length;
   const validated = input.tasks.filter((task) => task.nexoraValidated).length;
@@ -327,14 +421,91 @@ export function createEvalReport(input: {
     .sort((left, right) => left - right);
   const promptCache = aggregatePromptCache(input.tasks.map((task) => task.promptStrategy.cache));
   const consistency = input.tasks.map((task) => task.promptStrategy.strategyConsistency.consistent);
+  const efficiency = input.tasks.map((task) => task.decisionEfficiency).filter((value): value is DecisionEfficiencyReport => value !== undefined);
+  const efficiencyComplete = efficiency.length === input.tasks.length;
+  const efficiencyEstimateComplete = efficiencyComplete && efficiency.every((value) => value.providerVisibleEstimatedInputTokens !== null);
+  const efficiencyActualComplete = efficiencyComplete && efficiency.every((value) => value.actualProviderInputTokens !== null);
+  const efficiencyActions = efficiency.reduce<Record<string, number>>((out, value) => {
+    for (const [category, count] of Object.entries(value.effectiveActions)) out[category] = (out[category] ?? 0) + count;
+    return out;
+  }, {});
+  const effectiveActionCount = efficiency.reduce((total, value) => total + value.effectiveActionCount, 0);
+  const actualTotal = efficiency.length > 0 && efficiencyActualComplete
+    ? efficiency.reduce((total, value) => total + (value.actualProviderInputTokens ?? 0), 0)
+    : null;
+  const actualOutputTotal = efficiency.length > 0 && efficiencyComplete && efficiency.every((value) => value.actualProviderOutputTokens !== null)
+    ? efficiency.reduce((total, value) => total + (value.actualProviderOutputTokens ?? 0), 0)
+    : null;
+  const actualTokenTotal = efficiency.length > 0 && efficiencyComplete && efficiency.every((value) => value.actualProviderTotalTokens !== null)
+    ? efficiency.reduce((total, value) => total + (value.actualProviderTotalTokens ?? 0), 0)
+    : null;
+  const estimateTotal = efficiency.length > 0 && efficiencyEstimateComplete
+    ? efficiency.reduce((total, value) => total + (value.providerVisibleEstimatedInputTokens ?? 0), 0)
+    : null;
+  const aggregatedWasteCategories = efficiency.reduce<Record<string, number>>((out, value) => {
+    for (const [category, count] of Object.entries(value.wasteCategories)) out[category] = (out[category] ?? 0) + count;
+    return out;
+  }, {});
+  const sizeHistogram = efficiency.reduce<Record<string, number>>((out, value) => {
+    for (const [size, count] of Object.entries(value.toolBatches.sizeHistogram)) out[size] = (out[size] ?? 0) + count;
+    return out;
+  }, {});
+  const concurrencyHistogram = efficiency.reduce<Record<string, number>>((out, value) => {
+    for (const [concurrency, count] of Object.entries(value.toolBatches.concurrencyHistogram)) out[concurrency] = (out[concurrency] ?? 0) + count;
+    return out;
+  }, {});
+  const aggregatedAttempts = efficiency.flatMap((value) => value.attempts);
+  const sectionNames = [...new Set(efficiency.flatMap((value) => Object.keys(value.sectionAttributionTotals)))];
+  const sectionAttributionTotals = Object.fromEntries(sectionNames.map((name) => {
+    const sections = efficiency
+      .map((value) => value.sectionAttributionTotals[name as keyof DecisionEfficiencyReport["sectionAttributionTotals"]])
+      .filter((section): section is DecisionEfficiencyReport["sectionAttributionTotals"][keyof DecisionEfficiencyReport["sectionAttributionTotals"]] => section !== undefined);
+    return [name, Object.freeze({
+      bytes: sections.reduce((total, section) => total + section.bytes, 0),
+      estimatedTokens: sections.reduce((total, section) => total + section.estimatedTokens, 0),
+      attempts: sections.reduce((total, section) => total + section.attempts, 0)
+    })];
+  })) as DecisionEfficiencyAggregate["sectionAttributionTotals"];
+  const distributions = {
+    actualProviderInputTokens: aggregateDistribution(aggregatedAttempts.map((attempt) => attempt.actualProviderInputTokens)),
+    providerVisibleEstimatedInputTokens: aggregateDistribution(aggregatedAttempts.map((attempt) => attempt.providerVisibleEstimatedInputTokens)),
+    providerVisibleMeasurementDelta: aggregateDistribution(aggregatedAttempts.map((attempt) => attempt.providerVisibleMeasurementDelta)),
+    finalRequestBytes: aggregateDistribution(aggregatedAttempts.map((attempt) => attempt.finalRequestBytes))
+  };
+  const unknownDeltaCount = efficiency.reduce((total, value) => total + value.deltaCauseCounts.unknown, 0);
+  const deltaCauseCounts = {
+    unknown: unknownDeltaCount,
+    unknownShare: aggregatedAttempts.length === 0 || unknownDeltaCount === 0
+      ? null
+      : unknownDeltaCount / aggregatedAttempts.length
+  };
+  const wasteTokenAttribution = Object.fromEntries([...new Set(efficiency.flatMap((value) => Object.keys(value.wasteTokenAttribution)))].map((flag) => {
+    const values = efficiency.map((value) => value.wasteTokenAttribution[flag]).filter((value): value is number | null => value !== undefined);
+    const numbers = values.filter((value): value is number => value !== null);
+    return [flag, values.some((value) => value === null) ? null : numbers.reduce((total, value) => total + value, 0)];
+  }));
+  const successfulTasks = input.tasks.filter((task) => task.suite?.strictPass ?? task.passed);
+  const successfulEfficiency = successfulTasks
+    .map((task) => task.decisionEfficiency)
+    .filter((value): value is DecisionEfficiencyReport => value !== undefined);
+  const successfulCompleteUsage = successfulEfficiency.filter((value) => value.actualProviderInputTokens !== null);
+  const successfulTelemetryComplete = successfulTasks.length > 0
+    && successfulTasks.length === successfulEfficiency.length;
+  const successfulUsageComplete = successfulTelemetryComplete
+    && successfulCompleteUsage.length === successfulTasks.length;
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     benchmarkId: "nexora-bench",
     dataset: input.dataset,
     executionMode: "native_typescript_runtime",
     providerMode: input.providerMode ?? "deterministic",
     createdAt: input.createdAt ?? new Date().toISOString(),
     source: gitSource(),
+    baseline: Object.freeze({
+      repetition: input.repetition ?? 1,
+      providerMode: input.providerMode ?? "deterministic",
+      contextProjectionDedupe: "on"
+    }),
     passed: input.tasks.every((task) => task.passed),
     taskResolvedRate: taskPassed / input.tasks.length,
     validatedSuccessRate: validated / input.tasks.length,
@@ -360,7 +531,77 @@ export function createEvalReport(input: {
       indeterminateTaskCount: consistency.filter((value) => value === null).length,
       cache: promptCache
     },
-    tasks: [...input.tasks]
+    decisionEfficiency: {
+      logicalModelCalls: efficiency.reduce((sum, value) => sum + value.logicalModelCalls, 0),
+      providerAttempts: efficiency.reduce((sum, value) => sum + value.providerAttempts, 0),
+      budgetMeasuredInputTokens: efficiency.reduce((sum, value) => sum + value.budgetMeasuredInputTokens, 0),
+      providerVisibleEstimatedInputTokens: estimateTotal,
+      actualProviderInputTokens: actualTotal,
+      actualProviderOutputTokens: actualOutputTotal,
+      actualProviderTotalTokens: actualTokenTotal,
+      providerVisibleMeasurementDelta: estimateTotal !== null && actualTotal !== null ? actualTotal - estimateTotal : null,
+      effectiveActionCount,
+      effectiveActions: Object.freeze(efficiencyActions),
+      laterReferencedEvidenceCount: efficiency.reduce((sum, value) => sum + value.laterReferencedEvidenceCount, 0),
+      usageIncompleteAttempts: efficiency.reduce((sum, value) => sum + value.usageIncompleteAttempts, 0),
+      wireTelemetryIncompleteAttempts: efficiency.reduce((sum, value) => sum + value.wireTelemetryIncompleteAttempts, 0),
+      usageIncompleteCalls: efficiency.reduce((sum, value) => sum + value.usageIncompleteCalls, 0),
+      wireTelemetryIncompleteCalls: efficiency.reduce((sum, value) => sum + value.wireTelemetryIncompleteCalls, 0),
+      responseToolCallCount: efficiency.reduce((sum, value) => sum + value.responseToolCallCount, 0),
+      toolInvocationCount: efficiency.reduce((sum, value) => sum + value.toolInvocationCount, 0),
+      duplicateSubstantivePayloadCount: efficiency.reduce((sum, value) => sum + value.duplicateSubstantivePayloadCount, 0),
+      duplicateSubstantivePayloadEstimatedTokens: efficiency.reduce((sum, value) => sum + value.duplicateSubstantivePayloadEstimatedTokens, 0),
+      wasteCategories: Object.freeze(aggregatedWasteCategories) as DecisionEfficiencyAggregate["wasteCategories"],
+      toolBatches: Object.freeze({
+        count: efficiency.reduce((sum, value) => sum + value.toolBatches.count, 0),
+        sizeHistogram: Object.freeze(sizeHistogram),
+        concurrencyHistogram: Object.freeze(concurrencyHistogram),
+        retryCount: efficiency.reduce((sum, value) => sum + value.toolBatches.retryCount, 0)
+      }),
+      efficiency: Object.freeze({
+        actualInputTokensPerEffectiveAction: effectiveActionCount === 0 || actualTotal === null ? null : actualTotal / effectiveActionCount,
+        logicalModelCallsPerEffectiveAction: effectiveActionCount === 0
+          ? null
+          : efficiency.reduce((sum, value) => sum + value.logicalModelCalls, 0) / effectiveActionCount,
+        noEffectiveAction: effectiveActionCount === 0
+      }),
+      wallClockMs: efficiency.reduce((sum, value) => sum + value.wallClockMs, 0),
+      attempts: Object.freeze(aggregatedAttempts),
+      sectionAttributionTotals: Object.freeze(sectionAttributionTotals),
+      deltaCauseCounts: Object.freeze(deltaCauseCounts),
+      wasteTokenAttribution: Object.freeze(wasteTokenAttribution),
+      distributions: Object.freeze(distributions),
+      dataset: Object.freeze({
+        attemptedTasks: input.tasks.length,
+        successfulTasks: successfulTasks.length,
+        successfulTasksWithCompleteUsage: successfulCompleteUsage.length,
+        usageIncompleteTasks: efficiency.filter((value) => value.actualProviderInputTokens === null).length,
+        successRate: input.tasks.length === 0 ? 0 : successfulTasks.length / input.tasks.length,
+        falseSuccessRate: input.tasks.length === 0 ? 0 : input.tasks.filter((task) => task.falseSuccess).length / input.tasks.length,
+        inputTokensPerSuccessfulTask: successfulUsageComplete
+          ? successfulCompleteUsage.reduce((total, value) => total + (value.actualProviderInputTokens ?? 0), 0) / successfulTasks.length
+          : null,
+        logicalModelCallsPerSuccessfulTask: successfulTelemetryComplete
+          ? successfulEfficiency.reduce((total, value) => total + value.logicalModelCalls, 0) / successfulTasks.length
+          : null,
+        wallClockMsPerSuccessfulTask: successfulTelemetryComplete
+          ? successfulEfficiency.reduce((total, value) => total + value.wallClockMs, 0) / successfulTasks.length
+          : null,
+        actualInputTokensPerSuccessfulTask: Object.freeze(aggregateDistribution(successfulCompleteUsage.map((value) => value.actualProviderInputTokens))),
+        logicalModelCallsPerSuccessfulTaskDistribution: Object.freeze(aggregateDistribution(successfulEfficiency.map((value) => value.logicalModelCalls)))
+      })
+    },
+    tasks: [...input.tasks],
+    evaluation: Object.freeze({
+      strictPassRate: input.tasks.length === 0 ? 0 : input.tasks.filter((task) => task.suite?.strictPass ?? task.passed).length / input.tasks.length,
+      strictPassCount: input.tasks.filter((task) => task.suite?.strictPass ?? task.passed).length,
+      taskSchemaVersions: Object.freeze(input.tasks.reduce<Record<string, number>>((counts, task) => {
+        const version = String(task.suite?.sourceTaskSchemaVersion ?? 1);
+        counts[version] = (counts[version] ?? 0) + 1;
+        return counts;
+      }, {})),
+      isolation: "unsupported_host_isolation"
+    })
   });
 }
 
@@ -418,7 +659,7 @@ function promptStrategyCall(trace: ModelCallTrace): PromptStrategyCallReport {
   const transportKind = transport?.kind;
   const promptCacheMode = promptCache?.mode;
   const parsedTransport: PromptStrategyCallReport["transport"] = (
-    transportKind === "native_tools" || transportKind === "structured_output"
+    transportKind === "native_tools"
   ) && (
     promptCacheMode === "disabled"
     || promptCacheMode === "automatic"
@@ -617,21 +858,25 @@ export function createOptimizationPacket(report: EvalReport): OptimizationPacket
 }
 
 function classifyBoundary(input: {
-  readonly task: EvalTask;
+  readonly task: NormalizedEvalTask;
   readonly inspection: RunInspection;
   readonly view: RunView;
   readonly taskGrade: TaskGrade;
   readonly authorityGrade: AuthorityGrade;
+  readonly suiteGrade?: EvalGradeBundle;
   readonly telemetryErrors: readonly string[];
 }): FailureBoundary | null {
   if (
     input.taskGrade.passed
-    && input.authorityGrade.passed
+    && (input.suiteGrade?.strictPass ?? input.authorityGrade.passed)
     && input.inspection.status === input.task.expectedTerminal
     && input.telemetryErrors.length === 0
   ) return null;
   if (input.authorityGrade.metrics.unauthorizedEffects > 0) return "APPROVAL";
   if (input.authorityGrade.metrics.duplicateNonIdempotentEffects > 0) return "INVOCATION_RECOVERY";
+  if (input.suiteGrade?.safety.passed === false) return "APPROVAL";
+  if (input.suiteGrade?.authority.passed === false) return "ACTION_CONTRACT";
+  if (input.suiteGrade?.runtime.passed === false) return "EVIDENCE";
   if (input.authorityGrade.gates.evidence_integrity === false || input.authorityGrade.gates.result_evidence_integrity === false) return "EVIDENCE";
   if (input.authorityGrade.gates.no_false_success === false) return "COMPLETION_CONTRACT";
   if (input.inspection.recovery !== null || input.view.toolInvocations.some((item) => item.status === "unknown")) return "INVOCATION_RECOVERY";
@@ -685,6 +930,23 @@ function expectedFor(boundary: FailureBoundary): string {
     PRODUCT_PATH: "The production Host path drives the same Runtime lifecycle and authoritative transitions."
   };
   return descriptions[boundary];
+}
+
+function aggregateDistribution(values: readonly (number | null)[]): DecisionEfficiencyReport["distributions"]["actualProviderInputTokens"] {
+  const present = values.filter((value): value is number => value !== null).sort((left, right) => left - right);
+  return Object.freeze({
+    n: present.length,
+    sum: present.length === 0 ? null : present.reduce((total, value) => total + value, 0),
+    p50: quantile(present, 0.5),
+    p95: quantile(present, 0.95),
+    max: present.length === 0 ? null : present.at(-1)!
+  });
+}
+
+function quantile(sorted: readonly number[], quantile: number): number | null {
+  if (sorted.length === 0) return null;
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(quantile * sorted.length) - 1));
+  return sorted[index]!;
 }
 
 function gitSource(): { readonly commit: string | null; readonly dirty: boolean | null } {

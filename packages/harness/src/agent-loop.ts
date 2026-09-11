@@ -1,18 +1,21 @@
 import { z } from "zod";
 
-import type { AgentAuditEvent, RunSnapshot, RuntimeAction } from "@nexora/runtime/internal";
+import type {
+  AgentAuditEvent,
+  AgentStateView,
+  ProviderBoundaryProposal,
+  RunSnapshot,
+  RuntimeAction
+} from "@nexora/runtime/internal";
 import type { DecisionContextResult } from "./context/decision-context.js";
 import {
   REQUEST_INPUT_CONTROL,
   UPDATE_PLAN_CONTROL,
   DELEGATE_WORKERS_CONTROL,
-  DIRECT_RESPONSE_CONTROL,
   SKILL_SELECTION_CONTROL,
   isControlCall,
-  ModelDirectResponseSchema,
-  ModelInputRequestSchema,
-  ModelPlanUpdateSchema,
   SkillSelectionInputSchema,
+  CONTROL_ARGUMENT_SCHEMAS,
   type ModelResponse
 } from "./providers/model-response.js";
 import type { RehydratedFact } from "./providers/model-client.js";
@@ -25,22 +28,78 @@ import {
   compileModelFinish,
   compileModelPlan,
   compileProviderToolCalls,
-  DelegateWorkersSchema,
   parseDelegationControl,
-  parseDirectResponseControl,
   parseInputControl,
   parseModelResponse,
   parsePlanControl
 } from "./planning.js";
-import { providerJsonSchema, type JsonSchema } from "./tool-schema.js";
+import type { ProviderToolExecutionView } from "./planning.js";
 import {
   normalizeProviderToolArguments,
   type ToolArgumentNormalizationDiagnostic
 } from "./tool-argument-normalization.js";
+import type { JsonSchema } from "./tool-schema.js";
+import {
+  decideHarnessConvergence,
+  type HarnessConvergenceDiagnostic
+} from "./convergence.js";
+import { noProgressGuidance, providerBoundaryGuidance } from "./failure-guidance.js";
 
 const PREMATURE_INPUT_REPAIR = "AUTONOMOUS_INPUT_REPAIR_REQUIRED";
+const REPEATED_INPUT_REPAIR = "REPEATED_INPUT_REPAIR_REQUIRED";
 const DELEGATION_ACTION_MUST_BE_EXCLUSIVE = "DELEGATION_ACTION_MUST_BE_EXCLUSIVE";
-const FINAL_CONTROL_REQUIRED = "FINAL_CONTROL_REQUIRED";
+const MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW = 2;
+
+/** Mechanical execution view used to compile a Provider Tool batch against Check attribution. */
+function providerToolExecutionView(
+  runtime: AgentLoopRuntimePort,
+  run: RunSnapshot
+): ProviderToolExecutionView {
+  const state = runtime.readState(run.runId);
+  const effects = new Map(state.tools.map((tool) => [
+    tool.contract.identity.name,
+    tool.contract.execution.effect.kind
+  ]));
+  return {
+    invocations: state.invocations,
+    toolEffect: (toolName) => effects.get(toolName)
+  };
+}
+
+/** Harness owns Provider retry exhaustion and submits only a mechanical conclusion. */
+function providerBoundaryProposal(state: AgentStateView, error: unknown): ProviderBoundaryProposal {
+  const errorCode = providerBoundaryErrorCode(error);
+  const lineage = [...state.continuationAncestors.map((item) => item.events), state.events].flat();
+  const lastProgressIndex = lineage.reduce((latest, event, index) => (
+    isProviderRecoveryProgressEvent(event) ? index : latest
+  ), -1);
+  const priorFailures = lineage.slice(lastProgressIndex + 1).filter((event) => (
+    event.type === "run.blocked"
+    && (event.payload.stopReason === "PROVIDER_UNAVAILABLE"
+      || event.payload.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
+  )).length;
+  const remainingRecoverySegments = Math.max(
+    0,
+    MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW - priorFailures - 1
+  );
+  const outcome = errorCode === "STRATEGY_SNAPSHOT_UNAVAILABLE"
+    ? "failed"
+    : remainingRecoverySegments > 0 ? "blocked" : "failed";
+  const guidance = providerBoundaryGuidance({
+    outcome,
+    errorCode,
+    message: error instanceof Error ? error.message : String(error),
+    remainingRecoverySegments
+  });
+  return {
+    outcome,
+    errorCode,
+    message: error instanceof Error ? error.message : String(error),
+    remainingRecoverySegments,
+    summary: guidance.summary,
+    nextAction: guidance.nextAction
+  };
+}
 
 /** Runtime mechanics consumed by the sole Harness-owned Agent Loop. */
 export interface AgentLoopRuntimePort {
@@ -70,16 +129,31 @@ export interface AgentLoopRuntimePort {
     activeStartedAt: number,
     observer?: RuntimeObserver
   ): RunSnapshot | null;
-  enforceConvergence(run: RunSnapshot, observer?: RuntimeObserver): RunSnapshot | null;
+  proposeTaskFailure(
+    run: RunSnapshot,
+    input: {
+      readonly stopReason: "NO_PROGRESS_DETECTED";
+      readonly message: string;
+      readonly diagnostic: HarnessConvergenceDiagnostic;
+      readonly summary?: string;
+      readonly nextAction?: string;
+    },
+    observer?: RuntimeObserver
+  ): RunSnapshot;
+  recordConvergenceEvent(
+    runId: string,
+    payload: Readonly<Record<string, unknown>>,
+    observer?: RuntimeObserver
+  ): void;
   finalizeBudget(
     run: RunSnapshot,
     activeStartedAt: number,
     summary: string | undefined,
     observer?: RuntimeObserver
   ): RunSnapshot;
-  blockForProvider(
+  admitProviderBoundary(
     run: RunSnapshot,
-    error: unknown,
+    proposal: ProviderBoundaryProposal,
     observer?: RuntimeObserver
   ): RunSnapshot;
   recordModelResponse(
@@ -121,6 +195,7 @@ export interface AgentLoopRuntimePort {
     observer?: RuntimeObserver
   ): RunSnapshot;
   snapshot(runId: string): RunSnapshot;
+  readState(runId: string): AgentStateView;
 }
 
 /**
@@ -145,9 +220,22 @@ export async function runAgentLoop(
       run = budgetFailure;
       break;
     }
-    const convergenceFailure = runtime.enforceConvergence(run, observer);
-    if (convergenceFailure !== null) {
-      run = convergenceFailure;
+    const convergence = decideHarnessConvergence(runtime.readState(run.runId));
+    if (convergence.kind === "record") {
+      runtime.recordConvergenceEvent(run.runId, convergence.payload, observer);
+      run = runtime.snapshot(run.runId);
+    }
+    if (convergence.kind === "stop") {
+      const guidance = noProgressGuidance({
+        kind: convergence.diagnostic.kind,
+        repeatCount: convergence.diagnostic.repeatCount,
+        message: convergence.message
+      });
+      run = runtime.proposeTaskFailure(run, {
+        ...convergence,
+        summary: guidance.summary,
+        nextAction: guidance.nextAction
+      }, observer);
       break;
     }
 
@@ -156,7 +244,7 @@ export async function runAgentLoop(
       run = await executeBoundedExecutionUnit({
         runtime,
         run,
-        action: compileProviderToolCalls(run, resumableUnit.calls),
+        action: compileProviderToolCalls(run, resumableUnit.calls, providerToolExecutionView(runtime, run)),
         modelDecisionId: resumableUnit.modelDecisionId,
         executionUnitId: runtime.createId(),
         initialInvocationIds: resumableUnit.linkedToolInvocations,
@@ -194,7 +282,11 @@ export async function runAgentLoop(
         run = stopForAbort(runtime, run, activeStartedAt, signal, observer);
         break;
       }
-      run = runtime.blockForProvider(run, error, observer);
+      run = runtime.admitProviderBoundary(
+        run,
+        providerBoundaryProposal(runtime.readState(run.runId), error),
+        observer
+      );
       break;
     }
     const rawResponse = modelCall.output;
@@ -250,7 +342,6 @@ export async function runAgentLoop(
       const planCalls = response.toolCalls.filter((call) => call.name === UPDATE_PLAN_CONTROL);
       const inputCalls = response.toolCalls.filter((call) => call.name === REQUEST_INPUT_CONTROL);
       const delegationCalls = response.toolCalls.filter((call) => call.name === DELEGATE_WORKERS_CONTROL);
-      const directResponseCalls = response.toolCalls.filter((call) => call.name === DIRECT_RESPONSE_CONTROL);
       const skillCalls = response.toolCalls.filter((call) => call.name === SKILL_SELECTION_CONTROL);
       const runtimeCalls = response.toolCalls.filter((call) => !isControlCall(call));
       if (planCalls.length > 1) {
@@ -264,25 +355,19 @@ export async function runAgentLoop(
           `${DELEGATION_ACTION_MUST_BE_EXCLUSIVE}: Delegation was not accepted. No Child Run was created. Choose delegation or ordinary tool execution, not both.`
         );
       }
-      if (directResponseCalls.length > 1 || (directResponseCalls.length === 1 && response.toolCalls.length !== 1)) {
-        throw new ActionRejectedError(`${DIRECT_RESPONSE_CONTROL} must be the only call in a Provider response.`);
-      }
       if (skillCalls.length > 1 || (skillCalls.length === 1 && response.toolCalls.length !== 1)) {
         throw new ActionRejectedError(`${SKILL_SELECTION_CONTROL} must be the only call in a Provider response.`);
       }
       if (decisionContext.delegationMode === "required"
         && decisionContext.delegationAllowed !== false
         && decisionContext.delegationSatisfied !== true
-        && (response.toolCalls.length === 0 || directResponseCalls.length === 1)) {
+        && response.toolCalls.length === 0) {
         throw new ActionRejectedError(
           "DELEGATION_REQUIRED: Delegate at least two safe independent Worker objectives, or request the missing user input; Parent-only completion is forbidden by Host policy."
         );
       }
       const planUpdate = planCalls.length === 1 ? parsePlanControl(planCalls[0]!) : null;
       const inputRequest = inputCalls.length === 1 ? parseInputControl(inputCalls[0]!) : null;
-      const directResponse = directResponseCalls.length === 1
-        ? parseDirectResponseControl(directResponseCalls[0]!)
-        : null;
       const skillSelection = skillCalls.length === 1
         ? SkillSelectionInputSchema.parse(skillCalls[0]!.arguments)
         : null;
@@ -294,8 +379,6 @@ export async function runAgentLoop(
         ...(planUpdate === null ? [] : ["set_plan"]),
         ...(inputRequest !== null
           ? ["request_input"]
-          : directResponse !== null
-            ? ["propose_finish"]
           : delegationCalls.length === 1
             ? ["delegate_workers"]
           : runtimeCalls.length > 0
@@ -332,7 +415,7 @@ export async function runAgentLoop(
             "TASK_CONTRACT_REQUIRED: create the Task Contract and Structured Plan with nexora_update_plan before the first write or execute action. Read-only exploration may remain unplanned."
           );
         }
-        if (directResponse !== null || response.toolCalls.length === 0) {
+        if (response.toolCalls.length === 0) {
           requireTaskContractForCompletion(runtime, run);
         }
       }
@@ -373,19 +456,21 @@ export async function runAgentLoop(
         // Skill activation is Harness-local. The accepted control is persisted
         // by recordModelResponse so the next turn and reopen can recover it.
         continue;
-      } else if (directResponse !== null) {
-        run = await runtime.dispatch(
-          run,
-          compileModelFinish(run, directResponse.text, directControlCompletionMode(run)),
-          signal,
-          observer
-        );
       } else if (inputCalls.length === 1) {
         if (shouldRepairPrematureInputRequest(run, decisionContext, inputRequest ?? undefined)) {
           run = runtime.rejectResponse(
             run,
             new ActionRejectedError(
               `${PREMATURE_INPUT_REPAIR}: Use existing information and available Tools before requesting user input. Ask only for a user-exclusive fact or choice after autonomous paths are exhausted.`
+            ),
+            rawResponse,
+            observer
+          );
+        } else if (shouldRepairRepeatedInputRequest(runtime, run, inputRequest!.question)) {
+          run = runtime.rejectResponse(
+            run,
+            new ActionRejectedError(
+              `${REPEATED_INPUT_REPAIR}: The same user-exclusive request was already answered without intervening execution progress. Continue from the persisted user input or choose a different action.`
             ),
             rawResponse,
             observer
@@ -400,7 +485,11 @@ export async function runAgentLoop(
           run = await runtime.dispatch(run, inputAction, signal, observer);
         }
       } else if (runtimeCalls.length > 0) {
-        const toolAction = compileProviderToolCalls(run, runtimeCalls);
+        const toolAction = compileProviderToolCalls(
+          run,
+          runtimeCalls,
+          providerToolExecutionView(runtime, run)
+        );
         run = executionUnit === null || executionUnitId === undefined
           ? await runtime.dispatch(run, toolAction, signal, observer)
           : await executeBoundedExecutionUnit({
@@ -413,15 +502,6 @@ export async function runAgentLoop(
               ...(observer === undefined ? {} : { observer })
             });
       } else if (response.toolCalls.length === 0) {
-        if (
-          run.currentPlan !== null
-          || run.taskContract !== null
-          || run.budgetsUsed.toolCalls > 0
-        ) {
-          throw new ActionRejectedError(
-            `${FINAL_CONTROL_REQUIRED}: after workspace execution, return the final answer through ${DIRECT_RESPONSE_CONTROL}; bare model content is not a completion proposal.`
-          );
-        }
         const finishAction = compileModelFinish(
           run,
           response.text!,
@@ -607,14 +687,6 @@ function requireTaskContractForCompletion(runtime: AgentLoopRuntimePort, run: Ru
   );
 }
 
-const CONTROL_ARGUMENT_SCHEMAS = new Map<string, JsonSchema>([
-  [UPDATE_PLAN_CONTROL, providerJsonSchema(ModelPlanUpdateSchema)],
-  [REQUEST_INPUT_CONTROL, providerJsonSchema(ModelInputRequestSchema)],
-  [DELEGATE_WORKERS_CONTROL, providerJsonSchema(DelegateWorkersSchema)],
-  [DIRECT_RESPONSE_CONTROL, providerJsonSchema(ModelDirectResponseSchema)],
-  [SKILL_SELECTION_CONTROL, providerJsonSchema(SkillSelectionInputSchema)]
-]);
-
 function toolArgumentSchemas(
   tools: DecisionContextResult["context"]["tools"]
 ): ReadonlyMap<string, JsonSchema> {
@@ -650,14 +722,6 @@ function bareTextCompletionMode(
     : "task_result";
 }
 
-function directControlCompletionMode(run: RunSnapshot): "task_result" | "direct_response" {
-  return run.currentPlan !== null
-    || run.taskContract !== null
-    || run.budgetsUsed.toolCalls > 0
-    ? "task_result"
-    : "direct_response";
-}
-
 function shouldRepairPrematureInputRequest(
   run: RunSnapshot,
   context: DecisionContextResult["context"],
@@ -680,6 +744,60 @@ function shouldRepairPrematureInputRequest(
     || context.tools.length === 0
   ) return false;
   return !run.lastError?.message.includes(PREMATURE_INPUT_REPAIR);
+}
+
+function shouldRepairRepeatedInputRequest(
+  runtime: AgentLoopRuntimePort,
+  run: RunSnapshot,
+  question: string
+): boolean {
+  const events = runtime.readState(run.runId).events;
+  const prior = [...events].reverse().find((event) => (
+    event.type === "run.waiting"
+    && event.payload.kind === "input"
+    && event.payload.prompt === question
+  ));
+  if (prior === undefined) return false;
+  return !events.some((event) => (
+    event.sequence > prior.sequence
+    && isAuthoritativeExecutionProgress(event)
+  ));
+}
+
+function isAuthoritativeExecutionProgress(event: {
+  readonly type: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+}): boolean {
+  if (event.type === "tool.succeeded" || event.type === "tool.failed" || event.type === "tool.reconciled") {
+    return true;
+  }
+  return event.type === "plan.set" && event.payload.noOp !== true;
+}
+
+function isProviderRecoveryProgressEvent(event: {
+  readonly type: string;
+}): boolean {
+  return event.type === "run.created"
+    || event.type === "tool.attempt.succeeded"
+    || event.type === "validation.passed"
+    || event.type === "tool.reconciled"
+    || event.type === "recovery.confirmed_succeeded"
+    || event.type === "recovery.confirmed_failed"
+    || event.type === "branch.merged";
+}
+
+function providerBoundaryErrorCode(
+  error: unknown
+): "PROVIDER_UNAVAILABLE" | "CONTEXT_CAPACITY_EXCEEDED" | "STRATEGY_SNAPSHOT_UNAVAILABLE" {
+  if (error !== null && typeof error === "object" && "code" in error
+    && error.code === "CONTEXT_CAPACITY_EXCEEDED") {
+    return "CONTEXT_CAPACITY_EXCEEDED";
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("STRATEGY_SNAPSHOT_UNAVAILABLE")) {
+    return "STRATEGY_SNAPSHOT_UNAVAILABLE";
+  }
+  return "PROVIDER_UNAVAILABLE";
 }
 
 function reservedFinalizationReason(run: RunSnapshot): string | null {

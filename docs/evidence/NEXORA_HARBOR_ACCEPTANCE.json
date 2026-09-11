@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "harbor": {
+    "repository": "https://github.com/laude-institute/harbor",
+    "auditedCommit": "106d19109903b45a1c9467e340765496176628ae",
+    "packageVersion": "0.22.0"
+  },
+  "smoke": {
+    "jobId": "4a85b3dd-5ffc-41e1-909b-56ea861b8272",
+    "trialId": "6a6e4e27-3a90-4bfc-a0e9-bbfd174b2331",
+    "trialName": "cap-data-ordered-report__5fmSd2Q",
+    "startedAt": "2026-09-03T12:48:45.220102+08:00",
+    "finishedAt": "2026-09-03T12:49:49.737994+08:00",
+    "rewards": {
+      "reward": 1,
+      "external_result": 1,
+      "runtime_integrity": 1,
+      "authority": 1,
+      "safety": 1,
+      "expected_outcome": 1,
+      "nexora_strict_pass": 1
+    }
+  },
+  "reliability": {
+    "jobId": "3239b326-eda0-45b8-a2f5-48223cd25e50",
+    "startedAt": "2026-09-03T12:39:27.229178+08:00",
+    "finishedAt": "2026-09-03T12:40:17.067251+08:00",
+    "trials": 3,
+    "errors": 0,
+    "empiricalStrictPassRate": 1,
+    "observedAll3": true,
+    "terminalDistribution": { "succeeded": 3 },
+    "firstBrokenBoundaryDistribution": { "none": 3 }
+  },
+  "faultLab": {
+    "cases": 28,
+    "failed": [],
+    "passed": true
+  },
+  "scenarioMapping": {
+    "mode": "auto",
+    "resolvedFrom": "Harbor trial agent session_id",
+    "manifest": "harness/nexora-bench/datasets/nexora-core-v1/capability-cohort-all.json",
+    "jobs": [
+      "harness/nexora-bench/harbor/jobs/smoke.yaml",
+      "harness/nexora-bench/harbor/jobs/reliability-3.yaml"
+    ],
+    "status": "completed",
+    "smoke": {
+      "job": "harness/nexora-bench/harbor/jobs-output/2026-09-03__23-41-06",
+      "trials": 10,
+      "mappingMatch": "10/10",
+      "strictPassRate": 1.0
+    },
+    "reliability": {
+      "job": "harness/nexora-bench/harbor/jobs-output/2026-09-03__23-50-14",
+      "trials": 30,
+      "mappingMatch": "30/30",
+      "strictPassRate": 1.0,
+      "observedAll3": true
+    }
+  },
+  "checks": {
+    "benchTests": "23/23 passed",
+    "benchTypecheck": "passed",
+    "pythonAdapterTests": "7/7 passed",
+    "diffCheck": "passed",
+    "workspaceTypecheck": "not an acceptance check: unrelated existing tests outside nexora-bench currently fail typecheck"
+  }
+}

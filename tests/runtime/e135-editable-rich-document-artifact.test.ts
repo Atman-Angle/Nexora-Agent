@@ -275,30 +275,49 @@ describe("E135 editable rich-document Deliverable", () => {
       calls += 1;
       const manifest = () => JSON.parse(readFileSync(join(workspace, "outputs", "board-report", "manifest.nexora.json"), "utf8")) as { currentRevision: number; sourceDigest: string };
       const content = calls === 1
-        ? toolResponse("document.create", createInput())
+        ? planResponse("Create and verify the board report.", [
+          { objective: "Create the board report.", toolName: "document.create" },
+          { objective: "Inspect the created report.", toolName: "document.inspect" }
+        ])
+        : calls === 5
+          ? planResponse("Revise only the report summary.", [
+            { objective: "Inspect the current report.", toolName: "document.inspect" },
+            { objective: "Patch only the summary.", toolName: "document.apply_patch" },
+            { objective: "Inspect the revised report.", toolName: "document.inspect" }
+          ])
+          : calls === 10
+            ? planResponse("Revise only the report title.", [
+              { objective: "Inspect the current title.", toolName: "document.inspect" },
+              { objective: "Patch only the title.", toolName: "document.apply_patch" },
+              { objective: "Inspect the revised title.", toolName: "document.inspect" }
+            ])
         : calls === 2
-          ? toolResponse("nexora_respond", { text: "已创建可继续修改的经营简报。" })
-          : calls === 3 || calls === 6
-            ? toolResponse("document.inspect", { manifestPath: "outputs/board-report/manifest.nexora.json", mode: "blocks", blockIds: [calls === 3 ? "summary" : "title"] })
-            : calls === 4
-              ? toolResponse("document.apply_patch", {
-                manifestPath: "outputs/board-report/manifest.nexora.json",
-                expectedRevision: manifest().currentRevision,
-                expectedSourceDigest: manifest().sourceDigest,
-                operations: [{ type: "replace_block", targetBlockId: "summary", block: { blockId: "summary", type: "paragraph", runs: [{ text: "第二轮仅更新摘要。" }] } }]
-              })
-              : calls === 5
-                ? toolResponse("nexora_respond", { text: "已按范围更新摘要，其他内容保持不变。" })
-                : calls === 7
-                  ? toolResponse("document.apply_patch", {
-                    manifestPath: "outputs/board-report/manifest.nexora.json",
-                    expectedRevision: manifest().currentRevision,
-                    expectedSourceDigest: manifest().sourceDigest,
-                    operations: [{ type: "set_title", title: "Board report · final" }]
-                  })
-                  : toolResponse("nexora_respond", { text: "重启后已继续修改同一产物。" });
+          ? toolResponse("document.create", createInput())
+          : calls === 3 || calls === 6 || calls === 8
+            ? toolResponse("document.inspect", { manifestPath: "outputs/board-report/manifest.nexora.json", mode: "blocks", blockIds: ["summary"] })
+            : calls === 7
+            ? toolResponse("document.apply_patch", {
+              manifestPath: "outputs/board-report/manifest.nexora.json",
+              expectedRevision: manifest().currentRevision,
+              expectedSourceDigest: manifest().sourceDigest,
+              operations: [{ type: "replace_block", targetBlockId: "summary", block: { blockId: "summary", type: "paragraph", runs: [{ text: "第二轮仅更新摘要。" }] } }]
+            })
+            : calls === 11 || calls === 13
+              ? toolResponse("document.inspect", { manifestPath: "outputs/board-report/manifest.nexora.json", mode: "blocks", blockIds: ["title"] })
+              : calls === 12
+                ? toolResponse("document.apply_patch", {
+                  manifestPath: "outputs/board-report/manifest.nexora.json",
+                  expectedRevision: manifest().currentRevision,
+                  expectedSourceDigest: manifest().sourceDigest,
+                  operations: [{ type: "set_title", title: "Board report · final" }]
+                })
+                : calls === 4
+                  ? textResponse("已创建可继续修改的经营简报。")
+                  : calls === 9
+                    ? textResponse("已按范围更新摘要，其他内容保持不变。")
+                    : textResponse("重启后已继续修改同一产物。");
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message: nativeMessage(content, calls) }] }));
     });
     await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
     const address = server.address();
@@ -309,20 +328,23 @@ describe("E135 editable rich-document Deliverable", () => {
       "NEXORA_MODEL_NAME=desktop-document-test",
       "NEXORA_MODEL_CONTEXT_WINDOW_TOKENS=128000",
       "NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096",
-      "NEXORA_MODEL_TOOL_TRANSPORT=structured_output"
     ].join("\n"), "utf8");
 
     let service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
     try {
       await service.startSession("创建一份包含图表、表格和图片的经营简报。");
-      const first = await waitForStatus(service, "succeeded", 15_000);
+      const first = await waitForStatus(service, "succeeded", 30_000);
       expect(first.session?.deliverables).toEqual([expect.objectContaining({ revision: 1 })]);
       expect(first.session?.history.records.filter(({ type }) => type === "approval.granted")).toHaveLength(1);
 
       await service.continueSession(first.session!.id, "只修改摘要，其他部分不要动。");
-      const second = await waitForStatus(service, "succeeded", 15_000, 2);
+      const second = await waitForStatus(service, "succeeded", 30_000, 2);
       expect(second.session?.deliverables).toEqual([expect.objectContaining({ revision: 2, changedBlockIds: ["summary"], preservedBlockCount: 6 })]);
-      expect(second.session?.runs[1]?.inspection.invocations.map(({ toolName }) => toolName)).toEqual(["document.inspect", "document.apply_patch"]);
+      expect(second.session?.runs[1]?.inspection.invocations.map(({ toolName }) => toolName)).toEqual([
+        "document.inspect",
+        "document.apply_patch",
+        "document.inspect"
+      ]);
       expect(second.session?.runs[1]?.inspection.evidence.length).toBeGreaterThan(0);
 
       const sessionId = second.session!.id;
@@ -334,16 +356,20 @@ describe("E135 editable rich-document Deliverable", () => {
       expect(preview.html).toContain("第二轮仅更新摘要。");
 
       await service.continueSession(sessionId, "把标题改成最终版。");
-      const third = await waitForStatus(service, "succeeded", 15_000, 3);
+      const third = await waitForStatus(service, "succeeded", 30_000, 3);
       expect(third.session?.deliverables).toEqual([expect.objectContaining({ revision: 3, title: "Board report · final" })]);
-      expect(third.session?.runs[2]?.inspection.invocations.map(({ toolName }) => toolName)).toEqual(["document.inspect", "document.apply_patch"]);
-      expect(calls).toBe(8);
+      expect(third.session?.runs[2]?.inspection.invocations.map(({ toolName }) => toolName)).toEqual([
+        "document.inspect",
+        "document.apply_patch",
+        "document.inspect"
+      ]);
+      expect(calls).toBe(14);
     } finally {
       await service.close();
       server.closeAllConnections();
       await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
     }
-  }, 20_000);
+  }, 70_000);
 });
 
 function createWorkspace(): string {
@@ -386,6 +412,46 @@ function createInput() {
 
 function toolResponse(name: string, argumentsValue: unknown) {
   return { text: null, toolCalls: [{ name, arguments: argumentsValue }], finishReason: "tool_calls" };
+}
+
+function planResponse(
+  goal: string,
+  tasks: readonly { readonly objective: string; readonly toolName: string }[]
+) {
+  return toolResponse("nexora_update_plan", {
+    goal,
+    tasks: tasks.map((task) => ({ objective: task.objective, checks: [{ toolName: task.toolName }] }))
+  });
+}
+
+function textResponse(text: string) {
+  return { text, toolCalls: [], finishReason: "stop" };
+}
+
+function nativeMessage(value: unknown, decisionIndex: number): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, index) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${decisionIndex}-${index}`,
+      type: "function" as const,
+      function: { name: String(call.name), arguments: JSON.stringify(call.arguments ?? null) }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
 }
 
 function pngFixture(): Buffer {

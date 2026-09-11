@@ -1,0 +1,1 @@
+Inspect the repository requirements and current service configuration, correct every mismatch while preserving required values, run the provided verifier, use any failure diagnostics to repair the result, and report only after verification succeeds.

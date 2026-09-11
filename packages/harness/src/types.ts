@@ -11,6 +11,7 @@ import type {
 import type { DelegationPolicy } from "./multi-agent.js";
 import type { SkillConfiguration } from "./skills.js";
 import type { CodingStrategyMode } from "./coding-strategy.js";
+import type { ToolCatalogProjection } from "./prompt.js";
 
 export type RuntimeMemoryOptions = {
   readonly store: MemoryStore;
@@ -55,6 +56,10 @@ export type CreateAgentOptions = {
   readonly hybridContext?: "on" | "off";
   /** Eval switch for coding-only bounded execution units; product default is ON. */
   readonly codingExecutionCadence?: "on" | "off";
+  /** A/B switch for deduplicating tool payloads already present in native continuation. */
+  readonly contextProjectionDedupe?: "on" | "off";
+  /** Eval-only switch; product default keeps the full Prompt Tool Catalog. */
+  readonly toolCatalogProjection?: ToolCatalogProjection;
 };
 
 /** @deprecated Use CreateAgentOptions. */

@@ -1,4 +1,9 @@
-import { createAgent, type ModelDecisionContext, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import {
+  NATIVE_FUNCTION_CALLING_CAPABILITIES,
+  createAgent,
+  type ModelDecisionContext,
+  type RuntimeProvider
+} from "../../packages/harness/src/index.js";
 import { responseCall, responseText } from "../runtime/runtime-testkit.js";
 
 const workspace = process.argv[2];
@@ -7,6 +12,7 @@ if (workspace === undefined || dataDir === undefined) throw new Error("workspace
 
 let idCount = 0;
 const provider: RuntimeProvider = {
+  nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
   async decide(context: ModelDecisionContext) {
     if (context.workerRun === true) return responseText("Recovered Worker completed.");
     return responseCall("nexora_delegate_workers", { assignments: [
@@ -23,9 +29,9 @@ const runtime = createAgent({
   tools: [],
   createId: () => {
     idCount += 1;
-    // owner, Parent, model call, attempt, delegation, two assignments,
-    // first Branch + Child, then the second Branch. Exit at that boundary.
-    if (idCount === 10) process.exit(91);
+    // Exit after the first Branch and Child are durable, before the second
+    // Branch is created.
+    if (idCount === 12) process.exit(91);
     return `crash-id-${idCount}`;
   },
   delegationPolicy: { mode: "allowed", maxConcurrentWorkers: 2 }

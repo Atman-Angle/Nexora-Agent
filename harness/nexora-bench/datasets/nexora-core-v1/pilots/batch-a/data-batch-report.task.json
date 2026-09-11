@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-data-ordered-report",
+  "revision": 1,
+  "datasetVersion": "0.1.0-pilot",
+  "family": "file_data_transformation",
+  "secondaryCoverage": [
+    "validation",
+    "artifact"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "real_workflow",
+  "agentVisible": {
+    "instruction": "Combine the three supplied fact shards into an ordered report containing every value and its total. Validate the report and preserve all source facts.",
+    "allowedCapabilities": [
+      "fixture.delayed_read",
+      "filesystem.list",
+      "filesystem.write",
+      "shell.execute"
+    ],
+    "environmentFacts": [
+      "Source shards may complete observation out of order; output order is part of the requested report."
+    ]
+  },
+  "execution": {
+    "fixture": {
+      "path": "pilots/batch-a/cap-data-ordered-report/fixture",
+      "digest": "sha256:7985c9479d25b955422173b91646ec9dd1b2943107afd1e1e1d492bc3d19edb2"
+    },
+    "scenario": "pilots/batch-a/cap-data-ordered-report/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "driver": {
+      "approvalPolicy": {
+        "mode": "unattended",
+        "maxApprovals": 8,
+        "rules": [
+          {
+            "toolName": "filesystem.write",
+            "decision": "approve",
+            "maxApprovals": 2
+          },
+          {
+            "toolName": "shell.execute",
+            "decision": "approve",
+            "maxApprovals": 6
+          }
+        ]
+      },
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "facts/alpha.txt",
+      "facts/beta.txt",
+      "facts/gamma.txt",
+      "verify.mjs"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "pilots/batch-a/sealed/data-batch-report.grader.json",
+    "graderDigest": "sha256:b346b244ebeaf0d6cec5b9e02679c2744b8a89b14983c3477fcea1ba2003b7f1",
+    "referenceRef": "pilots/batch-a/sealed/data-batch-report.reference.json",
+    "referenceDigest": "sha256:ffc063b792206190bd7fe3ec3599525eff06b0f07eec6ea1356787329c57cd44",
+    "resetRef": "pilots/batch-a/sealed/reset.json"
+  },
+  "humanReviewRef": "pilots/batch-a/cap-data-ordered-report/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:94d8b0355bf7bfe94e0c6d64eee51b994f996e221e96322bbb4fed05f95ccb64",
+    "fixtureDigest": "sha256:7985c9479d25b955422173b91646ec9dd1b2943107afd1e1e1d492bc3d19edb2"
+  }
+}

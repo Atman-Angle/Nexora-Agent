@@ -1,0 +1,17 @@
+jobs_dir: jobs-output
+n_attempts: 1
+n_concurrent_trials: 1
+environment:
+  type: docker
+agents:
+  - import_path: nexora_harbor.agent:NexoraRuntimeAgent
+    kwargs:
+      scenario_id: cap-data-ordered-report
+      manifest_path: harness/nexora-bench/datasets/nexora-core-v1/pilot-batch-a.json
+      provider_mode: real
+verifier:
+  import_path: nexora_harbor.verifier:NexoraRuntimeVerifier
+datasets:
+  - path: datasets/nexora-capability-v1
+    task_names:
+      - cap-data-ordered-report

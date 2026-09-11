@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createRuntime } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES } from "../../packages/harness/src/providers/model-client.js";
 import type {
   ModelDecisionContext,
   RuntimeProvider
@@ -112,7 +113,7 @@ describe("E102 rehydration action continuity", () => {
         };
       }
     ]);
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       decide: scripted.decide.bind(scripted)
     };
     const runtime = createRuntime({

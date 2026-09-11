@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createRuntime } from "../../packages/harness/src/index.js";
-import { ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { createRuntime, NATIVE_FUNCTION_CALLING_CAPABILITIES } from "../../packages/harness/src/index.js";
+import { responseInput, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -47,9 +47,10 @@ describe("E062 waiting-safe duration budget", () => {
       workspace,
       dataDir: join(workspace, ".nexora"),
       provider: {
+        nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           await new Promise<void>((resolve) => setTimeout(resolve, 25));
-          return { type: "request_input", question: "Should not wait", reason: "Duration must stop first" };
+          return responseInput("Should not wait", "Duration must stop first");
         }
       },
       tools: []

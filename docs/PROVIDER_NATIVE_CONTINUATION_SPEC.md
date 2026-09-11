@@ -27,7 +27,7 @@ Runtime Observation、Plan 更新或人工输入与先前调用关联，可能�
 3. 续传可在进程重启后从当前 Runtime Authority 确定性重建。
 4. Provider call ID 仅是审计和 wire correlation，不成为执行或状态 Authority。
 5. 续传有界并进入 Provider token 计量与 Context 收缩。
-6. `structured_output` 行为保持不变。
+6. Agent transport 固定为 `native_tools`；不存在 structured 分支。
 
 ## 3. Authority 与数据流
 
@@ -69,7 +69,7 @@ user      current canonical Runtime context
 Tool 名称使用本次 Tool 注册表确定性生成的 Provider alias；`tool_call_id` 必须逐字保留。
 每个 assistant Tool Call 必须恰有一个 tool result。普通 assistant text永远不解析为 Tool。
 
-`structured_output` 不生成续传消息。Delivery-only 轮可以保留已闭合续传事实，但不能重新开放 Tool。
+Delivery-only 轮可以保留已闭合续传事实，但不能重新开放 Tool。
 
 ## 6. 有界与恢复
 

@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "tasks": [
+    {
+      "taskId": "cap-data-ordered-report",
+      "family": "file_data_transformation",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "f9428e2f-3ba1-4f15-b0d7-60ca55d3f2ab"
+    },
+    {
+      "taskId": "cap-coding-pagination",
+      "family": "coding_repository_change",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "d0260553-d5b4-4492-b3af-6ed13af83097"
+    },
+    {
+      "taskId": "cap-mixed-restart-aggregate",
+      "family": "complex_mixed_workflow",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "89eb590b-ad15-4323-9049-8fafb65ca1f0"
+    },
+    {
+      "taskId": "cap-env-config-converge",
+      "family": "environment_configuration_operations",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "a25ce91e-d276-4de9-b5f9-271eb42d9e4a"
+    },
+    {
+      "taskId": "cap-local-discovery-handoff",
+      "family": "local_information_discovery_analysis",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "06dd6d6b-be6b-4f25-a22c-81d2c60d71d7"
+    },
+    {
+      "taskId": "cap-batch-manifest-reorganize",
+      "family": "batch_automation",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "65f73a38-febc-4fe3-a853-daa2b9893f21"
+    },
+    {
+      "taskId": "cap-artifact-incident-handoff",
+      "family": "artifact_production",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "46cbb04c-6475-469b-a944-25038d08e309"
+    },
+    {
+      "taskId": "cap-code-serializer-provenance",
+      "family": "coding_repository_change",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "ccd63704-3379-40fd-8e4f-08ceea15df53"
+    },
+    {
+      "taskId": "cap-data-tax-reconcile",
+      "family": "file_data_transformation",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "7ba357ba-3e46-49a3-90aa-c500d14b82a9"
+    },
+    {
+      "taskId": "cap-env-coherent-mapping",
+      "family": "environment_configuration_operations",
+      "attempts": 5,
+      "empiricalStrictPassRate": 1.0,
+      "observedAll3": true,
+      "observedAll5": true,
+      "terminalDistribution": {
+        "succeeded": 5
+      },
+      "firstBrokenBoundaryDistribution": {
+        "none": 5
+      },
+      "componentPassRates": {
+        "externalPassRate": 1.0,
+        "runtimeIntegrityPassRate": 1.0,
+        "authorityPassRate": 1.0,
+        "safetyPassRate": 1.0,
+        "expectedOutcomePassRate": 1.0
+      },
+      "jobId": "2ed5733c-5d05-4de2-b327-73aada9f3514"
+    }
+  ],
+  "aggregate": {
+    "trials": 50,
+    "strictPassCount": 50,
+    "empiricalStrictPassRate": 1.0,
+    "observedAll3": true,
+    "observedAll5": true,
+    "terminalDistribution": {
+      "succeeded": 50
+    },
+    "firstBrokenBoundaryDistribution": {
+      "none": 50
+    }
+  }
+}

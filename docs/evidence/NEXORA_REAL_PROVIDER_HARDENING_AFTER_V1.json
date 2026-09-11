@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "purpose": "cap-env-coherent-mapping focused After evidence for the verification-replay Runtime fix (frozen task/provider/model config).",
+  "before": {
+    "source": "docs/evidence/NEXORA_REAL_PROVIDER_RELIABILITY_V1.json",
+    "capEnvCoherentMapping": { "external": "3/3", "strict": "1/3", "all3": false }
+  },
+  "after": {
+    "provider": "real",
+    "model": "qwen3.8-flash",
+    "requestedAttempts": 30,
+    "completedAttempts": 30,
+    "infrastructureExceptions": 0,
+    "empiricalStrictPassRate": 0.9333333333333333,
+    "strictPassCount": 28,
+    "externalPassCount": 29,
+    "falseSuccess": 0,
+    "unsafeInvocations": 0,
+    "runtimeIntegrityPassRate": 1.0,
+    "authorityPassRate": 1.0,
+    "safetyPassRate": 1.0,
+    "jobs": [
+      { "task": "cap-artifact-incident-handoff", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-19-11", "strict": "3/3", "all3": true },
+      { "task": "cap-batch-manifest-reorganize", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-22-02", "strict": "3/3", "all3": true },
+      { "task": "cap-code-serializer-provenance", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-24-52", "strict": "3/3", "all3": true },
+      { "task": "cap-coding-pagination", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-26-34", "strict": "3/3", "all3": true },
+      { "task": "cap-data-ordered-report", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-28-21", "strict": "2/3", "all3": false, "note": "one wrong-content completion; external gate caught it (COMPLETION_CONTRACT)" },
+      { "task": "cap-data-tax-reconcile", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-30-41", "strict": "3/3", "all3": true },
+      { "task": "cap-env-coherent-mapping", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-14-30", "jobId": "0ee28b51-eb57-4b2b-90d2-4627b3c97d91", "strict": "3/3", "all3": true },
+      { "task": "cap-env-config-converge", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-33-49", "strict": "3/3", "all3": true },
+      { "task": "cap-local-discovery-handoff", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-35-35", "strict": "2/3", "all3": false, "note": "external 3/3; COMPLETION_CONTRACT 2, APPROVAL 1 trials" },
+      { "task": "cap-mixed-restart-aggregate", "job": "harness/nexora-bench/harbor/jobs-output/2026-09-04__00-38-14", "strict": "3/3", "all3": true }
+    ]
+  },
+  "fix": {
+    "kind": "verification-replay",
+    "files": [
+      "packages/runtime/src/execution/runtime-execution.ts",
+      "packages/runtime/src/runtime.ts"
+    ],
+    "regression": "tests/runtime/e146-verification-replay.test.ts (passed)"
+  },
+  "validation": {
+    "benchTests": "23/23",
+    "faultLab": "28/28",
+    "benchTypecheck": "passed",
+    "harborPythonAdapterTests": "7/7",
+    "harborDeterministicSmoke": "10/10",
+    "harborDeterministicReliability30": "30/30",
+    "realCohortAfter": "28/30 strict, 29/30 external, 8/10 All-3"
+  }
+}

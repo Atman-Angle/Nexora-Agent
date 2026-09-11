@@ -11,20 +11,17 @@ import {
   RuntimeBudgetsSchema,
   StructuredPlanSchema,
   TaskContractSchema,
-  UNPLANNED_STEP_ID,
   JsonValueSchema,
   createInitialRunSnapshot,
   type BranchRecord,
   type CompletionRequirements,
   type Evidence,
   type PlanTaskContract,
-  type RunEvent,
   type RunSnapshot,
   type RuntimeAction,
   type RuntimeBudgetExtension,
   type RuntimeBudgets,
-  type TaskContract,
-  type ToolInvocation
+  type TaskContract
 } from "./contracts.js";
 import { ArtifactStore } from "./store/artifacts.js";
 import {
@@ -48,6 +45,7 @@ import type {
   ModelCallStart,
   ProviderAttemptCompletion,
   ProviderAttemptStart,
+  ProviderBoundaryProposal,
   RuntimeCommand
 } from "./agent-runtime-port.js";
 import { openRunStore, type RunStore } from "./store/run-store.js";
@@ -125,19 +123,6 @@ import {
 } from "./runtime-error.js";
 import { LeaseManager } from "./runtime-lease.js";
 
-type NoProgressDiagnostic = {
-  readonly fingerprint: string;
-  readonly kind: string;
-  readonly repeatCount: number;
-  readonly strategyFingerprints?: readonly string[];
-  readonly observationFingerprints?: readonly string[];
-  readonly resources?: readonly string[];
-  readonly reads?: number;
-  readonly mutations?: number;
-  readonly failures?: number;
-};
-
-const MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW = 2;
 
 export type {
   ApprovalDecision,
@@ -578,7 +563,6 @@ export class RuntimeEngine {
         && run.resumePredicate?.kind === "provider_reconnect"
         && input.recoveryDecision === undefined
       ) {
-        if (!this.#providerRecoveryAllowed(run.runId)) return toRunResult(run);
         const now = this.#now();
         const resumed = transitionRunStatus(run, "running", { now });
         run = this.#commit(run, resumed, "run.resumed", {
@@ -680,14 +664,21 @@ export class RuntimeEngine {
               true
             );
           } else {
+            const pendingRequest: NonNullable<RunSnapshot["pendingRequest"]> = {
+              id: this.#createId(),
+              kind: "input",
+              prompt: "The protected Tool action was denied. Provide new instructions to continue.",
+              createdAt: now
+            };
             const waiting = transitionRunStatus(run, "waiting", {
               now,
-              pendingRequest: {
-                id: this.#createId(),
-                kind: "input",
-                prompt: "The protected Tool action was denied. Provide new instructions to continue.",
-                createdAt: now
-              },
+              pendingRequest,
+              delivery: deriveRunDelivery({
+                run,
+                outcome: "paused",
+                now,
+                pendingRequest
+              }),
               stopReason: "INPUT_REQUIRED"
             });
             run = this.#commit(run, waiting, "run.waiting", {
@@ -1035,20 +1026,6 @@ export class RuntimeEngine {
         runId,
         "Corrective input is only valid for a NO_PROGRESS_DETECTED Run."
       );
-    }
-    if (
-      run.status === "blocked"
-      && (run.stopReason === "PROVIDER_UNAVAILABLE" || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
-      && !this.#providerRecoveryAllowed(runId)
-    ) {
-      this.#fail(
-        run,
-        run.stopReason,
-        run.stopReason,
-        undefined,
-        "Provider recovery is exhausted for the current progress window."
-      );
-      return;
     }
     if (run.status === "blocked" && run.resumePredicate !== null) {
       this.#assertResumePredicate(run, options);
@@ -1578,14 +1555,20 @@ export class RuntimeEngine {
         const failure = this.#budgetFailure(run, activeStartedAt);
         return failure === null ? null : this.#blockForBudget(run, failure, observer);
       },
-      enforceConvergence: (run, observer) => this.#enforceConvergence(run, observer),
+      proposeTaskFailure: (run, input, observer) => this.#proposeTaskFailure(run, input, observer),
+      recordConvergenceEvent: (runId, payload, observer) => {
+        this.#recordAgentEvent(runId, {
+          type: "runtime.event",
+          payload
+        }, observer);
+      },
       finalizeBudget: (run, activeStartedAt, summary, observer) => {
         const failure = this.#budgetFailure(run, activeStartedAt);
         if (failure === null) throw new Error("Budget finalization requires an exhausted Runtime budget.");
         return this.#blockForBudget(run, failure, observer, summary);
       },
-      blockForProvider: (run, error, observer) => (
-        this.#blockForProvider(run, error, observer)
+      admitProviderBoundary: (run, proposal, observer) => (
+        this.#admitProviderBoundary(run, proposal, observer)
       ),
       beginModelCall: (run, input, observer) => this.#beginModelCall(run, input, observer),
       completeModelCall: (runId, input) => this.#completeModelCall(runId, input),
@@ -1992,9 +1975,21 @@ export class RuntimeEngine {
     if (action.type === "execute_step") return this.#handleExecuteStep(run, action, signal, observer);
     if (action.type === "request_input") {
       const now = this.#now();
+      const pendingRequest: NonNullable<RunSnapshot["pendingRequest"]> = {
+        id: this.#createId(),
+        kind: "input",
+        prompt: action.question,
+        createdAt: now
+      };
       const waiting = transitionRunStatus(run, "waiting", {
         now,
-        pendingRequest: { id: this.#createId(), kind: "input", prompt: action.question, createdAt: now },
+        pendingRequest,
+        delivery: deriveRunDelivery({
+          run,
+          outcome: "paused",
+          now,
+          pendingRequest
+        }),
         stopReason: "INPUT_REQUIRED"
       });
       return this.#commit(run, waiting, "run.waiting", {
@@ -2005,7 +2000,6 @@ export class RuntimeEngine {
       }, observer);
     }
     if (action.type === "call_tool") {
-      this.#assertMutationActionsAdmissible(run, [action]);
       return callTool(this.#services(signal, run.runId), run, action, observer);
     }
     throw new ActionRejectedError("Unsupported Runtime command.");
@@ -2297,7 +2291,6 @@ export class RuntimeEngine {
     observer?: RuntimeObserver
   ): Promise<RunSnapshot> {
     signal.throwIfAborted();
-    this.#assertMutationActionsAdmissible(run, action.actions);
     const services = this.#services(signal, run.runId);
     const plan = run.currentPlan;
     const activeStepId = run.stepProgress.find((item) => item.status === "active")?.stepId;
@@ -2488,11 +2481,6 @@ export class RuntimeEngine {
 
   #setPlan(run: RunSnapshot, action: Extract<RuntimeAction, { type: "set_plan" }>, observer?: RuntimeObserver): RunSnapshot {
     const current = run.currentPlan;
-    if (current === null && this.#closedMutationForSlots(run, this.#unplannedMutationSlots(run)) !== null) {
-      throw new ActionRejectedError(
-        "PLAN_AFTER_UNPLANNED_MUTATION: a successful unplanned mutation cannot be retroactively expanded into a Plan without a later authoritative verification failure. Verify or finish the current result."
-      );
-    }
     let contract = run.taskContract;
     if (current === null) {
       if (action.basedOnVersion !== null) throw new ActionRejectedError("The first Plan must be based on null.");
@@ -2656,89 +2644,6 @@ export class RuntimeEngine {
     }
   }
 
-  #assertMutationActionsAdmissible(
-    run: RunSnapshot,
-    actions: readonly Extract<RuntimeAction, { type: "call_tool" }>[]
-  ): void {
-    for (const action of actions) {
-      const tool = this.#tools.get(action.toolName);
-      if (tool?.contract.execution.effect.kind !== "write") continue;
-      const slots = this.#mutationSlots(run, action.stepId, action.checkIds, action.toolName);
-      const prior = this.#closedMutationForSlots(run, slots);
-      if (prior === null) continue;
-      throw new ActionRejectedError(
-        `MUTATION_VERIFICATION_REQUIRED: successful mutation ${prior.id} already satisfied the active mutation outcome. Verify or finish it; another write requires a later authoritative verification failure or new user input. No Tool side effect was admitted.`
-      );
-    }
-  }
-
-  #closedMutationForSlots(run: RunSnapshot, slots: readonly string[]): ToolInvocation | null {
-    const events = this.#store.listEvents(run.runId);
-    const inputBoundary = [...events].reverse().find((event) => (
-      event.type === "run.resumed" && typeof event.payload.inputSequence === "number"
-    ));
-    const invocations = this.#store.listToolInvocations(run.runId)
-      .filter((invocation) => inputBoundary === undefined || invocation.startedAt > inputBoundary.occurredAt);
-    let latest: { invocation: ToolInvocation; index: number } | null = null;
-    for (const [index, invocation] of invocations.entries()) {
-      if (
-        invocation.status !== "succeeded"
-        || this.#tools.get(invocation.toolName)?.contract.execution.effect.kind !== "write"
-        || !overlaps(slots, this.#mutationSlots(run, invocation.stepId, invocation.checkIds, invocation.toolName))
-      ) continue;
-      latest = { invocation, index };
-    }
-    if (latest === null) return null;
-    const verificationCheckIds = this.#verificationCheckIds(run, latest.invocation.stepId);
-    const mutationSubjects = new Set(run.evidence
-      .filter((evidence) => evidence.invocationId === latest.invocation.id)
-      .map((evidence) => evidence.subjectRef));
-    const failedVerification = invocations.slice(latest.index + 1).some((invocation) => {
-      if (invocation.status !== "failed") return false;
-      const effect = this.#tools.get(invocation.toolName)?.contract.execution.effect.kind;
-      if (effect === undefined || effect === "write") return false;
-      if (verificationCheckIds.length > 0) return overlaps(verificationCheckIds, invocation.checkIds);
-      if (effect === "execute") return true;
-      return this.#store.listToolAttempts(run.runId).some((attempt) => (
-        attempt.invocationId === invocation.id
-        && attempt.subjectRef !== null
-        && mutationSubjects.has(attempt.subjectRef)
-      ));
-    });
-    return failedVerification ? null : latest.invocation;
-  }
-
-  #mutationSlots(
-    run: RunSnapshot,
-    stepId: string,
-    checkIds: readonly string[],
-    toolName: string
-  ): readonly string[] {
-    if (stepId === UNPLANNED_STEP_ID) return [`${UNPLANNED_STEP_ID}:${toolName}`];
-    const step = run.currentPlan?.orderedSteps.find((candidate) => candidate.id === stepId);
-    const mutationChecks = step?.acceptanceChecks.filter((check) => (
-      check.kind === "tool_result" && check.role === "mutation" && checkIds.includes(check.id)
-    )).map((check) => check.id) ?? [];
-    return mutationChecks.length > 0 ? mutationChecks : [`step:${stepId}`];
-  }
-
-  #unplannedMutationSlots(run: RunSnapshot): readonly string[] {
-    return [...new Set(this.#store.listToolInvocations(run.runId).flatMap((invocation) => (
-      invocation.stepId === UNPLANNED_STEP_ID
-      && invocation.status === "succeeded"
-      && this.#tools.get(invocation.toolName)?.contract.execution.effect.kind === "write"
-        ? [`${UNPLANNED_STEP_ID}:${invocation.toolName}`]
-        : []
-    )))];
-  }
-
-  #verificationCheckIds(run: RunSnapshot, stepId: string): readonly string[] {
-    const step = run.currentPlan?.orderedSteps.find((candidate) => candidate.id === stepId);
-    return step?.acceptanceChecks.filter((check) => (
-      check.kind === "tool_result" && check.role === "verification"
-    )).map((check) => check.id) ?? [];
-  }
-
   #rejectResponse(run: RunSnapshot, error: z.ZodError | ActionRejectedError, rawResponse: unknown, observer?: RuntimeObserver): RunSnapshot {
     const diagnostic = responseRejectionDiagnostic(error, rawResponse);
     const message = JSON.stringify(diagnostic);
@@ -2756,7 +2661,8 @@ export class RuntimeEngine {
     stopReason: string,
     errorCode: string,
     observer?: RuntimeObserver,
-    deliverySummary?: string
+    deliverySummary?: string,
+    deliveryNextAction?: string
   ): RunSnapshot {
     const failedInput = RunSnapshotSchema.parse({
       ...run,
@@ -2772,30 +2678,38 @@ export class RuntimeEngine {
         stopReason,
         ...(deliverySummary === undefined
           ? {}
-          : { summary: deliverySummary, generatedBy: "model" as const })
+          : { summary: deliverySummary, generatedBy: "model" as const }),
+        ...(deliveryNextAction === undefined ? {} : { nextAction: deliveryNextAction })
       })
     });
     return this.#commit(run, failed, "run.failed", { stopReason, errorCode }, observer);
   }
 
-  #blockForProvider(run: RunSnapshot, error: unknown, observer?: RuntimeObserver): RunSnapshot {
-    const errorCode = providerBoundaryErrorCode(error);
-    const retryable = this.#providerRecoveryAllowed(run.runId, 1);
-    if (!retryable) {
+  #admitProviderBoundary(
+    run: RunSnapshot,
+    proposal: ProviderBoundaryProposal,
+    observer?: RuntimeObserver
+  ): RunSnapshot {
+    const { errorCode, message, remainingRecoverySegments, summary, nextAction } = proposal;
+    if (proposal.outcome === "failed") {
       return this.#fail(
         RunSnapshotSchema.parse({
           ...run,
-          lastError: { code: errorCode, message: errorMessage(error), retryable: false, detailsArtifact: null }
+          lastError: { code: errorCode, message, retryable: false, detailsArtifact: null }
         }),
         errorCode,
         errorCode,
         observer,
-        "Provider recovery is exhausted for the current progress window. Start a bounded continuation Run to continue from persisted facts."
+        summary,
+        nextAction
       );
+    }
+    if (errorCode === "STRATEGY_SNAPSHOT_UNAVAILABLE") {
+      throw new Error("Strategy snapshot incompatibility cannot enter Provider reconnect state.");
     }
     const blockedInput = RunSnapshotSchema.parse({
       ...run,
-      lastError: { code: errorCode, message: errorMessage(error), retryable, detailsArtifact: null }
+      lastError: { code: errorCode, message, retryable: true, detailsArtifact: null }
     });
     const blocked = transitionRunStatus(blockedInput, "blocked", {
       now: this.#now(),
@@ -2803,7 +2717,7 @@ export class RuntimeEngine {
       resumePredicate: {
         kind: "provider_reconnect",
         providerCode: errorCode,
-        remainingRecoverySegments: MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW - this.#providerFailureCount(run.runId) - 1,
+        remainingRecoverySegments,
         verification: "bounded_provider_probe"
       },
       delivery: deriveRunDelivery({
@@ -2811,6 +2725,8 @@ export class RuntimeEngine {
         outcome: "blocked",
         now: this.#now(),
         stopReason: errorCode,
+        ...(summary === undefined ? {} : { summary }),
+        ...(nextAction === undefined ? {} : { nextAction })
       })
     });
     return this.#commit(run, blocked, "run.blocked", { stopReason: errorCode, resumePredicate: blocked.resumePredicate }, observer);
@@ -2828,7 +2744,7 @@ export class RuntimeEngine {
     const recoveryDecision = input.recoveryDecision ?? input.recovery;
     if (predicate === null) return; // Explicit legacy compatibility: do not reinterpret historical blocked Runs.
     if (predicate.kind === "provider_reconnect") {
-      if (!this.#providerRecoveryAllowed(run.runId) || predicate.remainingRecoverySegments <= 0) {
+      if (predicate.remainingRecoverySegments <= 0) {
         throw this.#controlConflict(run.runId, "Provider recovery predicate is no longer satisfiable.");
       }
       return;
@@ -2954,451 +2870,26 @@ export class RuntimeEngine {
     }, observer);
   }
 
-  #enforceConvergence(run: RunSnapshot, observer?: RuntimeObserver): RunSnapshot | null {
-    const inherited = this.#inheritedNoProgressDiagnostic(run);
-    if (inherited !== null) return this.#failForNoProgress(run, inherited, observer);
-    const diagnostic = this.#noProgressDiagnostic(run.runId);
-    if (diagnostic === null) return null;
-    if (run.budgetsUsed.iterations < (diagnostic.kind === "repeated_invalid_response" ? 2 : 3)) return null;
-    const minimumRepeats = diagnostic.kind === "repeated_invalid_response" ? 2 : 3;
-    if (diagnostic.repeatCount < minimumRepeats) return null;
-    // An identical schema rejection is already an authoritative fact: the
-    // response was never executable and replaying it cannot produce progress.
-    // Bound it on the second occurrence instead of spending another Provider
-    // turn on a warning-only cycle.
-    if (diagnostic.kind === "repeated_invalid_response") {
-      return this.#failForNoProgress(run, diagnostic, observer);
-    }
-    const recentEvents = this.#store.listRecentEvents(run.runId, 64);
-    const warning = [...recentEvents].reverse().find((event) => (
-      event.type === "runtime.event"
-      && event.payload.name === "execution.no_progress.warning"
-      && event.payload.fingerprint === diagnostic.fingerprint
-    ));
-    if (warning === undefined) {
-      const warningSequence = (recentEvents.at(-1)?.sequence ?? 0) + 1;
-      const latestRejection = [...recentEvents].reverse().find((event) => event.type === "response.rejected");
-      const forbiddenStrategy = diagnostic.kind === "repeated_response_rejection" && latestRejection !== undefined
-        ? rejectionStrategyFingerprint(latestRejection)
-        : diagnostic.fingerprint;
-      this.#store.recordRunEvent({
-        runId: run.runId,
-        event: {
-          type: "runtime.event",
-          occurredAt: this.#now(),
-          payload: {
-            name: "execution.no_progress.warning",
-            ...diagnostic,
-            warningSequence,
-            forbiddenStrategy,
-            allowedRepairAttempts: 1
-          }
-        },
-        fencingToken: this.#leases.requireFencingToken(run.runId)
-      });
-      this.#notify(run.runId, observer);
-      return null;
-    }
-
-    const afterWarning = recentEvents.filter((event) => event.sequence > warning.sequence);
-    const revisedPlan = afterWarning.find((event) => (
-      event.type === "plan.set" && event.payload.noOp !== true
-    ));
-    const attemptedAfterReplan = revisedPlan === undefined
-      ? undefined
-      : afterWarning.find((event) => (
-        event.sequence > revisedPlan.sequence
-        && (event.type === "tool.succeeded" || event.type === "tool.failed" || event.type === "tool.recovered")
-      ));
-    // A Plan is an intent, not proof that its execution strategy changed. It
-    // may earn one empirical Tool attempt after a warning, so a genuinely
-    // different action can be observed; it must not reset the whole repeated
-    // action window merely by changing objectives or step IDs.
-    if (revisedPlan !== undefined && attemptedAfterReplan === undefined) return null;
-    const repairAllowed = afterWarning.find((event) => (
-      event.type === "runtime.event"
-      && event.payload.name === "execution.no_progress.repair_allowed"
-      && event.payload.warningSequence === warning.sequence
-    ));
-    if (repairAllowed !== undefined) {
-      const authoritativeAttempt = afterWarning.find((event) => (
-        event.sequence > repairAllowed.sequence
-        && (event.type === "tool.succeeded" || event.type === "tool.failed" || event.type === "tool.recovered")
-      ));
-      if (authoritativeAttempt !== undefined) {
-        this.#store.recordRunEvent({
-          runId: run.runId,
-          event: {
-            type: "runtime.event",
-            occurredAt: this.#now(),
-            payload: {
-              name: "execution.no_progress.probation_resolved",
-              warningSequence: warning.sequence,
-              progressSequence: authoritativeAttempt.sequence
-            }
-          },
-          fencingToken: this.#leases.requireFencingToken(run.runId)
-        });
-        this.#notify(run.runId, observer);
-        return null;
-      }
-    } else {
-      const authoritativeAttempt = afterWarning.find((event) => (
-        event.type === "tool.succeeded" || event.type === "tool.failed" || event.type === "tool.recovered"
-      ));
-      if (authoritativeAttempt !== undefined) {
-        const invocationId = authoritativeAttempt.payload.invocationId;
-        const invocation = typeof invocationId === "string"
-          ? this.#store.listRecentToolInvocations(run.runId, 24).find((item) => item.id === invocationId)
-          : undefined;
-        if (invocation !== undefined && this.#isMateriallyDifferentProbationAttempt(invocation, warning.payload)) {
-          this.#recordProbationResolved(run, warning.sequence, authoritativeAttempt, observer);
-          return null;
-        }
-      }
-      const rejection = [...afterWarning].reverse().find((event) => event.type === "response.rejected");
-      if (rejection !== undefined && correctableRejection(rejection)) {
-        const strategyFingerprint = rejectionStrategyFingerprint(rejection);
-        if (strategyFingerprint !== warning.payload.forbiddenStrategy) {
-          this.#store.recordRunEvent({
-            runId: run.runId,
-            event: {
-              type: "runtime.event",
-              occurredAt: this.#now(),
-              payload: {
-                name: "execution.no_progress.repair_allowed",
-                fingerprint: diagnostic.fingerprint,
-                warningSequence: warning.sequence,
-                forbiddenStrategy: warning.payload.forbiddenStrategy,
-                attemptedStrategy: strategyFingerprint,
-                allowedRepairAttempts: 1
-              }
-            },
-            fencingToken: this.#leases.requireFencingToken(run.runId)
-          });
-          this.#notify(run.runId, observer);
-          return null;
-        }
-      }
-    }
-    return this.#failForNoProgress(run, diagnostic, observer);
-  }
-
-  #recordProbationResolved(
+  // Task convergence is Harness-owned; Runtime exposes only mechanical admission.
+  #proposeTaskFailure(
     run: RunSnapshot,
-    warningSequence: number,
-    attempt: RunEvent,
-    observer?: RuntimeObserver
-  ): void {
-    this.#store.recordRunEvent({
-      runId: run.runId,
-      event: {
-        type: "runtime.event",
-        occurredAt: this.#now(),
-        payload: {
-          name: "execution.no_progress.probation_resolved",
-          warningSequence,
-          progressSequence: attempt.sequence,
-          outcome: attempt.type === "tool.failed" ? "failed" : "succeeded",
-          ...(typeof attempt.payload.payloadDigest === "string"
-            ? { payloadDigest: attempt.payload.payloadDigest }
-            : {})
-        }
-      },
-      fencingToken: this.#leases.requireFencingToken(run.runId)
-    });
-    this.#notify(run.runId, observer);
-  }
-
-  #isMateriallyDifferentProbationAttempt(
-    invocation: ToolInvocation,
-    warning: Readonly<Record<string, unknown>>
-  ): boolean {
-    if (warning.kind !== "resource_churn") return false;
-    const warnedResources = Array.isArray(warning.resources)
-      ? warning.resources.filter((resource): resource is string => typeof resource === "string")
-      : [];
-    const resource = this.#invocationResource(invocation);
-    return resource !== null && !warnedResources.includes(resource);
-  }
-
-  #noProgressDiagnostic(runId: string): NoProgressDiagnostic | null {
-    const allEvents = this.#store.listRecentEvents(runId, 64);
-    // A plain recovery Resume is not a new convergence window. Only a
-    // persisted user input creates new facts; preserving the older window
-    // prevents the same strategy being reopened indefinitely.
-    const lastInputResume = [...allEvents].reverse().find((event) => (
-      event.type === "run.resumed"
-      && typeof event.payload.inputSequence === "number"
-    ));
-    const probationResolved = [...allEvents].reverse().find((event) => (
-      event.type === "runtime.event"
-      && event.payload.name === "execution.no_progress.probation_resolved"
-    ));
-    const segmentBoundary = [lastInputResume, probationResolved]
-      .filter((event): event is RunEvent => event !== undefined)
-      .sort((left, right) => right.sequence - left.sequence)[0];
-    const inputSegmentEvents = allEvents.filter((event) => (
-      lastInputResume === undefined || event.sequence > lastInputResume.sequence
-    ));
-    const inputSegmentRejections = inputSegmentEvents.filter((event) => (
-      event.type === "response.rejected" && isStateRejection(event)
-    )).slice(-8);
-    // Authoritative progress re-opens the repeated-state window: the same
-    // state-rejection code that recurs after a successful Tool outcome or
-    // validation is a different local situation, not proof that the earlier
-    // invalid action is looping. The per-input-segment total cap below still
-    // bounds alternation between a rejection and a single new fact, so the
-    // repair opportunity stays bounded instead of reopening forever.
-    const progressAnchorSequence = inputSegmentEvents.reduce(
-      (sequence, event) => (
-        isAuthoritativeProgressEvent(event) ? event.sequence : sequence
-      ),
-      lastInputResume?.sequence ?? 0
-    );
-    const repeatedStateBoundary = repeatedStateIssueWithinSegments(
-      inputSegmentRejections,
-      progressAnchorSequence
-    );
-    if (repeatedStateBoundary !== null) {
-      return {
-        fingerprint: digestCanonicalJson({
-          kind: "invalid_state_transition",
-          strategyFingerprint: repeatedStateBoundary.fingerprint,
-          inputSequence: lastInputResume?.payload.inputSequence ?? 1
-        }),
-        kind: "repeated_invalid_response",
-        repeatCount: repeatedStateBoundary.repeatCount,
-        strategyFingerprints: [repeatedStateBoundary.fingerprint]
-      };
-    }
-    const segmentStartedAt = segmentBoundary?.occurredAt ?? "";
-    const invocations = this.#store.listRecentToolInvocations(runId, 24)
-      .filter((invocation) => invocation.startedAt >= segmentStartedAt)
-      .slice(-24);
-    const resourceChurn = this.#resourceChurnDiagnostic(invocations);
-    if (resourceChurn !== null) return resourceChurn;
-    const latest = invocations.at(-1);
-    if (latest !== undefined && (latest.status === "succeeded" || latest.status === "failed")) {
-      const strategyFingerprint = invocationStrategyFingerprint(latest)!;
-      const observationFingerprint = invocationObservationFingerprint(latest)!;
-      const actionFingerprint = digestCanonicalJson({ strategyFingerprint, observationFingerprint });
-      const completed = invocations.filter((invocation) => invocation.status === "succeeded" || invocation.status === "failed");
-      let repeatCount = 0;
-      let convergenceAnchor = `boundary:${segmentBoundary?.sequence ?? 0}`;
-      for (let index = completed.length - 1; index >= 0; index -= 1) {
-        const invocation = completed[index]!;
-        const candidateStrategyFingerprint = invocationStrategyFingerprint(invocation)!;
-        const candidateObservationFingerprint = invocationObservationFingerprint(invocation)!;
-        const candidateFingerprint = digestCanonicalJson({
-          strategyFingerprint: candidateStrategyFingerprint,
-          observationFingerprint: candidateObservationFingerprint
-        });
-        if (candidateFingerprint !== actionFingerprint) {
-          convergenceAnchor = invocation.id;
-          break;
-        }
-        repeatCount += 1;
-      }
-      const fingerprint = digestCanonicalJson({ actionFingerprint, convergenceAnchor });
-      if (repeatCount >= 3) return {
-        fingerprint,
-        kind: latest.status === "failed" ? "repeated_tool_failure" : "repeated_tool_result",
-        repeatCount,
-        strategyFingerprints: [strategyFingerprint],
-        observationFingerprints: [observationFingerprint]
-      };
-    }
-    const events = allEvents.filter((event) => segmentBoundary === undefined || event.sequence > segmentBoundary.sequence);
-    const convergenceAnchor = events.reduce((sequence, event) => {
-      const isToolOutcome = event.type === "tool.attempt.succeeded" || event.type === "tool.attempt.failed";
-      const isAcceptedPlan = event.type === "plan.set" && event.payload.noOp !== true;
-      return isToolOutcome || isAcceptedPlan ? event.sequence : sequence;
-    }, segmentBoundary?.sequence ?? 0);
-    const convergenceEvents = events.filter((event) => event.sequence > convergenceAnchor);
-    const noOps = convergenceEvents.filter((event) => event.type === "plan.set" && event.payload.noOp === true).slice(-4);
-    if (noOps.length >= 3) {
-      const fingerprint = digestCanonicalJson({ kind: "equivalent_plan", version: noOps.at(-1)?.payload.version, convergenceAnchor });
-      return {
-        fingerprint,
-        kind: "equivalent_plan",
-        repeatCount: noOps.length,
-        strategyFingerprints: [digestCanonicalJson({ kind: "equivalent_plan", version: noOps.at(-1)?.payload.version })]
-      };
-    }
-    const rejections = convergenceEvents.filter((event) => event.type === "response.rejected").slice(-6);
-    if (rejections.length >= 2) {
-      const repeatedIssue = repeatedRejectionIssue(rejections);
-      if (repeatedIssue !== null) {
-        return {
-          fingerprint: digestCanonicalJson({
-            kind: "invalid_response_issue",
-            strategyFingerprint: repeatedIssue.fingerprint,
-            convergenceAnchor
-          }),
-          kind: "repeated_invalid_response",
-          repeatCount: repeatedIssue.repeatCount,
-          strategyFingerprints: [repeatedIssue.fingerprint]
-        };
-      }
-      const latestMessage = rejections.at(-1)?.payload.message;
-      const equivalent = rejections.filter((event) => event.payload.message === latestMessage).length;
-      if (equivalent >= 3) {
-        return { fingerprint: digestCanonicalJson({ kind: "response_rejected", message: latestMessage, convergenceAnchor }), kind: "repeated_response_rejection", repeatCount: equivalent };
-      }
-      if (equivalent >= 2) {
-        let schema = false;
-        try {
-          schema = (JSON.parse(String(latestMessage)) as { readonly kind?: unknown }).kind === "schema";
-        } catch {
-          schema = false;
-        }
-        if (schema) {
-          return { fingerprint: digestCanonicalJson({ kind: "invalid_response", message: latestMessage, convergenceAnchor }), kind: "repeated_invalid_response", repeatCount: equivalent };
-        }
-      }
-    }
-    return null;
-  }
-
-  #inheritedNoProgressDiagnostic(run: RunSnapshot): NoProgressDiagnostic | null {
-    const allCurrentEvents = this.#store.listEvents(run.runId);
-    const allCurrentInvocations = this.#store.listToolInvocations(run.runId);
-    const correctiveResume = [...allCurrentEvents].reverse().find((event) => (
-      event.type === "run.resumed" && event.payload.reason === "no_progress_corrective_input"
-    ));
-    const sameRunBlockedEvent = correctiveResume === undefined
-      ? undefined
-      : [...allCurrentEvents].reverse().find((event) => (
-          event.sequence < correctiveResume.sequence
-          && (event.type === "run.blocked" || event.type === "run.failed")
-          && event.payload.stopReason === "NO_PROGRESS_DETECTED"
-        ));
-    const blockedAncestor = sameRunBlockedEvent === undefined
-      ? [...this.#continuationAncestors(run)].reverse().find(({ run: ancestor }) => (
-          (ancestor.status === "blocked" || ancestor.status === "failed")
-          && ancestor.stopReason === "NO_PROGRESS_DETECTED"
-        ))
-      : undefined;
-    const blockedEvent = sameRunBlockedEvent ?? (blockedAncestor === undefined
-      ? undefined
-      : [...blockedAncestor.events].reverse().find((event) => (
-          (event.type === "run.blocked" || event.type === "run.failed")
-          && event.payload.stopReason === "NO_PROGRESS_DETECTED"
-        )));
-    if (blockedEvent === undefined) return null;
-    const priorEvents = sameRunBlockedEvent === undefined
-      ? blockedAncestor!.events
-      : allCurrentEvents.filter((event) => event.sequence <= sameRunBlockedEvent.sequence);
-    const currentEvents = correctiveResume === undefined
-      ? allCurrentEvents
-      : allCurrentEvents.filter((event) => event.sequence > correctiveResume.sequence);
-    const priorInvocations = invocationsReferencedByEvents(
-      sameRunBlockedEvent === undefined ? blockedAncestor!.invocations : allCurrentInvocations,
-      priorEvents
-    );
-    const currentInvocations = invocationsReferencedByEvents(allCurrentInvocations, currentEvents);
-    const diagnostic = blockedEvent.payload.diagnostic;
-    if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return null;
-    const prior = diagnostic as Readonly<Record<string, unknown>>;
-    const kind = typeof prior.kind === "string" ? prior.kind : "repeated_action";
-    const priorRepeatCount = typeof prior.repeatCount === "number" ? prior.repeatCount : 1;
-    const priorStrategies = Array.isArray(prior.strategyFingerprints)
-      ? prior.strategyFingerprints.filter((item): item is string => typeof item === "string")
-      : inheritedStrategyFingerprints(kind, priorEvents, priorInvocations);
-    const priorObservations = Array.isArray(prior.observationFingerprints)
-      ? prior.observationFingerprints.filter((item): item is string => typeof item === "string")
-      : inheritedObservationFingerprints(kind, priorInvocations);
-    if (hasAuthoritativeProgressBeyondStrategy(currentEvents, currentInvocations, priorStrategies, priorObservations)) return null;
-    const currentStrategies = kind === "resource_churn"
-      ? this.#resourceChurnDiagnostic([...currentInvocations])?.strategyFingerprints ?? []
-      : currentFailureStrategyFingerprints(kind, currentEvents, currentInvocations);
-    const repeatedStrategies = currentStrategies.filter((item) => priorStrategies.includes(item));
-    if (repeatedStrategies.length === 0) return null;
-    return {
-      fingerprint: digestCanonicalJson({
-        kind: "inherited_no_progress",
-        sourceRunId: blockedAncestor?.run.runId ?? run.runId,
-        sourceEventSequence: blockedEvent.sequence,
-        repeatedStrategies
-      }),
-      kind,
-      repeatCount: priorRepeatCount + 1,
-      strategyFingerprints: repeatedStrategies,
-      ...(Array.isArray(prior.resources)
-        ? { resources: prior.resources.filter((item): item is string => typeof item === "string") }
-        : {})
-    };
-  }
-
-  #resourceChurnDiagnostic(
-    invocations: ReturnType<RunStore["listRecentToolInvocations"]>
-  ): NoProgressDiagnostic | null {
-    const resources = new Map<string, { reads: number; mutations: number; failures: number }>();
-    for (const invocation of invocations) {
-      if (invocation.status !== "succeeded" && invocation.status !== "failed") continue;
-      const effect = this.#tools.get(invocation.toolName)?.contract.execution.effect.kind;
-      if (effect !== "read" && effect !== "write") continue;
-      const resource = this.#invocationResource(invocation);
-      if (resource === null) continue;
-      const counts = resources.get(resource) ?? { reads: 0, mutations: 0, failures: 0 };
-      if (effect === "read") counts.reads += 1;
-      else {
-        counts.mutations += 1;
-        if (invocation.status === "failed") counts.failures += 1;
-      }
-      resources.set(resource, counts);
-    }
-    const candidate = [...resources.entries()]
-      .filter(([, counts]) => counts.reads >= 4 && counts.mutations >= 3)
-      .sort(([leftPath, left], [rightPath, right]) => (
-        right.reads + right.mutations - left.reads - left.mutations
-        || right.failures - left.failures
-        || leftPath.localeCompare(rightPath)
-      ))[0];
-    if (candidate === undefined) return null;
-    const [resource, counts] = candidate;
-    return {
-      fingerprint: digestCanonicalJson({ kind: "resource_churn", resource }),
-      kind: "resource_churn",
-      repeatCount: counts.reads + counts.mutations,
-      strategyFingerprints: [digestCanonicalJson({ kind: "resource_churn", resource })],
-      resources: [resource],
-      reads: counts.reads,
-      mutations: counts.mutations,
-      failures: counts.failures
-    };
-  }
-
-  #invocationResource(invocation: ToolInvocation): string | null {
-    const input = invocation.inputJson;
-    const path = input !== null && typeof input === "object" && !Array.isArray(input)
-      ? (input as { readonly path?: unknown }).path
-      : undefined;
-    if (typeof path === "string" && path.trim().length > 0) return canonicalResource(path);
-    const evidence = this.#store.getRun(invocation.runId)?.evidence.find((candidate) => (
-      candidate.invocationId === invocation.id
-    ));
-    if (evidence !== undefined) return canonicalResource(evidence.subjectRef);
-    const attempt = this.#store.listToolAttempts(invocation.runId)
-      .filter((candidate) => candidate.invocationId === invocation.id && candidate.subjectRef !== null)
-      .at(-1);
-    return attempt?.subjectRef === null || attempt?.subjectRef === undefined
-      ? null
-      : canonicalResource(attempt.subjectRef);
-  }
-
-  #failForNoProgress(
-    run: RunSnapshot,
-    diagnostic: NoProgressDiagnostic,
+    input: {
+      readonly stopReason: "NO_PROGRESS_DETECTED";
+      readonly message: string;
+      readonly diagnostic: Readonly<Record<string, unknown>>;
+      readonly summary?: string;
+      readonly nextAction?: string;
+    },
     observer?: RuntimeObserver
   ): RunSnapshot {
-    const stopReason = "NO_PROGRESS_DETECTED";
+    const unresolved = this.#store.listToolInvocations(run.runId).some((item) => item.status === "started" || item.status === "unknown");
+    if (unresolved) throw new ActionRejectedError("Task failure is not admissible while a Tool Invocation is unresolved.");
+    const stopReason = input.stopReason;
     const failedInput = RunSnapshotSchema.parse({
       ...run,
       lastError: {
         code: stopReason,
-        message: `Execution repeated ${diagnostic.kind} ${diagnostic.repeatCount} times without a new authoritative fact.`,
+        message: input.message,
         retryable: false,
         detailsArtifact: null
       }
@@ -3406,9 +2897,21 @@ export class RuntimeEngine {
     const failed = transitionRunStatus(failedInput, "failed", {
       now: this.#now(),
       stopReason,
-      delivery: deriveRunDelivery({ run: failedInput, outcome: "failed", now: this.#now(), stopReason })
+      delivery: deriveRunDelivery({
+        run: failedInput,
+        outcome: "failed",
+        now: this.#now(),
+        stopReason,
+        ...(input.summary === undefined ? {} : { summary: input.summary, generatedBy: "model" as const }),
+        ...(input.nextAction === undefined ? {} : { nextAction: input.nextAction })
+      })
     });
-    return this.#commit(run, failed, "run.failed", { stopReason, diagnostic }, observer);
+    return this.#commit(run, failed, "run.failed", {
+      stopReason,
+      source: "harness",
+      message: input.message,
+      diagnostic: input.diagnostic
+    }, observer);
   }
 
   #budgetFailure(run: RunSnapshot, activeStartedAt: number): string | null {
@@ -3572,35 +3075,15 @@ export class RuntimeEngine {
     });
   }
 
-  #providerRecoveryAllowed(runId: string, pendingFailures = 0): boolean {
-    return this.#providerFailureCount(runId) + pendingFailures < MAX_PROVIDER_FAILURES_PER_PROGRESS_WINDOW;
-  }
-
-  #providerFailureCount(runId: string): number {
-    const run = this.#requireRun(runId);
-    const lineage = [
-      ...this.#continuationAncestors(run).map((item) => item.events),
-      this.#store.listEvents(runId)
-    ].flat();
-    const lastProgressIndex = lineage.reduce((latest, event, index) => (
-      isProviderRecoveryProgressEvent(event) ? index : latest
-    ), -1);
-    return lineage.slice(lastProgressIndex + 1).filter((event) => (
-      event.type === "run.blocked"
-      && (event.payload.stopReason === "PROVIDER_UNAVAILABLE"
-        || event.payload.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
-    )).length;
-  }
-
   #isRecoverableContinuationParent(run: RunSnapshot): boolean {
     if (run.stopReason === "NO_PROGRESS_DETECTED") {
       return run.status === "blocked" || run.status === "failed";
     }
     if (run.status !== "blocked") return false;
-    return (
-      run.stopReason === "PROVIDER_UNAVAILABLE"
-      || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED"
-    ) && !this.#providerRecoveryAllowed(run.runId);
+    return (run.stopReason === "PROVIDER_UNAVAILABLE"
+      || run.stopReason === "CONTEXT_CAPACITY_EXCEEDED")
+      && run.resumePredicate?.kind === "provider_reconnect"
+      && run.resumePredicate.remainingRecoverySegments <= 0;
   }
 
   /** Derived Child → Parent projection; Child Run remains the only authority. */
@@ -4165,291 +3648,13 @@ function isBudgetStopReason(value: string | null): boolean {
     || value === "DURATION_BUDGET_EXCEEDED";
 }
 
-function isProviderRecoveryProgressEvent(event: RunEvent): boolean {
-  return event.type === "tool.attempt.succeeded"
-    || event.type === "validation.passed"
-    || event.type === "recovery.confirmed_succeeded"
-    || event.type === "recovery.confirmed_failed"
-    || event.type === "branch.merged";
-}
 
-function invocationsReferencedByEvents(
-  invocations: readonly ToolInvocation[],
-  events: readonly RunEvent[]
-): readonly ToolInvocation[] {
-  const invocationIds = new Set(events.flatMap((event) => (
-    typeof event.payload.invocationId === "string" ? [event.payload.invocationId] : []
-  )));
-  return invocations.filter((invocation) => invocationIds.has(invocation.id));
-}
 
-function hasAuthoritativeProgressBeyondStrategy(
-  events: readonly RunEvent[],
-  invocations: readonly ToolInvocation[],
-  priorStrategies: readonly string[],
-  priorObservations: readonly string[] = []
-): boolean {
-  if (events.some((event) => (
-    event.type === "tool.recovered"
-    || event.type === "validation.passed"
-    || event.type === "recovery.confirmed_succeeded"
-    || event.type === "recovery.confirmed_failed"
-    || event.type === "branch.merged"
-    || event.type === "run.succeeded"
-  ))) return true;
-  return invocations.some((invocation) => {
-    const strategy = invocationStrategyFingerprint(invocation);
-    if (strategy === null) return false;
-    if (!priorStrategies.includes(strategy)) return true;
-    const observation = invocationObservationFingerprint(invocation);
-    return observation !== null && !priorObservations.includes(observation);
-  });
-}
 
-function isAuthoritativeProgressEvent(event: RunEvent): boolean {
-  return event.type === "tool.succeeded"
-    || event.type === "tool.failed"
-    || event.type === "tool.recovered"
-    || event.type === "validation.passed"
-    || event.type === "recovery.confirmed_succeeded"
-    || event.type === "recovery.confirmed_failed"
-    || event.type === "branch.merged";
-}
-
-/**
- * Repeated-state detection over one user-input segment.
- *
- * Two identical state rejections are treated as one no-progress loop only
- * when no authoritative progress occurred between them. An authoritative
- * outcome re-opens the window so a run that legitimately advanced is not
- * terminated on the second same-code rejection. A total cap of three
- * occurrences per segment still bounds rejection/progress alternation.
- */
-function repeatedStateIssueWithinSegments(
-  rejections: readonly RunEvent[],
-  progressAnchorSequence: number
-): { readonly fingerprint: string; readonly repeatCount: number } | null {
-  const totalCounts = new Map<string, number>();
-  const windowCounts = new Map<string, number>();
-  for (const rejection of rejections) {
-    for (const fingerprint of rejectionIssueFingerprints(rejection)) {
-      totalCounts.set(fingerprint, (totalCounts.get(fingerprint) ?? 0) + 1);
-      if (rejection.sequence > progressAnchorSequence) {
-        windowCounts.set(fingerprint, (windowCounts.get(fingerprint) ?? 0) + 1);
-      }
-    }
-  }
-  let best: { readonly fingerprint: string; readonly repeatCount: number } | null = null;
-  const fingerprints = new Set([...totalCounts.keys(), ...windowCounts.keys()]);
-  for (const fingerprint of fingerprints) {
-    const inWindow = windowCounts.get(fingerprint) ?? 0;
-    const total = totalCounts.get(fingerprint) ?? 0;
-    if (inWindow < 2 && total < 3) continue;
-    const repeatCount = inWindow >= 2 ? inWindow : total;
-    if (best === null || repeatCount > best.repeatCount) best = { fingerprint, repeatCount };
-  }
-  return best;
-}
-
-function repeatedRejectionIssue(
-  rejections: readonly RunEvent[]
-): { readonly fingerprint: string; readonly repeatCount: number } | null {
-  const counts = new Map<string, number>();
-  for (const rejection of rejections) {
-    for (const fingerprint of rejectionIssueFingerprints(rejection)) {
-      counts.set(fingerprint, (counts.get(fingerprint) ?? 0) + 1);
-    }
-  }
-  const repeated = [...counts.entries()]
-    .filter(([, count]) => count >= 2)
-    .sort(([leftFingerprint, leftCount], [rightFingerprint, rightCount]) => (
-      rightCount - leftCount || leftFingerprint.localeCompare(rightFingerprint)
-    ))[0];
-  return repeated === undefined ? null : { fingerprint: repeated[0], repeatCount: repeated[1] };
-}
-
-function isStateRejection(event: RunEvent): boolean {
-  if (event.type !== "response.rejected") return false;
-  const diagnostic = event.payload.diagnostic;
-  return diagnostic !== null
-    && typeof diagnostic === "object"
-    && !Array.isArray(diagnostic)
-    && (diagnostic as { readonly kind?: unknown }).kind === "state";
-}
-
-function rejectionIssueFingerprints(event: RunEvent): readonly string[] {
-  if (event.type !== "response.rejected") return [];
-  const diagnostic = event.payload.diagnostic;
-  if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return [];
-  const value = diagnostic as { readonly kind?: unknown; readonly issues?: unknown };
-  if (!Array.isArray(value.issues)) return [];
-  return value.issues.flatMap((issue) => {
-    if (issue === null || typeof issue !== "object" || Array.isArray(issue)) return [];
-    const item = issue as { readonly path?: unknown; readonly code?: unknown; readonly message?: unknown };
-    if (typeof item.path !== "string" || typeof item.code !== "string") return [];
-    return [digestCanonicalJson({
-      kind: typeof value.kind === "string" ? value.kind : "unknown",
-      path: item.path,
-      code: item.code,
-      ...(value.kind === "state" && item.code === "response_rejected" && typeof item.message === "string"
-        ? { message: item.message }
-        : {})
-    })];
-  });
-}
-
-function invocationStrategyFingerprint(invocation: ToolInvocation): string | null {
-  if (invocation.status !== "succeeded" && invocation.status !== "failed") return null;
-  return digestCanonicalJson({
-    toolName: invocation.toolName,
-    inputDigest: invocation.inputDigest,
-  });
-}
-
-function invocationObservationFingerprint(invocation: ToolInvocation): string | null {
-  if (invocation.status !== "succeeded" && invocation.status !== "failed") return null;
-  const outcome = invocation.status === "succeeded"
-    ? invocation.resultJson
-    : (() => {
-        const error = invocation.errorJson;
-        if (error === null || typeof error !== "object" || Array.isArray(error)) return error;
-        const value = error as { readonly code?: unknown; readonly retryable?: unknown; readonly details?: unknown };
-        return {
-          code: value.code,
-          retryable: value.retryable,
-          ...(value.details === undefined ? {} : { details: value.details })
-        };
-      })();
-  return digestCanonicalJson({
-    status: invocation.status,
-    outcome
-  });
-}
-
-function inheritedObservationFingerprints(
-  kind: string,
-  invocations: readonly ToolInvocation[]
-): readonly string[] {
-  if (kind !== "repeated_tool_failure" && kind !== "repeated_tool_result") return [];
-  return invocations.flatMap((invocation) => {
-    const fingerprint = invocationObservationFingerprint(invocation);
-    return fingerprint === null ? [] : [fingerprint];
-  });
-}
-
-function inheritedStrategyFingerprints(
-  kind: string,
-  events: readonly RunEvent[],
-  invocations: readonly ToolInvocation[]
-): readonly string[] {
-  if (kind === "repeated_invalid_response" || kind === "repeated_response_rejection") {
-    const rejection = [...events].reverse().find((event) => event.type === "response.rejected");
-    return rejection === undefined ? [] : rejectionIssueFingerprints(rejection);
-  }
-  if (kind === "repeated_tool_failure" || kind === "repeated_tool_result") {
-    const latest = [...invocations].reverse().find((invocation) => (
-      invocation.status === "succeeded" || invocation.status === "failed"
-    ));
-    const fingerprint = latest === undefined ? null : invocationStrategyFingerprint(latest);
-    return fingerprint === null ? [] : [fingerprint];
-  }
-  if (kind === "equivalent_plan") {
-    const plan = [...events].reverse().find((event) => event.type === "plan.set" && event.payload.noOp === true);
-    return plan === undefined ? [] : [digestCanonicalJson({ kind, version: plan.payload.version })];
-  }
-  if (kind === "resource_churn") {
-    const blocked = [...events].reverse().find((event) => event.type === "run.blocked");
-    const diagnostic = blocked?.payload.diagnostic;
-    const resources = diagnostic !== null && typeof diagnostic === "object" && !Array.isArray(diagnostic)
-      && Array.isArray((diagnostic as { readonly resources?: unknown }).resources)
-      ? (diagnostic as { readonly resources: unknown[] }).resources.filter((item): item is string => typeof item === "string")
-      : [];
-    return resources.map((resource) => digestCanonicalJson({ kind, resource }));
-  }
-  return [];
-}
-
-function currentFailureStrategyFingerprints(
-  kind: string,
-  events: readonly RunEvent[],
-  invocations: readonly ToolInvocation[]
-): readonly string[] {
-  if (kind === "repeated_invalid_response" || kind === "repeated_response_rejection") {
-    return events.flatMap((event) => rejectionIssueFingerprints(event));
-  }
-  if (kind === "repeated_tool_failure" || kind === "repeated_tool_result") {
-    return invocations.flatMap((invocation) => {
-      const fingerprint = invocationStrategyFingerprint(invocation);
-      return fingerprint === null ? [] : [fingerprint];
-    });
-  }
-  if (kind === "equivalent_plan") {
-    return events
-      .filter((event) => event.type === "plan.set" && event.payload.noOp === true)
-      .map((event) => digestCanonicalJson({ kind, version: event.payload.version }));
-  }
-  if (kind === "resource_churn") {
-    return invocations.flatMap((invocation) => {
-      if (invocation.status !== "succeeded" && invocation.status !== "failed") return [];
-      const input = invocation.inputJson;
-      if (input === null || typeof input !== "object" || Array.isArray(input)) return [];
-      const path = (input as { readonly path?: unknown }).path;
-      if (typeof path !== "string") return [];
-      return [digestCanonicalJson({
-        kind,
-        resource: path.replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase()
-      })];
-    });
-  }
-  return [];
-}
-
-function canonicalResource(value: string): string {
-  return value.trim().replaceAll("\\", "/").replace(/^\.\//, "").toLowerCase();
-}
-
-function overlaps(left: readonly string[], right: readonly string[]): boolean {
-  const values = new Set(left);
-  return right.some((item) => values.has(item));
-}
-
-function correctableRejection(event: RunEvent): boolean {
-  if (event.type !== "response.rejected") return false;
-  const diagnostic = event.payload.diagnostic;
-  if (diagnostic === null || typeof diagnostic !== "object" || Array.isArray(diagnostic)) return false;
-  const recovery = (diagnostic as { readonly recovery?: unknown }).recovery;
-  if (recovery === null || typeof recovery !== "object" || Array.isArray(recovery)) return false;
-  const value = recovery as {
-    readonly sideEffect?: unknown;
-    readonly doNotRepeat?: unknown;
-    readonly nextAction?: unknown;
-  };
-  return value.sideEffect === "none"
-    && value.doNotRepeat === true
-    && typeof value.nextAction === "string"
-    && value.nextAction.trim().length > 0;
-}
-
-function rejectionStrategyFingerprint(event: RunEvent): string {
-  if (event.type !== "response.rejected") return digestCanonicalJson({ event: event.type });
-  return digestCanonicalJson({
-    diagnostic: event.payload.diagnostic
-  });
-}
 
 function addQuota(current: number, additional: number | undefined): number {
   if (additional === undefined) return current;
   const next = current + additional;
   if (!Number.isSafeInteger(next)) throw new Error("Budget Extension exceeds the safe integer range.");
   return next;
-}
-
-function providerBoundaryErrorCode(error: unknown): "PROVIDER_UNAVAILABLE" | "CONTEXT_CAPACITY_EXCEEDED" {
-  if (
-    error !== null
-    && typeof error === "object"
-    && "code" in error
-    && error.code === "CONTEXT_CAPACITY_EXCEEDED"
-  ) return "CONTEXT_CAPACITY_EXCEEDED";
-  return "PROVIDER_UNAVAILABLE";
 }

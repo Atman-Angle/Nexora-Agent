@@ -13,7 +13,6 @@ NEXORA_MODEL_BASE_URL=https://your-provider.example/v1
 NEXORA_MODEL_API_KEY=replace-me
 NEXORA_MODEL_NAME=your-supported-model
 NEXORA_MODEL_DECISION_OUTPUT_TOKENS=4096
-NEXORA_MODEL_TOOL_TRANSPORT=native_tools
 '@ | Set-Content -LiteralPath .env
 ```
 

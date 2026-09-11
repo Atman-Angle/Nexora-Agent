@@ -1,0 +1,19 @@
+jobs_dir: jobs-output
+n_attempts: 1
+n_concurrent_trials: 1
+environment:
+  type: docker
+agents:
+  - import_path: nexora_harbor.agent:NexoraRuntimeAgent
+    kwargs:
+      scenario_id: auto
+      manifest_path: harness/nexora-bench/datasets/nexora-core-v1/capability-cohort-all.json
+      provider_mode: real
+    override_setup_timeout_sec: 900
+    override_timeout_sec: 2400
+verifier:
+  import_path: nexora_harbor.verifier:NexoraRuntimeVerifier
+datasets:
+  - path: .tmp-tb/terminal-bench
+    task_names:
+      - distribution-search

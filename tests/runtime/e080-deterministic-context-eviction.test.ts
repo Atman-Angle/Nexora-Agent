@@ -7,7 +7,7 @@ import { z } from "zod";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ArtifactStore } from "../../packages/runtime/src/store/artifacts.js";
-import { createRuntime, modelResponses, type RuntimeProvider } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createRuntime, modelResponses, type RuntimeProvider } from "../../packages/harness/src/index.js";
 import {
   canonicalJson,
   digestCanonicalJson
@@ -170,7 +170,7 @@ describe("E080 deterministic Context Eviction", () => {
       { type: "request_input", question: "Stop after token eviction.", reason: "Projection captured." }
     ]);
     const measurements: number[] = [];
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "test-provider",
         model: "token-eviction-model",
@@ -372,7 +372,7 @@ describe("E080 deterministic Context Eviction", () => {
       { type: "request_input", question: "Never reached.", reason: "Hard limit blocks." }
     ]);
     let decideCalls = 0;
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "test-provider",
         model: "hard-eviction-model",
@@ -818,7 +818,7 @@ function fixture(): string {
   return root;
 }
 function requestInputStub(): RuntimeProvider {
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide() {
       return modelResponses.input({ question: "Provide more input.", reason: "Input is required." });
     }

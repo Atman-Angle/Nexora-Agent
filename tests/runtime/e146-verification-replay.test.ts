@@ -136,7 +136,7 @@ describe("E146 verification replay after progress attribution loss", () => {
     expect(toolEvents).toHaveLength(3);
     expect(new Set(toolEvents.map((event) => event.payload.invocationId)).size).toBe(3);
     expect(view.events.map((event) => event.type)).toContain("response.rejected");
-    expect(JSON.stringify(view.events)).toContain("STEP_INCOMPLETE");
+    expect(JSON.stringify(view.events)).toContain("CHECK_UNSATISFIED");
     runtime.close();
   });
 });

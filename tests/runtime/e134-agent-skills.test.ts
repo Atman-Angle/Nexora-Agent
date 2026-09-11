@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   SkillCatalog,
   SkillSelectionInputSchema,
@@ -125,13 +125,13 @@ describe("E134 Agent Skills", () => {
         workspace: root,
         run: { inputHistory: [], taskContract: null, currentPlan: null, stepProgress: [], evidence: [], lastError: null },
         projection: { schemaVersion: 1, digest: "projection" },
-        activeInvocations: [], toolObservations: [], historyCandidates: [], memoryCandidates: [], tools: [],
+        activeInvocations: [], toolObservations: [], rehydratedFacts: [], historyCandidates: [], memoryCandidates: [], tools: [],
         skills: catalog.project([])
       } as unknown as ModelDecisionContext;
       const prompt = compilePrompt({
         context,
         host: { hostPolicy: null, hostPolicyDigest: null, profile: null, projectInstructions: [], projectInstructionsDigest: "sha256:" + "0".repeat(64), strategyRevision: null },
-        transport: { kind: "structured_output", promptCache: { mode: "disabled" } }
+        transport: { kind: "native_tools", promptCache: { mode: "disabled" } }
       });
       expect(prompt.system).toContain("typescript-review");
       expect(prompt.input).not.toContain("small, verified edits");
@@ -143,7 +143,7 @@ describe("E134 Agent Skills", () => {
           toolCalls: [{ name: SKILL_SELECTION_CONTROL, arguments: { catalogDigest: catalog.digest, skills: [{ id: descriptor.id, version: descriptor.version, packageDigest: descriptor.packageDigest }] } }]
         }
       } as never]) } as ModelDecisionContext;
-      expect(compilePrompt({ context: activeContext, host: { hostPolicy: null, hostPolicyDigest: null, profile: null, projectInstructions: [], projectInstructionsDigest: "sha256:" + "0".repeat(64), strategyRevision: null }, transport: { kind: "structured_output", promptCache: { mode: "disabled" } } }).input).toContain("small, verified edits");
+      expect(compilePrompt({ context: activeContext, host: { hostPolicy: null, hostPolicyDigest: null, profile: null, projectInstructions: [], projectInstructionsDigest: "sha256:" + "0".repeat(64), strategyRevision: null }, transport: { kind: "native_tools", promptCache: { mode: "disabled" } } }).input).toContain("small, verified edits");
     });
   });
 
@@ -156,8 +156,8 @@ describe("E134 Agent Skills", () => {
       const descriptor = catalog.descriptors[0]!;
       const selection = { catalogDigest: catalog.digest, skills: [{ id: descriptor.id, version: descriptor.version, packageDigest: descriptor.packageDigest }] };
       const contexts: ModelDecisionContext[] = [];
-      const responses = [modelResponses.skills(selection), modelResponses.tool({ name: "skills.read", arguments: { path: "README.md" } }), modelResponses.direct({ text: "Verified with the selected review Skill." })];
-      const provider: RuntimeProvider = { async decide(context) { contexts.push(structuredClone(context)); const response = responses.shift(); if (response === undefined) throw new Error("provider exhausted"); return response; } };
+      const responses = [modelResponses.skills(selection), modelResponses.tool({ name: "skills.read", arguments: { path: "README.md" } }), modelResponses.text("Verified with the selected review Skill.")];
+      const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide(context) { contexts.push(structuredClone(context)); const response = responses.shift(); if (response === undefined) throw new Error("provider exhausted"); return response; } };
       const tool: RuntimeTool = {
         contract: {
           identity: { name: "skills.read" },

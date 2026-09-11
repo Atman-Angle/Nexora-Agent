@@ -1,0 +1,24 @@
+[
+  {
+    "name": "tools_one",
+    "status": 200,
+    "headerMs": 41440,
+    "totalMs": 41445,
+    "chars": 14119,
+    "ct": "application/json; charset=utf-8"
+  },
+  {
+    "name": "max4096",
+    "error": "AbortError: This operation was aborted",
+    "headerMs": null,
+    "totalMs": 120018
+  },
+  {
+    "name": "reduced_no_tools",
+    "status": 200,
+    "headerMs": 9201,
+    "totalMs": 9203,
+    "chars": 3426,
+    "ct": "application/json; charset=utf-8"
+  }
+]

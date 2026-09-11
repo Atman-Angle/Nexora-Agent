@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-batch-automation-dev-04",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "batch_automation",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "basic",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "real_workflow",
+  "agentVisible": {
+    "instruction": "Prepare the batch normalization job manifest from the three input rows, preserving row order and producing a validated handoff for the automation queue.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-batch-automation-dev-04/fixture",
+      "digest": "sha256:c023134aaf15fd112712063bf6bd70a4bec566d22f6d1cf66f52a2f6484d2cb3"
+    },
+    "scenario": "release-v1/tasks/v1-batch-automation-dev-04/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-batch-automation-dev-04.grader.json",
+    "graderDigest": "sha256:21a6d5841c05ae848a31422f09093ba96089b3d95eef731742f1748af7a1c8d9",
+    "referenceRef": "release-v1/sealed/v1-batch-automation-dev-04.reference.json",
+    "referenceDigest": "sha256:e19b0c284832b03098df95a7b97b1ea6ccbf21abe939874837c4b2a7bd0dd267",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-batch-automation-dev-04.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:a1ace56968ebce8e636fe5463f85f479386ce87d93b560914b5b05a099f21530",
+    "fixtureDigest": "sha256:c023134aaf15fd112712063bf6bd70a4bec566d22f6d1cf66f52a2f6484d2cb3"
+  }
+}

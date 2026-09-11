@@ -1,0 +1,259 @@
+{
+  "schemaVersion": 1,
+  "version": "2.1.0",
+  "name": "nexora-runtime-fault-lab",
+  "cases": [
+    {
+      "id": "prepared-before-effect",
+      "boundary": "INVOCATION_RECOVERY",
+      "invariant": "Prepared invocations recover in source order without duplicate evidence.",
+      "command": [
+        "tests/runtime/e112-durable-crash-matrix.test.ts",
+        "--testNamePattern=prepared.*Effect"
+      ]
+    },
+    {
+      "id": "partial-batch-result",
+      "boundary": "INVOCATION_RECOVERY",
+      "invariant": "Persisted sibling success is retained while only interrupted work is retried.",
+      "command": [
+        "tests/runtime/e112-durable-crash-matrix.test.ts",
+        "--testNamePattern=persisted.*sibling.*success"
+      ]
+    },
+    {
+      "id": "interrupted-attempt",
+      "boundary": "INVOCATION_RECOVERY",
+      "invariant": "Transient retries follow durable attempt sequencing and backoff.",
+      "command": [
+        "tests/runtime/e112-durable-crash-matrix.test.ts",
+        "--testNamePattern=transient.*retries"
+      ]
+    },
+    {
+      "id": "unknown-non-idempotent",
+      "boundary": "INVOCATION_RECOVERY",
+      "invariant": "Unknown non-idempotent effects require confirmation and are never replayed automatically.",
+      "command": [
+        "tests/runtime/e112-durable-crash-matrix.test.ts",
+        "--testNamePattern=exposes.*unknown.*Invocations"
+      ]
+    },
+    {
+      "id": "recovery-reducer-corrupt-facts",
+      "boundary": "EVIDENCE",
+      "invariant": "Corrupt batch and attempt facts fail closed instead of being guessed.",
+      "command": [
+        "tests/runtime/e110-recovery-reducer.test.ts",
+        "--testNamePattern=rejects.*corrupt.*batch"
+      ]
+    },
+    {
+      "id": "cancellation-after-reopen",
+      "boundary": "INVOCATION_RECOVERY",
+      "invariant": "A persisted cancellation request is reconciled after reopening without losing completed evidence.",
+      "command": [
+        "tests/runtime/e112-durable-crash-matrix.test.ts",
+        "--testNamePattern=reconciles.*cancellation.*reopening"
+      ]
+    },
+    {
+      "id": "crash-after-side-effect-before-finalization",
+      "boundary": "FINALIZATION_RECOVERY",
+      "invariant": "A side effect performed before finalization is reconciled from persisted Invocation truth without model self-report.",
+      "command": [
+        "tests/runtime/e049-recovery.test.ts",
+        "--testNamePattern=reconciles an unknown effect as succeeded and resumes the same Run"
+      ]
+    },
+    {
+      "id": "interrupted-idempotent-attempt-resume",
+      "boundary": "INVOCATION_RECOVERY",
+      "invariant": "An interrupted idempotent attempt resumes with the same persisted record and input.",
+      "command": [
+        "tests/runtime/e049-recovery.test.ts",
+        "--testNamePattern=retries an interrupted idempotent invocation with the same record and input"
+      ]
+    },
+    {
+      "id": "blocked-non-idempotent-interrupt",
+      "boundary": "INVOCATION_RECOVERY",
+      "invariant": "An interrupted non-idempotent invocation is never auto-replayed.",
+      "command": [
+        "tests/runtime/e049-recovery.test.ts",
+        "--testNamePattern=blocks an interrupted non-idempotent invocation without executing it"
+      ]
+    },
+    {
+      "id": "unknown-effect-confirmation-only",
+      "boundary": "SIDE_EFFECT_SAFETY",
+      "invariant": "High-risk indeterminate effects remain on the confirmation-only path.",
+      "command": [
+        "tests/runtime/e049-recovery.test.ts",
+        "--testNamePattern=keeps a high-risk indeterminate effect on the existing confirmation-only path"
+      ]
+    },
+    {
+      "id": "lease-fencing-busy-run",
+      "boundary": "LEASE_FENCING",
+      "invariant": "A second Runtime cannot own a Run already leased by another owner.",
+      "command": [
+        "tests/runtime/e049-concurrency.test.ts",
+        "--testNamePattern=returns RUN_BUSY when another Runtime owns the active Run"
+      ]
+    },
+    {
+      "id": "provider-stream-interruption-lease",
+      "boundary": "PROVIDER_RECOVERY",
+      "invariant": "A started Provider Attempt interrupted by lease takeover is marked interrupted without fabricating success.",
+      "command": [
+        "tests/runtime/e118-durable-run-journal.test.ts",
+        "--testNamePattern=marks a started Provider Attempt and its logical call interrupted on lease takeover"
+      ]
+    },
+    {
+      "id": "provider-recovery-bounded-resume",
+      "boundary": "PROVIDER_RECOVERY",
+      "invariant": "One bounded Provider recovery segment is allowed; repeated generic Resume without a new request is rejected.",
+      "command": [
+        "tests/runtime/e065-provider-transient-recovery.test.ts",
+        "--testNamePattern=allows one bounded Provider recovery segment and rejects repeated generic Resume"
+      ]
+    },
+    {
+      "id": "approval-denial-no-tool-execution",
+      "boundary": "APPROVAL",
+      "invariant": "A denied approval feeds back without executing the protected Tool.",
+      "command": [
+        "tests/runtime/e049-approval.test.ts",
+        "--testNamePattern=feeds a denied approval back to the loop without executing the Tool"
+      ]
+    },
+    {
+      "id": "approval-wait-duration-hard-bound",
+      "boundary": "APPROVAL",
+      "invariant": "Exceeding the safe waiting duration fails a hard boundary instead of silently extending.",
+      "command": [
+        "tests/runtime/e062-waiting-safe-duration-budget.test.ts",
+        "--testNamePattern=fails a hard duration boundary instead of offering a budget extension"
+      ]
+    },
+    {
+      "id": "denial-stop-waits-for-input",
+      "boundary": "APPROVAL",
+      "invariant": "A denial stop waits for new input without another model call or denied Tool effect.",
+      "command": [
+        "tests/runtime/e066-denial-stop.test.ts",
+        "--testNamePattern=waits for new input without another model call or denied Tool effect"
+      ]
+    },
+    {
+      "id": "stale-evidence-rejected",
+      "boundary": "EVIDENCE",
+      "invariant": "Final verification Evidence that predates a later source mutation is rejected.",
+      "command": [
+        "tests/runtime/e049-completion-integrity.test.ts",
+        "--testNamePattern=rejects final verification Evidence that predates a later source mutation"
+      ]
+    },
+    {
+      "id": "mutation-check-provenance",
+      "boundary": "EVIDENCE",
+      "invariant": "A mutation check cannot prove a final implementation objective by itself.",
+      "command": [
+        "tests/runtime/e049-completion-integrity.test.ts",
+        "--testNamePattern=does not let one mutation check prove a final implementation objective"
+      ]
+    },
+    {
+      "id": "incomplete-plan-step-gate",
+      "boundary": "COMPLETION",
+      "invariant": "A Run cannot succeed while a verifiable planned Step remains incomplete.",
+      "command": [
+        "tests/runtime/e049-completion-integrity.test.ts",
+        "--testNamePattern=cannot succeed while a verifiable planned Step remains incomplete"
+      ]
+    },
+    {
+      "id": "artifact-ref-requires-existence",
+      "boundary": "ARTIFACT",
+      "invariant": "An Artifact ref is published only after the Artifact exists.",
+      "command": [
+        "tests/runtime/e089-checkpoint-integrity.test.ts",
+        "--testNamePattern=requires Artifact existence before publishing an Artifact ref"
+      ]
+    },
+    {
+      "id": "no-incomplete-artifact-after-cancel",
+      "boundary": "ARTIFACT",
+      "invariant": "Cancelling a non-idempotent Tool leaves no incomplete Artifact or reference.",
+      "command": [
+        "tests/runtime/e080-deterministic-context-eviction.test.ts",
+        "--testNamePattern=leaves no incomplete Artifact or reference after cancelling a non-idempotent Tool"
+      ]
+    },
+    {
+      "id": "incorrect-completion-proposal-direct-text",
+      "boundary": "COMPLETION",
+      "invariant": "Bare draft text after Tool execution is rejected until explicit completion supplies the final answer.",
+      "command": [
+        "tests/runtime/e124-task-liveness-verifiable-completion.test.ts",
+        "--testNamePattern=rejects bare draft text after Tool execution until explicit completion supplies the final answer"
+      ]
+    },
+    {
+      "id": "memory-trust-boundary-untrusted-data",
+      "boundary": "MEMORY_SAFETY",
+      "invariant": "Injection-like restored Memory is labelled untrusted and preserves the normal Approval Gate.",
+      "command": [
+        "tests/runtime/e095-memory-security-privacy.test.ts",
+        "--testNamePattern=labels restored injection-like Memory as untrusted data and preserves the normal Approval Gate"
+      ]
+    },
+    {
+      "id": "transient-tool-retry-durable-backoff",
+      "boundary": "TOOL_RECOVERY",
+      "invariant": "Transient retries are allowlisted and respect durable backoff without replaying unknown work.",
+      "command": [
+        "tests/runtime/e110-recovery-reducer.test.ts",
+        "--testNamePattern=retries only allowlisted transient failures and respects durable backoff"
+      ]
+    },
+    {
+      "id": "lease-takeover-interrupts-unfinished-provider-call",
+      "boundary": "LEASE_FENCING",
+      "invariant": "Lease takeover interrupts an unfinished Provider call truthfully instead of fabricating success.",
+      "command": [
+        "tests/runtime/e079-context-budget-token-accounting.test.ts",
+        "--testNamePattern=marks an unfinished logical call interrupted when a new lease takes over after expiry"
+      ]
+    },
+    {
+      "id": "provider-timeout-gateway-classified-retryable",
+      "boundary": "PROVIDER_RECOVERY",
+      "invariant": "A timed-out decision request is classified for audited Harness retry without an Adapter-level retry.",
+      "command": [
+        "tests/runtime/e065-provider-transient-recovery.test.ts",
+        "--testNamePattern=classifies one timed-out decision request for audited Harness retry without an Adapter retry"
+      ]
+    },
+    {
+      "id": "context-explicit-ref-restoration",
+      "boundary": "CONTEXT_RECOVERY",
+      "invariant": "An explicitly named scoped Memory/fact is restored before Tool work and deterministic completion.",
+      "command": [
+        "tests/runtime/e103-context-ref-acceptance-evidence.test.ts",
+        "--testNamePattern=restores an explicitly named scoped Memory before Tool work and deterministic completion"
+      ]
+    },
+    {
+      "id": "context-archive-projection-bounded",
+      "boundary": "CONTEXT_RECOVERY",
+      "invariant": "A ten-thousand-entry Archive projection stays bounded under repeated pressure.",
+      "command": [
+        "tests/runtime/e087-long-sequence-context-quality.test.ts",
+        "--testNamePattern=keeps a ten-thousand-entry Archive projection bounded"
+      ]
+    }
+  ]
+}

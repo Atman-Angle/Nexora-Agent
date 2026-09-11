@@ -364,7 +364,9 @@ export const RunErrorSchema = z.object({
 }).strict();
 
 export const RunDeliverySchema = z.object({
-  outcome: z.enum(["succeeded", "failed", "cancelled", "blocked"]),
+  // "paused" is the non-terminal counterpart of the other outcomes: it explains
+  // a Run that waits for an Approval or an Input instead of stalling silently.
+  outcome: z.enum(["succeeded", "failed", "cancelled", "blocked", "paused"]),
   summary: NonEmptyString,
   producedArtifacts: z.array(NonEmptyString),
   confirmedFacts: z.array(NonEmptyString),
@@ -439,6 +441,7 @@ export const AuditRecordTypeSchema = z.enum([
   "model.completed",
   "model.interrupted",
   "model.requested",
+  "model.wire_telemetry",
   "model.turn",
   "plan.set",
   "provider.attempt.cancelled",

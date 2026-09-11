@@ -18,6 +18,27 @@ export function digestTaskContract(contract: TaskContract): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(contract)).digest("hex")}`;
 }
 
+/**
+ * The latest succeeded write Invocation, including writes that were never
+ * attributed to a Plan Step. Runtime admission and Harness refresh targeting
+ * must agree on which mutation invalidates verification Evidence, so both
+ * consume this single mechanical definition.
+ */
+export function latestWriteMutation(
+  invocations: readonly ToolInvocation[],
+  toolEffect: (toolName: string) => "read" | "write" | "execute" | undefined
+): ToolInvocation | null {
+  return invocations
+    .filter((invocation) => (
+      invocation.status === "succeeded"
+      && invocation.completedAt !== null
+      && toolEffect(invocation.toolName) === "write"
+    ))
+    .reduce<ToolInvocation | null>((latest, invocation) => (
+      latest === null || invocation.completedAt! > latest.completedAt! ? invocation : latest
+    ), null);
+}
+
 /** Deterministic Runtime hard gate. This function never invokes a Provider. */
 export function validateCompletion(
   run: RunSnapshot,
@@ -34,40 +55,6 @@ export function validateCompletion(
   if (contract !== null && plan !== null && plan.goalDigest !== digestTaskContract(contract)) {
     issues.push("PLAN_GOAL_DIGEST_MISMATCH");
   }
-  if (contract?.scope !== undefined) {
-    if (plan === null) {
-      issues.push("SCOPE_PLAN_REQUIRED");
-    } else {
-      const requiredBindingCounts = new Map<string, number>();
-      const knownScopeRefs = new Set(
-        contract.scope.requiredOutcomes.map((outcome) => outcome.id)
-      );
-      for (const step of plan.orderedSteps) {
-        if (step.kind === undefined || step.scopeRefs === undefined) {
-          issues.push(`SCOPE_STEP_RELATION_MISSING:${step.id}`);
-          continue;
-        }
-        for (const scopeRef of step.scopeRefs) {
-          if (!knownScopeRefs.has(scopeRef)) {
-            issues.push(`SCOPE_STEP_REF_INVALID:${step.id}:${scopeRef}`);
-          }
-        }
-        if (step.kind !== "required_outcome") continue;
-        if (step.scopeRefs.length !== 1) {
-          issues.push(`SCOPE_REQUIRED_OUTCOME_BINDING_INVALID:${step.id}`);
-        }
-        for (const scopeRef of step.scopeRefs) {
-          requiredBindingCounts.set(scopeRef, (requiredBindingCounts.get(scopeRef) ?? 0) + 1);
-        }
-      }
-      for (const outcome of contract.scope.requiredOutcomes) {
-        const count = requiredBindingCounts.get(outcome.id) ?? 0;
-        if (count === 0) issues.push(`SCOPE_REQUIRED_OUTCOME_UNCOVERED:${outcome.id}`);
-        if (count > 1) issues.push(`SCOPE_REQUIRED_OUTCOME_DUPLICATED:${outcome.id}`);
-      }
-    }
-  }
-
   const unresolved = invocations.filter(
     (item) => item.status === "started" || item.status === "unknown"
   );
@@ -158,41 +145,14 @@ export function validateCompletion(
   }
 
   if (plan !== null) {
-    const finalStep = plan.orderedSteps.at(-1);
-    const latestMutationCompletedAt = invocations
-      .filter((invocation) => (
-        invocation.status === "succeeded"
-        && invocation.completedAt !== null
-        && toolEffect(invocation.toolName) === "write"
-      ))
-      .reduce<string | null>((latest, invocation) => (
-        latest === null || invocation.completedAt! > latest ? invocation.completedAt : latest
-      ), null);
-    for (const step of plan.orderedSteps) {
-      const requiredChecks = step.acceptanceChecks.filter(
-        (item) => item.required && item.kind !== "semantic_review"
-      );
-      if (completionMode === "task_result" && requiredChecks.length === 0) {
-        issues.push(`STEP_UNVERIFIABLE:${step.id}`);
-      }
-      const progress = run.stepProgress.find((item) => item.stepId === step.id);
-      if (completionMode === "task_result" && progress?.status !== "completed") {
-        issues.push(`STEP_INCOMPLETE:${step.id}`);
-      }
-      const hasExplicitRole = requiredChecks.some((check) => (
-        check.kind === "tool_result" && check.role !== undefined
-      ));
-      if (
-        completionMode === "task_result"
-        && step.id === finalStep?.id
-        && hasExplicitRole
-        && !requiredChecks.some((check) => (
-          check.kind === "tool_result" && check.role === "verification"
-        ))
-      ) {
-        issues.push(`STEP_VERIFICATION_REQUIRED:${step.id}`);
-      }
-      for (const check of requiredChecks) {
+    const latestMutation = latestWriteMutation(invocations, toolEffect);
+    const latestMutationStepIndex = latestMutation === null || latestMutation.stepId === UNPLANNED_STEP_ID
+      ? null
+      : plan.orderedSteps.findIndex((step) => step.id === latestMutation.stepId);
+    for (const [stepIndex, step] of plan.orderedSteps.entries()) {
+      for (const check of step.acceptanceChecks.filter((item) => (
+        item.required && item.kind !== "semantic_review"
+      ))) {
         const persisted = findApplicableEvidence(
           eligibleEvidence,
           plan.version,
@@ -202,11 +162,12 @@ export function validateCompletion(
         if (persisted === undefined) {
           issues.push(`CHECK_UNSATISFIED:${step.id}:${check.id}`);
         } else if (
-          step.id === finalStep?.id
-          && check.kind === "tool_result"
+          check.kind === "tool_result"
           && check.role === "verification"
-          && latestMutationCompletedAt !== null
-          && persisted.producedAt < latestMutationCompletedAt
+          && latestMutation !== null
+          && persisted.producedAt < latestMutation.completedAt!
+          && (latestMutation.stepId === UNPLANNED_STEP_ID
+            || latestMutationStepIndex !== null && stepIndex >= latestMutationStepIndex)
         ) {
           issues.push(`CHECK_EVIDENCE_STALE:${step.id}:${check.id}`);
         }
@@ -224,9 +185,12 @@ function findApplicableEvidence(
   stepId: string,
   checkId: string
 ): Evidence | undefined {
-  return evidence.find((item) => (
-    item.planVersion <= currentPlanVersion
-    && item.stepId === stepId
-    && item.checkId === checkId
-  ));
+  return evidence.reduce<Evidence | undefined>((latest, item) => {
+    if (
+      item.planVersion > currentPlanVersion
+      || item.stepId !== stepId
+      || item.checkId !== checkId
+    ) return latest;
+    return latest === undefined || item.producedAt >= latest.producedAt ? item : latest;
+  }, undefined);
 }

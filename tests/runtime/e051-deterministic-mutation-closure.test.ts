@@ -144,8 +144,11 @@ describe("E051 deterministic mutation closure", () => {
     let release!: () => void;
     const releasePromise = new Promise<void>((resolve) => { release = resolve; });
     const stub = await providerStub(async (_context, index) => {
-      if (index <= 1) {
+      if (index === 0) {
         return structuredInput("First input?", "Set up the persisted wait.");
+      }
+      if (index === 1) {
+        return structuredTool("filesystem.read", { path: "note.txt" });
       }
       entered();
       await releasePromise;
@@ -325,11 +328,11 @@ function structuredTool(name: string, argumentsValue: unknown): unknown {
 }
 
 function structuredInput(question: string, reason: string): unknown {
-  return structuredTool("nexora_request_input", { question, reason });
+  return structuredTool("nexora_request_input", { question, reason, basis: "user_exclusive" });
 }
 
 function structuredText(text: string): unknown {
-  return structuredTool("nexora_respond", { text });
+  return { text, toolCalls: [], finishReason: "stop" };
 }
 
 async function providerStub(
@@ -342,10 +345,12 @@ async function providerStub(
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { messages: Array<{ content: string }> };
       const payload = JSON.parse(body.messages.at(-1)!.content) as DecisionContext;
-      const content = await decide(payload, decisionCalls);
+      const decisionIndex = decisionCalls;
+      const content = await decide(payload, decisionIndex);
       decisionCalls += 1;
+      const message = nativeMessage(content, decisionIndex);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }));
+      response.end(JSON.stringify({ choices: [{ message }] }));
     } catch (error) {
       response.writeHead(500, { "content-type": "text/plain" });
       response.end(error instanceof Error ? error.message : String(error));
@@ -366,7 +371,7 @@ function provider(baseUrl: string) {
     baseUrl,
     apiKey: "test-key",
     model: "test-model",
-    transport: "structured_output"
+    transport: "native_tools"
   });
 }
 
@@ -376,8 +381,36 @@ function providerEnvironment(baseUrl: string): Record<string, string> {
     NEXORA_MODEL_BASE_URL: baseUrl,
     NEXORA_MODEL_API_KEY: "test-key",
     NEXORA_MODEL_NAME: "qwen3.7-flash",
-    NEXORA_MODEL_TOOL_TRANSPORT: "structured_output",
     NEXORA_MODEL_DECISION_OUTPUT_TOKENS: "4096"
+  };
+}
+
+function nativeMessage(value: unknown, decisionIndex: number): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, callIndex) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${decisionIndex}-${callIndex}`,
+      type: "function" as const,
+      function: {
+        name: String(call.name),
+        arguments: JSON.stringify(call.arguments ?? null)
+      }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
   };
 }
 

@@ -203,6 +203,11 @@ function cleanup() {
   clearTimeout(startupTimer);
   if (lifetimeTimer !== null) clearTimeout(lifetimeTimer);
   stdout.end(); stderr.end();
+  // The terminal descriptor is retained on purpose. `process.stop` and
+  // `process.inspect` confirm termination by reading it, and deleting it here
+  // races with those readers (the observed Windows flake surfaced as a bogus
+  // PROCESS_STOP_TIMEOUT). `process.start` ignores terminal descriptors, so a
+  // later start of the same service simply replaces this file.
   void Promise.allSettled([rm(config.stopPath, { force: true }), rm(configPath, { force: true })]).finally(() => process.exit());
 }
 

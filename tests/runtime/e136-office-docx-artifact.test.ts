@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createAgent } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createAgent } from "../../packages/harness/src/index.js";
 
 import { compileAuthoringCreateInput } from "../../apps/desktop/src/deliverables/authoring.js";
 import { RichDocumentPatchInputSchema } from "../../apps/desktop/src/deliverables/contracts.js";
@@ -16,7 +16,7 @@ import {
   patchRichDocument
 } from "../../apps/desktop/src/deliverables/rich-document.js";
 import { createRichDocumentTools } from "../../apps/desktop/src/deliverables/tools.js";
-import { finishFromEvidence, responseCall, ScriptedRuntimeProvider } from "./runtime-testkit.js";
+import { finishFromEvidence, responsePlanAndTools, ScriptedRuntimeProvider } from "./runtime-testkit.js";
 
 const roots: string[] = [];
 const signal = new AbortController().signal;
@@ -109,7 +109,10 @@ describe("E136 real DOCX Office artifact", () => {
   it("runs the DOCX write through the existing Invocation, Evidence and Completion authorities and reopens it", async () => {
     const workspace = createWorkspace();
     const provider = new ScriptedRuntimeProvider([
-      responseCall("document.create", authoringInput()),
+      responsePlanAndTools({
+        goal: "Create the requested Word document.",
+        tasks: [{ objective: "Create the DOCX artifact.", checks: [{ toolName: "document.create", role: "mutation" }] }]
+      }, [{ name: "document.create", arguments: authoringInput() }]),
       finishFromEvidence("The requested DOCX is committed in the Workspace.")
     ]);
     const first = createAgent({ workspace, provider, tools: [...createRichDocumentTools()] });
@@ -130,7 +133,7 @@ describe("E136 real DOCX Office artifact", () => {
     let providerCalls = 0;
     const second = createAgent({
       workspace,
-      provider: { async decide() { providerCalls += 1; throw new Error("A terminal Run must not execute again."); } },
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES, async decide() { providerCalls += 1; throw new Error("A terminal Run must not execute again."); } },
       tools: [...createRichDocumentTools()]
     });
     expect((await second.openRun(run.id).result()).status).toBe("succeeded");

@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES } from "../../packages/harness/src/index.js";
 import type {
   ModelCallRecord,
   RunEvent,
@@ -37,7 +38,7 @@ describe("E097 real Provider continuity canary contract", () => {
       responsePlan({ tasks: [{ objective: "Read every fixed shard and report the ordered preferred-stream codes from persisted facts.", checks: [{ toolName: "filesystem.read" }] }] }),
       responseDirect("Verified all eight ORCHID shard codes from exact file Evidence.")
     ]);
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "scripted-canary",
         model: "scripted-canary",
@@ -101,7 +102,7 @@ describe("E097 real Provider continuity canary contract", () => {
       question: "Stop after profile capture.",
       reason: "Profile capture only."
     }]);
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
         provider: "scripted-canary",
         model: "qwen3.7-flash",

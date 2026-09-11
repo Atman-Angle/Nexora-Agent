@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   type ModelDecisionContext,
   type ModelResponse,
@@ -115,7 +115,7 @@ describe("Context Harness system validation", () => {
     const workspace = fixture();
     const agent = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() { throw new Error("provider offline"); }
       },
       tools: []
@@ -140,7 +140,7 @@ describe("Context Harness system validation", () => {
     let decisions = 0;
     const agent = createAgent({
       workspace,
-      provider: {
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide() {
           decisions += 1;
           return {} as ModelResponse;
@@ -163,8 +163,8 @@ describe("Context Harness system validation", () => {
     await agent.close();
 
     expect(decisions).toBe(2);
-    expect(result).toMatchObject({ status: "blocked", stopReason: "NO_PROGRESS_DETECTED" });
-    expect(result.delivery).toMatchObject({ outcome: "blocked" });
+    expect(result).toMatchObject({ status: "failed", stopReason: "NO_PROGRESS_DETECTED" });
+    expect(result.delivery).toMatchObject({ outcome: "failed" });
     expect(view.events.filter((event) => event.type === "response.rejected")).toHaveLength(2);
     expect(view.events.map((event) => event.type)).not.toContain("run.succeeded");
   });
@@ -178,7 +178,7 @@ function fixture(): string {
 
 function queuedProvider(responses: readonly ModelResponse[]): RuntimeProvider {
   const queue = [...responses];
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide(_context: ModelDecisionContext) {
       const response = queue.shift();
       if (response === undefined) throw new Error("Provider queue exhausted.");

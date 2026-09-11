@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-pilot-batch-a",
+  "version": 1,
+  "description": "Three V2 capability-task authoring pilots; dev-only and pending human review.",
+  "tasks": [
+    "pilots/batch-a/coding-pagination.task.json",
+    "pilots/batch-a/data-batch-report.task.json",
+    "pilots/batch-a/mixed-restart-aggregate.task.json"
+  ]
+}

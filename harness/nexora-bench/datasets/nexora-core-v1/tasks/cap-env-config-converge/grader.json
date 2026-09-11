@@ -1,0 +1,27 @@
+{
+  "files": [
+    {
+      "id": "service-config",
+      "path": "service.json",
+      "exists": true,
+      "equals": "{\n  \"schemaVersion\": 2,\n  \"service\": \"nexora-worker\",\n  \"port\": 8080,\n  \"healthCheck\": true\n}\n"
+    }
+  ],
+  "commands": [
+    {
+      "id": "service-validation",
+      "command": "node",
+      "args": ["verify.mjs"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "expectedExitCode": 0
+    }
+  ],
+  "unchangedPaths": ["REQUIREMENTS.md", "verify.mjs"],
+  "authority": {
+    "requiredEventTypes": [],
+    "forbiddenEventTypes": [],
+    "eventCounts": [],
+    "invocations": []
+  }
+}

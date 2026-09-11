@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-batch-automation-dev-04",
+  "expectedPaths": [
+    "manifest.json"
+  ],
+  "referenceStateDigest": "sha256:b00653e9afd4c9d79d7b47778986b499c73fbb8d7c7c715291cb6126f4abf0ee"
+}

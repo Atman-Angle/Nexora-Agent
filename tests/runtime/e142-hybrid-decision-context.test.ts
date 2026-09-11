@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createAgent, type ModelDecisionContext } from "../../packages/harness/src/index.js";
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES, createAgent, type ModelDecisionContext } from "../../packages/harness/src/index.js";
 import { MAX_OLDER_OBSERVATION_REFS, projectHybridDecisionContext } from "../../packages/harness/src/context/hybrid-context.js";
 import { diffContextSections } from "../../packages/harness/src/context/manifest-diff.js";
 import { compilePrompt } from "../../packages/harness/src/prompt.js";
@@ -59,18 +59,14 @@ describe("E142 hybrid decision context", () => {
     let compiledInput = "";
     const agent = createAgent({
       workspace,
-      capturePolicy: "metadata",
-      provider: {
+      payloadCapturePolicy: "metadata",
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
         async decide(_context, operation) {
           compiledInput = operation.compiledPrompt?.input ?? "";
           return {
-            text: null,
-            toolCalls: [{
-              callId: "hybrid-direct-1",
-              name: "nexora_respond",
-              arguments: { text: "Analysis complete." }
-            }],
-            finishReason: "tool_calls"
+            text: "Analysis complete.",
+            toolCalls: [],
+            finishReason: "stop"
           };
         }
       },
@@ -192,7 +188,7 @@ function fixtureContext(observationCount: number): ModelDecisionContext {
         version: 1, basedOnVersion: null, goalDigest: `sha256:${"a".repeat(64)}`,
         orderedSteps: [{ id: "inspect", objective: "Inspect files.", acceptanceChecks: [] }]
       },
-      stepProgress: [{ stepId: "inspect", status: "active", evidenceRefs: [] }],
+      stepProgress: [{ stepId: "inspect", status: "active", evidenceIds: [] }],
       evidence: [], lastError: null
     },
     projection: { schemaVersion: 1, digest: `sha256:${"b".repeat(64)}` },

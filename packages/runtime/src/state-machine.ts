@@ -74,7 +74,9 @@ export function transitionRunStatus(
     stopReason: nextStatus === "running" ? null : options.stopReason?.trim() ?? null,
     pendingRequest: nextStatus === "waiting" ? options.pendingRequest ?? null : null,
     result: nextStatus === "succeeded" ? options.result ?? null : run.result,
-    delivery: nextStatus === "running" || nextStatus === "waiting"
+    // A waiting Run must carry the same explanation surface as a terminal Run so
+    // a paused Run can never be a silent dead end. Returning to running clears it.
+    delivery: nextStatus === "running"
       ? null
       : options.delivery ?? run.delivery,
     resumePredicate: nextStatus === "blocked" ? options.resumePredicate! : null,

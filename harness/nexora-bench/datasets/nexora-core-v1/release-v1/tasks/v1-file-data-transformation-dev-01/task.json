@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "id": "v1-file-data-transformation-dev-01",
+  "revision": 1,
+  "datasetVersion": "1.0.0",
+  "family": "file_data_transformation",
+  "secondaryCoverage": [
+    "validation"
+  ],
+  "difficulty": "basic",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Combine the three supplied operational fact shards into the requested ordered report, preserve source records, and validate the result.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "release-v1/tasks/v1-file-data-transformation-dev-01/fixture",
+      "digest": "sha256:7f72a6627bc6c9286fefccc6f9dab9b83db2a99074a163dbdf9de78ff7edd6c9"
+    },
+    "scenario": "release-v1/tasks/v1-file-data-transformation-dev-01/scenario.ts",
+    "budgets": {
+      "maxIterations": 24,
+      "maxModelCalls": 24,
+      "maxToolCalls": 20,
+      "maxRetries": 2,
+      "maxDurationMs": 300000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "release-v1/sealed/v1-file-data-transformation-dev-01.grader.json",
+    "graderDigest": "sha256:b4413de0f7bfb7adf3e49dca2fb8c7af56bbc773e58b9f0b49e5a61f1b9039ef",
+    "referenceRef": "release-v1/sealed/v1-file-data-transformation-dev-01.reference.json",
+    "referenceDigest": "sha256:a3b86e7ce9ddcf2e8ec17f6d1c13ee695390ac633e0a05aaa3501c1c40c577b2",
+    "resetRef": "release-v1/sealed/reset.json"
+  },
+  "humanReviewRef": "release-v1/reviews/v1-file-data-transformation-dev-01.human-review.json",
+  "identity": {
+    "taskDigest": "sha256:dce1ec438b942dede589a6e855010b544775f17752812bc0667188eb37e97023",
+    "fixtureDigest": "sha256:7f72a6627bc6c9286fefccc6f9dab9b83db2a99074a163dbdf9de78ff7edd6c9"
+  }
+}

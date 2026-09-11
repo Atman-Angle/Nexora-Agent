@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-environment-configuration-operations-dev-02",
+  "expectedPaths": [
+    "config.json"
+  ],
+  "referenceStateDigest": "sha256:f026e6c240e955da44ff36ab13465d04db7aef20ed58387ab2944587f683e79c"
+}

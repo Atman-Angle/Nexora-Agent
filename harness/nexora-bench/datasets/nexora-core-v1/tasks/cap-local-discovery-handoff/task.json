@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-local-discovery-handoff",
+  "revision": 1,
+  "datasetVersion": "0.1.0-cohort-c",
+  "family": "local_information_discovery_analysis",
+  "secondaryCoverage": [
+    "validation",
+    "artifact"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Determine the current owner and priority for checkout-service from the local notes (older notes may be stale), then write a concise evidence-linked findings note without changing source material.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "environmentFacts": [
+      "The notes directory contains runbook, incident and architecture material.",
+      "Older owner references in the notes are stale."
+    ]
+  },
+  "execution": {
+    "fixture": {
+      "path": "tasks/cap-local-discovery-handoff/fixture",
+      "digest": "sha256:6684fa801e6edd140d288f54d2c6d5108426bbee41cdc4d2168489436a1aa49f"
+    },
+    "scenario": "tasks/cap-local-discovery-handoff/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "notes/runbook.md",
+      "notes/incidents.log",
+      "notes/architecture.md",
+      "verify.mjs"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "tasks/cap-local-discovery-handoff/grader.json",
+    "graderDigest": "sha256:dfd1d3e1801c027d4d7cbe524c144d98b242f350bf5c317caed567e2855a98fd"
+  },
+  "humanReviewRef": "tasks/cap-local-discovery-handoff/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:74ea6cf18af0702d888f56e322ffb4dbe8d00722cba21484bfd211023ad0a1a4",
+    "fixtureDigest": "sha256:6684fa801e6edd140d288f54d2c6d5108426bbee41cdc4d2168489436a1aa49f"
+  }
+}

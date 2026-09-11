@@ -49,9 +49,9 @@ type CompletionRequirements = {
 Rules:
 
 - the default is `evidence: "auto"`, independent of registered Tool count;
-- Harness uses `nexora_respond` only when the complete answer is grounded in
-  authoritative Context already present and no Plan, Tool, user input or
-  external observation is needed;
+- a no-call, non-empty final text is a direct-response candidate only when the
+  complete answer is grounded in authoritative Context already present and no
+  Plan, Tool, user input or external observation is needed;
 - Runtime accepts an `auto` direct response only before Plan/Tool execution;
 - an `auto` task result requires eligible persisted Evidence;
 - a Host may explicitly select `optional` to permit a direct answer or

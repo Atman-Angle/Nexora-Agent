@@ -74,7 +74,10 @@ describe("E084 Model / Provider configuration", () => {
 
     await expect(
       provider.decide(decisionContext(null), { signal: new AbortController().signal })
-    ).rejects.toThrow("Provider did not return response headers for 5ms.");
+    ).rejects.toMatchObject({
+      code: "PROVIDER_RESPONSE_HEADERS_TIMEOUT",
+      retryable: true
+    });
   });
 
   it("uses the generic one-minute response-header timeout for qwen3.7-flash", async () => {
@@ -151,10 +154,90 @@ describe("E084 Model / Provider configuration", () => {
       fetch
     });
     const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
-    const rejection = expect(decision).rejects.toThrow("Provider Attempt exceeded 100ms.");
+    const rejection = expect(decision).rejects.toMatchObject({
+      code: "PROVIDER_ATTEMPT_TIMEOUT",
+      retryable: true
+    });
 
     await vi.advanceTimersByTimeAsync(100);
     await rejection;
+  });
+
+  it("classifies a non-streaming response body read timeout", async () => {
+    vi.useFakeTimers();
+    const fetch: typeof globalThis.fetch = async (_input, init) => new Response(new ReadableStream({
+      start(controller) {
+        // Deliberately leave the body pending after headers have arrived.
+        init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+      }
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      connectTimeoutMs: 50,
+      timeoutMs: 5,
+      maxDurationMs: 100,
+      fetch
+    });
+    const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
+    const rejection = expect(decision).rejects.toMatchObject({
+      code: "PROVIDER_RESPONSE_BODY_TIMEOUT",
+      retryable: true
+    });
+
+    await vi.advanceTimersByTimeAsync(5);
+    await rejection;
+  });
+
+  it("classifies stream idle timeout separately from response body timeout", async () => {
+    vi.useFakeTimers();
+    const fetch: typeof globalThis.fetch = async (_input, init) => new Response(new ReadableStream({
+      start(controller) {
+        // Deliberately leave the SSE stream idle after headers have arrived.
+        init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+      }
+    }), { status: 200, headers: { "content-type": "text/event-stream" } });
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      connectTimeoutMs: 50,
+      timeoutMs: 5,
+      maxDurationMs: 100,
+      stream: true,
+      fetch
+    });
+    const decision = provider.decide(decisionContext(null), { signal: new AbortController().signal });
+    const rejection = expect(decision).rejects.toMatchObject({
+      code: "PROVIDER_STREAM_IDLE_TIMEOUT",
+      retryable: true
+    });
+
+    await vi.advanceTimersByTimeAsync(5);
+    await rejection;
+  });
+
+  it("classifies caller cancellation without treating it as a retryable transport timeout", async () => {
+    const caller = new AbortController();
+    const fetch: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+    const provider = createOpenAICompatibleProvider({
+      baseUrl: "https://provider.example/v1",
+      apiKey: "test-key",
+      model: "test-model",
+      connectTimeoutMs: 1_000,
+      timeoutMs: 1_000,
+      fetch
+    });
+    const decision = provider.decide(decisionContext(null), { signal: caller.signal });
+    caller.abort(new Error("caller stopped"));
+
+    await expect(decision).rejects.toMatchObject({
+      code: "PROVIDER_CANCELLED",
+      retryable: false
+    });
   });
 
   it("maps the reasoning policy to the declared vendor thinking toggle", async () => {
@@ -371,15 +454,18 @@ describe("E084 Model / Provider configuration", () => {
   it("applies the dynamic policy across a real Runtime decision loop", async () => {
     const workspace = temporaryWorkspace();
     const dataDir = join(workspace, ".nexora");
-    const seen: Array<{ messages: Array<{ content: string }>; enable_thinking?: boolean }> = [];
+    const seen: Array<{ messages: Array<{ role: string; content: string }>; enable_thinking?: boolean }> = [];
     let decisions = 0;
     const fetch: typeof globalThis.fetch = async (_input, init) => {
-      const request = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }>; enable_thinking?: boolean };
+      const request = JSON.parse(String(init?.body)) as {
+        messages: Array<{ role: string; content: string }>;
+        enable_thinking?: boolean;
+      };
       seen.push(request);
       decisions += 1;
       if (decisions === 1) return providerResponse(setPlan());
       if (decisions === 2) return providerResponse(callTool());
-      return providerResponse({ text: null, toolCalls: [{ name: "nexora_respond", arguments: { text: "Read the target file." } }], finishReason: "tool_calls" });
+      return providerResponse({ text: "Read the target file.", toolCalls: [], finishReason: "stop" });
     };
     const runtime = createRuntime({
       workspace,
@@ -389,7 +475,7 @@ describe("E084 Model / Provider configuration", () => {
         apiKey: "test-key",
         model: "test-model",
         thinkingToggleParam: "enable_thinking",
-        transport: "structured_output",
+        transport: "native_tools",
         fetch
       }),
       tools: [readTool()]
@@ -404,13 +490,15 @@ describe("E084 Model / Provider configuration", () => {
     expect(decisionBodies[0]).toHaveProperty("enable_thinking", false);
     expect(decisionBodies[1]).toHaveProperty("enable_thinking", false);
     expect(decisionBodies[2]).toHaveProperty("enable_thinking", false);
-    const executionPayload = JSON.parse(decisionBodies[1]!.messages[1]!.content) as {
+    const executionPayload = JSON.parse(
+      decisionBodies[1]!.messages.filter((message) => message.role === "user").at(-1)!.content
+    ) as {
       currentPlanAndChecks: { plan?: unknown };
     };
     expect(executionPayload.currentPlanAndChecks.plan).not.toBeNull();
     expect(decisionBodies[1]!.messages[0]!.content).toContain('"name":"test.read"');
     expect(decisionBodies[1]!.messages[0]!.content).not.toContain("allowedIntents");
-    expect(decisionBodies[1]!.messages[0]!.content).toContain("A Plan is optional navigation");
+    expect(decisionBodies[1]!.messages[0]!.content).toContain("A Plan is navigation plus the Runtime-owned Task Contract");
     expect(seen).toHaveLength(3);
   });
 });
@@ -518,12 +606,36 @@ function readTool(): RuntimeTool {
 }
 
 function providerResponse(value: unknown): Response {
-  return new Response(JSON.stringify({
-    choices: [{ message: { content: JSON.stringify(value) } }]
-  }), {
+  return new Response(JSON.stringify({ choices: [{ message: nativeMessage(value) }] }), {
     status: 200,
     headers: { "content-type": "application/json" }
   });
+}
+
+function nativeMessage(value: unknown): {
+  content: string | null;
+  tool_calls?: readonly {
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }[];
+} {
+  if (typeof value === "string") return { content: value };
+  if (value === null || typeof value !== "object") return { content: null };
+  const response = value as { text?: unknown; toolCalls?: unknown };
+  if (!Array.isArray(response.toolCalls)) return { content: null };
+  const toolCalls = response.toolCalls.map((item, index) => {
+    const call = item as { name?: unknown; arguments?: unknown };
+    return {
+      id: `native-${index}`,
+      type: "function" as const,
+      function: { name: String(call.name), arguments: JSON.stringify(call.arguments ?? null) }
+    };
+  });
+  return {
+    content: typeof response.text === "string" ? response.text : null,
+    ...(toolCalls.length === 0 ? {} : { tool_calls: toolCalls })
+  };
 }
 
 function responseForBody(body: Record<string, unknown>): unknown {

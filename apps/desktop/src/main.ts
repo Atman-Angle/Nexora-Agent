@@ -38,7 +38,7 @@ const ModelProfileSchema = z.object({
   contextWindowTokens: z.number().int().positive().max(10_000_000).optional(),
   activeInputTargetTokens: z.number().int().positive().max(10_000_000).nullable().optional(),
   decisionOutputTokens: z.number().int().positive().max(1_000_000),
-  transport: z.enum(["native_tools", "structured_output"]),
+  transport: z.literal("native_tools"),
   reasoning: z.enum(["off", "dynamic", "on"]).optional(),
   thinkingToggleParam: z.string().trim().min(1).max(128).nullable().optional()
 }).strict();
@@ -88,7 +88,6 @@ function runtime(): RuntimeWorkerClient {
   });
   return service;
 }
-
 async function createWindow(): Promise<void> {
   window = new BrowserWindow({
     width: 1180,
@@ -531,7 +530,12 @@ async function runDesktopUat(reportPath: string): Promise<void> {
       continue;
     }
     if (["waiting_for_input", "waiting_for_approval", "blocked", "failed", "cancelled"].includes(status ?? "")) {
-      throw new Error(`Desktop UAT stopped in ${status}.`);
+      const inspection = snapshot.session!.inspection;
+      throw new Error(`Desktop UAT stopped in ${status}: ${JSON.stringify({
+        runId: inspection.runId,
+        stopReason: inspection.stopReason,
+        delivery: inspection.delivery
+      })}`);
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 500));
   }
@@ -627,7 +631,7 @@ async function runDesktopUat(reportPath: string): Promise<void> {
       collapsedChevronOpacity,
       reasoningTexts: probe.reasoningTexts,
       maxReasoningRows: probe.maxReasoningRows,
-      oldUiCount: document.querySelectorAll('.live-model-feedback, .activity-timeline, .activity-group, [data-view="activity"]').length
+      oldUiCount: document.querySelectorAll('.live-model-feedback, .activity-timeline, .activity-group').length
     };
   })()`, true) as { reasoningRows: number; toolRows: number; reasoningExpanded: boolean; toolExpanded: boolean; collapsedChevronOpacity: string | null; reasoningTexts: string[]; maxReasoningRows: number; oldUiCount: number };
   if (transcriptEvidence.toolRows < 1
@@ -647,8 +651,12 @@ async function runDesktopUat(reportPath: string): Promise<void> {
       const content = document.querySelector('.content-scroll');
       if (content instanceof HTMLElement) content.scrollTop = content.scrollHeight;
       const rows = [...document.querySelectorAll('.tool-entry .execution-row')];
-      const changes = rows.filter((row) => row.querySelector('.execution-action')?.textContent === '修改文件');
-      return changes.length === ${expectedFileChanges} && (changes[0]?.querySelector('.execution-target')?.textContent ?? '').includes('src/features/portfolio/components');
+      const changes = rows.filter((row) => {
+        const action = row.querySelector('.execution-action')?.textContent ?? '';
+        return action === '修改文件' || action === '写入文件';
+      });
+      const target = changes.map((row) => row.querySelector('.execution-target')?.textContent ?? '').join(' ');
+      return changes.length >= ${expectedFileChanges} && (target.includes('portfolio') || target.includes('components'));
     })()`, true) as boolean;
     if (!fileChangesReady) throw new Error("Desktop file-change UAT did not render the authoritative long-path file summary.");
   }

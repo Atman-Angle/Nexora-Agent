@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   createAgent,
   DelegationPolicySchema,
   renderWorkerAssignmentPrompt,
@@ -95,6 +95,7 @@ describe("Supervisor / Coordinator completion Contract", () => {
 });
 
 class ForbiddenProbeProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   controlNames: string[] = [];
   #calls = 0;
   async decide(_context: ModelDecisionContext, operation: RuntimeOperationContext) {
@@ -107,6 +108,7 @@ class ForbiddenProbeProvider implements RuntimeProvider {
 }
 
 class RequiredFallbackProvider implements RuntimeProvider {
+  readonly nativeFunctionCalling = NATIVE_FUNCTION_CALLING_CAPABILITIES;
   #calls = 0;
   async decide() {
     this.#calls += 1;

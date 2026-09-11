@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "nexora-capability-cohort-g-data-tax-reconcile",
+  "version": 1,
+  "description": "Harbor capability cohort G: realistic data transformation task (cross-file tax reconciliation).",
+  "tasks": [
+    "tasks/cap-data-tax-reconcile/task.json"
+  ]
+}

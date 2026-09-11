@@ -62,3 +62,7 @@ tmp/
 .tmp-e001/
 .tmp-e0013/
 .tmp-e0014/
+
+# Local diagnostic captures.
+/native_refs.txt
+/nexora-runtime-telemetry.jsonl

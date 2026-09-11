@@ -1,0 +1,7 @@
+{
+  "taskId": "v1-environment-configuration-operations-holdout-01",
+  "expectedPaths": [
+    "config.json"
+  ],
+  "referenceStateDigest": "sha256:822442b67fd29a50a89117f59ad14fdac9b15e2c75fcde6aa6020025937ecbc6"
+}

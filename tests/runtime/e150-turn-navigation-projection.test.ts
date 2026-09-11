@@ -7,7 +7,12 @@ import {
 import { resolvePromptHostConfiguration } from "../../packages/harness/src/profile.js";
 import { projectCompletionProjection } from "../../packages/harness/src/context/decision-context.js";
 import { compileModelPlan } from "../../packages/harness/src/planning.js";
-import { ModelPlanUpdateSchema, modelResponses } from "../../packages/harness/src/providers/model-response.js";
+import {
+  CONTROL_FUNCTION_DESCRIPTORS,
+  ModelPlanUpdateSchema,
+  UPDATE_PLAN_CONTROL,
+  modelResponses
+} from "../../packages/harness/src/providers/model-response.js";
 
 type ParsedInput = {
   controlState: {
@@ -109,6 +114,7 @@ describe("E150 Turn navigation and repair projection", () => {
   it.each([
     ["PLAN_SCOPE_REQUIRED_OUTCOME_DUPLICATED", "resubmit the full Plan"],
     ["PROTECTED_MUTATION_BATCH_REQUIRES_ONE_AT_A_TIME", "exactly one protected mutation/execute"],
+    ["CHECK_UNSATISFIED", "repair that real cause"],
     ["TASK_SCOPE_REVISION_REQUIRES_NEW_USER_INPUT", "call nexora_request_input"],
     ["response_rejected", "already succeeded"]
   ])("maps a state-rejection repair code %s to a deterministic directive", (code, fragment) => {
@@ -174,7 +180,7 @@ describe("E150 Turn navigation and repair projection", () => {
     expect(parsed.controlState.nextUnfinishedStep).toBeNull();
     expect(parsed.controlState.protectedEffectsThisTurn).toBe(0);
     expect(parsed.controlState.repairCode).toBe("CHECK_EVIDENCE_STALE");
-    expect(parsed.controlState.repairDirective).toContain("nexora_respond");
+    expect(parsed.controlState.repairDirective).toContain("final assistant text");
     expect(parsed.controlState.repairDirective).toContain("legal order");
   });
 
@@ -199,7 +205,7 @@ describe("E150 Turn navigation and repair projection", () => {
         recovery: {
           sideEffect: "none",
           doNotRepeat: true,
-          nextAction: "Submit nexora_respond once."
+          nextAction: "Submit ordinary final text once."
         }
       }
     });
@@ -228,7 +234,7 @@ describe("E150 Turn navigation and repair projection", () => {
         recovery: {
           sideEffect: "none",
           doNotRepeat: true,
-          nextAction: "Submit nexora_respond once."
+          nextAction: "Submit ordinary final text once."
         }
       }
     });
@@ -257,13 +263,13 @@ describe("E150 Turn navigation and repair projection", () => {
         recovery: {
           sideEffect: "none",
           doNotRepeat: true,
-          nextAction: "Submit nexora_respond once."
+          nextAction: "Submit ordinary final text once."
         }
       }
     });
     const parsed = input(context);
     expect(parsed.controlState.repairCode).toBe("FINAL_CONTROL_REQUIRED");
-    expect(parsed.controlState.repairDirective).toContain("nexora_respond");
+    expect(parsed.controlState.repairDirective).toContain("ordinary assistant text");
   });
 
 
@@ -292,7 +298,7 @@ describe("E150 Turn navigation and repair projection", () => {
       stepProgress: [{ stepId: "step-verify", status: "pending", evidenceIds: [] }],
       completionRequirements: { evidence: "none", requiredToolNames: [] },
       evidence: []
-    } as never;
+    } as unknown as Parameters<typeof projectCompletionProjection>[0]["run"];
     const blocked = projectCompletionProjection({
       run: pendingRun,
       invocations: [],
@@ -301,7 +307,6 @@ describe("E150 Turn navigation and repair projection", () => {
     });
     expect(blocked.ready).toBe(false);
     expect(blocked.blockers).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "STEP_INCOMPLETE", stepId: "step-verify", nextAction: "execute" }),
       expect.objectContaining({ code: "CHECK_UNSATISFIED", stepId: "step-verify", checkId: "check-read", nextAction: "execute" })
     ]));
 
@@ -384,6 +389,17 @@ describe("E150 Turn navigation and repair projection", () => {
     expect(() => compileModelPlan(run, {
       removeSteps: [{ stepId: "step-done", reason: "Completed work is immutable." }]
     }, () => "unused")).toThrow(/PLAN_REMOVE_INVALID/);
+  });
+
+  it("requires a Plan verification check that can genuinely fail", () => {
+    const compiled = compilePrompt({ context: baseContext(), host, transport });
+    expect(compiled.system).toContain("A check marked verification must be a Tool invocation that can genuinely fail");
+    expect(compiled.system).toContain("re-reading or listing a file only observes it");
+
+    const descriptor = CONTROL_FUNCTION_DESCRIPTORS.find((item) => item.name === UPDATE_PLAN_CONTROL);
+    const schema = JSON.stringify(descriptor?.inputSchema ?? {});
+    expect(schema).toContain("verification means this check must be able to fail");
+    expect(schema).toContain("it never verifies an outcome");
   });
 
   it("removes the duplicated latestUserInput while preserving the user-input history", () => {

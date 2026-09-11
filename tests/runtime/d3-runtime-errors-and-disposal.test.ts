@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 
-import {
+import { NATIVE_FUNCTION_CALLING_CAPABILITIES,
   RunControlError,
   RuntimeError,
   createOpenAICompatibleProvider,
@@ -82,7 +82,7 @@ describe("D3 typed Runtime errors and disposal", () => {
     const signals: AbortSignal[] = [];
     const providerDisposed = { calls: 0 };
     const toolDisposed = { calls: 0 };
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide(_context, operation) {
         signals.push(operation.signal);
         await aborted(operation.signal);
@@ -136,7 +136,7 @@ describe("D3 typed Runtime errors and disposal", () => {
   it("continues cleanup after dispose failure and returns typed INTERNAL once", async () => {
     const workspace = temporaryWorkspace();
     const disposed: string[] = [];
-    const provider: RuntimeProvider = {
+    const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       async decide() {
         return modelResponses.input({ question: "Wait.", reason: "test" });
       },
@@ -199,7 +199,7 @@ function temporaryWorkspace(): string {
 }
 
 function inputProvider(): RuntimeProvider {
-  return {
+  return { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
     async decide() {
       return modelResponses.input({ question: "Provide input.", reason: "test" });
     }

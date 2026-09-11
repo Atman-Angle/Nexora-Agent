@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 2,
+  "id": "cap-env-config-converge",
+  "revision": 1,
+  "datasetVersion": "0.1.0-cohort-b",
+  "family": "environment_configuration_operations",
+  "secondaryCoverage": [
+    "validation",
+    "restart",
+    "approval",
+    "side_effect"
+  ],
+  "difficulty": "standard",
+  "horizon": "multi_stage",
+  "split": "dev",
+  "source": "sanitized_real_failure",
+  "agentVisible": {
+    "instruction": "Inspect the repository requirements and current service configuration, correct every mismatch while preserving required values, run the provided verifier, use any failure diagnostics to repair the result, and report only after verification succeeds.",
+    "allowedCapabilities": [
+      "filesystem.list",
+      "filesystem.read",
+      "filesystem.patch",
+      "shell.execute"
+    ],
+    "toolCatalogPolicy": "declared",
+    "budgetSummary": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "environmentFacts": []
+  },
+  "execution": {
+    "fixture": {
+      "path": "tasks/NB-CONVERGE-001/fixture",
+      "digest": "sha256:9f57e4831de384ac3e459bdb8c49d39cd456643f199b83f855041acde4f2821a"
+    },
+    "scenario": "tasks/cap-env-config-converge/scenario.ts",
+    "budgets": {
+      "maxIterations": 40,
+      "maxModelCalls": 40,
+      "maxToolCalls": 30,
+      "maxRetries": 3,
+      "maxDurationMs": 900000
+    },
+    "seedPolicy": "derived",
+    "driver": {
+      "approvals": [
+        {
+          "occurrence": 1,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 2,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        },
+        {
+          "occurrence": 3,
+          "decision": "approve",
+          "restartBeforeDecision": false
+        }
+      ],
+      "inputs": [],
+      "recoveries": [],
+      "cancellations": []
+    }
+  },
+  "constraints": {
+    "forbiddenTools": [],
+    "forbiddenPaths": [
+      "REQUIREMENTS.md",
+      "verify.mjs"
+    ],
+    "processPolicy": "declared"
+  },
+  "expectedOutcome": {
+    "acceptedTerminals": [
+      "succeeded"
+    ],
+    "acceptedStopReasons": [],
+    "confirmationRequired": false
+  },
+  "sealed": {
+    "graderRef": "tasks/cap-env-config-converge/grader.json",
+    "graderDigest": "sha256:af89558c8353ab84c0cc1468c68241537cc4955f60c193d423a3c85f20b4df3b"
+  },
+  "humanReviewRef": "tasks/cap-env-config-converge/human-review.json",
+  "identity": {
+    "taskDigest": "sha256:89213c2572ee725b5e76c0cc7daafc2d95eaba9e0a9e41f8c305f66ab8ebef68",
+    "fixtureDigest": "sha256:9f57e4831de384ac3e459bdb8c49d39cd456643f199b83f855041acde4f2821a"
+  }
+}
