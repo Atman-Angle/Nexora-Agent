@@ -57,6 +57,7 @@ import {
   assertCompletedStepsUnchanged,
   completeSatisfiedSteps,
   deepFreeze,
+  digestAcceptanceCheck,
   digestJson,
   digestCanonicalJson,
   errorMessage,
@@ -1943,6 +1944,7 @@ export class RuntimeEngine {
         planVersion: plan.version,
         stepId: activeStep.id,
         checkId: check.id,
+        checkDigest: digestAcceptanceCheck(check),
         subjectRef: fact.ref,
         invocationId: null,
         artifactRef: null,
@@ -2879,6 +2881,7 @@ export class RuntimeEngine {
       readonly diagnostic: Readonly<Record<string, unknown>>;
       readonly summary?: string;
       readonly nextAction?: string;
+      readonly generatedBy?: "model" | "deterministic";
     },
     observer?: RuntimeObserver
   ): RunSnapshot {
@@ -2902,7 +2905,7 @@ export class RuntimeEngine {
         outcome: "failed",
         now: this.#now(),
         stopReason,
-        ...(input.summary === undefined ? {} : { summary: input.summary, generatedBy: "model" as const }),
+        ...(input.summary === undefined ? {} : { summary: input.summary, generatedBy: input.generatedBy ?? "deterministic" as const }),
         ...(input.nextAction === undefined ? {} : { nextAction: input.nextAction })
       })
     });

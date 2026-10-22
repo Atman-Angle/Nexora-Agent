@@ -93,7 +93,7 @@ describe("E148 workspace-absolute path containment", () => {
     }));
   });
 
-  it("verifies loopback HTTP responses with the dedicated read-only Tool", async () => {
+  it("verifies loopback HTTP responses with the dedicated approval-gated Tool", async () => {
     const root = workspace();
     const server = createServer((request, response) => {
       if (request.url === "/health") {

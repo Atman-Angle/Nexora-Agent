@@ -257,6 +257,7 @@ export const EvidenceSchema = z.object({
   planVersion: z.number().int().positive(),
   stepId: NonEmptyString,
   checkId: NonEmptyString,
+  checkDigest: NonEmptyString.nullable().optional(),
   subjectRef: NonEmptyString,
   invocationId: NonEmptyString.nullable(),
   artifactRef: NonEmptyString.nullable(),

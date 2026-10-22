@@ -1,3 +1,6 @@
+import { realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+
 import {
   JsonValueSchema,
   RunSnapshotSchema,
@@ -11,6 +14,7 @@ import {
   ActionRejectedError,
   canonicalJson,
   completeSatisfiedSteps,
+  digestAcceptanceCheck,
   digestCanonicalJson,
   digestJson,
   errorMessage
@@ -204,7 +208,7 @@ async function executeDurableToolAttempt(
 
   let result: RuntimeToolResult;
   let failureDetails: ReturnType<typeof toolFailureDiagnostics>;
-  const reused = reusableReadResult(services, invocation, tool, attemptNumber);
+  const reused = await reusableReadResult(services, invocation, tool, attemptNumber);
   try {
     const executed = reused?.result ?? await services.withHeartbeat(invocation.runId, () => abortableToolExecution(tool.execute(parsedInput, {
         workspace: services.workspace,
@@ -283,12 +287,12 @@ async function executeDurableToolAttempt(
   return completed;
 }
 
-function reusableReadResult(
+async function reusableReadResult(
   services: RuntimeServices,
   invocation: ToolInvocation,
   tool: RuntimeTool,
   attemptNumber: number
-): { readonly invocationId: string; readonly result: RuntimeToolResult } | null {
+): Promise<{ readonly invocationId: string; readonly result: RuntimeToolResult } | null> {
   if (
     attemptNumber !== 1
     || !invocation.idempotent
@@ -308,7 +312,7 @@ function reusableReadResult(
   for (let index = 0; index < currentIndex; index += 1) {
     const candidate = invocations[index]!;
     const candidateTool = services.tools.get(candidate.toolName);
-    if (invalidatesRead(candidate, candidateTool, invocation)) invalidatedAfter = index;
+    if (await invalidatesRead(services.workspace, candidate, candidateTool, invocation)) invalidatedAfter = index;
   }
   const attempts = services.store.listToolAttempts(invocation.runId);
   for (let index = currentIndex - 1; index > invalidatedAfter; index -= 1) {
@@ -343,26 +347,56 @@ function reusableReadResult(
   return null;
 }
 
-function invalidatesRead(
+async function invalidatesRead(
+  workspace: string,
   candidate: ToolInvocation,
   tool: RuntimeTool | undefined,
   requestedRead: ToolInvocation
-): boolean {
+): Promise<boolean> {
   if (tool?.contract.execution.effect.kind === "read") return false;
   if (candidate.status === "failed") return false;
   if (candidate.status !== "succeeded") return true;
   if (tool?.contract.execution.effect.kind !== "write") return true;
-  const changedPath = exactFilesystemPath(candidate);
-  const readPath = exactFilesystemPath(requestedRead);
+  const changedPath = await exactFilesystemPath(workspace, candidate);
+  const readPath = await exactFilesystemPath(workspace, requestedRead);
   return changedPath === null || readPath === null || changedPath === readPath;
 }
 
-function exactFilesystemPath(invocation: ToolInvocation): string | null {
+async function exactFilesystemPath(
+  workspace: string,
+  invocation: ToolInvocation
+): Promise<string | null> {
   if (!invocation.toolName.startsWith("filesystem.")) return null;
   const input = invocation.inputJson;
   if (input === null || typeof input !== "object" || Array.isArray(input)) return null;
   const path = (input as Record<string, unknown>).path;
-  return typeof path === "string" ? path.replace(/\\/g, "/").replace(/^\.\//, "").toLocaleLowerCase() : null;
+  if (typeof path !== "string" || path.trim() === "") return null;
+  try {
+    const root = await realpath(workspace);
+    const lexicalTarget = isAbsolute(path) ? resolve(path) : resolve(root, path);
+    if (!isInside(root, lexicalTarget)) return null;
+    let canonicalTarget: string;
+    try {
+      canonicalTarget = await realpath(lexicalTarget);
+    } catch {
+      const realParent = await realpath(dirname(lexicalTarget));
+      canonicalTarget = resolve(realParent, basename(lexicalTarget));
+    }
+    if (!isInside(root, canonicalTarget)) return null;
+    return normalizePathIdentity(canonicalTarget);
+  } catch {
+    return null;
+  }
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function normalizePathIdentity(path: string): string {
+  const normalized = path.replace(/\\/gu, "/");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
 function finalizeReadToolBatch(
@@ -392,6 +426,7 @@ function finalizeReadToolBatch(
       planVersion: invocation.planVersion,
       stepId: invocation.stepId,
       checkId,
+      checkDigest: evidenceCheckDigest(run, invocation.stepId, checkId),
       subjectRef: attempt.subjectRef!,
       invocationId: invocation.id,
       artifactRef: attempt.payloadArtifactRef,
@@ -892,6 +927,7 @@ export async function executeToolInvocation(
     planVersion: invocation.planVersion,
     stepId: invocation.stepId,
     checkId,
+    checkDigest: evidenceCheckDigest(run, invocation.stepId, checkId),
     subjectRef: result.subjectRef,
     invocationId: invocation.id,
     artifactRef: payloadArtifact?.digest ?? null,
@@ -1194,6 +1230,10 @@ async function reconcileUnknownInvocation(
 
   const facts = JsonValueSchema.parse(tool.contract.evidence.factsSchema.parse(result.facts));
   const factDigest = digestCanonicalJson(facts);
+  const checkId = result.status === "confirmed_succeeded"
+    ? (matchingToolResultCheckIds(run, invocation.stepId, invocation.toolName, invocation.checkIds, invocation.id)[0]
+      ?? `reconciliation:${invocation.id}`)
+    : `reconciliation:${invocation.id}`;
   const evidence: Evidence = {
     id: services.createId(),
     kind: result.status === "confirmed_succeeded" ? "tool_result" : "state_assertion",
@@ -1201,10 +1241,8 @@ async function reconcileUnknownInvocation(
     producedAt: services.now(),
     planVersion: invocation.planVersion,
     stepId: invocation.stepId,
-    checkId: result.status === "confirmed_succeeded"
-      ? (matchingToolResultCheckIds(run, invocation.stepId, invocation.toolName, invocation.checkIds, invocation.id)[0]
-        ?? `reconciliation:${invocation.id}`)
-      : `reconciliation:${invocation.id}`,
+    checkId,
+    checkDigest: evidenceCheckDigest(run, invocation.stepId, checkId),
     subjectRef: result.subjectRef,
     invocationId: invocation.id,
     artifactRef: null,
@@ -1346,6 +1384,7 @@ function applyRecoveryDecision(
       planVersion: invocation.planVersion,
       stepId: invocation.stepId,
       checkId,
+      checkDigest: evidenceCheckDigest(runInput, invocation.stepId, checkId),
       subjectRef: decision.subjectRef,
       invocationId: invocation.id,
       artifactRef: null,
@@ -1486,6 +1525,17 @@ function applyRecoveryDecision(
   });
   services.notify(runInput.runId, observer);
   return committed.run;
+}
+
+function evidenceCheckDigest(
+  run: RunSnapshot,
+  stepId: string,
+  checkId: string
+): string | null {
+  const check = run.currentPlan?.orderedSteps
+    .find((step) => step.id === stepId)
+    ?.acceptanceChecks.find((candidate) => candidate.id === checkId);
+  return check === undefined ? null : digestAcceptanceCheck(check);
 }
 
 function matchingToolResultCheckIds(

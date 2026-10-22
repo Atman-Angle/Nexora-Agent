@@ -87,10 +87,15 @@ describe("E076 repeated Tool Action safety", () => {
 
       expect(result.status).toBe("failed");
       expect(result.stopReason).toBe("NO_PROGRESS_DETECTED");
-      expect(result.summary).toContain("NO_PROGRESS_DETECTED");
+      expect(result.summary).toBe(result.delivery?.summary);
+      expect(result.summary).toContain("no new progress");
       expect(result.delivery).toEqual(expect.objectContaining({
         outcome: "failed",
         generatedBy: "deterministic",
+        exactCause: expect.objectContaining({
+          code: "NO_PROGRESS_DETECTED",
+          stopReason: "NO_PROGRESS_DETECTED"
+        }),
         unfinishedWork: ["Write the protected value once: use capability test.write"]
       }));
       expect(result.lastError?.code).toBe("NO_PROGRESS_DETECTED");

@@ -18,7 +18,7 @@ import {
   type FileChild,
   type IParagraphOptions
 } from "docx";
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8 } from "fflate";
 
 import type {
   InlineRun,
@@ -26,6 +26,7 @@ import type {
   RichDocumentLeafBlock,
   RichDocumentSource
 } from "./contracts.js";
+import { safeUnzipSync } from "./zip-safety.js";
 
 export type DocxValidation = {
   readonly format: "docx";
@@ -90,7 +91,7 @@ export async function renderDocx(
 
 export function validateDocxPackage(bytes: Uint8Array): { readonly packageEntryCount: number } {
   let entries: Record<string, Uint8Array>;
-  try { entries = unzipSync(bytes); }
+  try { entries = safeUnzipSync(bytes); }
   catch (error) { throw new Error(`Generated DOCX is not a readable ZIP package: ${error instanceof Error ? error.message : String(error)}`); }
   for (const required of ["[Content_Types].xml", "_rels/.rels", "word/document.xml"]) {
     if (entries[required] === undefined) throw new Error(`Generated DOCX is missing required package entry ${required}.`);
@@ -112,7 +113,7 @@ export function validateDocxPackage(bytes: Uint8Array): { readonly packageEntryC
 }
 
 export function readDocxDocumentXml(bytes: Uint8Array): string {
-  const entries = unzipSync(bytes);
+  const entries = safeUnzipSync(bytes);
   const document = entries["word/document.xml"];
   if (document === undefined) throw new Error("DOCX package is missing word/document.xml.");
   return strFromU8(document);

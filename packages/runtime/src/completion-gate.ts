@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 
+import { digestAcceptanceCheck } from "./runtime-helpers.js";
+
 import {
   UNPLANNED_STEP_ID,
+  type AcceptanceCheck,
   type Evidence,
   type RunSnapshot,
   type TaskContract,
@@ -157,7 +160,7 @@ export function validateCompletion(
           eligibleEvidence,
           plan.version,
           step.id,
-          check.id
+          check
         );
         if (persisted === undefined) {
           issues.push(`CHECK_UNSATISFIED:${step.id}:${check.id}`);
@@ -183,13 +186,15 @@ function findApplicableEvidence(
   evidence: readonly Evidence[],
   currentPlanVersion: number,
   stepId: string,
-  checkId: string
+  check: AcceptanceCheck
 ): Evidence | undefined {
+  const checkDigest = digestAcceptanceCheck(check);
   return evidence.reduce<Evidence | undefined>((latest, item) => {
     if (
       item.planVersion > currentPlanVersion
       || item.stepId !== stepId
-      || item.checkId !== checkId
+      || item.checkId !== check.id
+      || item.checkDigest !== checkDigest
     ) return latest;
     return latest === undefined || item.producedAt >= latest.producedAt ? item : latest;
   }, undefined);

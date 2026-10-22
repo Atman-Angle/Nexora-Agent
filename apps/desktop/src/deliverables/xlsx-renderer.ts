@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { extname } from "node:path";
 
 import ExcelJS from "exceljs";
-import { unzipSync } from "fflate";
 
 import type { InlineRun, RichDocumentBlock, RichDocumentLeafBlock, RichDocumentSource } from "./contracts.js";
+import { safeUnzipSync } from "./zip-safety.js";
 
 export type XlsxValidation = {
   readonly format: "xlsx";
@@ -110,7 +110,7 @@ export async function renderXlsx(
 }
 
 export function validateXlsxPackage(bytes: Uint8Array): { readonly packageEntryCount: number } {
-  const entries = unzipSync(bytes);
+  const entries = safeUnzipSync(bytes);
   for (const required of ["[Content_Types].xml", "_rels/.rels", "xl/workbook.xml"]) {
     if (entries[required] === undefined) throw new Error(`Generated XLSX is missing required package entry ${required}.`);
   }

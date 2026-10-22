@@ -109,7 +109,7 @@ describe("E049 built-in Tool Runtime", () => {
     await expect(execute(tool(tools, "filesystem.read"), root, { path: "linked/secret.txt" }))
       .resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "PATH_ESCAPE" }) }));
     await expect(execute(tool(tools, "filesystem.write"), root, { path: "linked/created.txt", content: "escape" }))
-      .resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "PATH_ESCAPE" }) }));
+      .resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "SYMLINK_ESCAPE" }) }));
     expect(existsSync(join(outside, "created.txt"))).toBe(false);
   });
 
@@ -174,8 +174,8 @@ describe("E049 built-in Tool Runtime", () => {
       status: "failure",
       subjectRef: "shell.execute",
       error: {
-        code: "PROCESS_START_FAILED",
-        message: expect.stringContaining("Process could not be started:"),
+        code: "COMMAND_UNAVAILABLE",
+        message: expect.stringContaining("Could not resolve a trusted executable"),
         retryable: false
       }
     });

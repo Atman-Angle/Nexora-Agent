@@ -48,7 +48,6 @@ const DESKTOP_PROFILE = createAgentProfileSnapshot({
 const AUTO_APPROVED_DESKTOP_TOOLS = new Set([
   "filesystem.write",
   "filesystem.patch",
-  "http.request",
   "document.create",
   "document.import",
   "document.apply_patch",
@@ -60,40 +59,32 @@ export function desktopToolApprovalPolicy(
   toolName: string,
   input: unknown = null
 ): "auto_approve" | "require_user" {
-  if (AUTO_APPROVED_DESKTOP_TOOLS.has(toolName)) return "auto_approve";
-  if (toolName !== "shell.execute") return "require_user";
-  return isBoundedVerificationCommand(input) ? "auto_approve" : "require_user";
+  if (toolName === "shell.execute" || toolName === "http.request") return "require_user";
+  if (!AUTO_APPROVED_DESKTOP_TOOLS.has(toolName)) return "require_user";
+  if (
+    (toolName === "filesystem.write" || toolName === "filesystem.patch")
+    && hasSensitiveWorkspacePath(input)
+  ) return "require_user";
+  return "auto_approve";
 }
 
-function isBoundedVerificationCommand(input: unknown): boolean {
+function hasSensitiveWorkspacePath(input: unknown): boolean {
   if (input === null || typeof input !== "object" || Array.isArray(input)) return false;
-  const record = input as Record<string, unknown>;
-  if (typeof record.command !== "string" || !Array.isArray(record.args) || record.args.some((item) => typeof item !== "string")) return false;
-  const args = record.args as string[];
-  if (args.some(isHighRiskArgument)) return false;
-  const executable = basename(record.command).toLowerCase().replace(/\.exe$/u, "");
-  if (executable === "node") {
-    return args.length === 1 && ["--version", "-v"].includes(args[0]!)
-      || args[0] === "--test";
+  const path = (input as Record<string, unknown>).path;
+  if (typeof path !== "string") return false;
+  const segments = path.replace(/\\/gu, "/").split("/");
+  const normalized: string[] = [];
+  for (const segment of segments) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") normalized.pop();
+    else normalized.push(segment.toLowerCase());
   }
-  if (["npm", "pnpm", "yarn"].includes(executable)) {
-    const first = args[0]?.toLowerCase();
-    if (args.length === 1 && ["--version", "-v", "version"].includes(first ?? "")) return true;
-    if (first === "test") return true;
-    if (first !== "run") return false;
-    return ["test", "build", "lint", "typecheck", "check"].includes(args[1]?.toLowerCase() ?? "");
-  }
-  if (["tsc", "eslint", "vitest"].includes(executable)) return true;
-  if (executable === "git") return ["status", "diff", "log", "show"].includes(args[0]?.toLowerCase() ?? "");
-  return false;
-}
-
-function isHighRiskArgument(value: string): boolean {
-  const lower = value.toLowerCase();
-  return /^https?:\/\//u.test(lower)
-    || /^\\\\/u.test(value)
-    || /^[a-z]:[\\/]/iu.test(value)
-    || ["--global", "-g", "--force", "--unsafe-perm", "--ignore-scripts=false"].includes(lower);
+  return normalized.some((segment) => (
+    segment === ".git"
+    || segment === ".nexora"
+    || segment === "desktop-secrets.env"
+    || /^\.env(?:\..+)?$/u.test(segment)
+  ));
 }
 
 type AgentRuntime = ReturnType<typeof createAgent>;

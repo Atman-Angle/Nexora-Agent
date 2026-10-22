@@ -6,6 +6,7 @@ import {
   type StructuredPlan,
   type ToolInvocation,
   latestWriteMutation,
+  digestAcceptanceCheck,
   UNPLANNED_STEP_ID
 } from "@nexora/runtime/internal";
 import {
@@ -132,6 +133,7 @@ export function compileProviderToolCalls(
         evidence.planVersion <= run.currentPlan!.version
         && evidence.stepId === step.id
         && evidence.checkId === check.id
+        && evidence.checkDigest === digestAcceptanceCheck(check)
       )))
     )
   ) ?? [];
@@ -165,7 +167,7 @@ function staleVerificationTarget(
     if (stepIndex < latestMutation.stepIndex) continue;
     const stale = step.acceptanceChecks.filter((check) => {
       if (check.kind !== "tool_result" || check.role !== "verification" || !requestedTools.has(check.toolName)) return false;
-      const evidence = latestCheckEvidence(run, step.id, check.id);
+      const evidence = latestCheckEvidence(run, step.id, check);
       return evidence !== undefined && evidence.producedAt < latestMutation.producedAt;
     });
     if (stale.length > 0) return { step, checkIds: new Set(stale.map((check) => check.id)) };
@@ -204,7 +206,7 @@ function latestMutationAnchor(
   for (const [stepIndex, step] of plan.orderedSteps.entries()) {
     for (const check of step.acceptanceChecks) {
       if (check.kind !== "tool_result" || check.role !== "mutation") continue;
-      const evidence = latestCheckEvidence(run, step.id, check.id);
+      const evidence = latestCheckEvidence(run, step.id, check);
       if (evidence !== undefined && (latest === undefined || evidence.producedAt >= latest.producedAt)) {
         latest = { producedAt: evidence.producedAt, stepIndex };
       }
@@ -213,12 +215,14 @@ function latestMutationAnchor(
   return latest;
 }
 
-function latestCheckEvidence(run: RunSnapshot, stepId: string, checkId: string) {
+function latestCheckEvidence(run: RunSnapshot, stepId: string, check: AcceptanceCheck) {
+  const checkDigest = digestAcceptanceCheck(check);
   return run.evidence.reduce<(typeof run.evidence)[number] | undefined>((latest, evidence) => {
     if (
       evidence.planVersion > (run.currentPlan?.version ?? 0)
       || evidence.stepId !== stepId
-      || evidence.checkId !== checkId
+      || evidence.checkId !== check.id
+      || evidence.checkDigest !== checkDigest
     ) return latest;
     return latest === undefined || evidence.producedAt >= latest.producedAt ? evidence : latest;
   }, undefined);

@@ -598,20 +598,17 @@ describe("E130 Desktop Project and continuous Session", () => {
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   });
 
-  it("auto-approves bounded workspace writes but keeps process execution user-gated", async () => {
+  it("auto-approves ordinary workspace writes while user-gating sensitive writes, HTTP, and process execution", async () => {
     expect(desktopToolApprovalPolicy("filesystem.write")).toBe("auto_approve");
     expect(desktopToolApprovalPolicy("filesystem.patch")).toBe("auto_approve");
-    expect(desktopToolApprovalPolicy("http.request")).toBe("auto_approve");
+    expect(desktopToolApprovalPolicy("http.request")).toBe("require_user");
+    expect(desktopToolApprovalPolicy("filesystem.write", { path: ".git/config", content: "unsafe" })).toBe("require_user");
+    expect(desktopToolApprovalPolicy("filesystem.write", { path: "nested/.ENV.test", content: "unsafe" })).toBe("require_user");
+    expect(desktopToolApprovalPolicy("filesystem.patch", { path: "a/../.nexora/desktop-host.json", expectedDigest: "x", patch: "x" })).toBe("require_user");
     expect(desktopToolApprovalPolicy("shell.execute")).toBe("require_user");
     expect(desktopToolApprovalPolicy("shell.execute", {
       command: process.execPath,
-      args: ["--test"],
-      cwd: ".",
-      timeoutMs: 60_000
-    })).toBe("auto_approve");
-    expect(desktopToolApprovalPolicy("shell.execute", {
-      command: "pnpm",
-      args: ["install"],
+      args: ["--test", "../../outside.test.js"],
       cwd: ".",
       timeoutMs: 60_000
     })).toBe("require_user");
@@ -620,7 +617,7 @@ describe("E130 Desktop Project and continuous Session", () => {
       args: ["run", "build"],
       cwd: ".",
       timeoutMs: 60_000
-    })).toBe("auto_approve");
+    })).toBe("require_user");
     expect(desktopToolApprovalPolicy("process.start")).toBe("require_user");
     expect(desktopToolApprovalPolicy("process.stop")).toBe("require_user");
 
@@ -813,7 +810,7 @@ describe("E130 Desktop Project and continuous Session", () => {
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
   }, 15_000);
 
-  it("auto-approves a bounded shell verification command and records the approval audit", async () => {
+  it("requires user approval for a bounded shell verification command", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-bounded-shell-"));
     roots.push(workspace);
     let calls = 0;
@@ -849,18 +846,20 @@ describe("E130 Desktop Project and continuous Session", () => {
 
     const service = new DesktopRuntimeService({ workspace, onSnapshot() {}, onError(message) { throw new Error(message); } });
     await service.startSession("Verify the installed Node version.");
-    const completed = await waitForStatus(service, "succeeded");
+    const waiting = await waitForStatus(service, "waiting_for_approval");
 
-    expect(completed.session?.inspection.invocations).toEqual([
-      expect.objectContaining({ toolName: "shell.execute", status: "succeeded" })
-    ]);
-    expect(completed.session?.history.records.filter(({ type }) => type === "approval.requested")).toHaveLength(1);
-    expect(completed.session?.history.records.filter(({ type }) => type === "approval.granted")).toHaveLength(1);
-    expect(calls).toBe(3);
+    expect(waiting.session?.inspection.pendingRequest).toEqual(expect.objectContaining({
+      kind: "approval",
+      toolName: "shell.execute"
+    }));
+    expect(waiting.session?.inspection.invocations).toHaveLength(0);
+    expect(waiting.session?.history.records.filter(({ type }) => type === "approval.requested")).toHaveLength(1);
+    expect(waiting.session?.history.records.filter(({ type }) => type === "approval.granted")).toHaveLength(0);
+    expect(calls).toBe(2);
     await service.close();
     server.closeAllConnections();
     await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
-  });
+  }, 15_000);
 
   it("projects a live managed service across Desktop Runtime reopen without replaying start", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "nexora-e130-managed-process-"));

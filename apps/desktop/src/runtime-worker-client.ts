@@ -30,7 +30,7 @@ export class RuntimeWorkerClient {
     this.#onError = input.onError;
     this.#onPublicOutput = input.onPublicOutput;
     const workerPath = resolve(dirname(fileURLToPath(import.meta.url)), "runtime-worker.js");
-    this.#child = spawn("node", [workerPath, input.workspace], {
+    this.#child = spawn(process.execPath, [workerPath, input.workspace], {
       cwd: input.workspace,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"]

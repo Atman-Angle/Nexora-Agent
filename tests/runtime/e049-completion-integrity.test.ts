@@ -5,8 +5,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createBuiltInTools, createRuntime } from "../../packages/harness/src/index.js";
-import { createInitialRunSnapshot, UNPLANNED_STEP_ID } from "../../packages/runtime/src/contracts.js";
+import { createInitialRunSnapshot, UNPLANNED_STEP_ID, type RunSnapshot } from "../../packages/runtime/src/contracts.js";
 import { digestTaskContract, validateCompletion } from "../../packages/runtime/src/completion-gate.js";
+import { digestAcceptanceCheck } from "../../packages/runtime/src/runtime-helpers.js";
 import { compileProviderToolCalls } from "../../packages/harness/src/planning.js";
 import {
   responseCall,
@@ -17,6 +18,20 @@ import {
 } from "./runtime-testkit.js";
 
 const roots: string[] = [];
+
+function withEvidenceCheckDigests<T extends Pick<RunSnapshot, "currentPlan" | "evidence">>(run: T): T {
+  return {
+    ...run,
+    evidence: run.evidence.map((evidence) => {
+      const check = run.currentPlan?.orderedSteps
+        .find((step) => step.id === evidence.stepId)
+        ?.acceptanceChecks.find((candidate) => candidate.id === evidence.checkId);
+      return check === undefined
+        ? evidence
+        : { ...evidence, checkDigest: digestAcceptanceCheck(check) };
+    })
+  };
+}
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -69,7 +84,7 @@ describe("E049 deterministic completion integrity", () => {
       invocation("mutate", "filesystem.write", "2026-09-10T00:02:00.000Z", "digest-mutation"),
       invocation("verify-fresh", "shell.execute", "2026-09-10T00:03:00.000Z", "digest-fresh")
     ];
-    const run = {
+    const run = withEvidenceCheckDigests({
       ...initial,
       taskContract,
       currentPlan: {
@@ -91,7 +106,7 @@ describe("E049 deterministic completion integrity", () => {
         { id: "mutation", kind: "tool_result" as const, source: "tool" as const, producedAt: "2026-09-10T00:02:00.000Z", planVersion: 1, stepId: "implement", checkId: "mutate", subjectRef: "file:target", invocationId: "mutate", artifactRef: null, digest: "digest-mutation" },
         { id: "fresh", kind: "tool_result" as const, source: "tool" as const, producedAt: "2026-09-10T00:03:00.000Z", planVersion: 1, stepId: "implement", checkId: "verify", subjectRef: "process:fresh", invocationId: "verify-fresh", artifactRef: null, digest: "digest-fresh" }
       ]
-    };
+    });
 
     const staleRun = { ...run, evidence: run.evidence.slice(0, 2) };
     expect(compileProviderToolCalls(staleRun, [{
@@ -145,7 +160,7 @@ describe("E049 deterministic completion integrity", () => {
       payloadDigest: "digest-mutation",
       payloadArtifactRef: null
     };
-    const run = {
+    const run = withEvidenceCheckDigests({
       ...initial,
       taskContract,
       currentPlan: {
@@ -179,7 +194,7 @@ describe("E049 deterministic completion integrity", () => {
         artifactRef: null,
         digest: "digest-mutation"
       }]
-    };
+    });
 
     expect(validateCompletion(
       run,
@@ -235,7 +250,7 @@ describe("E049 deterministic completion integrity", () => {
       invocation("mutate", "filesystem.write", "implement", ["mutate"], "2026-09-10T00:02:00.000Z"),
       invocation("verify", "shell.execute", "implement", ["verify"], "2026-09-10T00:03:00.000Z")
     ];
-    const run = {
+    const run = withEvidenceCheckDigests({
       ...initial,
       taskContract,
       currentPlan: {
@@ -256,7 +271,7 @@ describe("E049 deterministic completion integrity", () => {
         { id: "mutate", kind: "tool_result" as const, source: "tool" as const, producedAt: "2026-09-10T00:02:00.000Z", planVersion: 1, stepId: "implement", checkId: "mutate", subjectRef: "file:target", invocationId: "mutate", artifactRef: null, digest: "digest-mutate" },
         { id: "verified", kind: "tool_result" as const, source: "tool" as const, producedAt: "2026-09-10T00:03:00.000Z", planVersion: 1, stepId: "implement", checkId: "verify", subjectRef: "process:verify", invocationId: "verify", artifactRef: null, digest: "digest-verify" }
       ]
-    };
+    });
     const toolEffect = (toolName: string) => (
       toolName === "filesystem.write" || toolName === "filesystem.patch"
         ? "write" as const
@@ -286,10 +301,10 @@ describe("E049 deterministic completion integrity", () => {
       checkIds: []
     });
 
-    expect(validateCompletion({
+    expect(validateCompletion(withEvidenceCheckDigests({
       ...run,
       evidence: [...run.evidence, { id: "refreshed", kind: "tool_result" as const, source: "tool" as const, producedAt: "2026-09-10T00:05:00.000Z", planVersion: 1, stepId: "implement", checkId: "verify", subjectRef: "process:refresh", invocationId: "refresh", artifactRef: null, digest: "digest-refresh" }]
-    }, [
+    }), [
       ...planned,
       invocation("late-patch", "filesystem.patch", UNPLANNED_STEP_ID, [], "2026-09-10T00:04:00.000Z"),
       invocation("refresh", "shell.execute", "implement", ["verify"], "2026-09-10T00:05:00.000Z")
@@ -365,7 +380,7 @@ describe("E049 deterministic completion integrity", () => {
       invocation("verify-a", "shell.execute", "implement", ["verify-a"], "2026-09-10T00:02:00.000Z"),
       invocation("verify-b", "shell.execute", "finalize", ["verify-b"], "2026-09-10T00:03:00.000Z")
     ];
-    const run = {
+    const run = withEvidenceCheckDigests({
       ...initial,
       taskContract,
       currentPlan: {
@@ -399,7 +414,7 @@ describe("E049 deterministic completion integrity", () => {
         evidence("verify-a", "implement", "verify-a", "verify-a", "2026-09-10T00:02:00.000Z"),
         evidence("verify-b", "finalize", "verify-b", "verify-b", "2026-09-10T00:03:00.000Z")
       ]
-    };
+    });
     const toolEffect = (toolName: string) => (
       toolName === "filesystem.write" || toolName === "filesystem.patch"
         ? "write" as const
@@ -425,10 +440,10 @@ describe("E049 deterministic completion integrity", () => {
     });
 
     const refreshed = invocation("refresh", "shell.execute", "finalize", ["verify-b"], "2026-09-10T00:05:00.000Z");
-    expect(validateCompletion({
+    expect(validateCompletion(withEvidenceCheckDigests({
       ...run,
       evidence: [...run.evidence, evidence("verify-b-refreshed", "finalize", "verify-b", "refresh", "2026-09-10T00:05:00.000Z")]
-    }, [...plannedInvocations, lateWrite, refreshed], () => true, "task_result", toolEffect))
+    }), [...plannedInvocations, lateWrite, refreshed], () => true, "task_result", toolEffect))
       .toMatchObject({ passed: true, issues: [] });
   });
 
@@ -503,7 +518,7 @@ describe("E049 deterministic completion integrity", () => {
       invocation("verify", "shell.execute", "implement", ["verify"], "2026-09-10T00:02:00.000Z")
     ];
     const lateWrite = invocation("late-patch", "filesystem.patch", UNPLANNED_STEP_ID, [], "2026-09-10T00:03:00.000Z");
-    const run = {
+    const run = withEvidenceCheckDigests({
       ...initial,
       taskContract,
       currentPlan: {
@@ -524,7 +539,7 @@ describe("E049 deterministic completion integrity", () => {
         evidence("mutate", "implement", "mutate", "mutate", "2026-09-10T00:01:00.000Z"),
         evidence("verify", "implement", "verify", "verify", "2026-09-10T00:02:00.000Z")
       ]
-    };
+    });
     const toolEffect = (toolName: string) => (
       toolName === "filesystem.write" || toolName === "filesystem.patch"
         ? "write" as const
@@ -549,10 +564,10 @@ describe("E049 deterministic completion integrity", () => {
     });
 
     const refreshed = invocation("refresh", "shell.execute", "implement", ["verify"], "2026-09-10T00:04:00.000Z");
-    expect(validateCompletion({
+    expect(validateCompletion(withEvidenceCheckDigests({
       ...run,
       evidence: [...run.evidence, evidence("verify-refreshed", "implement", "verify", "refresh", "2026-09-10T00:04:00.000Z")]
-    }, [...planned, lateWrite, refreshed], () => true, "task_result", toolEffect))
+    }), [...planned, lateWrite, refreshed], () => true, "task_result", toolEffect))
       .toMatchObject({ passed: true, issues: [] });
   });
 
