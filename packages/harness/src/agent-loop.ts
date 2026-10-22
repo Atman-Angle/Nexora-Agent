@@ -137,6 +137,7 @@ export interface AgentLoopRuntimePort {
       readonly diagnostic: HarnessConvergenceDiagnostic;
       readonly summary?: string;
       readonly nextAction?: string;
+      readonly generatedBy?: "model" | "deterministic";
     },
     observer?: RuntimeObserver
   ): RunSnapshot;
@@ -234,7 +235,8 @@ export async function runAgentLoop(
       run = runtime.proposeTaskFailure(run, {
         ...convergence,
         summary: guidance.summary,
-        nextAction: guidance.nextAction
+        nextAction: guidance.nextAction,
+        generatedBy: "deterministic"
       }, observer);
       break;
     }

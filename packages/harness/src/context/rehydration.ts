@@ -19,7 +19,7 @@ import type {
   ToolObservation
 } from "../providers/model-client.js";
 import type { RuntimeMemoryOptions } from "../types.js";
-import { digestCanonicalJson } from "@nexora/runtime/internal";
+import { digestAcceptanceCheck, digestCanonicalJson } from "@nexora/runtime/internal";
 import { memoryIdFromRef } from "../memory/recall.js";
 import type { ContextArtifactSource, ContextSource } from "./source.js";
 import {
@@ -528,14 +528,18 @@ export function autoRehydrateForActiveStep(args: {
   for (const check of activeStep.acceptanceChecks) {
     if (check.kind === "context_ref") {
       const satisfied = run.evidence.some(
-        (item) => item.stepId === activeStepId && item.checkId === check.id
+        (item) => item.stepId === activeStepId
+          && item.checkId === check.id
+          && item.checkDigest === digestAcceptanceCheck(check)
       );
       if (!satisfied) required.add(check.ref);
       continue;
     }
     if (check.kind !== "tool_result") continue;
     const evidence = run.evidence.find(
-      (item) => item.stepId === activeStepId && item.checkId === check.id
+      (item) => item.stepId === activeStepId
+        && item.checkId === check.id
+        && item.checkDigest === digestAcceptanceCheck(check)
     );
     if (evidence !== null && evidence !== undefined && evidence.invocationId !== null) {
       const observation = observationByInvocation.get(evidence.invocationId);

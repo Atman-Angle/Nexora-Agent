@@ -3,6 +3,7 @@ import type {
   RunDelivery,
   RunSnapshot
 } from "./contracts.js";
+import { digestAcceptanceCheck } from "./runtime-helpers.js";
 
 export function deriveRunDelivery(input: {
   readonly run: RunSnapshot;
@@ -18,8 +19,10 @@ export function deriveRunDelivery(input: {
   const completedStepIds = new Set(run.stepProgress
     .filter((progress) => progress.status === "completed")
     .map((progress) => progress.stepId));
-  const satisfiedChecks = new Set(run.evidence.map((evidence) => (
-    `${evidence.stepId}\0${evidence.checkId}`
+  const satisfiedChecks = new Set(run.evidence.flatMap((evidence) => (
+    evidence.checkDigest === null || evidence.checkDigest === undefined
+      ? []
+      : [`${evidence.stepId}\0${evidence.checkId}\0${evidence.checkDigest}`]
   )));
   const completedWork = run.currentPlan?.orderedSteps
     .filter((step) => completedStepIds.has(step.id))
@@ -27,7 +30,7 @@ export function deriveRunDelivery(input: {
   const unfinishedWork = run.currentPlan?.orderedSteps.flatMap((step) => {
     if (completedStepIds.has(step.id)) return [];
     const missingChecks = step.acceptanceChecks
-      .filter((check) => !satisfiedChecks.has(`${step.id}\0${check.id}`))
+      .filter((check) => !satisfiedChecks.has(`${step.id}\0${check.id}\0${digestAcceptanceCheck(check)}`))
       .map((check) => `${step.objective}: ${describeCheck(check)}`);
     return missingChecks.length > 0 ? missingChecks : [step.objective];
   }) ?? (input.outcome === "succeeded" ? [] : [run.inputHistory.at(-1)!.text]);

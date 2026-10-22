@@ -285,7 +285,7 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     }));
   });
 
-  it("fails closed on Profile drift across reopen and continues only with an audited strategy revision", async () => {
+  it("fails closed on Profile drift across reopen and does not allow an in-place terminal resume", async () => {
     const workspace = tempRoot();
     const dataDir = join(workspace, ".nexora");
     const firstProfile = profile("continuity", "1", "Use the first strategy.");
@@ -326,17 +326,27 @@ describe("E120 general Agent Prompt and Host Profile", () => {
       provider: waitingProvider,
       tools: []
     });
-    const blocked = await driftedRuntime.resume({
+    const failed = await driftedRuntime.resume({
       runId: waiting.runId,
       input: "Continue under the current Host strategy."
     });
     await driftedRuntime.close();
-    expect(blocked).toMatchObject({
-      status: "blocked",
-      stopReason: "PROVIDER_UNAVAILABLE",
+    expect(failed).toMatchObject({
+      status: "failed",
+      stopReason: "STRATEGY_SNAPSHOT_UNAVAILABLE",
       lastError: {
+        code: "STRATEGY_SNAPSHOT_UNAVAILABLE",
         message: expect.stringContaining("STRATEGY_SNAPSHOT_UNAVAILABLE")
-      }
+      },
+      delivery: expect.objectContaining({
+        outcome: "failed",
+        exactCause: expect.objectContaining({ code: "STRATEGY_SNAPSHOT_UNAVAILABLE" }),
+        nextAction: expect.stringContaining("new continuation Run")
+      }),
+      failureHandoff: expect.objectContaining({
+        resumable: false,
+        nextAction: expect.stringContaining("new continuation Run")
+      })
     });
 
     const revisedRuntime = createAgent({
@@ -352,18 +362,14 @@ describe("E120 general Agent Prompt and Host Profile", () => {
     });
     const resumed = await revisedRuntime.resume({ runId: waiting.runId });
     const view = await revisedRuntime.inspect(waiting.runId);
-    const trace = await revisedRuntime.openRun(waiting.runId)
-      .modelCallTrace(view.modelCalls.at(-1)!.id);
     await revisedRuntime.close();
 
-    expect(resumed.status).toBe("waiting");
-    expect(trace.audit!.manifest.strategy).toEqual(expect.objectContaining({
-      profile: expect.objectContaining({ digest: secondProfile.digest }),
-      strategyRevision: {
-        actor: "host:test",
-        reason: "The Host explicitly migrated this Run to Profile continuity@2."
-      }
-    }));
+    expect(resumed).toMatchObject({
+      status: "failed",
+      stopReason: "STRATEGY_SNAPSHOT_UNAVAILABLE"
+    });
+    expect(view.modelCalls).toHaveLength(1);
+    expect(waitingProviderCalls).toBe(1);
   });
 
   it("normalizes unsupported, disabled and unknown Provider cache telemetry", async () => {

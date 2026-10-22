@@ -1,9 +1,10 @@
 import { extname } from "node:path";
 
-import { strFromU8, unzipSync } from "fflate";
+import { strFromU8 } from "fflate";
 
 import type { InlineRun, RichDocumentBlock, RichDocumentLeafBlock, RichDocumentSource } from "./contracts.js";
 import { validateXlsxPackage } from "./xlsx-renderer.js";
+import { safeUnzipSync } from "./zip-safety.js";
 
 export type PptxValidation = {
   readonly format: "pptx";
@@ -85,7 +86,7 @@ export async function renderPptx(
 }
 
 export function validatePptxPackage(bytes: Uint8Array): { readonly packageEntryCount: number; readonly slideCount: number } {
-  const entries = unzipSync(bytes);
+  const entries = safeUnzipSync(bytes);
   for (const required of ["[Content_Types].xml", "_rels/.rels", "ppt/presentation.xml"]) {
     if (entries[required] === undefined) throw new Error(`Generated PPTX is missing required package entry ${required}.`);
   }
@@ -104,7 +105,7 @@ export function validatePptxPackage(bytes: Uint8Array): { readonly packageEntryC
 }
 
 export function readPptxSlideXml(bytes: Uint8Array): readonly string[] {
-  const entries = unzipSync(bytes);
+  const entries = safeUnzipSync(bytes);
   return Object.entries(entries)
     .filter(([name]) => /^ppt\/slides\/slide\d+\.xml$/u.test(name))
     .sort(([left], [right]) => left.localeCompare(right, "en", { numeric: true }))

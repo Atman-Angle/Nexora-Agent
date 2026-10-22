@@ -68,7 +68,13 @@ describe("E066 deterministic denial stop", () => {
 
     expect(denied.status).toBe("waiting");
     expect(denied.stopReason).toBe("INPUT_REQUIRED");
-    expect(denied.summary).toBeNull();
+    expect(denied.resultArtifact).toBeNull();
+    expect(denied.delivery).toMatchObject({
+      outcome: "paused",
+      exactCause: { code: "USER_INPUT_REQUIRED" }
+    });
+    expect(denied.summary).toBe(denied.delivery?.summary);
+    expect(denied.summary).toContain("protected Tool action was denied");
     expect(view.snapshot.pendingRequest).toEqual(expect.objectContaining({ kind: "input" }));
     expect(view.snapshot.inputHistory.at(-1)?.text).toBe("Do not modify the workspace.");
     expect(view.events.filter((event) => event.type === "model.requested")).toHaveLength(2);

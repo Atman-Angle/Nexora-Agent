@@ -1,6 +1,6 @@
 # Provider-native Tool Protocol Specification
 
-Status: Superseded by `PURE_NATIVE_FUNCTION_CALLING_SPEC.md` for the native-only transport contract
+Status: normative native Function Calling transport contract
 
 ## 1. Problem
 

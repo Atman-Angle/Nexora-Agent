@@ -66,3 +66,22 @@ tmp/
 # Local diagnostic captures.
 /native_refs.txt
 /nexora-runtime-telemetry.jsonl
+
+# Internal development documentation. Keep local copies, never publish them.
+/*.md
+!/README.md
+!/README.zh-CN.md
+!/PROJECT.md
+!/ARCHITECTURE.md
+!/DATA_FLOW.md
+!/TESTS.md
+/docs/*.md
+!/docs/README.md
+!/docs/BUILD_WITH_NEXORA_RUNTIME.md
+!/docs/USER_GUIDE_CURRENT.md
+!/docs/RELEASE.md
+!/docs/PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md
+!/docs/PROVIDER_NATIVE_CONTINUATION_SPEC.md
+/harness/nexora-bench/**/reliability-reports/**/*.md
+/harness/nexora-bench/*_BASELINE.md
+/harness/nexora-bench/stress-tasks/STRESS_BASELINE.md

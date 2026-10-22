@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
-import type { Evidence, RunSnapshot } from "./contracts.js";
+import type { AcceptanceCheck, Evidence, RunSnapshot } from "./contracts.js";
 import type { RunResult, RuntimeTool } from "./runtime-types.js";
 import { deriveFailureHandoff } from "./failure-handoff.js";
 
@@ -21,7 +21,12 @@ export function completeSatisfiedSteps(plan: NonNullable<RunSnapshot["currentPla
     const existing = progress.find((item) => item.stepId === step.id);
     const requiredChecks = step.acceptanceChecks.filter((check) => check.required);
     const satisfied = requiredChecks.length > 0
-      && requiredChecks.every((check) => evidence.some((item) => item.stepId === step.id && item.checkId === check.id && item.planVersion <= plan.version));
+      && requiredChecks.every((check) => evidence.some((item) => (
+        item.stepId === step.id
+        && item.checkId === check.id
+        && item.checkDigest === digestAcceptanceCheck(check)
+        && item.planVersion <= plan.version
+      )));
     if (satisfied) return { stepId: step.id, status: "completed", evidenceIds: evidence.filter((item) => item.stepId === step.id).map((item) => item.id) };
     if (!activeAssigned) { activeAssigned = true; return { stepId: step.id, status: "active", evidenceIds: existing?.evidenceIds ?? [] }; }
     return { stepId: step.id, status: "pending", evidenceIds: existing?.evidenceIds ?? [] };
@@ -38,6 +43,10 @@ export function assertCompletedStepsUnchanged(run: RunSnapshot, nextSteps: reado
 }
 
 export function digestJson(value: unknown): string { return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
+
+export function digestAcceptanceCheck(check: AcceptanceCheck): string {
+  return digestCanonicalJson(check);
+}
 
 export function canonicalJson(value: unknown): string {
   return JSON.stringify(canonicalJsonValue(value));

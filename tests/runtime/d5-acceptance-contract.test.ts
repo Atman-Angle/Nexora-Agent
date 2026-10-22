@@ -12,7 +12,19 @@ describe("D5 Nexora 1.2 acceptance", () => {
     expect(docs).toContain("BUILD_WITH_NEXORA_RUNTIME.md");
     expect(guide).toContain("@nexora/harness");
     expect(guide).toContain("createAgent");
-    expect(docs).not.toMatch(/audit|reports|specs|agent-evaluation/);
+    // The boundary statement legitimately names the excluded categories in
+    // prose ("evaluation reports, audits, plans"). What must never happen is
+    // the public page exposing those internal trees, so the gate checks path
+    // and link exposure instead of the bare words.
+    const internalPathMention = /(?:^|[\s("'`])(?:\.{0,2}\/)*(?:audit|reports|specs|agent-evaluation)\//;
+    expect(docs).not.toMatch(internalPathMention);
+    const linkTargets = [...docs.matchAll(/\]\(([^)\s]+)\)/g)].map((match) => match[1]!);
+    // Guard against a silently vacuous link check if the page ever loses its
+    // markdown links.
+    expect(linkTargets.length).toBeGreaterThan(0);
+    expect(linkTargets.filter((target) => (
+      /(?:^|\/)(?:audit|reports|specs|agent-evaluation)\//.test(target)
+    ))).toEqual([]);
   });
 
   it("keeps package exports and public types structurally closed", () => {

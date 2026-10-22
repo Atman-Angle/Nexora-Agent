@@ -114,5 +114,4 @@ Harbor agent environment configuration and change `provider_mode` to `real` in a
 separate job configuration. Deterministic and real-provider cohorts must remain
 separate.
 
-See `docs/NEXORA_EVAL_SPEC.md` and `NEXORA_HARBOR_MIGRATION_REPORT.md` for the
-normative boundary and migration evidence.
+The Harbor job configuration and this guide define the normative evaluation boundary.

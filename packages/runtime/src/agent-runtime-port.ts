@@ -235,6 +235,7 @@ export interface AgentRuntimePort {
       readonly diagnostic: Readonly<Record<string, unknown>>;
       readonly summary?: string;
       readonly nextAction?: string;
+      readonly generatedBy?: "model" | "deterministic";
     },
     observer?: RuntimeObserver
   ): RunSnapshot;

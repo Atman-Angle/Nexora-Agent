@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { ArtifactStore } from "../../store/artifacts.js";
-import { commandRejectionReason, normalizePackageManagerCommandInput } from "./command-resolution.js";
+import { commandRejectionReason, normalizePackageManagerCommandInput, resolveWindowsSystemExecutable } from "./command-resolution.js";
 import { ToolFailure, workspacePath } from "./workspace.js";
 
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -515,6 +515,9 @@ function redactLog(value: string): string {
 }
 
 export function terminateProcessTreeForTests(pid: number): void {
-  if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+  if (process.platform === "win32") {
+    const taskkill = resolveWindowsSystemExecutable("taskkill");
+    if (taskkill !== null) spawnSync(taskkill, ["/pid", String(pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+  }
   else { try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ } } }
 }

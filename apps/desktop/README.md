@@ -101,4 +101,4 @@ pnpm desktop:uat
 
 首版没有右栏、Workbench、Dashboard、文件树、编辑器、交互终端、安装包、签名、自动更新或内置 Node 分发。当前可重复启动方式是从源码运行 `pnpm desktop`；打包、签名、自动更新和安装体验仍是独立 Release Gates。
 
-完整产品与 Authority 约束见 [`docs/NEXORA_DESKTOP_WORKSPACE_SPEC.md`](../../docs/NEXORA_DESKTOP_WORKSPACE_SPEC.md)。
+完整产品与 Authority 约束见 [`ARCHITECTURE.md`](../../ARCHITECTURE.md) 和 [`DATA_FLOW.md`](../../DATA_FLOW.md)。

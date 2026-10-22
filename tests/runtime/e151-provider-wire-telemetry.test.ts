@@ -161,8 +161,12 @@ describe("E151 Provider wire telemetry", () => {
     const inspection = await runtime.inspect(run.runId);
     const telemetryEvents = inspection.events.filter((event) => event.type === "model.wire_telemetry");
 
-    expect(fetchCalls).toBe(3);
-    expect(telemetryEvents).toHaveLength(3);
+    // The Harness Provider gateway performs five logical attempts
+    // (provider-gateway.ts) with 500 * 2^(n-1) ms backoff, so a fully failing
+    // logical call is ~7.5 s by contract, not an anomaly.
+    const PROVIDER_ATTEMPTS = 5;
+    expect(fetchCalls).toBe(PROVIDER_ATTEMPTS);
+    expect(telemetryEvents).toHaveLength(PROVIDER_ATTEMPTS);
     expect(telemetryEvents.every((event) => {
       if (event.type !== "model.wire_telemetry") return false;
       const telemetry = event.payload.telemetry as {
@@ -178,12 +182,10 @@ describe("E151 Provider wire telemetry", () => {
     expect(firstBytes).not.toBeNull();
     const budgetCall = inspection.modelCalls[0];
     expect(budgetCall).toBeDefined();
-    expect(telemetryEvents.map((event) => event.payload.callId)).toEqual([
-      budgetCall?.id,
-      budgetCall?.id,
-      budgetCall?.id
-    ]);
-    expect(new Set(telemetryEvents.map((event) => event.payload.attemptId)).size).toBe(3);
+    expect(telemetryEvents.map((event) => event.payload.callId)).toEqual(
+      Array.from({ length: PROVIDER_ATTEMPTS }, () => budgetCall?.id)
+    );
+    expect(new Set(telemetryEvents.map((event) => event.payload.attemptId)).size).toBe(PROVIDER_ATTEMPTS);
     expect(first.payload.budgetMeasuredInputTokens).toBe(budgetCall?.measuredInputTokens);
     expect(first.payload.providerVisibleEstimatedInputTokens).toBe(Math.ceil((firstBytes ?? 0) / 4));
     expect(first.payload.providerVisibleMeasurementMethod).toBe("estimated");
@@ -193,7 +195,7 @@ describe("E151 Provider wire telemetry", () => {
     expect(first.payload.finalRequestBytes).toBe(firstBytes);
     expect(typeof first.payload.finalRequestDigest).toBe("string");
     await runtime.close();
-  });
+  }, 20_000);
 
   it("deduplicates a native continuation result in dynamic observations", async () => {
     let telemetry: Record<string, any> | undefined;

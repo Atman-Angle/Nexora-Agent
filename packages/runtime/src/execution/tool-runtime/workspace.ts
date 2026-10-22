@@ -31,11 +31,41 @@ export async function writableWorkspacePath(rootInput: string, requested: string
   const existing = await lstat(target).catch(() => null);
   if (existing?.isSymbolicLink()) throw new ToolFailure("SYMLINK_ESCAPE", "Write target cannot be a symlink.");
   if (existing?.isDirectory()) throw new ToolFailure("INVALID_PATH", "Write target cannot be a directory.");
-  const parent = dirname(target);
-  await mkdir(parent, { recursive: true });
-  const realParent = await realpath(parent);
-  assertInside(root, realParent);
+  await ensureWritableParent(root, dirname(target));
   return target;
+}
+
+/**
+ * Validate and create a writable parent one component at a time. No directory
+ * is created until every existing ancestor has been proven to be a real
+ * directory inside the workspace; this prevents a symlink or junction from
+ * receiving filesystem effects before containment fails.
+ */
+async function ensureWritableParent(root: string, parent: string): Promise<void> {
+  const missing: string[] = [];
+  let current = parent;
+  while (true) {
+    const entry = await lstat(current).catch(() => null);
+    if (entry !== null) {
+      if (entry.isSymbolicLink()) throw new ToolFailure("SYMLINK_ESCAPE", "Writable ancestors cannot be symlinks.");
+      if (!entry.isDirectory()) throw new ToolFailure("INVALID_PATH", "A writable path ancestor is not a directory.");
+      const real = await realpath(current);
+      assertInside(root, real);
+      break;
+    }
+    const next = dirname(current);
+    if (next === current) throw new ToolFailure("PATH_ESCAPE", "Writable parent has no existing workspace ancestor.");
+    missing.push(current);
+    current = next;
+  }
+  for (const directory of missing.reverse()) {
+    await mkdir(directory);
+    const entry = await lstat(directory);
+    if (entry.isSymbolicLink()) throw new ToolFailure("SYMLINK_ESCAPE", "Writable ancestors cannot be symlinks.");
+    if (!entry.isDirectory()) throw new ToolFailure("INVALID_PATH", "A writable path ancestor is not a directory.");
+    const real = await realpath(directory);
+    assertInside(root, real);
+  }
 }
 
 function candidate(rootInput: string, requested: string): string {

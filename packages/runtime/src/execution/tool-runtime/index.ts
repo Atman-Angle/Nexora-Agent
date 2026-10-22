@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import { finished } from "node:stream/promises";
 
@@ -14,7 +14,8 @@ import { attachToolFailureDiagnostics } from "../tool-diagnostics.js";
 import {
   commandRejectionReason,
   normalizePackageManagerCommandInput,
-  resolveExecutableCommand
+  resolveExecutableCommand,
+  resolveWindowsSystemExecutable
 } from "./command-resolution.js";
 import {
   inspectManagedProcess,
@@ -37,14 +38,29 @@ const ReadInput = z.object({
   limit: z.number().int().positive().max(3_000).optional()
 }).strict();
 const MAX_INLINE_BYTES = 16 * 1024;
+const MAX_READABLE_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_READ_RANGE_BYTES = 2_800;
+const STREAM_CHUNK_BYTES = 64 * 1024;
 const MAX_CAPTURE_BYTES = 64 * 1024;
 const MAX_PROCESS_DIAGNOSTIC_ARGUMENTS = 64;
 const MAX_PROCESS_DIAGNOSTIC_TEXT_CHARACTERS = 2048;
 const MAX_SEARCH_MATCHES = 100;
 const MAX_LIST_ENTRIES = 2_000;
+const MAX_LIST_OFFSET = 50_000;
+const MAX_LIST_VISITED_ENTRIES = 50_000;
+const MAX_LIST_DEPTH = 64;
 const IGNORED = new Set([".git", ".nexora", "node_modules", "dist", "coverage"]);
 const IGNORED_FILES = new Set([".env", ".env.local", ".env.production", ".env.development", "desktop-secrets.env"]);
+const GIT_SECRET_PATHSPECS = [
+  ":(exclude,icase,glob).env*",
+  ":(exclude,icase,glob)**/.env*",
+  ":(exclude,icase,glob)desktop-secrets.env",
+  ":(exclude,icase,glob)**/desktop-secrets.env"
+] as const;
+const GitPathSchema = z.string().trim().min(1).refine(
+  (value) => !value.startsWith(":"),
+  "Git pathspec magic is not allowed; pass one workspace-relative path."
+);
 const DigestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const ReadFactsSchema = z.union([
   z.object({ path: z.string(), content: z.string(), digest: DigestSchema, byteLength: z.number().int().nonnegative() }).strict(),
@@ -137,32 +153,91 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
           throw new ToolFailure("SECRET_FILE_READ_BLOCKED", "Workspace secret files are not readable by the Agent.");
         }
         const path = await workspacePath(context.workspace, input.path, "file");
-        const bytes = await readFile(path);
-        throwIfAborted(context.signal);
-        const content = decodeUtf8Text(bytes, input.path);
+        const fileStat = await stat(path);
+        if (fileStat.size > MAX_READABLE_FILE_BYTES) {
+          throw new ToolFailure(
+            "FILE_TOO_LARGE",
+            `File ${input.path} is ${fileStat.size} bytes; the bounded text read limit is ${MAX_READABLE_FILE_BYTES} bytes.`,
+            false,
+            { path: input.path, byteLength: fileStat.size, maxBytes: MAX_READABLE_FILE_BYTES }
+          );
+        }
+        if (fileStat.size <= MAX_INLINE_BYTES) {
+          const bytes = await readFile(path);
+          throwIfAborted(context.signal);
+          const content = decodeUtf8Text(bytes, input.path);
+          if (input.offset !== undefined || input.limit !== undefined) {
+            const offset = Math.min(input.offset ?? 0, content.length);
+            const requestedEnd = Math.min(content.length, offset + (input.limit ?? 3_000));
+            const ranged = boundedUtf8Slice(content, offset, requestedEnd, MAX_READ_RANGE_BYTES);
+            const nextOffset = ranged.end < content.length ? ranged.end : null;
+            return {
+              subjectRef: `${input.path}#chars=${offset}-${ranged.end}`,
+              facts: {
+                path: input.path,
+                content: ranged.content,
+                digest: digest(content),
+                byteLength: bytes.byteLength,
+                characterLength: content.length,
+                offset,
+                returnedCharacters: ranged.end - offset,
+                nextOffset,
+                truncated: nextOffset !== null
+              }
+            };
+          }
+          return { subjectRef: input.path, facts: { path: input.path, content, digest: digest(content), byteLength: bytes.byteLength } };
+        }
+
+        const artifactStore = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts"));
         if (input.offset !== undefined || input.limit !== undefined) {
-          const offset = Math.min(input.offset ?? 0, content.length);
-          const requestedEnd = Math.min(content.length, offset + (input.limit ?? 3_000));
-          const ranged = boundedUtf8Slice(content, offset, requestedEnd, MAX_READ_RANGE_BYTES);
-          const nextOffset = ranged.end < content.length ? ranged.end : null;
+          const offset = input.offset ?? 0;
+          const limit = input.limit ?? 3_000;
+          const streamed = await readUtf8File(path, input.path, context.signal, { kind: "range", offset, limit });
+          const rangeContent = streamed.rangeContent ?? "";
+          const ranged = boundedUtf8Slice(rangeContent, 0, rangeContent.length, MAX_READ_RANGE_BYTES);
+          const effectiveOffset = Math.min(offset, streamed.characterLength);
+          const actualEnd = effectiveOffset + ranged.end;
+          const nextOffset = actualEnd < streamed.characterLength ? actualEnd : null;
           return {
-            subjectRef: `${input.path}#chars=${offset}-${ranged.end}`,
+            subjectRef: `${input.path}#chars=${effectiveOffset}-${actualEnd}`,
             facts: {
               path: input.path,
               content: ranged.content,
-              digest: digest(content),
-              byteLength: bytes.byteLength,
-              characterLength: content.length,
-              offset,
-              returnedCharacters: ranged.end - offset,
+              digest: streamed.digest,
+              byteLength: streamed.byteLength,
+              characterLength: streamed.characterLength,
+              offset: effectiveOffset,
+              returnedCharacters: ranged.end,
               nextOffset,
               truncated: nextOffset !== null
             }
           };
         }
-        if (bytes.byteLength <= MAX_INLINE_BYTES) return { subjectRef: input.path, facts: { path: input.path, content, digest: digest(content), byteLength: bytes.byteLength } };
-        const artifact = new ArtifactStore(options.artifactDir ?? join(context.workspace, ".nexora", "artifacts")).putText(content);
-        return { subjectRef: input.path, facts: { path: input.path, preview: content.slice(0, 500), digest: digest(content), artifactRef: artifact.digest, byteLength: artifact.byteLength } };
+
+        const temporaryPath = artifactStore.temporaryPath("read");
+        try {
+          const streamed = await readUtf8File(path, input.path, context.signal, {
+            kind: "preview",
+            previewCharacters: 500,
+            temporaryPath
+          });
+          throwIfAborted(context.signal);
+          const artifact = await artifactStore.putFile(temporaryPath, "text/plain");
+          return {
+            subjectRef: input.path,
+            facts: {
+              path: input.path,
+              preview: streamed.preview ?? "",
+              digest: streamed.digest,
+              artifactRef: artifact.digest,
+              byteLength: streamed.byteLength
+            }
+          };
+        } catch (error) {
+          await rm(temporaryPath, { force: true });
+          throw error;
+        }
       }
     }),
     defineTool({
@@ -170,7 +245,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         identity: { name: "filesystem.list" },
         capability: { purpose: "Discover workspace file names and paths under one known directory.", nonGoals: ["Read file contents.", "Search for text inside files."] },
         decision: { useWhen: ["A required path is unknown but its containing directory is known."], avoidWhen: ["The exact target path is already known.", "The uncertainty concerns file content rather than path."] },
-        execution: { effect: { kind: "read", description: "Enumerates workspace paths without modifying external state." }, idempotent: true, inputSchema: z.object({ path: z.string().default("."), offset: z.number().int().nonnegative().default(0), limit: z.number().int().positive().max(MAX_LIST_ENTRIES).default(MAX_LIST_ENTRIES) }).strict(), inputExample: { path: ".", offset: 0, limit: 2000 } },
+        execution: { effect: { kind: "read", description: "Enumerates workspace paths without modifying external state." }, idempotent: true, inputSchema: z.object({ path: z.string().default("."), offset: z.number().int().nonnegative().max(MAX_LIST_OFFSET).default(0), limit: z.number().int().positive().max(MAX_LIST_ENTRIES).default(MAX_LIST_ENTRIES) }).strict(), inputExample: { path: ".", offset: 0, limit: 2000 } },
         evidence: { produces: ["One deterministic recursive path page and the exact next offset when more entries exist."], factsSchema: ListFactsSchema }
       },
       async execute(input, context) {
@@ -209,9 +284,9 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
     defineTool({
       contract: {
         identity: { name: "http.request" },
-        capability: { purpose: "Read one bounded HTTP response from a loopback development server for verification.", nonGoals: ["Call arbitrary external hosts.", "Modify server state.", "Send request bodies."] },
-        decision: { useWhen: ["A local development server has a known loopback URL and its status or content must be verified."], avoidWhen: ["The server is not bound to loopback.", "A dedicated file or process capability already answers the question."] },
-        execution: { effect: { kind: "read", description: "Performs one bounded GET or HEAD request against a loopback HTTP URL." }, idempotent: true, inputSchema: HttpRequestInputSchema, inputExample: { url: "http://127.0.0.1:4173/health", method: "GET", expectedStatus: 200, timeoutMs: 10_000 } },
+        capability: { purpose: "Observe one bounded HTTP response from a loopback development server for verification.", nonGoals: ["Call arbitrary external hosts.", "Assume an HTTP method is side-effect free.", "Send request bodies."] },
+        decision: { useWhen: ["A local development server has a known loopback URL and its status or content must be verified and the request is approved."], avoidWhen: ["The server is not bound to loopback.", "A dedicated file or process capability already answers the question."] },
+        execution: { effect: { kind: "execute", description: "Performs one bounded GET or HEAD request against a loopback HTTP URL. GET is not assumed to be read-only." }, idempotent: false, inputSchema: HttpRequestInputSchema, inputExample: { url: "http://127.0.0.1:4173/health", method: "GET", expectedStatus: 200, timeoutMs: 10_000 } },
         evidence: { produces: ["The loopback URL, HTTP status, content type, bounded response body, byte length, truncation state, and elapsed time."], factsSchema: HttpFactsSchema }
       },
       async execute(input, context) {
@@ -327,6 +402,15 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
       async execute(input, context) {
         throwIfAborted(context.signal);
         const path = await workspacePath(context.workspace, input.path, "file");
+        const fileStat = await stat(path);
+        if (fileStat.size > MAX_READABLE_FILE_BYTES) {
+          throw new ToolFailure(
+            "FILE_TOO_LARGE",
+            `File ${input.path} is ${fileStat.size} bytes; the bounded patch limit is ${MAX_READABLE_FILE_BYTES} bytes.`,
+            false,
+            { path: input.path, byteLength: fileStat.size, maxBytes: MAX_READABLE_FILE_BYTES }
+          );
+        }
         const current = await readFile(path, "utf8");
         throwIfAborted(context.signal);
         const currentDigest = digest(current);
@@ -462,7 +546,11 @@ function decodeUtf8Text(bytes: Buffer, path: string): string {
       false
     );
   }
-  const sample = content.slice(0, 8_192);
+  assertTextSample(content.slice(0, 8_192), path);
+  return content;
+}
+
+function assertTextSample(sample: string, path: string): void {
   const disallowedControls = [...sample].filter((character) => {
     const code = character.charCodeAt(0);
     return code === 0 || (code < 0x20 && ![0x09, 0x0a, 0x0c, 0x0d].includes(code));
@@ -474,7 +562,107 @@ function decodeUtf8Text(bytes: Buffer, path: string): string {
       false
     );
   }
-  return content;
+}
+
+type Utf8ReadMode =
+  | { readonly kind: "range"; readonly offset: number; readonly limit: number }
+  | { readonly kind: "preview"; readonly previewCharacters: number; readonly temporaryPath: string };
+
+async function readUtf8File(
+  path: string,
+  displayPath: string,
+  signal: AbortSignal,
+  mode: Utf8ReadMode
+): Promise<{
+  readonly digest: string;
+  readonly byteLength: number;
+  readonly characterLength: number;
+  readonly rangeContent?: string;
+  readonly preview?: string;
+}> {
+  const source = await open(path, "r");
+  let destination = null;
+  try {
+    destination = mode.kind === "preview" ? await open(mode.temporaryPath, "wx") : null;
+  } catch (error) {
+    await source.close().catch(() => { /* already closed */ });
+    throw error;
+  }
+  const hash = createHash("sha256");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const buffer = Buffer.allocUnsafe(STREAM_CHUNK_BYTES);
+  let byteLength = 0;
+  let characterLength = 0;
+  let sample = "";
+  let rangeContent = "";
+  let preview = "";
+  const consume = async (text: string): Promise<void> => {
+    if (text.length === 0) return;
+    const chunkStart = characterLength;
+    characterLength += text.length;
+    hash.update(text);
+    if (sample.length < 8_192) sample += text.slice(0, 8_192 - sample.length);
+    if (mode.kind === "range") {
+      const requestedEnd = mode.offset + mode.limit;
+      const from = Math.max(0, mode.offset - chunkStart);
+      const to = Math.min(text.length, requestedEnd - chunkStart);
+      if (to > from) rangeContent += text.slice(from, to);
+    } else if (preview.length < mode.previewCharacters) {
+      preview += text.slice(0, mode.previewCharacters - preview.length);
+    }
+    if (destination !== null) await destination.write(text, undefined, "utf8");
+  };
+  try {
+    let position = 0;
+    while (true) {
+      throwIfAborted(signal);
+      const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, position);
+      if (bytesRead === 0) break;
+      position += bytesRead;
+      byteLength += bytesRead;
+      if (byteLength > MAX_READABLE_FILE_BYTES) {
+        throw new ToolFailure(
+          "FILE_TOO_LARGE",
+          `File ${displayPath} grew beyond the ${MAX_READABLE_FILE_BYTES}-byte read limit.`,
+          false,
+          { path: displayPath, maxBytes: MAX_READABLE_FILE_BYTES }
+        );
+      }
+      try {
+        await consume(decoder.decode(buffer.subarray(0, bytesRead), { stream: true }));
+      } catch (error) {
+        if (error instanceof ToolFailure) throw error;
+        throw new ToolFailure(
+          "BINARY_FILE_NOT_TEXT",
+          `Workspace file ${displayPath} is not valid UTF-8 text. Use a format-aware read capability instead.`,
+          false
+        );
+      }
+    }
+    try {
+      await consume(decoder.decode());
+    } catch (error) {
+      if (error instanceof ToolFailure) throw error;
+      throw new ToolFailure(
+        "BINARY_FILE_NOT_TEXT",
+        `Workspace file ${displayPath} is not valid UTF-8 text. Use a format-aware read capability instead.`,
+        false
+      );
+    }
+    assertTextSample(sample, displayPath);
+    return {
+      digest: `sha256:${hash.digest("hex")}`,
+      byteLength,
+      characterLength,
+      ...(mode.kind === "range" ? { rangeContent } : { preview })
+    };
+  } catch (error) {
+    if (mode.kind === "preview") await rm(mode.temporaryPath, { force: true });
+    throw error;
+  } finally {
+    await source.close().catch(() => { /* already closed */ });
+    await destination?.close().catch(() => { /* already closed */ });
+  }
 }
 
 function boundedUtf8Slice(
@@ -535,13 +723,14 @@ async function searchWithRipgrep(
   truncated: boolean;
 }> {
   const ignoredGlobs = [
-    ...[...IGNORED].sort().flatMap((name) => ["--glob", `!${name}/**`]),
-    ...[...IGNORED_FILES].sort().flatMap((name) => ["--glob", `!${name}`])
+    ...[...IGNORED].sort().flatMap((name) => ["--glob", `!${name}/**`, "--glob", `!**/${name}/**`]),
+    ...["!.env*", "!**/.env*", "!desktop-secrets.env", "!**/desktop-secrets.env"]
+      .flatMap((glob) => ["--glob", glob])
   ];
   return new Promise((resolvePromise, rejectPromise) => {
     throwIfAborted(signal);
     const child = spawn(rgPath, [
-      "--json", "--sort", "path", "--hidden", "--no-ignore", "--fixed-strings", "--ignore-case", "--max-filesize", "256K",
+      "--json", "--sort", "path", "--hidden", "--no-ignore", "--glob-case-insensitive", "--fixed-strings", "--ignore-case", "--max-filesize", "256K",
       ...ignoredGlobs, "-e", query, "--", "."
     ], { cwd: directory, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     const matches: Array<{ path: string; line: number; text: string }> = [];
@@ -572,21 +761,23 @@ async function searchWithRipgrep(
       let event: { type?: string; data?: { path?: { text?: string }; lines?: { text?: string }; line_number?: number } };
       try { event = JSON.parse(line) as typeof event; } catch { return; }
       if (event.type !== "match") return;
-      const current = seen;
-      seen += 1;
-      if (current < offset) return;
+      const path = event.data?.path?.text;
+      const text = event.data?.lines?.text?.replace(/\r?\n$/, "");
+      const lineNumber = event.data?.line_number;
+      if (path === undefined || text === undefined || lineNumber === undefined) return;
+      const exposedPath = relativeFromRequested(requestedPath, directory, join(directory, path));
+      if (isSecretWorkspacePath(exposedPath)) return;
       if (matches.length >= limit) {
         hasMore = true;
         stoppedAfterPage = true;
         child.kill();
         return;
       }
-      const path = event.data?.path?.text;
-      const text = event.data?.lines?.text?.replace(/\r?\n$/, "");
-      const lineNumber = event.data?.line_number;
-      if (path === undefined || text === undefined || lineNumber === undefined) return;
+      const currentExposed = seen;
+      seen += 1;
+      if (currentExposed < offset) return;
       matches.push({
-        path: relativeFromRequested(requestedPath, directory, join(directory, path)),
+        path: exposedPath,
         line: lineNumber,
         text: text.slice(0, 500)
       });
@@ -622,7 +813,7 @@ function gitTools(options: { readonly artifactDir?: string }): RuntimeTool[] {
       useWhen: ["The current set of changed, untracked, or staged paths is required."],
       avoidWhen: ["Existing facts already establish the required workspace status."],
       produces: ["The bounded short-form repository status and process facts."],
-      schema: z.object({}).strict(), inputExample: {}, args: () => ["status", "--short"]
+      schema: z.object({}).strict(), inputExample: {}, args: () => ["status", "--short", "--", ...GIT_SECRET_PATHSPECS]
     }, options.artifactDir),
     gitTool({
       name: "git.diff",
@@ -631,7 +822,8 @@ function gitTools(options: { readonly artifactDir?: string }): RuntimeTool[] {
       useWhen: ["The current unstaged changes are required as facts."],
       avoidWhen: ["The required fact is repository status or committed content rather than an unstaged diff."],
       produces: ["The bounded unstaged diff and process facts."],
-      schema: z.object({ path: z.string().trim().min(1).optional() }).strict(), inputExample: {}, args: (input) => ["diff", "--", ...(input.path ? [input.path] : [])]
+      schema: z.object({ path: GitPathSchema.optional() }).strict(), inputExample: {}, path: (input) => input.path,
+      args: (input) => ["diff", "--no-ext-diff", "--no-textconv", "--", ...(input.path ? [input.path] : []), ...GIT_SECRET_PATHSPECS]
     }, options.artifactDir),
     gitTool({
       name: "git.show",
@@ -640,7 +832,11 @@ function gitTools(options: { readonly artifactDir?: string }): RuntimeTool[] {
       useWhen: ["The exact revision is known and its committed content is required."],
       avoidWhen: ["The revision is unresolved or the required fact concerns the working tree."],
       produces: ["The bounded committed revision content and process facts."],
-      schema: z.object({ revision: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/), path: z.string().trim().min(1).optional() }).strict(), inputExample: { revision: "HEAD" }, args: (input) => ["show", "--format=medium", input.revision, ...(input.path ? ["--", input.path] : [])]
+      schema: z.object({
+        revision: z.string().regex(/^[A-Za-z0-9._/-]{1,200}$/).refine((value) => !value.startsWith("-"), "Git revision must not start with '-'."),
+        path: GitPathSchema.optional()
+      }).strict(), inputExample: { revision: "HEAD" }, path: (input) => input.path,
+      args: (input) => ["show", "--format=medium", "--no-ext-diff", "--no-textconv", "--end-of-options", input.revision, "--", ...(input.path ? [input.path] : []), ...GIT_SECRET_PATHSPECS]
     }, options.artifactDir)
   ];
 }
@@ -654,6 +850,7 @@ function gitTool<T>(definition: {
   produces: readonly string[];
   schema: z.ZodType<T>;
   inputExample: unknown;
+  path?(input: T): string | undefined;
   args(input: T): string[];
 }, artifactDir?: string): RuntimeTool {
   return defineTool({
@@ -665,9 +862,13 @@ function gitTool<T>(definition: {
       evidence: { produces: definition.produces, factsSchema: ProcessFactsSchema }
     },
     async execute(input, context) {
+      const requestedPath = definition.path?.(input);
+      if (requestedPath !== undefined && isSecretWorkspacePath(requestedPath)) {
+        throw new ToolFailure("SECRET_FILE_READ_BLOCKED", "Workspace secret files are not readable by the Agent.");
+      }
       const result = await runProcess(
         "git",
-        definition.args(input),
+        ["-c", "core.fsmonitor=false", "-c", "diff.external=", ...definition.args(input)],
         context.workspace,
         30_000,
         context.signal,
@@ -738,7 +939,7 @@ async function listFilesPage(
 ): Promise<{ readonly entries: readonly string[]; readonly nextOffset: number | null }> {
   const entries: string[] = [];
   let seen = 0;
-  for await (const path of walkFiles(root, signal)) {
+  for await (const path of walkFiles(root, signal, { visited: 0 }, 0)) {
     if (seen < offset) {
       seen += 1;
       continue;
@@ -752,19 +953,44 @@ async function listFilesPage(
   return { entries, nextOffset: null };
 }
 
-async function* walkFiles(root: string, signal: AbortSignal): AsyncGenerator<string> {
+async function* walkFiles(
+  root: string,
+  signal: AbortSignal,
+  state: { visited: number },
+  depth: number
+): AsyncGenerator<string> {
   throwIfAborted(signal);
-  const entries = (await readdir(root, { withFileTypes: true }))
+  if (depth > MAX_LIST_DEPTH) {
+    throw new ToolFailure("LIST_DEPTH_EXCEEDED", `Directory traversal exceeded depth ${MAX_LIST_DEPTH}.`);
+  }
+  const entries = [];
+  const directory = await opendir(root);
+  try {
+    for await (const entry of directory) {
+      throwIfAborted(signal);
+      state.visited += 1;
+      if (state.visited > MAX_LIST_VISITED_ENTRIES) {
+        throw new ToolFailure(
+          "LIST_ENTRY_BUDGET_EXCEEDED",
+          `Directory traversal exceeded ${MAX_LIST_VISITED_ENTRIES} entries; narrow the requested path.`
+        );
+      }
+      entries.push(entry);
+    }
+  } finally {
+    await directory.close().catch(() => { /* already closed */ });
+  }
+  const visible = entries
     .filter((entry) => (
       !entry.isSymbolicLink()
       && !IGNORED.has(entry.name)
       && !(entry.isFile() && isSecretFilePath(entry.name))
     ))
     .sort((left, right) => left.name.localeCompare(right.name, "en"));
-  for (const entry of entries) {
+  for (const entry of visible) {
     throwIfAborted(signal);
     const path = join(root, entry.name);
-    if (entry.isDirectory()) yield* walkFiles(path, signal);
+    if (entry.isDirectory()) yield* walkFiles(path, signal, state, depth + 1);
     else if (entry.isFile()) yield path;
   }
 }
@@ -787,6 +1013,13 @@ async function atomicWrite(
 function isSecretFilePath(path: string): boolean {
   const name = basename(path).toLowerCase();
   return IGNORED_FILES.has(name) || /^\.env(?:\..+)?$/u.test(name);
+}
+
+function isSecretWorkspacePath(path: string): boolean {
+  return path
+    .split(/[\\/]+/u)
+    .filter(Boolean)
+    .some((segment) => isSecretFilePath(segment));
 }
 
 function parseLoopbackHttpUrl(value: string): URL {
@@ -914,11 +1147,14 @@ function runProcess(
     };
     const terminate = (): void => {
       if (process.platform === "win32" && child.pid !== undefined) {
-        const killed = spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
-          windowsHide: true,
-          stdio: "ignore"
-        });
-        if (killed.error === undefined && killed.status === 0) return;
+        const taskkill = resolveWindowsSystemExecutable("taskkill");
+        if (taskkill !== null) {
+          const killed = spawnSync(taskkill, ["/pid", String(child.pid), "/t", "/f"], {
+            windowsHide: true,
+            stdio: "ignore"
+          });
+          if (killed.error === undefined && killed.status === 0) return;
+        }
       } else if (child.pid !== undefined) {
         try {
           process.kill(-child.pid, "SIGKILL");

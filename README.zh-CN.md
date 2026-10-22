@@ -149,7 +149,6 @@ Nexora 当前版本为 `0.1.0`，尚未发布到 npm。项目正在积极开发�
 | 查看验证要求 | [测试策略](./TESTS.md) |
 | 运行能力与可靠性评估 | [评估工具说明](./harness/nexora-bench/README.md) |
 | 查看原生 Provider 协议 | [原生 Tool 协议](./docs/PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md) |
-| 查看 Context Phase B 证据 | [Context 优化 Phase B](./docs/CONTEXT_HARNESS_OPTIMIZATION_PHASE_B.md) |
 | 浏览全部公开文档 | [文档索引](./docs/README.md) |
 
 ## 开发验证

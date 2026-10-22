@@ -13,7 +13,7 @@ import {
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
-import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
+import { strFromU8, strToU8, zipSync } from "fflate";
 import { z } from "zod";
 
 import type {
@@ -28,6 +28,7 @@ import { validateDocxPackage } from "./docx-renderer.js";
 import { validatePptxPackage } from "./pptx-renderer.js";
 import { DeliverableError } from "./rich-document.js";
 import { validateXlsxPackage } from "./xlsx-renderer.js";
+import { safeUnzipSync } from "./zip-safety.js";
 
 type OfficeFormat = "docx" | "xlsx" | "pptx";
 type PackageEntries = Record<string, Uint8Array>;
@@ -336,7 +337,7 @@ function patchNativeBytes(
   bytes: Buffer,
   operations: readonly ImportedOfficePatchOperation[]
 ): { readonly bytes: Buffer; readonly changedTargetIds: string[]; readonly removedTargetIds: string[] } {
-  const entries = unzipSync(bytes);
+  const entries = safeUnzipSync(bytes);
   const changed = new Set<string>();
   const removed = new Set<string>();
   const prefix = `${format}.`;
@@ -467,7 +468,7 @@ function patchPptx(
 }
 
 function inspectNativeBytes(format: OfficeFormat, bytes: Uint8Array): NativeInspection {
-  const entries = unzipSync(bytes);
+  const entries = safeUnzipSync(bytes);
   return format === "docx" ? inspectDocx(entries) : format === "xlsx" ? inspectXlsxNative(entries) : inspectPptx(entries);
 }
 

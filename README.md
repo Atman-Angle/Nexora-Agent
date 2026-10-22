@@ -152,7 +152,6 @@ The current implementation targets local TypeScript applications and OpenAI-comp
 | Review verification requirements | [Tests](./TESTS.md) |
 | Run capability and reliability evaluation | [Evaluation harness](./harness/nexora-bench/README.md) |
 | Review native Provider protocol | [Native tool protocol](./docs/PROVIDER_NATIVE_TOOL_PROTOCOL_SPEC.md) |
-| Review Context Phase B evidence | [Context optimization Phase B](./docs/CONTEXT_HARNESS_OPTIMIZATION_PHASE_B.md) |
 | Browse all public documents | [Documentation index](./docs/README.md) |
 
 ## Development

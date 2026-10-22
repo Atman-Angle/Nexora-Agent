@@ -4,6 +4,7 @@ export {
   ActionRejectedError,
   canonicalJson,
   deepFreeze,
+  digestAcceptanceCheck,
   digestCanonicalJson,
   digestJson,
   errorMessage,

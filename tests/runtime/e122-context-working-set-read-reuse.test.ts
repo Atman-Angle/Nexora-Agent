@@ -125,6 +125,209 @@ describe("E122 context working set and read reuse", () => {
     await runtime.close();
   });
 
+  it("contracts an oversized current resource without dropping its identity", async () => {
+    const workspace = tempRoot();
+    const content = "a { display: grid; }\n".repeat(476);
+    writeFileSync(join(workspace, "big.css"), content, "utf8");
+    const contexts: ModelDecisionContext[] = [];
+    const measurements: number[] = [];
+    const runtime = createAgent({
+      workspace,
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
+        modelProfile: {
+          provider: "test",
+          model: "oversized-current-resource",
+          contextWindowTokens: 8_000,
+          reservedOutputTokens: { decision: 1_000 },
+          softLimitRatio: 0.8
+        },
+        measureTokens(_phase, context) {
+          const inputTokens = Math.ceil(Buffer.byteLength(JSON.stringify(context), "utf8") / 4);
+          measurements.push(inputTokens);
+          return { inputTokens, method: "exact", meter: "test:utf8" };
+        },
+        async decide(context) {
+          contexts.push(structuredClone(context));
+          if (contexts.length === 1) return responseCall("filesystem.read", { path: "big.css" });
+          return responseDirect("Read the oversized stylesheet.");
+        }
+      },
+      tools: createBuiltInTools()
+    });
+
+    const result = await runtime.start({ input: "Read big.css." });
+    const final = contexts.at(-1)!;
+    const observation = final.toolObservations.find((item) => item.toolName === "filesystem.read");
+
+    expect(result.status).toBe("succeeded");
+    // The oversized current resource contracts down the documented ladder but
+    // never disappears: identity, retention and rehydration refs survive.
+    expect(observation).toBeDefined();
+    expect(observation!.payloadMode).toBe("fragment");
+    expect(observation!.retention).toEqual(expect.objectContaining({
+      class: "current_resource",
+      critical: true
+    }));
+    expect((observation!.input as { path: string }).path).toBe("big.css");
+    expect(observation!.sourceRefs.length).toBeGreaterThan(0);
+    // Protection of the working set must never grow the Context without bound.
+    expect(measurements.at(-1)!).toBeLessThanOrEqual(5_600);
+    await runtime.close();
+  });
+
+  it("retains the newest current file resource and contracts non-current history under token pressure", async () => {
+    const workspace = tempRoot();
+    const contentA = "a { display: grid; }\n".repeat(220);
+    const contentB = "b { display: grid; }\n".repeat(220);
+    writeFileSync(join(workspace, "file-a.css"), contentA, "utf8");
+    writeFileSync(join(workspace, "file-b.css"), contentB, "utf8");
+    const contexts: ModelDecisionContext[] = [];
+    const measurements: number[] = [];
+    let turn = 0;
+    const runtime = createAgent({
+      workspace,
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
+        modelProfile: {
+          provider: "test",
+          model: "multi-current-file-pressure",
+          contextWindowTokens: 9_400,
+          reservedOutputTokens: { decision: 1_000 },
+          softLimitRatio: 0.8
+        },
+        measureTokens(_phase, context) {
+          const inputTokens = Math.ceil(Buffer.byteLength(JSON.stringify(context), "utf8") / 4);
+          measurements.push(inputTokens);
+          return { inputTokens, method: "exact", meter: "test:utf8" };
+        },
+        async decide(context) {
+          contexts.push(structuredClone(context));
+          turn += 1;
+          if (turn === 1) return responseCall("filesystem.read", { path: "file-a.css" });
+          if (turn === 2) return responseCall("filesystem.read", { path: "file-b.css" });
+          if (turn <= 8) return responseCall("noise.read", { key: `noise-${turn}` });
+          return responseDirect("Kept the newest stylesheet.");
+        }
+      },
+      tools: [...createBuiltInTools(), noiseReadTool()]
+    });
+
+    const result = await runtime.start({ input: "Read file-a.css and file-b.css, inspect unrelated records, then retain the working set." });
+    const final = contexts.at(-1)!;
+    const working = projectAgentWorkingContext(final, []);
+    const fileObservations = final.toolObservations.filter((item) => item.toolName === "filesystem.read");
+
+    expect(result.status).toBe("succeeded");
+    // Both current resources keep their identity; the newest one keeps content
+    // so the Provider can rebuild the working set directly.
+    expect(fileObservations.map((item) => (item.input as { path: string }).path).sort())
+      .toEqual(["file-a.css", "file-b.css"]);
+    expect(fileObservations.every((item) => item.retention.class === "current_resource" && item.retention.critical)).toBe(true);
+    expect(fileObservations.find((item) => (item.input as { path: string }).path === "file-b.css")!.payloadMode).toBe("full");
+    expect(fileObservations.find((item) => (item.input as { path: string }).path === "file-a.css")!.payloadMode).toBe("fragment");
+    expect(working.workingSet.currentFiles).toContainEqual({ path: "file-b.css", content: contentB, source: "read" });
+    // Non-current observations remain fully evictable.
+    expect(final.toolObservations.some((item) => item.toolName === "noise.read" && item.payloadMode !== "full")).toBe(true);
+    // The working set never becomes an unbounded budget exception.
+    expect(measurements.at(-1)!).toBeLessThanOrEqual(6_720);
+    await runtime.close();
+  });
+
+  it("evicts a superseded read once a newer read owns the working-set chain", async () => {
+    const workspace = tempRoot();
+    const dataDir = join(workspace, ".nexora");
+    const before = "old { color: red; }\n".repeat(100);
+    const after = "new { color: blue; }\n".repeat(600);
+    writeFileSync(join(workspace, "file-a.css"), before, "utf8");
+    const contexts: ModelDecisionContext[] = [];
+    let turn = 0;
+    const runtime = createAgent({
+      workspace,
+      dataDir,
+      provider: { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
+        modelProfile: {
+          provider: "test",
+          model: "superseded-current-resource",
+          contextWindowTokens: 9_400,
+          reservedOutputTokens: { decision: 1_000 },
+          softLimitRatio: 0.8
+        },
+        measureTokens(_phase, context) {
+          return {
+            inputTokens: Math.ceil(Buffer.byteLength(JSON.stringify(context), "utf8") / 4),
+            method: "exact",
+            meter: "test:utf8"
+          };
+        },
+        async decide(context) {
+          contexts.push(structuredClone(context));
+          turn += 1;
+          if (turn === 1) return responseCall("filesystem.read", { path: "file-a.css" });
+          if (turn === 2) return responsePlanAndTools({
+            goal: "Replace file-a.css.",
+            scope: {
+              taskShape: "feature",
+              requiredOutcomes: [{
+                id: "replace-stylesheet",
+                description: "file-a.css carries the verified replacement content.",
+                source: "user_explicit"
+              }],
+              assumptions: [],
+              excludedScope: ["Unrequested stylesheet changes"],
+              completionCriteria: ["A fresh read returns the replacement content."],
+              resolutionMode: "normalize"
+            },
+            tasks: [{
+              objective: "Replace file-a.css with the verified content.",
+              kind: "required_outcome",
+              supports: ["replace-stylesheet"],
+              checks: [{ toolName: "filesystem.write", role: "mutation" }]
+            }]
+          }, [{ name: "filesystem.write", arguments: { path: "file-a.css", content: after } }]);
+          if (turn === 3) return responseCall("filesystem.read", { path: "file-a.css" });
+          if (turn <= 8) return responseCall("noise.read", { key: `noise-${turn}` });
+          return responseDirect("Replaced and re-read the stylesheet.");
+        }
+      },
+      tools: [...createBuiltInTools(), noiseReadTool()]
+    });
+
+    const started = await runtime.start({ input: "Replace file-a.css and re-read it." });
+    const pending = (await runtime.inspect(started.runId)).snapshot.pendingRequest;
+    expect(pending).toMatchObject({ kind: "approval" });
+    const result = await runtime.resume({
+      runId: started.runId,
+      approvalDecision: { requestId: pending!.id, approved: true }
+    });
+    const view = await runtime.inspect(started.runId);
+    const final = contexts.at(-1)!;
+    const reads = final.toolObservations.filter(
+      (item) => item.toolName === "filesystem.read"
+    );
+    const readInvocations = view.toolInvocations.filter(
+      (item) => item.toolName === "filesystem.read"
+    );
+    const currentRead = readInvocations.at(-1)!;
+
+    expect(result.status).toBe("succeeded");
+    // Runtime authority recorded the replacement and the fresh read: the
+    // working-set chain now belongs to the post-write read.
+    expect(readInvocations).toHaveLength(2);
+    expect(currentRead.resultJson).toEqual(expect.objectContaining({ path: "file-a.css", content: after }));
+    // Exactly one read Observation survives, it is the current resource of the
+    // path, and it is the post-write read. The superseded pre-write read left
+    // the working set and was therefore eligible for complete eviction.
+    expect(reads).toHaveLength(1);
+    expect(reads[0]!.retention).toEqual(expect.objectContaining({
+      class: "current_resource",
+      critical: true
+    }));
+    expect(reads[0]!.invocationId).toBe(currentRead.id);
+    expect(reads[0]!.digest).toBe(currentRead.payloadDigest);
+    expect((reads[0]!.input as { path: string }).path).toBe("file-a.css");
+    expect(reads[0]!.sourceRefs.length).toBeGreaterThan(0);
+    await runtime.close();
+  });
+
   it("reuses an unchanged idempotent read without a second physical execution", async () => {
     const executions = { count: 0 };
     const runtime = createAgent({
@@ -147,6 +350,44 @@ describe("E122 context working set and read reuse", () => {
       type: "tool.attempt.succeeded",
       payload: expect.objectContaining({ physicalExecution: false })
     }));
+    await runtime.close();
+  });
+
+  it("invalidates read reuse when a write reaches the same file through a path alias", async () => {
+    const workspace = tempRoot();
+    mkdirSync(join(workspace, "a"));
+    writeFileSync(join(workspace, "b.txt"), "before", "utf8");
+    const runtime = createAgent({
+      workspace,
+      provider: provider([
+        () => responseCall("filesystem.read", { path: "b.txt" }),
+        () => responsePlanAndTools({
+          goal: "Update b.txt through an alias and verify the final content.",
+          tasks: [{ objective: "Update b.txt and verify it.", checks: [{ toolName: "filesystem.write", role: "mutation" }] }]
+        }, [{ name: "filesystem.write", arguments: { path: "a/../b.txt", content: "after" } }]),
+        () => responseCall("filesystem.read", { path: "b.txt" }),
+        () => responseDirect("The aliased write is visible.")
+      ]),
+      tools: createBuiltInTools()
+    });
+
+    const waiting = await runtime.start({ input: "Read, update through an alias, then reread b.txt." });
+    const approval = await runtime.inspect(waiting.runId);
+    const result = await runtime.resume({
+      runId: waiting.runId,
+      approvalDecision: {
+        requestId: approval.snapshot.pendingRequest!.id,
+        approved: true
+      }
+    });
+    const view = await runtime.inspect(result.runId);
+
+    const reads = view.toolInvocations.filter((item) => item.toolName === "filesystem.read");
+    expect(reads.map((item) => (item.resultJson as { content: string }).content)).toEqual(["before", "after"]);
+    expect(view.events.filter((event) => (
+      event.type === "tool.attempt.succeeded"
+      && event.payload.toolName === "filesystem.read"
+    )).map((event) => event.payload.physicalExecution)).toEqual([true, true]);
     await runtime.close();
   });
 
