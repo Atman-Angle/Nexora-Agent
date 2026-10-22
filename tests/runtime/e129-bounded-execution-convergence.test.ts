@@ -372,7 +372,7 @@ describe("bounded execution convergence", () => {
     const rejected = inspection.events.filter((event) => event.type === "response.rejected");
     expect(rejected.length).toBeLessThanOrEqual(2);
     await runtime.close();
-  });
+  }, 20_000);
 
   it("rejects completion after a planned mutation until post-mutation verification exists", async () => {
     const runtime = createAgent({

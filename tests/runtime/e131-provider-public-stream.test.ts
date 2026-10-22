@@ -268,17 +268,19 @@ describe("E131 Provider public output stream", () => {
     await runtime.close();
 
     expect(result).toMatchObject({ status: "blocked", stopReason: "PROVIDER_UNAVAILABLE" });
-    expect(requests).toBe(3);
-    expect(trace.attempts).toHaveLength(3);
+    // The Harness Provider gateway performs five logical attempts
+    // (provider-gateway.ts) with 500 * 2^(n-1) ms backoff, so a fully failing
+    // logical call is ~7.5 s by contract, not an anomaly.
+    const PROVIDER_ATTEMPTS = 5;
+    expect(requests).toBe(PROVIDER_ATTEMPTS);
+    expect(trace.attempts).toHaveLength(PROVIDER_ATTEMPTS);
     expect(trace.attempts.every((attempt) => attempt.status === "failed")).toBe(true);
     expect(trace.attempts.every((attempt) => attempt.errorCategory === "PROVIDER_IDLE_TIMEOUT")).toBe(true);
     expect(trace.attempts.every((attempt) => attempt.retryable)).toBe(true);
     expect(trace.attempts.every((attempt) => attempt.partialResponse)).toBe(true);
     expect(trace.attempts.every((attempt) => attempt.responseArtifactRef === null)).toBe(true);
-    expect(output.map((event) => event.type)).toEqual([
-      "text.delta", "text.discarded",
-      "text.delta", "text.discarded",
-      "text.delta", "text.discarded"
-    ]);
-  });
+    expect(output.map((event) => event.type)).toEqual(
+      Array.from({ length: PROVIDER_ATTEMPTS }, () => ["text.delta", "text.discarded"]).flat()
+    );
+  }, 20_000);
 });

@@ -30,7 +30,7 @@ describe("E059 result summary projection", () => {
     runtime.close();
   });
 
-  it("returns null when the Run has no validated Result", async () => {
+  it("returns a paused delivery summary but no validated Result", async () => {
     const workspace = fixture();
     const runtime = createRuntime({
       workspace,
@@ -45,7 +45,14 @@ describe("E059 result summary projection", () => {
     const result = await runtime.start({ input: "Read a file." });
 
     expect(result.status).toBe("waiting");
-    expect(result.summary).toBeNull();
+    expect(result.resultArtifact).toBeNull();
+    expect(result.delivery).toMatchObject({
+      outcome: "paused",
+      exactCause: { code: "USER_INPUT_REQUIRED" }
+    });
+    expect(result.summary).toBe(result.delivery?.summary);
+    expect(result.summary).toContain("requires user input");
+    expect(result.summary).toContain("Which file?");
     runtime.close();
   });
 });

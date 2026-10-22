@@ -237,10 +237,50 @@ export function evictDecisionContextTowardBudget(
   // toward the later (higher-value) candidate instead of forcing one Provider
   // measurement per Observation.
   let retainedFreshReferenceId: string | null = null;
+  let nativeContinuation = context.nativeToolContinuation;
+  const observationById = new Map(
+    observations.map((observation) => [observation.invocationId, observation] as const)
+  );
+  const payloadDetail = { full: 2, fragment: 1, reference: 0 } as const;
+  // A native continuation echo duplicates the same Invocation the Observation
+  // already carries. Under capacity pressure the duplicate echo is contracted
+  // first, so the authoritative Observation keeps the most detailed
+  // representation the budget can hold—and a current working-set resource is
+  // never reduced below the payload the echo still exposes.
+  const contractDuplicateContinuationEcho = (): boolean => {
+    if (nativeContinuation === undefined) return false;
+    const callIndex = nativeContinuation.calls.findIndex((call) => {
+      const mode = continuationObservationMode(call.result);
+      if (mode === null || mode === "reference") return false;
+      const invocationId = continuationObservationInvocationId(call.result);
+      const observation = invocationId === null
+        ? undefined
+        : observationById.get(invocationId);
+      if (observation === undefined || !observation.retention.critical) return true;
+      return payloadDetail[mode] <= payloadDetail[observation.payloadMode];
+    });
+    if (callIndex < 0) return false;
+    const call = nativeContinuation.calls[callIndex]!;
+    const replacement = referenceContinuationResult(call.result);
+    estimatedBytes -= Math.max(0, jsonBytes(call.result) - jsonBytes(replacement));
+    nativeContinuation = {
+      calls: nativeContinuation.calls.map((existing, index) => index === callIndex
+        ? { ...existing, result: replacement }
+        : existing)
+    };
+    changed = true;
+    return true;
+  };
   for (const candidate of byValue) {
     if (estimatedBytes <= targetBytes) break;
     let current = observations.find((observation) => observation.invocationId === candidate.invocationId);
     if (current === undefined) continue;
+    if (current.retention.critical) {
+      while (estimatedBytes > targetBytes && contractDuplicateContinuationEcho()) {
+        // Drain duplicate echoes before contracting authoritative content.
+      }
+      if (estimatedBytes <= targetBytes) break;
+    }
     let freshlyContracted = false;
     if (current.payloadMode === "full") {
       const replacement = current.retention.critical
@@ -290,8 +330,19 @@ export function evictDecisionContextTowardBudget(
     changed = true;
   }
   return changed
-    ? rebuildDecisionContext(context, { toolObservations: observations })
+    ? rebuildDecisionContext(context, {
+        toolObservations: observations,
+        ...(nativeContinuation === context.nativeToolContinuation ? {} : { nativeToolContinuation: nativeContinuation })
+      })
     : evictDecisionContextOnce(context);
+}
+
+function continuationObservationInvocationId(value: unknown): string | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const observation = (value as { readonly observation?: unknown }).observation;
+  if (observation === null || typeof observation !== "object" || Array.isArray(observation)) return null;
+  const invocationId = (observation as { readonly invocationId?: unknown }).invocationId;
+  return typeof invocationId === "string" ? invocationId : null;
 }
 
 function continuationObservationMode(value: unknown): "full" | "fragment" | "reference" | null {

@@ -25,6 +25,8 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
   it("stays bounded through 100+ decisions without a compaction Provider phase", async () => {
     const workspace = fixture();
     const contexts: ModelDecisionContext[] = [];
+    let eventLoopTurns = 0;
+    const observedEventLoopTurns: number[] = [];
     let turn = 0;
     const provider: RuntimeProvider = { nativeFunctionCalling: NATIVE_FUNCTION_CALLING_CAPABILITIES,
       modelProfile: {
@@ -42,6 +44,11 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
         };
       },
       async decide(context) {
+        // Real Provider I/O yields to the worker's RPC channel. Preserve that
+        // scheduling boundary in this otherwise entirely in-process fixture.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        observedEventLoopTurns.push(eventLoopTurns);
+        setImmediate(() => { eventLoopTurns += 1; });
         contexts.push(structuredClone(context));
         turn += 1;
         if (turn === 1) {
@@ -79,6 +86,11 @@ describe("E089 multi-cycle deterministic Context continuity", () => {
       Math.ceil(Buffer.byteLength(JSON.stringify(context), "utf8") / 4) <= 14_976
     ))).toBe(true);
     expect(contexts.at(-1)).not.toHaveProperty("contextCheckpoint");
+    // Long deterministic fixtures must let the worker process pending RPC replies
+    // between decisions, even when their Provider and Tools resolve immediately.
+    expect(observedEventLoopTurns.slice(1).every((value, index) => (
+      value > observedEventLoopTurns[index]!
+    ))).toBe(true);
   }, 120_000);
 
   it("rebuilds the same Plan and continues from persisted state after reopen", async () => {
