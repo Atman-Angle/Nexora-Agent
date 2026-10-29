@@ -17,6 +17,9 @@ const HandleSchema = z.string().regex(/^process_[a-f0-9-]{36}$/);
 const ServiceKeySchema = z.string().trim().min(1).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/);
 const LoopbackHostSchema = z.enum(["127.0.0.1", "localhost", "::1"]);
 const HEARTBEAT_STALE_MS = 30_000;
+const LOG_READ_CHUNK_BYTES = 32 * 1024;
+const LOG_ARTIFACT_THRESHOLD_BYTES = 64 * 1024;
+const MAX_LOG_ARTIFACT_BYTES = 256 * 1024;
 
 export const ReadinessSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("output_contains"), value: z.string().min(1).max(500) }).strict(),
@@ -63,6 +66,10 @@ const DescriptorSchema = z.object({
   exitCode: z.number().int().nullable(),
   errorCode: z.string().nullable(),
   errorMessage: z.string().nullable(),
+  stopPhase: z.enum(["none", "request", "kill_tree", "wait", "state_write", "completed", "failed"]).default("none"),
+  stopStartedAt: z.string().datetime().nullable().default(null),
+  stopDurationMs: z.number().int().nonnegative().nullable().default(null),
+  stopFinalStatus: z.enum(["starting", "ready", "stopping", "exited", "failed", "lost"]).nullable().default(null),
   stdoutPath: z.string(),
   stderrPath: z.string(),
   stopPath: z.string()
@@ -244,25 +251,66 @@ export async function readManagedProcessLogs(
 ): Promise<z.infer<typeof ManagedProcessLogsFactsSchema>> {
   const descriptor = await descriptorForHandle(workspace, processHandle);
   await Promise.all([assertRegularStateFile(descriptor.stdoutPath), assertRegularStateFile(descriptor.stderrPath)]);
-  const stdout = stream === "stderr" ? Buffer.alloc(0) : await readFile(descriptor.stdoutPath).catch(() => Buffer.alloc(0));
-  const stderr = stream === "stdout" ? Buffer.alloc(0) : await readFile(descriptor.stderrPath).catch(() => Buffer.alloc(0));
-  const complete = stream === "combined"
-    ? Buffer.concat([stdout, Buffer.from(stdout.length > 0 && stderr.length > 0 ? "\n--- stderr ---\n" : ""), stderr])
-    : (stream === "stdout" ? stdout : stderr);
-  const truncated = complete.length > tailBytes;
-  const tail = complete.subarray(Math.max(0, complete.length - tailBytes));
+  const readLimit = Math.max(tailBytes, MAX_LOG_ARTIFACT_BYTES);
+  const stdout = stream === "stderr" ? emptyLogTail() : await readLogTail(descriptor.stdoutPath, readLimit);
+  const stderr = stream === "stdout" ? emptyLogTail() : await readLogTail(descriptor.stderrPath, readLimit);
+  const separator = stdout.byteLength > 0 && stderr.byteLength > 0 ? Buffer.from("\n--- stderr ---\n") : Buffer.alloc(0);
+  const completeByteLength = stream === "combined"
+    ? stdout.byteLength + separator.byteLength + stderr.byteLength
+    : stream === "stdout" ? stdout.byteLength : stderr.byteLength;
+  const boundedCompleteTail = stream === "combined"
+    ? Buffer.concat([stdout.bytes, separator, stderr.bytes]).subarray(-Math.min(readLimit, completeByteLength))
+    : (stream === "stdout" ? stdout.bytes : stderr.bytes);
+  const tail = boundedCompleteTail.subarray(-Math.min(tailBytes, boundedCompleteTail.length));
   const content = redactLog(tail.toString("utf8"));
-  const artifact = complete.length > 64 * 1024
-    ? new ArtifactStore(artifactDir ?? join(workspace, ".nexora", "artifacts")).putText(redactLog(complete.toString("utf8")))
+  const artifact = completeByteLength > LOG_ARTIFACT_THRESHOLD_BYTES
+    ? new ArtifactStore(artifactDir ?? join(workspace, ".nexora", "artifacts"))
+      .putText(truncateUtf8Tail(redactLog(boundedCompleteTail.toString("utf8")), MAX_LOG_ARTIFACT_BYTES))
     : null;
   return {
     processHandle,
     stream,
     content,
-    byteLength: complete.length,
-    truncated,
+    byteLength: completeByteLength,
+    truncated: completeByteLength > tailBytes,
     artifactRef: artifact?.digest ?? null
   };
+}
+
+type LogTail = { readonly bytes: Buffer; readonly byteLength: number };
+
+function emptyLogTail(): LogTail {
+  return { bytes: Buffer.alloc(0), byteLength: 0 };
+}
+
+function truncateUtf8Tail(value: string, maxBytes: number): string {
+  const bytes = Buffer.from(value, "utf8");
+  return bytes.byteLength <= maxBytes ? value : bytes.subarray(-maxBytes).toString("utf8");
+}
+
+/** Read only a bounded tail. The complete log size remains observable without
+ * ever materializing the complete stdout/stderr file in memory. */
+async function readLogTail(path: string, limit: number): Promise<LogTail> {
+  const handle = await open(path, "r");
+  try {
+    const fileSize = Number((await handle.stat()).size);
+    const start = Math.max(0, fileSize - limit);
+    const wanted = fileSize - start;
+    const chunks: Buffer[] = [];
+    let position = start;
+    let remaining = wanted;
+    while (remaining > 0) {
+      const chunk = Buffer.alloc(Math.min(LOG_READ_CHUNK_BYTES, remaining));
+      const read = await handle.read(chunk, 0, chunk.byteLength, position);
+      if (read.bytesRead === 0) break;
+      chunks.push(read.bytesRead === chunk.byteLength ? chunk : chunk.subarray(0, read.bytesRead));
+      position += read.bytesRead;
+      remaining -= read.bytesRead;
+    }
+    return { bytes: Buffer.concat(chunks), byteLength: fileSize };
+  } finally {
+    await handle.close();
+  }
 }
 
 export async function stopManagedProcess(
@@ -271,7 +319,16 @@ export async function stopManagedProcess(
   signal: AbortSignal
 ): Promise<z.infer<typeof ManagedProcessStopFactsSchema>> {
   const descriptor = await descriptorForHandle(workspace, processHandle);
-  if (terminal(descriptor.status)) return stopFacts(descriptor, true);
+  if (descriptor.status === "exited") return stopFacts(descriptor, true);
+  if (terminal(descriptor.status)) {
+    if (descriptor.childPid === null) {
+      throw new ToolFailure("PROCESS_STOP_FAILED", descriptor.errorMessage ?? "Managed process stop failed and no child PID remains for recovery.", false, descriptor);
+    }
+    forceTerminateChild(descriptor.childPid);
+    const recovered = await waitForTerminal(await descriptorPathForHandle(workspace, processHandle), 10_000, signal);
+    if (recovered.status !== "exited") throw new ToolFailure(recovered.errorCode ?? "PROCESS_STOP_FAILED", recovered.errorMessage ?? "Managed process cleanup failed after supervisor recovery.", false, recovered);
+    return stopFacts(recovered, false);
+  }
   if (heartbeatAge(descriptor) > HEARTBEAT_STALE_MS || !processExists(descriptor.supervisorPid)) {
     throw new ToolFailure("PROCESS_SUPERVISOR_LOST", "The process supervisor is not alive; termination cannot be confirmed automatically.", false, {
       processHandle,
@@ -287,6 +344,15 @@ export async function stopManagedProcess(
     throw new ToolFailure(stopped.errorCode ?? "PROCESS_STOP_FAILED", stopped.errorMessage ?? "Managed process did not stop cleanly.");
   }
   return stopFacts(stopped, false);
+}
+
+function forceTerminateChild(pid: number): void {
+  if (process.platform === "win32") {
+    const taskkill = resolveWindowsSystemExecutable("taskkill");
+    if (taskkill !== null) spawnSync(taskkill, ["/pid", String(pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+    return;
+  }
+  try { process.kill(-pid, "SIGKILL"); } catch { try { process.kill(pid, "SIGKILL"); } catch { /* already exited */ } }
 }
 
 function startFacts(descriptor: Descriptor, replayed: boolean): z.infer<typeof ManagedProcessStartFactsSchema> {

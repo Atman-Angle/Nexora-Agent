@@ -536,6 +536,14 @@ export type PlanControlState = {
   /** Proactive read-only Completion Gate projection; never an approval or completion authority. */
   readonly completionReady: boolean | null;
   readonly completionBlockers: readonly CompletionBlocker[];
+  /** Earliest legal read-only navigation hint derived from current facts. */
+  readonly nextLegalAction: {
+    readonly action: "plan" | "execute" | "refresh" | "resolve" | "collect" | "complete";
+    readonly stepId: string | null;
+    readonly checkId: string | null;
+    readonly code: string | null;
+    readonly detail: string;
+  };
 };
 
 export function planControlState(context: ModelDecisionContext): PlanControlState {
@@ -582,6 +590,16 @@ export function planControlState(context: ModelDecisionContext): PlanControlStat
     ? 0
     : 1;
   const repairCode = primaryRepairCode(context);
+  const completionReady = context.completionProjection?.ready ?? null;
+  const completionBlockers = context.completionProjection?.blockers ?? [];
+  const nextLegalAction = deriveNextLegalAction({
+    phase,
+    repairCode,
+    repairDirective: repairCode === null ? null : repairDirectiveFor(repairCode),
+    nextUnfinishedStep,
+    completionReady,
+    completionBlockers
+  });
   return {
     phase,
     completedOutcomes,
@@ -591,9 +609,46 @@ export function planControlState(context: ModelDecisionContext): PlanControlStat
     nextUnfinishedStep,
     protectedEffectsThisTurn,
     ...(repairCode === null ? {} : { repairCode, repairDirective: repairDirectiveFor(repairCode) }),
-    completionReady: context.completionProjection?.ready ?? null,
-    completionBlockers: context.completionProjection?.blockers ?? []
+    completionReady,
+    completionBlockers,
+    nextLegalAction
   };
+}
+
+function deriveNextLegalAction(input: {
+  readonly phase: PlanControlState["phase"];
+  readonly repairCode: string | null;
+  readonly repairDirective: string | null;
+  readonly nextUnfinishedStep: PlanControlState["nextUnfinishedStep"];
+  readonly completionReady: boolean | null;
+  readonly completionBlockers: readonly CompletionBlocker[];
+}): PlanControlState["nextLegalAction"] {
+  if (input.repairCode !== null) {
+    return {
+      action: "resolve",
+      stepId: null,
+      checkId: null,
+      code: input.repairCode,
+      detail: input.repairDirective ?? "Resolve the persisted Runtime repair before repeating an action."
+    };
+  }
+  const blocker = input.completionBlockers[0];
+  if (blocker !== undefined) {
+    return {
+      action: blocker.nextAction,
+      stepId: blocker.stepId,
+      checkId: blocker.checkId,
+      code: blocker.code,
+      detail: blocker.nextAction === "complete" ? "Completion is admissible after the current authoritative facts." : blocker.nextAction
+    };
+  }
+  if (input.phase === "INITIAL_PLANNING") return { action: "plan", stepId: null, checkId: null, code: null, detail: "Establish the required Plan before an effectful action." };
+  if (input.phase === "COMPLETION") return { action: "complete", stepId: null, checkId: null, code: null, detail: "Submit the final completion candidate grounded in the persisted facts." };
+  if (input.nextUnfinishedStep !== null) {
+    return { action: "execute", stepId: input.nextUnfinishedStep.stepId, checkId: null, code: null, detail: input.nextUnfinishedStep.objective };
+  }
+  if (input.completionReady === true) return { action: "complete", stepId: null, checkId: null, code: null, detail: "All current outcomes and required checks are satisfied." };
+  return { action: "collect", stepId: null, checkId: null, code: null, detail: "Collect the missing authoritative facts before completion." };
 }
 
 const REPAIR_DIRECTIVES: Readonly<Record<string, string>> = Object.freeze({

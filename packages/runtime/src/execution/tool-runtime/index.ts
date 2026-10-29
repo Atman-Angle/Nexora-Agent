@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { open, opendir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
@@ -153,6 +153,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
           throw new ToolFailure("SECRET_FILE_READ_BLOCKED", "Workspace secret files are not readable by the Agent.");
         }
         const path = await workspacePath(context.workspace, input.path, "file");
+        await assertReadableFileIsNotSecret(context.workspace, input.path, path);
         const fileStat = await stat(path);
         if (fileStat.size > MAX_READABLE_FILE_BYTES) {
           throw new ToolFailure(
@@ -163,7 +164,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
           );
         }
         if (fileStat.size <= MAX_INLINE_BYTES) {
-          const bytes = await readFile(path);
+          const bytes = await readTrustedFile(path, fileStat);
           throwIfAborted(context.signal);
           const content = decodeUtf8Text(bytes, input.path);
           if (input.offset !== undefined || input.limit !== undefined) {
@@ -193,7 +194,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         if (input.offset !== undefined || input.limit !== undefined) {
           const offset = input.offset ?? 0;
           const limit = input.limit ?? 3_000;
-          const streamed = await readUtf8File(path, input.path, context.signal, { kind: "range", offset, limit });
+          const streamed = await readUtf8File(path, input.path, context.signal, fileStat, { kind: "range", offset, limit });
           const rangeContent = streamed.rangeContent ?? "";
           const ranged = boundedUtf8Slice(rangeContent, 0, rangeContent.length, MAX_READ_RANGE_BYTES);
           const effectiveOffset = Math.min(offset, streamed.characterLength);
@@ -217,7 +218,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
 
         const temporaryPath = artifactStore.temporaryPath("read");
         try {
-          const streamed = await readUtf8File(path, input.path, context.signal, {
+          const streamed = await readUtf8File(path, input.path, context.signal, fileStat, {
             kind: "preview",
             previewCharacters: 500,
             temporaryPath
@@ -387,7 +388,7 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
           path: z.string().trim().min(1),
           expectedDigest: DigestSchema,
           find: z.string().min(1, "Patch find must be non-empty. Read the current file and provide one unique existing text, or use filesystem.write when replacing the complete file with known content."),
-          replace: z.string()
+          replace: z.string().min(1, "Patch replacement must be non-empty. Use filesystem.write for an intentional deletion.")
         }).strict().superRefine((input, context) => {
           if (input.find === input.replace) {
             context.addIssue({
@@ -411,11 +412,9 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
             { path: input.path, byteLength: fileStat.size, maxBytes: MAX_READABLE_FILE_BYTES }
           );
         }
-        const current = await readFile(path, "utf8");
-        throwIfAborted(context.signal);
+        const current = (await readTrustedFile(path, await stat(path))).toString("utf8");
         const currentDigest = digest(current);
         if (currentDigest !== input.expectedDigest) {
-          if (!current.includes(input.find) && current.includes(input.replace)) return { subjectRef: input.path, facts: { path: input.path, digest: currentDigest, replayed: true } };
           const findOccurrences = countExactOccurrences(current, input.find);
           const recovery = findOccurrences === 1
             ? "retry_with_current_digest"
@@ -439,8 +438,37 @@ export function createBuiltInTools(options: { readonly artifactDir?: string } = 
         if (digest(next) === digest(current)) {
           throw new ToolFailure("PATCH_NOOP", "Patch would not change the file content. Change the replacement or revise the Plan.");
         }
-        await atomicWrite(path, next, context.signal);
-        return { subjectRef: input.path, facts: { path: input.path, digest: digest(next), replayed: false } };
+        const mutationLock = await acquireMutationLock(path, context.signal, currentDigest);
+        try {
+        // Re-read immediately before the exclusive commit. A stale read must not
+        // be promoted to successful Evidence when another writer changed the
+        // file after the initial digest check.
+        const beforeWrite = mutationLock.verifiedDigest === currentDigest
+          ? current
+          : (await readTrustedFile(path, await stat(path))).toString("utf8");
+        const beforeWriteDigest = digest(beforeWrite);
+        if (beforeWriteDigest !== currentDigest) {
+          throw new ToolFailure(
+            "CONTENT_CONFLICT",
+            "File content changed while preparing the patch. Read the current file before retrying.",
+            false,
+            { path: input.path, expectedDigest: input.expectedDigest, currentDigest: beforeWriteDigest, findOccurrences: countExactOccurrences(beforeWrite, input.find), recovery: "inspect_current_content" }
+          );
+        }
+        const committed = await mutationLock.commit(next, context.signal);
+        const persistedDigest = committed.digest;
+        if (persistedDigest !== digest(next)) {
+          throw new ToolFailure(
+            "PATCH_CONCURRENT_MODIFICATION",
+            "File content changed while the patch was being committed; the patch result is not authoritative.",
+            false,
+            { path: input.path, expectedDigest: input.expectedDigest, targetDigest: digest(next), currentDigest: persistedDigest, recovery: "inspect_current_content" }
+          );
+        }
+        return { subjectRef: input.path, facts: { path: input.path, digest: persistedDigest, replayed: false } };
+        } finally {
+          await mutationLock.release();
+        }
       }
     }),
     defineTool({
@@ -572,6 +600,7 @@ async function readUtf8File(
   path: string,
   displayPath: string,
   signal: AbortSignal,
+  expectedIdentity: { readonly dev: number; readonly ino: number },
   mode: Utf8ReadMode
 ): Promise<{
   readonly digest: string;
@@ -583,6 +612,8 @@ async function readUtf8File(
   const source = await open(path, "r");
   let destination = null;
   try {
+    const opened = await source.stat();
+    if (opened.dev !== expectedIdentity.dev || opened.ino !== expectedIdentity.ino) throw new ToolFailure("CONCURRENT_FILE_CHANGE", "The file identity changed while it was being opened.");
     destination = mode.kind === "preview" ? await open(mode.temporaryPath, "wx") : null;
   } catch (error) {
     await source.close().catch(() => { /* already closed */ });
@@ -1020,6 +1051,254 @@ function isSecretWorkspacePath(path: string): boolean {
     .split(/[\\/]+/u)
     .filter(Boolean)
     .some((segment) => isSecretFilePath(segment));
+}
+
+async function assertReadableFileIsNotSecret(workspace: string, requested: string, canonicalPath: string): Promise<void> {
+  if (isSecretWorkspacePath(requested) || isSecretWorkspacePath(canonicalPath)) {
+    throw new ToolFailure("SECRET_FILE_READ_BLOCKED", "Workspace secret files are not readable by the Agent.");
+  }
+  const target = await stat(canonicalPath);
+  // Symlink and junction aliases are covered by the canonical path check. A
+  // hardlink keeps its alias name, so compare file identity with each bounded
+  // secret-name candidate in the workspace before exposing its content.
+  if (target.ino === 0 || target.dev === 0) return;
+  if (await hasSecretFileIdentity(dirname(canonicalPath), target.dev, target.ino, 256)) {
+    throw new ToolFailure("SECRET_FILE_READ_BLOCKED", "Workspace secret files are not readable by the Agent.");
+  }
+}
+
+async function hasSecretFileIdentity(workspace: string, dev: number, ino: number, maxEntries: number): Promise<boolean> {
+  const pending: Array<{ readonly path: string; readonly depth: number }> = [{ path: workspace, depth: 0 }];
+  let visited = 0;
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    const directory = await opendir(current.path);
+    try {
+      for await (const entry of directory) {
+        visited += 1;
+        if (visited > maxEntries) throw new ToolFailure("SECRET_ALIAS_CHECK_LIMIT", "The workspace is too large to complete the sensitive-file alias check safely.");
+        const path = join(current.path, entry.name);
+        if (entry.isDirectory() && !entry.isSymbolicLink() && current.depth < 64) {
+          pending.push({ path, depth: current.depth + 1 });
+          continue;
+        }
+        if (!entry.isFile() || !isSecretFilePath(entry.name)) continue;
+        const candidate = await stat(path).catch(() => null);
+        if (candidate !== null && candidate.ino === ino && candidate.dev === dev) return true;
+      }
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
+  }
+  return false;
+}
+
+async function readTrustedFile(path: string, expected: { readonly dev: number; readonly ino: number }): Promise<Buffer> {
+  const handle = await open(path, "r");
+  try {
+    const actual = await handle.stat();
+    if (actual.dev !== expected.dev || actual.ino !== expected.ino) {
+      throw new ToolFailure("CONCURRENT_FILE_CHANGE", "The file identity changed while it was being opened.");
+    }
+    return await handle.readFile();
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
+
+type MutationLock = {
+  readonly commit: (content: string, signal: AbortSignal) => Promise<{ readonly digest: string }>;
+  readonly verifiedDigest?: string;
+  readonly release: () => Promise<void>;
+};
+
+const WINDOWS_MUTATION_LOCK_SCRIPT = [
+  "$ErrorActionPreference = 'Stop';",
+  "$stream = [System.IO.FileStream]::new($env:NEXORA_LOCK_PATH, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::ReadWrite);",
+  "$locked = $false; while (!$locked) { try { $stream.Lock(0, 1); $locked = $true } catch [System.IO.IOException] { Start-Sleep -Milliseconds 25 } }",
+  "$stream.Position = 0;",
+  "$initial = New-Object byte[] $stream.Length;",
+  "[void]$stream.Read($initial, 0, $initial.Length);",
+  "$initialDigest = 'sha256:' + ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($initial)).Replace('-', '')).ToLowerInvariant();",
+  "[Console]::Out.WriteLine('NEXORA_LOCK_READY ' + $initialDigest);",
+  "[Console]::Out.Flush();",
+  "try {",
+  "  while (($line = [Console]::ReadLine()) -ne $null) {",
+  "    if ($line -eq 'NEXORA_LOCK_RELEASE') { break }",
+  "    if (!$line.StartsWith('NEXORA_LOCK_WRITE ')) { throw 'Invalid mutation lock command.' }",
+  "    $source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line.Substring(18)));",
+  "    $bytes = [System.IO.File]::ReadAllBytes($source);",
+  "    $stream.Position = 0;",
+  "    $stream.SetLength(0);",
+  "    $stream.Write($bytes, 0, $bytes.Length);",
+  "    $stream.Flush($true);",
+  "    $stream.Position = 0;",
+  "    $check = New-Object byte[] $stream.Length;",
+  "    [void]$stream.Read($check, 0, $check.Length);",
+  "    $digest = 'sha256:' + ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($check)).Replace('-', '')).ToLowerInvariant();",
+  "    [Console]::Out.WriteLine('NEXORA_LOCK_WRITTEN ' + $digest);",
+  "    [Console]::Out.Flush();",
+  "  }",
+  "} finally {",
+  "  try { $stream.Unlock(0, 1) } catch {}",
+  "  $stream.Dispose();",
+  "}"
+].join(" ");
+
+async function acquireMutationLock(path: string, signal: AbortSignal, expectedDigest: string): Promise<MutationLock> {
+  if (process.platform === "win32") return await acquireWindowsMutationLock(path, signal, expectedDigest);
+  const lockPath = `${path}.nexora-lock`;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    throwIfAborted(signal);
+    try {
+      const handle = await open(lockPath, "wx");
+      return {
+        commit: async (content, commitSignal) => {
+          await atomicWrite(path, content, commitSignal);
+          return { digest: digest(content) };
+        },
+        release: async () => { await handle.close().catch(() => undefined); await rm(lockPath, { force: true }); }
+      };
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    }
+  }
+  throw new ToolFailure("MUTATION_BUSY", "Another writer is currently modifying this file.", true);
+}
+
+async function acquireWindowsMutationLock(path: string, signal: AbortSignal, expectedDigest: string): Promise<MutationLock> {
+  const executable = resolveWindowsSystemExecutable("WindowsPowerShell\\v1.0\\powershell");
+  if (executable === null) {
+    throw new ToolFailure("MUTATION_LOCK_UNAVAILABLE", "Windows filesystem locking requires the trusted system PowerShell executable.");
+  }
+  const child = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", WINDOWS_MUTATION_LOCK_SCRIPT], {
+    cwd: process.cwd(),
+    env: { ...process.env, NEXORA_LOCK_PATH: path },
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true
+  });
+  const lines = createChildLineReader(child);
+  let verifiedDigest = "";
+  try {
+    const ready = await waitForChildMessage(lines, (line) => line.startsWith("NEXORA_LOCK_READY "), "NEXORA_LOCK_READY", 5_000, signal);
+    verifiedDigest = ready.slice("NEXORA_LOCK_READY ".length);
+    if (verifiedDigest !== expectedDigest) {
+      child.stdin.write("NEXORA_LOCK_RELEASE\n");
+      child.stdin.end();
+      await waitForChildExit(child, 5_000);
+      throw new ToolFailure(
+        "CONTENT_CONFLICT",
+        "File content changed before the exclusive patch lock was acquired. Read the current file before retrying.",
+        false,
+        { expectedDigest, currentDigest: verifiedDigest, recovery: "inspect_current_content" }
+      );
+    }
+  } catch (error) {
+    child.kill();
+    throw error instanceof ToolFailure ? error : new ToolFailure("MUTATION_LOCK_FAILED", error instanceof Error ? error.message : String(error), true);
+  }
+  let released = false;
+  return {
+    commit: async (content, commitSignal) => {
+      if (released) throw new ToolFailure("MUTATION_LOCK_FAILED", "The filesystem mutation lock was already released.");
+      throwIfAborted(commitSignal);
+      const temporary = join(dirname(path), `.${basename(path)}.${randomUUID()}.nexora-write.tmp`);
+      await writeFile(temporary, content, "utf8");
+      try {
+        const encodedPath = Buffer.from(temporary, "utf8").toString("base64");
+        child.stdin.write(`NEXORA_LOCK_WRITE ${encodedPath}\n`);
+        const written = await waitForChildMessage(lines, (line) => line.startsWith("NEXORA_LOCK_WRITTEN "), "NEXORA_LOCK_WRITTEN", 10_000, commitSignal);
+        return { digest: written.slice("NEXORA_LOCK_WRITTEN ".length) };
+      } finally {
+        await rm(temporary, { force: true });
+      }
+    },
+    release: async () => {
+      if (released) return;
+      released = true;
+      child.stdin.write("NEXORA_LOCK_RELEASE\n");
+      child.stdin.end();
+      await waitForChildExit(child, 5_000);
+    },
+    verifiedDigest
+  };
+}
+
+type ChildLineReader = {
+  readonly next: () => Promise<string>;
+};
+
+function createChildLineReader(child: ChildProcessWithoutNullStreams): ChildLineReader {
+  let buffer = "";
+  let stderr = "";
+  let failure: Error | null = null;
+  const pending: Array<{ readonly resolve: (line: string) => void; readonly reject: (error: Error) => void }> = [];
+  const queue: string[] = [];
+  const drain = () => {
+    while (pending.length > 0 && queue.length > 0) pending.shift()!.resolve(queue.shift()!);
+    if (failure !== null) while (pending.length > 0) pending.shift()!.reject(failure);
+  };
+  child.stdout.on("data", (chunk: Buffer | string) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/u);
+    buffer = lines.pop() ?? "";
+    queue.push(...lines);
+    drain();
+  });
+  child.stderr.on("data", (chunk: Buffer | string) => { stderr += chunk.toString(); });
+  const fail = (error: Error) => { if (failure === null) failure = error; drain(); };
+  child.once("error", (error) => fail(error));
+  child.once("close", (code) => {
+    if (code !== 0) fail(new Error(`Mutation lock helper exited with code ${code ?? "unknown"}${stderr.trim().length > 0 ? `: ${stderr.trim()}` : ""}.`));
+  });
+  return {
+    next: () => {
+      if (queue.length > 0) return Promise.resolve(queue.shift()!);
+      if (failure !== null) return Promise.reject(failure);
+      return new Promise<string>((resolve, reject) => pending.push({ resolve, reject }));
+    }
+  };
+}
+
+async function waitForChildMessage(
+  lines: ChildLineReader,
+  predicate: (line: string) => boolean,
+  expected: string,
+  timeoutMs: number,
+  signal: AbortSignal
+): Promise<string> {
+  throwIfAborted(signal);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new ToolFailure("MUTATION_LOCK_TIMEOUT", `Timed out waiting for filesystem lock stage ${expected}.`, true)), timeoutMs);
+  });
+  try {
+    const actual = await Promise.race([lines.next(), timeoutPromise]);
+    if (!predicate(actual)) throw new ToolFailure("MUTATION_LOCK_FAILED", `Unexpected filesystem lock stage: ${actual}; expected ${expected}.`);
+    return actual;
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+async function waitForChildExit(child: ChildProcessWithoutNullStreams, timeoutMs: number): Promise<void> {
+  if (child.exitCode !== null) {
+    if (child.exitCode !== 0) throw new ToolFailure("MUTATION_LOCK_FAILED", `Mutation lock helper exited with code ${child.exitCode}.`);
+    return;
+  }
+  await new Promise<void>((resolvePromise, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new ToolFailure("MUTATION_LOCK_TIMEOUT", "Timed out releasing the filesystem mutation lock.", true));
+    }, timeoutMs);
+    child.once("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolvePromise();
+      else reject(new ToolFailure("MUTATION_LOCK_FAILED", `Mutation lock helper exited with code ${code ?? "unknown"}.`));
+    });
+  });
 }
 
 function parseLoopbackHttpUrl(value: string): URL {

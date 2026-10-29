@@ -22,6 +22,8 @@
     "benchmark:context-memory": "node --import tsx tests/benchmarks/context-memory-harness-v1.ts",
     "benchmark:context-memory:v2": "node --import tsx tests/benchmarks/context-memory-harness-v2.ts",
     "benchmark:context-memory:provider": "node --env-file=.env --import tsx tests/benchmarks/context-memory-provider-v1.ts",
+    "benchmark:managed-stop": "node --import tsx tests/benchmarks/managed-stop-repetition.ts",
+    "benchmark:context-independent": "node --import tsx tests/benchmarks/context-performance-independent.ts",
     "canary:context-memory": "node --env-file=.env --import tsx tests/canaries/context-memory-continuity.ts",
     "canary:provider-frontend": "node --env-file=.env --import tsx tests/canaries/provider-native-frontend.ts",
     "canary:coding-strategy-ab": "node --env-file=.env --import tsx tests/canaries/coding-strategy-real-ab.ts",
