@@ -22,12 +22,18 @@ if (!configPath) process.exit(64);
 const config = JSON.parse(await readFile(configPath, "utf8"));
 let child = null;
 let settled = false;
+let stopRequested = false;
+let stopAttempts = 0;
 let status = "starting";
 let readyAt = null;
 let stoppedAt = null;
 let exitCode = null;
 let errorCode = null;
 let errorMessage = null;
+let stopPhase = "none";
+let stopStartedAt = null;
+let stopDurationMs = null;
+let stopFinalStatus = null;
 let endpoint = readinessEndpoint(config.readiness);
 const startedAt = new Date().toISOString();
 let persistQueue = Promise.resolve();
@@ -52,6 +58,10 @@ function persist() {
     exitCode,
     errorCode,
     errorMessage,
+    stopPhase,
+    stopStartedAt,
+    stopDurationMs,
+    stopFinalStatus,
     stdoutPath: config.stdoutPath,
     stderrPath: config.stderrPath,
     stopPath: config.stopPath
@@ -66,13 +76,39 @@ function persist() {
 }
 
 function terminateTree() {
-  if (!child?.pid) return;
+  beginStop();
+  stopAttempts += 1;
+  stopPhase = "kill_tree";
+  if (!child?.pid) {
+    stopPhase = "state_write";
+    return;
+  }
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+    const taskkill = resolveWindowsSystemExecutable("taskkill");
+    if (taskkill === null) {
+      errorCode ??= "PROCESS_STOP_COMMAND_UNAVAILABLE";
+      errorMessage ??= "The trusted Windows taskkill executable could not be resolved.";
+      stopPhase = "failed";
+    } else {
+      const result = spawnSync(taskkill, ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+      if (result.error !== undefined || result.status !== 0) {
+        errorCode ??= "PROCESS_STOP_KILL_FAILED";
+        errorMessage ??= `Windows process-tree termination failed with code ${result.status ?? "unknown"}.`;
+        stopPhase = "failed";
+      }
+    }
   } else {
     try { process.kill(-child.pid, "SIGTERM"); } catch { try { child.kill("SIGTERM"); } catch { /* already exited */ } }
     setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch { /* already exited */ } }, 2_000).unref();
   }
+  if (stopPhase !== "failed") stopPhase = "wait";
+}
+
+function beginStop() {
+  if (stopStartedAt !== null) return;
+  stopRequested = true;
+  stopStartedAt = new Date().toISOString();
+  stopPhase = "request";
 }
 
 async function fail(code, message) {
@@ -126,11 +162,22 @@ child.once("close", (code) => { void (async () => {
   settled = true;
   exitCode = code ?? 1;
   stoppedAt = new Date().toISOString();
-  if (status !== "stopping" && status !== "ready") {
+  if (stopRequested) {
+    status = "exited";
+  } else if (status !== "stopping" && status !== "ready") {
     status = "failed";
     errorCode ??= "PROCESS_EXIT_BEFORE_READY";
     errorMessage ??= `Process exited with code ${exitCode} before readiness.`;
   } else status = "exited";
+  if (stopRequested || status === "stopping") {
+    status = "stopping";
+    stopPhase = "state_write";
+    await persist().catch(() => undefined);
+    status = "exited";
+    stopFinalStatus = status;
+    stopDurationMs = stopStartedAt === null ? null : Math.max(0, Date.now() - Date.parse(stopStartedAt));
+    stopPhase = "completed";
+  }
   await persist().catch(() => undefined);
   cleanup();
 })(); });
@@ -138,10 +185,17 @@ await persist();
 
 const heartbeat = setInterval(() => { void persist().catch(() => undefined); }, 1_000);
 const stopWatcher = setInterval(() => {
-  if (existsSync(config.stopPath) && !settled) {
+  if (existsSync(config.stopPath) && !settled && stopAttempts < 3) {
+    beginStop();
     status = "stopping";
-    void persist();
+    void persist().catch(() => undefined);
     terminateTree();
+  } else if (existsSync(config.stopPath) && !settled && stopAttempts >= 3) {
+    status = "failed";
+    errorCode ??= "PROCESS_STOP_RETRY_EXHAUSTED";
+    errorMessage ??= "Managed process stop failed after three bounded attempts.";
+    stopPhase = "failed";
+    void persist().catch(() => undefined);
   }
 }, 200);
 const startupTimer = setTimeout(() => { void fail("PROCESS_STARTUP_TIMEOUT", "Process did not reach readiness before the startup timeout."); }, config.startupTimeoutMs);
@@ -157,7 +211,7 @@ void waitForReadiness().then(async (ready) => {
   await persist();
 });
 
-for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { if (!settled) { status = "stopping"; terminateTree(); } });
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => { if (!settled && !stopRequested) { beginStop(); status = "stopping"; void persist().catch(() => undefined); terminateTree(); } });
 process.on("uncaughtException", (error) => { process.exitCode = 1; void fail("PROCESS_SUPERVISOR_CRASH", error.message); });
 process.on("unhandledRejection", (error) => { process.exitCode = 1; void fail("PROCESS_SUPERVISOR_CRASH", String(error)); });
 
@@ -237,7 +291,10 @@ async function runWatchdog(supervisorPid, childPid, generation, descriptorPath) 
       if (Number.isFinite(parsedHeartbeat)) lastValidHeartbeat = Math.max(lastValidHeartbeat, parsedHeartbeat);
     }
     if (!processExists(supervisorPid) || Date.now() - lastValidHeartbeat > 30_000) {
-      if (process.platform === "win32") spawnSync("taskkill", ["/pid", String(childPid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+      if (process.platform === "win32") {
+        const taskkill = resolveWindowsSystemExecutable("taskkill");
+        if (taskkill !== null) spawnSync(taskkill, ["/pid", String(childPid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+      }
       else { try { process.kill(-childPid, "SIGKILL"); } catch { try { process.kill(childPid, "SIGKILL"); } catch { /* already exited */ } } }
       return;
     }
@@ -247,4 +304,12 @@ async function runWatchdog(supervisorPid, childPid, generation, descriptorPath) 
 
 function processExists(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+function resolveWindowsSystemExecutable(name) {
+  if (process.platform !== "win32") return null;
+  const windowsRoot = process.env.SystemRoot ?? process.env.WINDIR;
+  if (!windowsRoot) return null;
+  const candidate = join(windowsRoot, "System32", `${name}.exe`);
+  return existsSync(candidate) ? candidate : null;
 }

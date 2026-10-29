@@ -43,6 +43,8 @@ export {
 
 export { buildDecisionContext } from "./decision-context.js";
 
+export { contextProjectionCacheKey, type ContextProjectionCacheIdentity } from "./cache-key.js";
+
 export { type ForkContext } from "@nexora/runtime/internal";
 
 export { evictDecisionContextOnce, jsonBytes } from "./eviction.js";

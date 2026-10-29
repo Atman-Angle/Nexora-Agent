@@ -7,6 +7,7 @@ import {
 import { resolvePromptHostConfiguration } from "../../packages/harness/src/profile.js";
 import { projectCompletionProjection } from "../../packages/harness/src/context/decision-context.js";
 import { compileModelPlan } from "../../packages/harness/src/planning.js";
+import { digestAcceptanceCheck } from "../../packages/runtime/src/runtime-helpers.js";
 import {
   CONTROL_FUNCTION_DESCRIPTORS,
   ModelPlanUpdateSchema,
@@ -22,6 +23,7 @@ type ParsedInput = {
     repairCode?: string;
     repairDirective?: string;
     guidance: string[];
+    nextLegalAction: { action: string; stepId: string | null; checkId: string | null; code: string | null; detail: string };
   };
   currentPlanAndChecks: unknown;
   originalTaskContract: { userInputs: unknown };
@@ -106,6 +108,7 @@ describe("E150 Turn navigation and repair projection", () => {
       stepId: "step-2",
       objective: "Change and verify the report summary."
     });
+    expect(parsed.controlState.nextLegalAction).toMatchObject({ action: "execute", stepId: "step-2" });
     expect(parsed.controlState.protectedEffectsThisTurn).toBe(1);
     expect(parsed.controlState.repairCode).toBeUndefined();
     expect(parsed.controlState.repairDirective).toBeUndefined();
@@ -182,6 +185,7 @@ describe("E150 Turn navigation and repair projection", () => {
     expect(parsed.controlState.repairCode).toBe("CHECK_EVIDENCE_STALE");
     expect(parsed.controlState.repairDirective).toContain("final assistant text");
     expect(parsed.controlState.repairDirective).toContain("legal order");
+    expect(parsed.controlState.nextLegalAction).toMatchObject({ action: "resolve", code: "CHECK_EVIDENCE_STALE" });
   });
 
   it("prefers the top-level Runtime code over a conflicting legacy message prefix", () => {
@@ -320,6 +324,7 @@ describe("E150 Turn navigation and repair projection", () => {
           planVersion: 1,
           stepId: "step-verify",
           checkId: "check-read",
+          checkDigest: digestAcceptanceCheck({ id: "check-read", kind: "tool_result", required: true, toolName: "records.lookup", expectedStatus: "success" }),
           kind: "tool_result",
           source: "tool",
           invocationId: "invocation-read",

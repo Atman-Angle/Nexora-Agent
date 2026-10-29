@@ -135,7 +135,7 @@ describe("E049 built-in Tool Runtime", () => {
     await expect(execute(patch, root, { path: "note.txt", expectedDigest: digest, find: "before", replace: "after" }))
       .resolves.toEqual(expect.objectContaining({ status: "success" }));
     await expect(execute(patch, root, { path: "note.txt", expectedDigest: digest, find: "before", replace: "after" }))
-      .resolves.toEqual(expect.objectContaining({ status: "success" }));
+      .resolves.toEqual(expect.objectContaining({ status: "failure", error: expect.objectContaining({ code: "CONTENT_CONFLICT" }) }));
     expect(readFileSync(join(root, "note.txt"), "utf8")).toBe("after");
   });
 
@@ -280,6 +280,21 @@ describe("E049 built-in Tool Runtime", () => {
       status: "success",
       facts: expect.objectContaining({ status: "exited", alreadyStopped: false })
     }));
+    const descriptorName = readdirSync(join(root, ".nexora", "processes"))
+      .find((name) => /^[a-f0-9]{64}\.json$/u.test(name));
+    expect(descriptorName).toBeDefined();
+    const descriptor = JSON.parse(readFileSync(join(root, ".nexora", "processes", descriptorName!), "utf8")) as {
+      stopPhase?: string;
+      stopStartedAt?: string | null;
+      stopDurationMs?: number | null;
+      stopFinalStatus?: string | null;
+    };
+    expect(descriptor).toMatchObject({
+      stopPhase: "completed",
+      stopStartedAt: expect.any(String),
+      stopDurationMs: expect.any(Number),
+      stopFinalStatus: "exited"
+    });
     await expect(execute(stop, root, { processHandle })).resolves.toEqual(expect.objectContaining({
       status: "success",
       facts: expect.objectContaining({ status: "exited", alreadyStopped: true })
