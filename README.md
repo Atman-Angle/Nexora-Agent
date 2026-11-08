@@ -16,6 +16,7 @@
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square">
   <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-5EA2FF?style=flat-square">
   <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-5CE1A4?style=flat-square">
+  <a href="https://hub.xerj.org/contributors/Atman-Angle"><img alt="XERJ Corpus Hub contributor" src="https://hub.xerj.org/contributors/Atman-Angle/badge.svg"></a>
 </p>
 
 <p align="center"><img src="./assets/readme/hero.png" width="100%" alt="Nexora turns agent actions into durable evidence and verified results"></p>
