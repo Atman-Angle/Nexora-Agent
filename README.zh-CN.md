@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img alt="Node.js 20+" src="https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square">
+  <img alt="Node.js 22+" src="https://img.shields.io/badge/Node.js-22%2B-5CE1A4?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square">
   <img alt="版本 0.1.0" src="https://img.shields.io/badge/version-0.1.0-5EA2FF?style=flat-square">
   <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-5CE1A4?style=flat-square">
@@ -64,7 +64,7 @@ Nexora 不是聊天机器人、托管式 Agent 服务、工作流搭建器，也
 
 ## 快速开始
 
-Nexora 当前从源码运行，需要 Node.js 20+ 和 pnpm 11。
+Nexora 当前从源码运行，需要 Node.js 22+ 和 pnpm 11。
 
 ```powershell
 git clone https://github.com/Atman-Angle/Nexora-Agent.git

@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img alt="Node.js 20+" src="https://img.shields.io/badge/Node.js-20%2B-5CE1A4?style=flat-square">
+  <img alt="Node.js 22+" src="https://img.shields.io/badge/Node.js-22%2B-5CE1A4?style=flat-square">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.8-5EA2FF?style=flat-square">
   <img alt="Version 0.1.0" src="https://img.shields.io/badge/version-0.1.0-5EA2FF?style=flat-square">
   <img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache--2.0-5CE1A4?style=flat-square">
@@ -64,7 +64,7 @@ There is one authoritative path for execution: Tool effects are recorded as Invo
 
 ## Quick start
 
-Nexora currently runs from source and requires Node.js 20+ and pnpm 11.
+Nexora currently runs from source and requires Node.js 22+ and pnpm 11.
 
 ```powershell
 git clone https://github.com/Atman-Angle/Nexora-Agent.git

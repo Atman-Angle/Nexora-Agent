@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Quality / Node 20 / Ubuntu
+    name: Quality / Node 22 / Ubuntu
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -26,7 +26,7 @@ jobs:
           version: 11.7.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
@@ -35,7 +35,7 @@ jobs:
       - run: pnpm test
 
   windows-package-consumer:
-    name: Packed consumer / Node 20 / Windows
+    name: Packed consumer / Node 22 / Windows
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -45,7 +45,7 @@ jobs:
           version: 11.7.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test:supervisor-coordinator
