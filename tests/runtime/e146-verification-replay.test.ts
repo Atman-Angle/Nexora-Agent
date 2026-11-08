@@ -48,7 +48,7 @@ function verifierTool(counter: { calls: number }): RuntimeTool {
         factsSchema: z.object({ exitCode: z.number().int(), output: z.string() }).strict()
       }
     },
-    async execute(input) {
+    async execute() {
       counter.calls += 1;
       return {
         status: "success",

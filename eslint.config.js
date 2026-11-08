@@ -15,6 +15,7 @@ export default [
       ".tmp/**",
       "tests/fixtures/**",
       "harness/**/reports/**",
+      "harness/**/reliability-reports/**",
       "harness/**/datasets/**/fixture/**",
       ".nexora/**",
       ".nexora-docling/**",
@@ -31,9 +32,6 @@ export default [
       parserOptions: {
         project: false,
         sourceType: "module"
-      },
-      globals: {
-        ...globals.node
       }
     },
     plugins: {
@@ -49,23 +47,20 @@ export default [
         }
       ],
       "no-unused-vars": "off",
+      // tsc reports undefined identifiers, and CI runs typecheck before lint.
+      "no-undef": "off",
       "no-console": "off"
     }
   },
   {
-    files: ["apps/desktop/src/renderer/**/*.ts"],
-    languageOptions: {
-      globals: {
-        ...globals.browser
-      }
-    }
-  },
-  {
-    files: ["apps/desktop/src/preload.cjs"],
+    files: ["**/*.js", "**/*.mjs", "**/*.cjs"],
     languageOptions: {
       globals: {
         ...globals.node
       }
+    },
+    rules: {
+      "no-unused-vars": ["error", { ignoreRestSiblings: true }]
     }
   }
 ];

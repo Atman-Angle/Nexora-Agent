@@ -3,7 +3,6 @@ import { join, resolve } from "node:path";
 
 import {
   compilePrompt,
-  createOpenAICompatibleProvider,
   openAICompatibleProviderFromEnv,
   resolvePromptHostConfiguration,
   type ModelDecisionContext,

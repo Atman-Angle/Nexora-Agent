@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { z } from "zod";
+import type { z } from "zod";
 
 import {
   RichDocumentCreateInputSchema,

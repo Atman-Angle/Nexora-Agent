@@ -453,7 +453,7 @@ describe("D1 developer Runtime golden path", () => {
     );
     execFileSync(
       "npm",
-      ["install", "--offline", ...tarballs],
+      ["install", ...tarballs],
       { cwd: root, stdio: "pipe", shell: process.platform === "win32" }
     );
     writeFileSync(join(root, "target.txt"), "external D1 consumer\n", "utf8");
@@ -520,7 +520,7 @@ describe("D1 developer Runtime golden path", () => {
     for (const path of packedFiles.filter((item) => /\.(?:js|d\.ts)$/.test(item))) {
       expect(readFileSync(path, "utf8")).not.toMatch(/packages\/runtime\/src|apps\/cli/);
     }
-  }, 60_000);
+  }, 180_000);
 });
 
 function temporaryWorkspace(): string {

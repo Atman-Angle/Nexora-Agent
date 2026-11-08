@@ -41,7 +41,7 @@ describe("D2 packed interactive consumer", () => {
     );
     execFileSync(
       "npm",
-      ["install", "--offline", ...tarballs],
+      ["install", ...tarballs],
       { cwd: root, stdio: "pipe", shell: process.platform === "win32" }
     );
     writeFileSync(
@@ -85,7 +85,7 @@ describe("D2 packed interactive consumer", () => {
       firstEvent: "run.created",
       lastEvent: "run.succeeded"
     });
-  }, 60_000);
+  }, 180_000);
 });
 
 function consumerSource(workspace: string): string {

@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   createAgent,
   createBuiltInTools,
-  openAICompatibleProviderFromEnv,
-  type ModelResponse
+  openAICompatibleProviderFromEnv
 } from "../../packages/harness/src/index.js";
 import { createDecisionEfficiencyReport } from "../../harness/nexora-bench/src/decision-efficiency.js";
 

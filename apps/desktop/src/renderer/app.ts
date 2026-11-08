@@ -495,15 +495,6 @@ function shellCommand(input: Record<string, unknown>): string | null {
   return [command, ...arrayValue(input.args).filter((item): item is string => typeof item === "string")].join(" ");
 }
 
-function activePlanObjective(run: SessionView["runs"][number]): string | null {
-  const plan = run.inspection.plan;
-  if (plan === null) return null;
-  const progress = new Map(run.inspection.progress.map((item) => [item.stepId, item.status]));
-  return plan.orderedSteps.find((step) => progress.get(step.id) === "active")?.objective
-    ?? plan.orderedSteps.find((step) => progress.get(step.id) !== "completed")?.objective
-    ?? null;
-}
-
 function resultMeta(firstInput: SessionView["inspection"]["inputs"][number] | undefined, processedUntil: string | null): string {
   if (firstInput === undefined) return "";
   return `<div class="result-meta"><small class="turn-duration" data-elapsed-start="${escapeAttr(firstInput.receivedAt)}" ${processedUntil === null ? "" : `data-elapsed-end="${escapeAttr(processedUntil)}"`}>${processingDuration(firstInput.receivedAt, processedUntil)}</small></div>`;
@@ -695,7 +686,6 @@ function settings(state: DesktopSnapshot): string {
   if (profile !== undefined && (settingsDraft === null || settingsDraft.id !== profile.id)) settingsDraft = modelSettingsDraft(profile);
   const draft = settingsDraft;
   const providerProfiles = uniqueProviderProfiles(profiles);
-  const provider = draft === null ? null : providerProfiles.find((item) => sameProviderUrl(item.baseUrl, draft.baseUrl)) ?? profile ?? null;
   const dirty = draft !== null && profile !== undefined && modelSettingsDirty(draft, profile);
   return `<div class="modal-backdrop settings-backdrop" data-action="close-settings"><section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="model-settings-title">
     <header class="settings-header"><div><h2 id="model-settings-title">模型设置</h2><small>全局模型配置 · 当前工作区：${escapeHtml(state.workspace.name)}</small></div><button type="button" class="icon-button" data-action="close-settings" aria-label="关闭">×</button></header>
@@ -1704,7 +1694,6 @@ function updateElapsedLabels(): void {
   });
 }
 function toolIcon(name: string): string { const lower = name.toLowerCase(); return lower.includes("shell") || lower.includes("command") || lower.includes("process") ? "⌘" : lower.includes("browser") || lower.includes("http") ? "◎" : lower.includes("read") || lower.includes("list") || lower.includes("search") || lower.includes("inspect") ? "⌕" : lower.includes("create") ? "＋" : lower.includes("write") || lower.includes("patch") ? "✎" : "·"; }
-function statusLabel(status: string): string { return ({ running: "正在工作", waiting_for_input: "需要回复", waiting_for_approval: "需要确认", blocked: "已暂停", succeeded: "已完成", failed: "未完成", cancelled: "已取消" } as Record<string, string>)[status] ?? humanize(status); }
 function threadIndicator(status: string, pendingRequestKind: string | null): string {
   if (pendingRequestKind === "approval") return `<span class="thread-indicator approval" title="需要批准">!</span>`;
   if (pendingRequestKind === "input") return `<span class="thread-indicator input" title="需要回复">?</span>`;
@@ -1712,7 +1701,6 @@ function threadIndicator(status: string, pendingRequestKind: string | null): str
   if (status === "failed" || status === "blocked") return `<span class="thread-indicator problem" title="需要处理">!</span>`;
   return "";
 }
-function sessionStatusLabel(session: SessionView): string { return partialOfficeOutcome(session) ? "部分完成（已提交格式保留）" : statusLabel(session.inspection.status); }
 function partialOfficeOutcome(session: SessionView): boolean {
   if (!["blocked", "failed", "cancelled"].includes(session.inspection.status) || session.deliverables.length === 0) return false;
   return true;

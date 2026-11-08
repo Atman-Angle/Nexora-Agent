@@ -351,12 +351,12 @@ function prepareConsumer(
   }), "utf8");
   runCommand(
     "npm",
-    ["install", "--offline", tarballs.runtime, tarballs.harness],
+    ["install", tarballs.runtime, tarballs.harness],
     project
   );
   runCommand(
     "npm",
-    ["install", "--offline", "--save-dev", "@types/node@24.13.2"],
+    ["install", "--save-dev", "@types/node@24.13.2"],
     project
   );
   writeFileSync(join(project, "tsconfig.json"), JSON.stringify({

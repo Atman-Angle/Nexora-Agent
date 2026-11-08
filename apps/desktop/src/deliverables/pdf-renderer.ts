@@ -176,6 +176,7 @@ function addPage(document: PDFKit.PDFDocument, fontPath: string | null): void {
 
 function fontFor(source: RichDocumentSource): { readonly name: string; readonly path: string | null } {
   const allText = JSON.stringify(source.blocks);
+  // eslint-disable-next-line no-control-regex -- ASCII detection intentionally spans control codes.
   if (/^[\x00-\x7F]*$/u.test(allText)) return { name: "Helvetica", path: null };
   const configured = process.env.NEXORA_OFFICE_FONT_PATH?.trim();
   const candidates = [

@@ -17,7 +17,7 @@ describe("E049 reusable @nexora/harness package", () => {
     execFileSync("pnpm", ["--filter", "@nexora/harness", "pack", "--pack-destination", root], { cwd: process.cwd(), stdio: "pipe", shell: process.platform === "win32" });
     const tarballs = readdirSync(root).filter((name) => name.endsWith(".tgz")).map((name) => join(root, name));
     writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module", private: true }), "utf8");
-    execFileSync("npm", ["install", "--offline", ...tarballs], { cwd: root, stdio: "pipe", shell: process.platform === "win32" });
+    execFileSync("npm", ["install", ...tarballs], { cwd: root, stdio: "pipe", shell: process.platform === "win32" });
     writeFileSync(join(root, "target.txt"), "external consumer\n", "utf8");
     writeFileSync(join(root, "consumer.mjs"), `
 import { createBuiltInTools, createRuntime, modelResponses, NATIVE_FUNCTION_CALLING_CAPABILITIES } from "@nexora/harness";
@@ -49,7 +49,7 @@ console.log(JSON.stringify({ status: result.status, invocations: view.toolInvoca
     for (const path of packedFiles.filter((item) => /\.(?:js|d\.ts)$/.test(item))) {
       expect(readFileSync(path, "utf8")).not.toMatch(/\.\.\/\.\.\/(?:core|contracts|storage|tool-runtime)\/src/);
     }
-  }, 60_000);
+  }, 180_000);
 });
 
 function allFiles(root: string): string[] {

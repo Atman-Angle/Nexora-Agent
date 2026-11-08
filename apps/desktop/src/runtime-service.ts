@@ -520,7 +520,6 @@ export class DesktopRuntimeService {
       runtime.discardBranch(id, "Discarded from Nexora Desktop recovery.");
     } else {
       const child = runtime.openRun(id);
-      const inspection = await child.inspect();
       await child.resume();
     }
     await parent.resume();
@@ -1276,6 +1275,7 @@ function validateAttachmentSignature(kind: AttachmentView["kind"], extension: st
 }
 
 function safeAttachmentName(value: string): string {
+  // eslint-disable-next-line no-control-regex -- Windows filename sanitization must strip control codes.
   const sanitized = value.normalize("NFKC").replace(/[<>:"/\\|?*\u0000-\u001f]/gu, "_").replace(/[. ]+$/u, "").slice(0, 180);
   return sanitized || "attachment";
 }

@@ -11,7 +11,6 @@ import {
   stableDigest,
   type EvalDatasetManifest,
   type EvalSplit,
-  type EvalTask,
   type EvalTaskSource,
   type NormalizedEvalTask
 } from "./contracts.js";

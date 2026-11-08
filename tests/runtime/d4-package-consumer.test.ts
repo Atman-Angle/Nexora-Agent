@@ -48,7 +48,7 @@ describe("D4 packed Developer API consumer", () => {
     );
     execFileSync(
       "npm",
-      ["install", "--offline", ...tarballs],
+      ["install", ...tarballs],
       { cwd: root, stdio: "pipe", shell: process.platform === "win32" }
     );
     writeFileSync(
@@ -123,7 +123,7 @@ describe("D4 packed Developer API consumer", () => {
     expect(runtimePackage.repository.directory).toBe("packages/runtime");
     expect(harnessPackage.repository.directory).toBe("packages/harness");
     expect(harnessPackage.dependencies["@nexora/runtime"]).toBe("0.1.0");
-  }, 60_000);
+  }, 180_000);
 });
 
 function assertReleaseTarball(tarball: string): void {

@@ -3,7 +3,6 @@ import { resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const repositoryRoot = resolve(import.meta.dirname, "..", "..", "..");
-const benchRoot = resolve(import.meta.dirname, "..");
 const manifestPath = resolve(process.env.INIT_CWD?.trim() || repositoryRoot, option("--manifest") || "harness/nexora-bench/datasets/nexora-core-v1/release-v1.json");
 const reliabilityPath = option("--reliability");
 const faultLabPath = option("--fault-lab");

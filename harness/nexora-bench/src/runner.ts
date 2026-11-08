@@ -324,8 +324,6 @@ async function runTask(input: {
     await cancellation.settled();
     const occurrences = { approval: 0, input: 0, recovery: 0 };
     const approvalRuleCounts = new Map<number, number>();
-    let approvalGranted = 0;
-    let approvalDenied = 0;
 
     for (let control = 0; control < 100 && !isTerminalOrExpectedStop(inspection, input.task); control += 1) {
       if (inspection.status === "waiting_for_approval") {
@@ -343,10 +341,8 @@ async function runTask(input: {
           }
           if (policyDecision.decision === "approve") {
             await handle.approve({ requestId });
-            approvalGranted += 1;
           } else {
             await handle.deny({ requestId, ...(policyDecision.reason === undefined ? {} : { reason: policyDecision.reason }) });
-            approvalDenied += 1;
           }
           inspection = await handle.wait();
           continue;
@@ -362,10 +358,8 @@ async function runTask(input: {
         }
         if (action.decision === "approve") {
           await handle.approve({ requestId });
-          approvalGranted += 1;
         } else {
           await handle.deny({ requestId, ...(action.reason === undefined ? {} : { reason: action.reason }) });
-          approvalDenied += 1;
         }
         inspection = await handle.wait();
         continue;

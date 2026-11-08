@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { RuntimeWorkerClient } from "./runtime-worker-client.js";
-import type { AttachmentView, DesktopMessageInput, DesktopSnapshot, ModelProfileInput, SessionControl } from "./shared.js";
+import type { DesktopMessageInput, DesktopSnapshot, ModelProfileInput, SessionControl } from "./shared.js";
 import { resolveExternalUrl, resolveKnownWorkspaceEntry } from "./workspace-entry.js";
 
 const RunIdSchema = z.string().trim().min(1).max(256);

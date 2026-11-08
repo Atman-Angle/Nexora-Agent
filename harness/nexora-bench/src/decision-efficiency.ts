@@ -173,15 +173,6 @@ export type DecisionEfficiencyReport = {
 
 export type DecisionEfficiencyAggregate = Omit<DecisionEfficiencyReport, "actions" | "calls">;
 
-const ACTION_CATEGORIES: readonly EffectiveActionCategory[] = [
-  "state_change",
-  "plan_progress",
-  "evidence_read",
-  "verification",
-  "recovery",
-  "completion_delivery"
-];
-
 export function createDecisionEfficiencyReport(
   view: RunView,
   traces: readonly ModelCallTrace[],

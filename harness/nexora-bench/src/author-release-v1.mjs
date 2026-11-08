@@ -1,13 +1,12 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../datasets/nexora-core-v1/release-v1");
 const DATASET_ROOT = dirname(ROOT);
 const TASK_ROOT = join(ROOT, "tasks");
 const SEALED_ROOT = join(ROOT, "sealed");
-const REVIEW_ROOT = join(ROOT, "reviews");
 const SCENARIO_IMPORT = "../../../../../src/scenario.js";
 const FAMILY_QUOTAS = {
   coding_repository_change: { dev: 6, validation: 4, holdout: 4 },
@@ -140,7 +139,6 @@ function makeTask({ id, family, split, difficulty, horizon, source, instruction,
 }
 
 function definitions(family, n, split, index, difficulty) {
-  const key = `${family}-${split}-${index + 1}`;
   const base = { id: `v1-${family.replaceAll("_", "-")}-${split}-${String(index + 1).padStart(2, "0")}`, family, split, difficulty: difficulty ?? DIFFICULTIES[index % 3], horizon: index % 3 === 0 ? "multi_stage" : index % 3 === 1 ? "short" : "long", source: index % 2 ? "real_workflow" : "sanitized_real_failure" };
   if (family === "coding_repository_change") {
     const names = ["csv-normalizer", "retry-budget", "date-window", "cache-key", "slug-builder", "config-loader", "queue-window", "path-filter"];

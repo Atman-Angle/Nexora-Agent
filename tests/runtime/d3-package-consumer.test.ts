@@ -51,7 +51,7 @@ describe("D3 packed cancellation consumer", () => {
     );
     execPackageManager(
       "npm",
-      ["install", "--offline", ...tarballs],
+      ["install", ...tarballs],
       { cwd: root, stdio: "pipe", encoding: "utf8" }
     );
     writeFileSync(
@@ -109,7 +109,7 @@ describe("D3 packed cancellation consumer", () => {
     ) as { exports: Record<string, unknown> };
     expect(Object.keys(runtimePackage.exports).sort()).toEqual([".", "./internal"]);
     expect(Object.keys(harnessPackage.exports).sort()).toEqual([".", "./testing"]);
-  }, 60_000);
+  }, 180_000);
 });
 
 function consumerSource(workspace: string): string {
