@@ -27,7 +27,7 @@ docs/NEXORA_RUNTIME_WORK_SUMMARY_WECHAT.md
 docs/wechat-render.lua
 docs/wechat-template.html
 apps/research-agent/canaries/
-scripts/
+/scripts/
 prototype/
 assets/readme/prompts.md
 

@@ -29,6 +29,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nexora/runtime --filter @nexora/harness build
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
@@ -48,4 +49,5 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nexora/runtime --filter @nexora/harness build
       - run: pnpm test:supervisor-coordinator
