@@ -11,8 +11,10 @@ export default [
       "packages/runtime/dist/**",
       "packages/harness/dist/**",
       "node_modules/**",
+      "**/.venv/**",
       "tmp/**",
-      ".tmp/**",
+      "**/.tmp/**",
+      "**/.tmp-tb/**",
       "tests/fixtures/**",
       "harness/**/reports/**",
       "harness/**/reliability-reports/**",
@@ -21,7 +23,9 @@ export default [
       ".nexora-docling/**",
       ".tmp-e001/**",
       ".tmp-e0013/**",
-      ".tmp-e0014/**"
+      ".tmp-e0014/**",
+      // ESLint does not read .gitignore, so local-only tooling needs an explicit entry.
+      "scripts/**"
     ]
   },
   js.configs.recommended,
