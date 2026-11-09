@@ -468,11 +468,14 @@ function toolFailureRecovery(invocation: ToolInvocation | null): RepairContext["
       nextAction: "The Tool effect is unknown; do not replay it. Request confirmation or use a safe read-only path."
     };
   }
-  if (code === "PROCESS_START_FAILED") {
+  // COMMAND_UNAVAILABLE is raised before spawn, so like PROCESS_START_FAILED no process ran.
+  if (code === "PROCESS_START_FAILED" || code === "COMMAND_UNAVAILABLE") {
     return {
       sideEffect: "none",
       doNotRepeat: true,
-      nextAction: "The process did not start. Use the returned Host platform fact. The command field is passed directly to that operating system and must contain exactly one installed native executable name or path. It cannot be a shell built-in, compound expression, or shell/script wrapper. Put every argument in the args array and retry only with a genuinely changed executable or arguments; use a dedicated discovery capability if the executable is not known.",
+      nextAction: code === "COMMAND_UNAVAILABLE"
+        ? "The executable could not be resolved from a trusted source, so no process ran. The workspace and its PATH entries are not trusted executable sources. The command field must contain exactly one installed native executable name or path from outside the workspace. It cannot be a shell built-in, compound expression, or shell/script wrapper. Put every argument in the args array and retry only with a genuinely changed executable or arguments; use a dedicated discovery capability if the executable is not known."
+        : "The process did not start. Use the returned Host platform fact. The command field is passed directly to that operating system and must contain exactly one installed native executable name or path. It cannot be a shell built-in, compound expression, or shell/script wrapper. Put every argument in the args array and retry only with a genuinely changed executable or arguments; use a dedicated discovery capability if the executable is not known.",
       fields: [
         { path: "$.command", code: "NATIVE_EXECUTABLE_REQUIRED", expectedFormat: "One installed native executable name or path only." },
         { path: "$.args", code: "EXPLICIT_ARGUMENTS_REQUIRED", expectedFormat: "An array containing each argument as a separate string." }

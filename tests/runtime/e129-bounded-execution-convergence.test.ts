@@ -463,14 +463,14 @@ describe("bounded execution convergence", () => {
     }));
 
     expect(result.status).not.toBe("succeeded");
-    expect(provider.repairCode).toBe("PROCESS_START_FAILED");
-    expect(provider.repairMessage).toContain("did not start");
+    expect(provider.repairCode).toBe("COMMAND_UNAVAILABLE");
+    expect(provider.repairMessage).toContain("no process ran");
     expect(provider.repairMessage).not.toContain("npm.cmd");
     await runtime.close();
   });
 
   it.each([
-    ["missing executable", "nexora-missing-executable --flag", "PROCESS_START_FAILED"],
+    ["missing executable", "nexora-missing-executable --flag", "COMMAND_UNAVAILABLE"],
     ["forbidden wrapper", "powershell", "COMMAND_REJECTED"]
   ])("repairs %s into a native executable call within a fixed Tool budget", async (_label, command, expectedCode) => {
     const provider = new ExecutableContractRepairProvider(command);

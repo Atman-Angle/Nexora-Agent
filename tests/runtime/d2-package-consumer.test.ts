@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   rmSync,
@@ -60,7 +61,10 @@ describe("D2 packed interactive consumer", () => {
       }),
       "utf8"
     );
-    writeFileSync(join(root, "consumer.ts"), consumerSource(root), "utf8");
+    // Keep node_modules out of the runtime workspace: the sensitive-file alias check is size-bounded.
+    const workspace = join(root, "workspace");
+    mkdirSync(workspace);
+    writeFileSync(join(root, "consumer.ts"), consumerSource(workspace), "utf8");
 
     execFileSync(
       process.execPath,
